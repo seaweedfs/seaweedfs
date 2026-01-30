@@ -74,17 +74,16 @@ type FilerClient interface {
 
 // HandleRequest is the main entry point for S3 Tables API requests
 func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, filerClient FilerClient) {
-	// S3 Tables API uses x-amz-target header to specify the operation
-	target := r.Header.Get("X-Amz-Target")
-	if target == "" {
-		// Try to get from query parameter for CLI compatibility
-		target = r.URL.Query().Get("Action")
+	operation := r.Header.Get("X-Amz-Target")
+	if operation != "" {
+		if idx := strings.LastIndex(operation, "."); idx != -1 {
+			operation = operation[idx+1:]
+		}
 	}
-
-	// Extract operation name (e.g., "S3Tables.CreateTableBucket" -> "CreateTableBucket")
-	operation := target
-	if idx := strings.LastIndex(target, "."); idx != -1 {
-		operation = target[idx+1:]
+	if operation == "" {
+		glog.V(1).Infof("S3Tables: missing X-Amz-Target header")
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "Missing X-Amz-Target header")
+		return
 	}
 
 	glog.V(3).Infof("S3Tables: handling operation %s", operation)

@@ -64,6 +64,10 @@ func TestS3TablesIntegration(t *testing.T) {
 	t.Run("Tagging", func(t *testing.T) {
 		testTagging(t, client)
 	})
+
+	t.Run("TargetOperations", func(t *testing.T) {
+		testTargetOperations(t, client)
+	})
 }
 
 func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
@@ -353,6 +357,125 @@ func testTagging(t *testing.T, client *S3TablesClient) {
 	assert.False(t, hasEnvironment, "Environment tag should be removed")
 	assert.Equal(t, "Engineering", listTagsResp.Tags["Department"])
 	t.Logf("✓ Verified tag removal")
+}
+
+func testTargetOperations(t *testing.T, client *S3TablesClient) {
+	bucketName := "test-target-bucket-" + randomString(8)
+
+	var createResp s3tables.CreateTableBucketResponse
+	err := client.doTargetRequestAndDecode("CreateTableBucket", &s3tables.CreateTableBucketRequest{
+		Name: bucketName,
+	}, &createResp)
+	require.NoError(t, err, "Failed to create table bucket via target")
+	defer client.doTargetRequestAndDecode("DeleteTableBucket", &s3tables.DeleteTableBucketRequest{
+		TableBucketARN: createResp.ARN,
+	}, nil)
+
+	var listResp s3tables.ListTableBucketsResponse
+	err = client.doTargetRequestAndDecode("ListTableBuckets", &s3tables.ListTableBucketsRequest{}, &listResp)
+	require.NoError(t, err, "Failed to list table buckets via target")
+	found := false
+	for _, b := range listResp.TableBuckets {
+		if b.Name == bucketName {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Created bucket should appear in target list")
+
+	var getResp s3tables.GetTableBucketResponse
+	err = client.doTargetRequestAndDecode("GetTableBucket", &s3tables.GetTableBucketRequest{
+		TableBucketARN: createResp.ARN,
+	}, &getResp)
+	require.NoError(t, err, "Failed to get table bucket via target")
+	assert.Equal(t, bucketName, getResp.Name)
+
+	namespaceName := "target_ns"
+	var createNsResp s3tables.CreateNamespaceResponse
+	err = client.doTargetRequestAndDecode("CreateNamespace", &s3tables.CreateNamespaceRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+	}, &createNsResp)
+	require.NoError(t, err, "Failed to create namespace via target")
+	defer client.doTargetRequestAndDecode("DeleteNamespace", &s3tables.DeleteNamespaceRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+	}, nil)
+
+	var listNsResp s3tables.ListNamespacesResponse
+	err = client.doTargetRequestAndDecode("ListNamespaces", &s3tables.ListNamespacesRequest{
+		TableBucketARN: createResp.ARN,
+	}, &listNsResp)
+	require.NoError(t, err, "Failed to list namespaces via target")
+
+	tableName := "target_table"
+	var createTableResp s3tables.CreateTableResponse
+	err = client.doTargetRequestAndDecode("CreateTable", &s3tables.CreateTableRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+		Name:           tableName,
+		Format:         "ICEBERG",
+	}, &createTableResp)
+	require.NoError(t, err, "Failed to create table via target")
+	defer client.doTargetRequestAndDecode("DeleteTable", &s3tables.DeleteTableRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+		Name:           tableName,
+	}, nil)
+
+	var listTablesResp s3tables.ListTablesResponse
+	err = client.doTargetRequestAndDecode("ListTables", &s3tables.ListTablesRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+	}, &listTablesResp)
+	require.NoError(t, err, "Failed to list tables via target")
+
+	var getTableResp s3tables.GetTableResponse
+	err = client.doTargetRequestAndDecode("GetTable", &s3tables.GetTableRequest{
+		TableBucketARN: createResp.ARN,
+		Namespace:      []string{namespaceName},
+		Name:           tableName,
+	}, &getTableResp)
+	require.NoError(t, err, "Failed to get table via target")
+	assert.Equal(t, tableName, getTableResp.Name)
+
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
+	err = client.doTargetRequestAndDecode("PutTableBucketPolicy", &s3tables.PutTableBucketPolicyRequest{
+		TableBucketARN: createResp.ARN,
+		ResourcePolicy: policy,
+	}, nil)
+	require.NoError(t, err, "Failed to put bucket policy via target")
+
+	var getPolicyResp s3tables.GetTableBucketPolicyResponse
+	err = client.doTargetRequestAndDecode("GetTableBucketPolicy", &s3tables.GetTableBucketPolicyRequest{
+		TableBucketARN: createResp.ARN,
+	}, &getPolicyResp)
+	require.NoError(t, err, "Failed to get bucket policy via target")
+	assert.Equal(t, policy, getPolicyResp.ResourcePolicy)
+
+	err = client.doTargetRequestAndDecode("DeleteTableBucketPolicy", &s3tables.DeleteTableBucketPolicyRequest{
+		TableBucketARN: createResp.ARN,
+	}, nil)
+	require.NoError(t, err, "Failed to delete bucket policy via target")
+
+	err = client.doTargetRequestAndDecode("TagResource", &s3tables.TagResourceRequest{
+		ResourceARN: createResp.ARN,
+		Tags:        map[string]string{"Environment": "test"},
+	}, nil)
+	require.NoError(t, err, "Failed to tag resource via target")
+
+	var listTagsResp s3tables.ListTagsForResourceResponse
+	err = client.doTargetRequestAndDecode("ListTagsForResource", &s3tables.ListTagsForResourceRequest{
+		ResourceARN: createResp.ARN,
+	}, &listTagsResp)
+	require.NoError(t, err, "Failed to list tags via target")
+	assert.Equal(t, "test", listTagsResp.Tags["Environment"])
+
+	err = client.doTargetRequestAndDecode("UntagResource", &s3tables.UntagResourceRequest{
+		ResourceARN: createResp.ARN,
+		TagKeys:     []string{"Environment"},
+	}, nil)
+	require.NoError(t, err, "Failed to untag resource via target")
 }
 
 // Helper functions

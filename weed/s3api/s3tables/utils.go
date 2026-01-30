@@ -38,6 +38,11 @@ func parseBucketNameFromARN(arn string) (string, error) {
 	return bucketName, nil
 }
 
+// ParseBucketNameFromARN is a wrapper to validate bucket ARN for other packages.
+func ParseBucketNameFromARN(arn string) (string, error) {
+	return parseBucketNameFromARN(arn)
+}
+
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
@@ -240,6 +245,11 @@ func validateNamespace(namespace []string) (string, error) {
 	return name, nil
 }
 
+// ValidateNamespace is a wrapper to validate namespace for other packages.
+func ValidateNamespace(namespace []string) (string, error) {
+	return validateNamespace(namespace)
+}
+
 // validateTableName validates a table name
 func validateTableName(name string) (string, error) {
 	if len(name) < 1 || len(name) > 255 {
@@ -263,6 +273,11 @@ func validateTableName(name string) (string, error) {
 		return "", fmt.Errorf("invalid table name: only 'a-z', '0-9', and '_' are allowed")
 	}
 	return name, nil
+}
+
+// ValidateTableName is a wrapper to validate table name for other packages.
+func ValidateTableName(name string) (string, error) {
+	return validateTableName(name)
 }
 
 // flattenNamespace joins namespace elements into a single string (using dots as per AWS S3 Tables)
