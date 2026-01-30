@@ -119,7 +119,15 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 			method:           "GET",
 			path:             "/",
 			isWrite:          false,
-			expectAuthorized: false,
+			expectAuthorized: true,
+		},
+		{
+			name:             "root path without token",
+			token:            "",
+			method:           "GET",
+			path:             "/",
+			isWrite:          false,
+			expectAuthorized: true,
 		},
 		{
 			name:             "exact prefix match",
@@ -134,7 +142,9 @@ func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
-			req.Header.Set("Authorization", "Bearer "+tt.token)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
 			if authorized := fs.maybeCheckJwtAuthorization(req, tt.isWrite); authorized != tt.expectAuthorized {
 				t.Errorf("expected authorized=%v, got %v", tt.expectAuthorized, authorized)
 			}
