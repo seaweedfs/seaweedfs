@@ -165,7 +165,22 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
-		// TODO(issues/7977): process status heartbeat updates from volume servers
+
+		if heartbeat.State != nil {
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("stateUpdates").Inc()
+
+			updated := false
+			dn.Lock()
+			if dn.MaintenanceMode != heartbeat.State.GetMaintenance() {
+				updated = true
+				dn.MaintenanceMode = heartbeat.State.GetMaintenance()
+			}
+			dn.Unlock()
+
+			if updated {
+				glog.V(1).Infof("master sees state update from %s: %v", dn.Url(), heartbeat.State)
+			}
+		}
 
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),
