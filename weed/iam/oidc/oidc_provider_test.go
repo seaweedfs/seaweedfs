@@ -262,7 +262,7 @@ func TestOIDCProviderJWTValidationECDSA(t *testing.T) {
 		})
 
 		_, err := provider.ValidateToken(context.Background(), token)
-require.Error(t, err)
+		require.Error(t, err)
 		assert.ErrorIs(t, err, providers.ErrProviderTokenExpired)
 	})
 
@@ -583,8 +583,18 @@ func encodePublicKey(t *testing.T, publicKey *rsa.PublicKey) string {
 }
 
 func encodeECPublicKey(t *testing.T, publicKey *ecdsa.PublicKey) (string, string) {
-	return base64.RawURLEncoding.EncodeToString(publicKey.X.Bytes()),
-		base64.RawURLEncoding.EncodeToString(publicKey.Y.Bytes())
+	// RFC 7518 §6.2.1.2 requires EC coordinates to be zero-padded to the full field size
+	curveParams := publicKey.Curve.Params()
+	size := (curveParams.BitSize + 7) / 8
+	xBytes := publicKey.X.Bytes()
+	yBytes := publicKey.Y.Bytes()
+	xPadded := make([]byte, size)
+	yPadded := make([]byte, size)
+	// Right-align the coordinate bytes and leave leading zeros for padding
+	copy(xPadded[size-len(xBytes):], xBytes)
+	copy(yPadded[size-len(yBytes):], yBytes)
+	return base64.RawURLEncoding.EncodeToString(xPadded),
+		base64.RawURLEncoding.EncodeToString(yPadded)
 }
 
 func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Server {
