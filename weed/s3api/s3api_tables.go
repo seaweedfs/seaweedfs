@@ -109,8 +109,6 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	glog.V(1).Infof("S3 Tables API enabled")
 }
 
-// isS3TablesAction checks if the action is an S3 Tables operation using O(1) map lookup
-
 type s3tablesRequestBuilder func(r *http.Request) (interface{}, error)
 
 func (st *S3TablesApiServer) handleRestOperation(operation string, builder s3tablesRequestBuilder) http.HandlerFunc {
