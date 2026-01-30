@@ -109,13 +109,13 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	results := []VerificationResult{}
 
-	for i, volumeId := range volumeIds {
-		fmt.Fprintf(writer, "[%d/%d] Verifying volume %d...\n", i+1, len(volumeIds), volumeId)
+	for i, vid := range volumeIds {
+		fmt.Fprintf(writer, "[%d/%d] Verifying volume %d...\n", i+1, len(volumeIds), vid)
 
-		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, volumeId, diskType, writer, *timeoutPtr)
+		verified, suspects, needlesVerified, badNeedleCount, badNeedleIds, badNeedleCookies, corruptedShards, volumeErr := doEcVerify(commandEnv, topologyInfo, *collection, vid, diskType, writer, *timeoutPtr)
 
 		result := VerificationResult{
-			VolumeID:         volumeId,
+			VolumeID:         vid,
 			Verified:         verified,
 			SuspectShards:    suspects,
 			NeedlesVerified:  needlesVerified,
@@ -150,7 +150,7 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 			if badNeedleCount > 0 {
 				badNeedleStrings := make([]string, len(badNeedleIds))
 				for i, needleId := range badNeedleIds {
-					badNeedleStrings[i] = needle.NewFileId(needle.VolumeId(volumeId), needleId, badNeedleCookies[i]).String()
+					badNeedleStrings[i] = needle.NewFileId(needle.VolumeId(vid), needleId, badNeedleCookies[i]).String()
 				}
 				fmt.Fprintf(writer, " (%d bad needles: %v)", badNeedleCount, badNeedleStrings)
 			}
@@ -193,13 +193,19 @@ func (c *commandEcVerify) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 		for _, result := range results {
 			if result.Error != nil {
 				fmt.Fprintf(writer, "  - Volume %d: ERROR - %v\n", result.VolumeID, result.Error)
-			} else if !result.Verified || result.BadNeedleCount > 0 {
+			} else if !result.Verified || result.BadNeedleCount > 0 || !result.NeedlesVerified {
 				fmt.Fprintf(writer, "  - Volume %d:", result.VolumeID)
 				if !result.Verified {
 					fmt.Fprintf(writer, " shards failed")
 				}
-				if result.BadNeedleCount > 0 {
+				if !result.NeedlesVerified {
 					if !result.Verified {
+						fmt.Fprintf(writer, ", ")
+					}
+					fmt.Fprintf(writer, " needles verification failed")
+				}
+				if result.BadNeedleCount > 0 {
+					if !result.Verified || !result.NeedlesVerified {
 						fmt.Fprintf(writer, ", ")
 					}
 					fmt.Fprintf(writer, "%d bad needles", result.BadNeedleCount)
