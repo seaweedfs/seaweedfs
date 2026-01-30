@@ -2,12 +2,19 @@ package s3tables
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
@@ -35,11 +42,84 @@ func (c *S3TablesClient) doRestRequest(method, path string, body interface{}) (*
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	req.URL.RawPath = path
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	}
+
+	if err := c.signRequest(req, bodyBytes); err != nil {
+		return nil, err
 	}
 
 	return c.client.Do(req)
+}
+
+func (c *S3TablesClient) doTargetRequest(operation string, body interface{}) (*http.Response, error) {
+	var bodyBytes []byte
+	var err error
+
+	if body != nil {
+		bodyBytes, err = json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.endpoint+"/", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.URL.RawPath = "/"
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "S3Tables."+operation)
+
+	if err := c.signRequest(req, bodyBytes); err != nil {
+		return nil, err
+	}
+
+	return c.client.Do(req)
+}
+
+func (c *S3TablesClient) doTargetRequestAndDecode(operation string, reqBody interface{}, respBody interface{}) error {
+	resp, err := c.doTargetRequest(operation, reqBody)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("%s failed with status %d and could not read error response body: %v", operation, resp.StatusCode, readErr)
+		}
+		var errResp s3tables.S3TablesError
+		if err := json.Unmarshal(bodyBytes, &errResp); err != nil {
+			return fmt.Errorf("%s failed with status %d, could not decode error response: %v. Body: %s", operation, resp.StatusCode, err, string(bodyBytes))
+		}
+		return fmt.Errorf("%s failed: %s - %s", operation, errResp.Type, errResp.Message)
+	}
+
+	if respBody != nil {
+		if err := json.NewDecoder(resp.Body).Decode(respBody); err != nil {
+			return fmt.Errorf("failed to decode %s response: %w", operation, err)
+		}
+	}
+
+	return nil
+}
+
+func (c *S3TablesClient) signRequest(req *http.Request, body []byte) error {
+	creds := aws.Credentials{
+		AccessKeyID:     c.accessKey,
+		SecretAccessKey: c.secretKey,
+	}
+	if req.Host == "" {
+		req.Host = req.URL.Host
+	}
+	req.Header.Set("Host", req.URL.Host)
+	payloadHash := sha256.Sum256(body)
+	return v4.NewSigner().SignHTTP(context.Background(), creds, req, hex.EncodeToString(payloadHash[:]), "s3tables", c.region, time.Now())
 }
 
 func (c *S3TablesClient) doRestRequestAndDecode(operation, method, path string, reqBody interface{}, respBody interface{}) error {

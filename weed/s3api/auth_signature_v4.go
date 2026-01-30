@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -284,8 +285,12 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 8. Verify the signature, trying with X-Forwarded-Prefix first
+	pathForSignature := r.URL.EscapedPath()
+	if pathForSignature == "" {
+		pathForSignature = r.URL.Path
+	}
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 		calculatedSignature, errCode = verify(cleanedPath)
 		if errCode == s3err.ErrNone {
 			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
@@ -293,12 +298,20 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 9. Verify with the original path
-	calculatedSignature, errCode = verify(r.URL.Path)
-	if errCode != s3err.ErrNone {
-		return nil, nil, "", nil, errCode
+	calculatedSignature, errCode = verify(pathForSignature)
+	if errCode == s3err.ErrNone {
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
-	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+	// 10. Retry with decoded path if signature used raw path encoding
+	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+		calculatedSignature, errCode = verify(decodedPath)
+		if errCode == s3err.ErrNone {
+			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+		}
+	}
+
+	return nil, nil, "", nil, errCode
 }
 
 // validateSTSSessionToken validates an STS session token and extracts temporary credentials
@@ -464,7 +477,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 	}
 
 	hashedPayload := getContentSha256Cksum(r)
-	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
+	if signV4Values.Credential.scope.service != "s3" && signV4Values.Credential.scope.service != "s3tables" && hashedPayload == emptySHA256 && r.Body != nil {
 		var hashErr error
 		hashedPayload, hashErr = streamHashRequestBody(r, iamRequestBodyLimit)
 		if hashErr != nil {
