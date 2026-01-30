@@ -477,7 +477,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 	}
 
 	hashedPayload := getContentSha256Cksum(r)
-	if signV4Values.Credential.scope.service != "s3" && signV4Values.Credential.scope.service != "s3tables" && hashedPayload == emptySHA256 && r.Body != nil {
+	if signV4Values.Credential.scope.service != "s3" && hashedPayload == emptySHA256 && r.Body != nil {
 		var hashErr error
 		hashedPayload, hashErr = streamHashRequestBody(r, iamRequestBodyLimit)
 		if hashErr != nil {
