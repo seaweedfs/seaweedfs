@@ -261,8 +261,8 @@ func TestOIDCProviderJWTValidationECDSA(t *testing.T) {
 		})
 
 		_, err := provider.ValidateToken(context.Background(), token)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "token is expired")
+require.Error(t, err)
+		assert.ErrorIs(t, err, providers.ErrProviderTokenExpired)
 	})
 
 	t.Run("invalid signature", func(t *testing.T) {
