@@ -80,6 +80,11 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 			operation = operation[idx+1:]
 		}
 	}
+	if operation == "" {
+		glog.V(1).Infof("S3Tables: missing X-Amz-Target header")
+		http.Error(w, "Missing X-Amz-Target header", http.StatusBadRequest)
+		return
+	}
 
 	glog.V(3).Infof("S3Tables: handling operation %s", operation)
 
