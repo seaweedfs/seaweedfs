@@ -55,7 +55,10 @@ func TestStripQuotes(t *testing.T) {
 		{input: `-account_display_name="Test number 004"`, expected: `-account_display_name=Test number 004`},
 		{input: `-flag="a"b'c'`, expected: `-flag=abc`},
 		{input: `-name="a\"b"`, expected: `-name=a"b`},
-		{input: `-path='a\ b'`, expected: `-path=a\ b`}, // Backslash preserved if not escaping a special character? No, our impl removes it always.
+		{input: `-path='a\ b'`, expected: `-path=a\ b`},
+		{input: `"unbalanced`, expected: `"unbalanced`},
+		{input: `'unbalanced`, expected: `'unbalanced`},
+		{input: `-name="a\"b`, expected: `-name="a\"b`},
 	}
 
 	for _, tt := range tests {

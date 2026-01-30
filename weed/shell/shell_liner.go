@@ -156,6 +156,9 @@ func stripQuotes(s string) string {
 		}
 		result.WriteByte(c)
 	}
+	if inDoubleQuotes || inSingleQuotes {
+		return s
+	}
 	return result.String()
 }
 
