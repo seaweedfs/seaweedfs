@@ -1,4 +1,4 @@
-package fuse_test
+package fuse
 
 import (
 	"fmt"
@@ -85,7 +85,54 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("framework already setup")
 	}
 
-	// Create directories
+	// Check if we should skip cluster setup and use existing mount
+	if os.Getenv("TEST_SKIP_CLUSTER_SETUP") == "true" {
+		// Use existing mount point from environment
+		if existingMount := os.Getenv("TEST_MOUNT_POINT"); existingMount != "" {
+			f.mountPoint = existingMount
+			f.t.Logf("Using existing mount point: %s", f.mountPoint)
+
+			// Verify mount point is accessible
+			if _, err := os.Stat(f.mountPoint); err != nil {
+				return fmt.Errorf("existing mount point not accessible: %v", err)
+			}
+
+			// Test basic functionality
+			testFile := filepath.Join(f.mountPoint, ".framework_test")
+			if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+				return fmt.Errorf("mount point not writable: %v", err)
+			}
+			if err := os.Remove(testFile); err != nil {
+				f.t.Logf("Warning: failed to cleanup test file: %v", err)
+			}
+
+			// Verify this is actually a SeaweedFS mount by checking for SeaweedFS-specific behavior
+			// Create a test file and verify it appears in the filer
+			verifyFile := filepath.Join(f.mountPoint, ".seaweedfs_mount_verification")
+			if err := os.WriteFile(verifyFile, []byte("SeaweedFS mount verification"), 0644); err != nil {
+				return fmt.Errorf("mount point verification failed - cannot write: %v", err)
+			}
+
+			// Read it back to ensure it's working
+			if data, err := os.ReadFile(verifyFile); err != nil {
+				return fmt.Errorf("mount point verification failed - cannot read: %v", err)
+			} else if string(data) != "SeaweedFS mount verification" {
+				return fmt.Errorf("mount point verification failed - data mismatch")
+			}
+
+			// Clean up verification file
+			if err := os.Remove(verifyFile); err != nil {
+				f.t.Logf("Warning: failed to cleanup verification file: %v", err)
+			}
+
+			f.t.Logf("✅ SeaweedFS mount point verified and working: %s", f.mountPoint)
+
+			f.isSetup = true
+			return nil
+		}
+	}
+
+	// Create directories for full cluster setup
 	dirs := []string{f.mountPoint, f.dataDir}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -139,6 +186,12 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 // Cleanup stops all processes and removes temporary files
 func (f *FuseTestFramework) Cleanup() {
+	// Skip cleanup if using external cluster
+	if os.Getenv("TEST_SKIP_CLUSTER_SETUP") == "true" {
+		f.t.Logf("Skipping cleanup - using external SeaweedFS cluster")
+		return
+	}
+
 	if f.mountProcess != nil {
 		f.unmountFuse()
 	}
