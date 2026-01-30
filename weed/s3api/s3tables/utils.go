@@ -175,6 +175,11 @@ func validateBucketName(name string) error {
 	return nil
 }
 
+// ValidateBucketName validates bucket name and returns an error if invalid.
+func ValidateBucketName(name string) error {
+	return validateBucketName(name)
+}
+
 // isValidBucketName validates bucket name characters (kept for compatibility)
 // Deprecated: use validateBucketName instead
 func isValidBucketName(name string) bool {
