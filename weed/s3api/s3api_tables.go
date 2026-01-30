@@ -228,16 +228,11 @@ func parseOptionalNamespace(r *http.Request, name string) []string {
 	if value == "" {
 		return nil
 	}
-	decoded, err := url.QueryUnescape(value)
-	if err != nil {
-		glog.V(1).Infof("failed to decode %s namespace value %q: %v", name, value, err)
+	if _, err := s3tables.ValidateNamespace([]string{value}); err != nil {
+		glog.V(1).Infof("invalid namespace value for %s: %q: %v", name, value, err)
 		return nil
 	}
-	if _, err := s3tables.ValidateNamespace([]string{decoded}); err != nil {
-		glog.V(1).Infof("invalid namespace value for %s: %q: %v", name, decoded, err)
-		return nil
-	}
-	return []string{decoded}
+	return []string{value}
 }
 
 // parseTagKeys handles tag key parsing from query parameters.
