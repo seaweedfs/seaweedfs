@@ -63,40 +63,40 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTableBucket", buildCreateTableBucketRequest)), "S3Tables-CreateTableBucket"))
 	router.Methods(http.MethodGet).Path("/buckets").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTableBuckets", buildListTableBucketsRequest)), "S3Tables-ListTableBuckets"))
-	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:.+}").
+	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucket", buildTableBucketArnRequest)), "S3Tables-GetTableBucket"))
-	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:.+}").
+	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTableBucket", buildDeleteTableBucketRequest)), "S3Tables-DeleteTableBucket"))
-	router.Methods(http.MethodPut).Path("/buckets/{tableBucketARN:.+}/policy").
+	router.Methods(http.MethodPut).Path("/buckets/{tableBucketARN:[^/]+}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTableBucketPolicy", buildPutTableBucketPolicyRequest)), "S3Tables-PutTableBucketPolicy"))
-	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:.+}/policy").
+	router.Methods(http.MethodGet).Path("/buckets/{tableBucketARN:[^/]+}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTableBucketPolicy", buildGetTableBucketPolicyRequest)), "S3Tables-GetTableBucketPolicy"))
-	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:.+}/policy").
+	router.Methods(http.MethodDelete).Path("/buckets/{tableBucketARN:[^/]+}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTableBucketPolicy", buildDeleteTableBucketPolicyRequest)), "S3Tables-DeleteTableBucketPolicy"))
 
-	router.Methods(http.MethodPut).Path("/namespaces/{tableBucketARN:.+}").
+	router.Methods(http.MethodPut).Path("/namespaces/{tableBucketARN:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateNamespace", buildCreateNamespaceRequest)), "S3Tables-CreateNamespace"))
-	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:.+}").
+	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListNamespaces", buildListNamespacesRequest)), "S3Tables-ListNamespaces"))
-	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:.+}/{namespace}").
+	router.Methods(http.MethodGet).Path("/namespaces/{tableBucketARN:[^/]+}/{namespace}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetNamespace", buildGetNamespaceRequest)), "S3Tables-GetNamespace"))
-	router.Methods(http.MethodDelete).Path("/namespaces/{tableBucketARN:.+}/{namespace}").
+	router.Methods(http.MethodDelete).Path("/namespaces/{tableBucketARN:[^/]+}/{namespace}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteNamespace", buildDeleteNamespaceRequest)), "S3Tables-DeleteNamespace"))
 
-	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:.+}/{namespace}").
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:[^/]+}/{namespace}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("CreateTable", buildCreateTableRequest)), "S3Tables-CreateTable"))
-	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:.+}").
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTables", buildListTablesRequest)), "S3Tables-ListTables"))
-	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:.+}/{namespace}/{name}").
+	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:[^/]+}/{namespace}/{name}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTable", buildDeleteTableRequest)), "S3Tables-DeleteTable"))
 	router.Methods(http.MethodGet).Path("/get-table").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTable", buildGetTableRequest)), "S3Tables-GetTable"))
 
-	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:.+}/{namespace}/{name}/policy").
+	router.Methods(http.MethodPut).Path("/tables/{tableBucketARN:[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("PutTablePolicy", buildPutTablePolicyRequest)), "S3Tables-PutTablePolicy"))
-	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:.+}/{namespace}/{name}/policy").
+	router.Methods(http.MethodGet).Path("/tables/{tableBucketARN:[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("GetTablePolicy", buildGetTablePolicyRequest)), "S3Tables-GetTablePolicy"))
-	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:.+}/{namespace}/{name}/policy").
+	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
 	router.Methods(http.MethodPost).Path("/tag/{resourceArn:.*}").
