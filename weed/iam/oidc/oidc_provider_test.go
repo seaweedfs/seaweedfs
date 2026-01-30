@@ -190,7 +190,8 @@ func TestOIDCProviderJWTValidation(t *testing.T) {
 		})
 
 		_, err := provider.ValidateToken(context.Background(), token)
-		assert.Error(t, err)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, providers.ErrProviderInvalidToken)
 	})
 }
 
@@ -276,7 +277,8 @@ require.Error(t, err)
 		})
 
 		_, err := provider.ValidateToken(context.Background(), token)
-		assert.Error(t, err)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, providers.ErrProviderInvalidToken)
 	})
 
 	t.Run("invalid issuer", func(t *testing.T) {
