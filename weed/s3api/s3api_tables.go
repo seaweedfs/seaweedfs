@@ -180,6 +180,17 @@ func getDecodedPathParam(r *http.Request, name string) (string, error) {
 	return decoded, nil
 }
 
+func buildTableBucketRequestWithARN(r *http.Request, constructor func(string) interface{}) (interface{}, error) {
+	arn, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	if arn == "" {
+		return nil, fmt.Errorf("tableBucketARN is required")
+	}
+	return constructor(arn), nil
+}
+
 func parseOptionalIntParam(r *http.Request, name string) (int, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
@@ -233,23 +244,15 @@ func buildListTableBucketsRequest(r *http.Request) (interface{}, error) {
 }
 
 func buildTableBucketArnRequest(r *http.Request) (interface{}, error) {
-	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
-	if err != nil {
-		return nil, err
-	}
-	return &s3tables.GetTableBucketRequest{
-		TableBucketARN: tableBucketARN,
-	}, nil
+	return buildTableBucketRequestWithARN(r, func(arn string) interface{} {
+		return &s3tables.GetTableBucketRequest{TableBucketARN: arn}
+	})
 }
 
 func buildDeleteTableBucketRequest(r *http.Request) (interface{}, error) {
-	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
-	if err != nil {
-		return nil, err
-	}
-	return &s3tables.DeleteTableBucketRequest{
-		TableBucketARN: tableBucketARN,
-	}, nil
+	return buildTableBucketRequestWithARN(r, func(arn string) interface{} {
+		return &s3tables.DeleteTableBucketRequest{TableBucketARN: arn}
+	})
 }
 
 func buildPutTableBucketPolicyRequest(r *http.Request) (interface{}, error) {
@@ -266,23 +269,15 @@ func buildPutTableBucketPolicyRequest(r *http.Request) (interface{}, error) {
 }
 
 func buildGetTableBucketPolicyRequest(r *http.Request) (interface{}, error) {
-	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
-	if err != nil {
-		return nil, err
-	}
-	return &s3tables.GetTableBucketPolicyRequest{
-		TableBucketARN: tableBucketARN,
-	}, nil
+	return buildTableBucketRequestWithARN(r, func(arn string) interface{} {
+		return &s3tables.GetTableBucketPolicyRequest{TableBucketARN: arn}
+	})
 }
 
 func buildDeleteTableBucketPolicyRequest(r *http.Request) (interface{}, error) {
-	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
-	if err != nil {
-		return nil, err
-	}
-	return &s3tables.DeleteTableBucketPolicyRequest{
-		TableBucketARN: tableBucketARN,
-	}, nil
+	return buildTableBucketRequestWithARN(r, func(arn string) interface{} {
+		return &s3tables.DeleteTableBucketPolicyRequest{TableBucketARN: arn}
+	})
 }
 
 func buildCreateNamespaceRequest(r *http.Request) (interface{}, error) {
