@@ -27,6 +27,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
@@ -101,6 +102,8 @@ type AdminServer struct {
 	collectionStatsCache          map[string]collectionStats
 	lastCollectionStatsUpdate     time.Time
 	collectionStatsCacheThreshold time.Duration
+
+	s3TablesManager *s3tables.Manager
 }
 
 // Type definitions moved to types.go
@@ -132,6 +135,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		filerCacheExpiration:          30 * time.Second, // Cache filers for 30 seconds
 		configPersistence:             NewConfigPersistence(dataDir),
 		collectionStatsCacheThreshold: 30 * time.Second,
+		s3TablesManager:               newS3TablesManager(),
 	}
 
 	// Initialize topic retention purger

@@ -41,7 +41,7 @@ type S3TablesTablesData struct {
 
 // S3Tables manager helpers
 
-func (s *AdminServer) newS3TablesManager() *s3tables.Manager {
+func newS3TablesManager() *s3tables.Manager {
 	manager := s3tables.NewManager()
 	manager.SetAccountID(s3_constants.AccountAdminId)
 	return manager
@@ -50,7 +50,7 @@ func (s *AdminServer) newS3TablesManager() *s3tables.Manager {
 func (s *AdminServer) executeS3TablesOperation(ctx context.Context, operation string, req interface{}, resp interface{}) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.newS3TablesManager().Execute(ctx, mgrClient, operation, req, resp, s3_constants.AccountAdminId)
+		return s.s3TablesManager.Execute(ctx, mgrClient, operation, req, resp, s3_constants.AccountAdminId)
 	})
 }
 
