@@ -95,9 +95,15 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
 													{{ namespaceName := strings.Join(namespace.Namespace, ".") }}
-													<a class={ "btn btn-outline-primary btn-sm", templ.KV("disabled", parseErr != nil) } href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)) } aria-disabled={ fmt.Sprintf("%t", parseErr != nil) }>
-														<i class="fas fa-table"></i>
-													</a>
+													if parseErr == nil {
+														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)) }>
+															<i class="fas fa-table"></i>
+														</a>
+													} else {
+														<button type="button" class="btn btn-outline-primary btn-sm" disabled title="Invalid bucket ARN">
+															<i class="fas fa-table"></i>
+														</button>
+													}
 													<button type="button" class="btn btn-outline-danger btn-sm s3tables-delete-namespace-btn" data-namespace-name={ namespaceName } title="Delete">
 														<i class="fas fa-trash"></i>
 													</button>
