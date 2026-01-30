@@ -20,6 +20,7 @@ const (
 var (
 	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
 	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
+	tagPattern       = regexp.MustCompile(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`)
 )
 
 // ARN parsing functions
@@ -178,6 +179,28 @@ func validateBucketName(name string) error {
 // ValidateBucketName validates bucket name and returns an error if invalid.
 func ValidateBucketName(name string) error {
 	return validateBucketName(name)
+}
+
+// ValidateTags validates tags for S3 Tables.
+func ValidateTags(tags map[string]string) error {
+	if len(tags) > 10 {
+		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
+	}
+	for k, v := range tags {
+		if len(k) > 128 {
+			return fmt.Errorf("validate tags: tag key longer than 128")
+		}
+		if !tagPattern.MatchString(k) {
+			return fmt.Errorf("validate tags key %s error, incorrect key", k)
+		}
+		if len(v) > 256 {
+			return fmt.Errorf("validate tags: tag value longer than 256")
+		}
+		if !tagPattern.MatchString(v) {
+			return fmt.Errorf("validate tags value %s error, incorrect value", v)
+		}
+	}
+	return nil
 }
 
 // isValidBucketName validates bucket name characters (kept for compatibility)

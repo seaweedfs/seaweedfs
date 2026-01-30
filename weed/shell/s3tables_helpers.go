@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -61,7 +60,7 @@ func parseS3TablesTags(value string) (map[string]string, error) {
 		}
 		parsed[parts[0]] = parts[1]
 	}
-	if err := validateS3TablesTags(parsed); err != nil {
+	if err := s3tables.ValidateTags(parsed); err != nil {
 		return nil, err
 	}
 	return parsed, nil
@@ -80,27 +79,4 @@ func parseS3TablesTagKeys(value string) ([]string, error) {
 		return nil, fmt.Errorf("tagKeys are required")
 	}
 	return keys, nil
-}
-
-func validateS3TablesTags(tags map[string]string) error {
-	if len(tags) > 10 {
-		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
-	}
-	for k, v := range tags {
-		if len(k) > 128 {
-			return fmt.Errorf("validate tags: tag key longer than 128")
-		}
-		validateKey, err := regexp.MatchString(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`, k)
-		if !validateKey || err != nil {
-			return fmt.Errorf("validate tags key %s error, incorrect key", k)
-		}
-		if len(v) > 256 {
-			return fmt.Errorf("validate tags: tag value longer than 256")
-		}
-		validateValue, err := regexp.MatchString(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`, v)
-		if !validateValue || err != nil {
-			return fmt.Errorf("validate tags value %s error, incorrect value", v)
-		}
-	}
-	return nil
 }

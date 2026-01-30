@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -128,7 +127,7 @@ func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
 		return
 	}
 	if len(req.Tags) > 0 {
-		if err := validateS3TablesTags(req.Tags); err != nil {
+		if err := s3tables.ValidateTags(req.Tags); err != nil {
 			c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
 			return
 		}
@@ -244,7 +243,7 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 		format = "ICEBERG"
 	}
 	if len(req.Tags) > 0 {
-		if err := validateS3TablesTags(req.Tags); err != nil {
+		if err := s3tables.ValidateTags(req.Tags); err != nil {
 			c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
 			return
 		}
@@ -401,7 +400,7 @@ func (s *AdminServer) TagS3TablesResource(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "resource_arn and tags are required"})
 		return
 	}
-	if err := validateS3TablesTags(req.Tags); err != nil {
+	if err := s3tables.ValidateTags(req.Tags); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid tags: " + err.Error()})
 		return
 	}
@@ -482,27 +481,4 @@ func s3TablesErrorStatus(err error) int {
 		}
 	}
 	return http.StatusInternalServerError
-}
-
-func validateS3TablesTags(tags map[string]string) error {
-	if len(tags) > 10 {
-		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
-	}
-	for k, v := range tags {
-		if len(k) > 128 {
-			return fmt.Errorf("validate tags: tag key longer than 128")
-		}
-		validateKey, err := regexp.MatchString(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`, k)
-		if !validateKey || err != nil {
-			return fmt.Errorf("validate tags key %s error, incorrect key", k)
-		}
-		if len(v) > 256 {
-			return fmt.Errorf("validate tags: tag value longer than 256")
-		}
-		validateValue, err := regexp.MatchString(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`, v)
-		if !validateValue || err != nil {
-			return fmt.Errorf("validate tags value %s error, incorrect value", v)
-		}
-	}
-	return nil
 }
