@@ -99,11 +99,11 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+(?:/table/[^/]+/[^/]+)?}").
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:.*}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
