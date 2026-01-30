@@ -144,6 +144,7 @@ func readS3TablesJSONBody(r *http.Request, v interface{}) error {
 	if r.Body == nil {
 		return nil
 	}
+	defer r.Body.Close()
 	const maxRequestBodySize = 10 * 1024 * 1024
 	limitedReader := io.LimitReader(r.Body, maxRequestBodySize+1)
 	body, err := io.ReadAll(limitedReader)
@@ -325,6 +326,9 @@ func buildGetNamespaceRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
 	return &s3tables.GetNamespaceRequest{
 		TableBucketARN: tableBucketARN,
 		Namespace:      []string{namespace},
@@ -339,6 +343,9 @@ func buildDeleteNamespaceRequest(r *http.Request) (interface{}, error) {
 	namespace, err := getDecodedPathParam(r, "namespace")
 	if err != nil {
 		return nil, err
+	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
 	}
 	return &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: tableBucketARN,
@@ -359,10 +366,11 @@ func buildCreateTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.TableBucketARN = tableBucketARN
-	if namespace != "" {
-		req.Namespace = []string{namespace}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
 	}
+	req.TableBucketARN = tableBucketARN
+	req.Namespace = []string{namespace}
 	return &req, nil
 }
 
