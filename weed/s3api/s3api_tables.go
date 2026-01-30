@@ -99,11 +99,11 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	router.Methods(http.MethodDelete).Path("/tables/{tableBucketARN:arn:aws:s3tables:[^/]+:[^/]+:bucket/[^/]+}/{namespace}/{name}/policy").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("DeleteTablePolicy", buildDeleteTablePolicyRequest)), "S3Tables-DeleteTablePolicy"))
 
-	router.Methods(http.MethodPost).Path("/tag/{resourceArn:.*}").
+	router.Methods(http.MethodPost).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("TagResource", buildTagResourceRequest)), "S3Tables-TagResource"))
-	router.Methods(http.MethodGet).Path("/tag/{resourceArn:.*}").
+	router.Methods(http.MethodGet).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("ListTagsForResource", buildListTagsForResourceRequest)), "S3Tables-ListTagsForResource"))
-	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:.*}").
+	router.Methods(http.MethodDelete).Path("/tag/{resourceArn:arn:aws:s3tables:[^/]+:[^/]+:[^/]+}").
 		HandlerFunc(track(s3a.authenticateS3Tables(s3TablesApi.handleRestOperation("UntagResource", buildUntagResourceRequest)), "S3Tables-UntagResource"))
 
 	glog.V(1).Infof("S3 Tables API enabled")
@@ -199,6 +199,9 @@ func parseOptionalIntParam(r *http.Request, name string) (int, error) {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s must be non-negative", name)
 	}
 	return parsed, nil
 }
@@ -411,9 +414,15 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
 	name, err := getDecodedPathParam(r, "name")
 	if err != nil {
 		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
 	}
 	return &s3tables.DeleteTableRequest{
 		TableBucketARN: tableBucketARN,
@@ -436,9 +445,15 @@ func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
 	name, err := getDecodedPathParam(r, "name")
 	if err != nil {
 		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
 	}
 	req.TableBucketARN = tableBucketARN
 	req.Namespace = []string{namespace}
@@ -455,9 +470,15 @@ func buildGetTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
 	name, err := getDecodedPathParam(r, "name")
 	if err != nil {
 		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
 	}
 	return &s3tables.GetTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
@@ -475,9 +496,15 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
 	name, err := getDecodedPathParam(r, "name")
 	if err != nil {
 		return nil, err
+	}
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
 	}
 	return &s3tables.DeleteTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
