@@ -90,6 +90,9 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 	}
 
 	remainingPath := parts[1]
+	if remainingPath == "" {
+		return nil // allow paths like "data/" or "metadata/"
+	}
 
 	switch topDir {
 	case "metadata":
