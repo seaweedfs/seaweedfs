@@ -373,7 +373,6 @@ func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
 	if !wfs.inodeToPath.NeedsRefresh(dirPath) {
 		return
 	}
-	now := time.Now()
 	wfs.refreshMu.Lock()
 	if _, exists := wfs.refreshingDirs[dirPath]; exists {
 		wfs.refreshMu.Unlock()
@@ -393,7 +392,7 @@ func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
 			glog.Warningf("refresh dir cache %s: %v", dirPath, err)
 			return
 		}
-		wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, now)
+		wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, time.Now())
 	}()
 }
 
