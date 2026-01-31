@@ -29,6 +29,14 @@ type InodeEntry struct {
 	needsRefresh      bool
 }
 
+func (ie *InodeEntry) resetCacheState() {
+	ie.isChildrenCached = false
+	ie.cachedExpiresTime = time.Time{}
+	ie.needsRefresh = false
+	ie.updateCount = 0
+	ie.updateWindowStart = time.Time{}
+}
+
 func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 	if len(ie.paths) == 0 {
 		return false
@@ -60,6 +68,7 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		paths:       []util.FullPath{root},
 		nlookup:     1,
 		isDirectory: true,
+		lastAccess:  time.Now(),
 	}
 	t.path2inode[root] = 1
 
@@ -222,11 +231,7 @@ func (i *InodeToPath) InvalidateAllChildrenCache() {
 	defer i.Unlock()
 	for _, entry := range i.inode2path {
 		if entry.isDirectory && entry.isChildrenCached {
-			entry.isChildrenCached = false
-			entry.cachedExpiresTime = time.Time{}
-			entry.needsRefresh = false
-			entry.updateCount = 0
-			entry.updateWindowStart = time.Time{}
+			entry.resetCacheState()
 		}
 	}
 }
@@ -242,11 +247,7 @@ func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
 	if !found {
 		return
 	}
-	entry.isChildrenCached = false
-	entry.cachedExpiresTime = time.Time{}
-	entry.needsRefresh = false
-	entry.updateCount = 0
-	entry.updateWindowStart = time.Time{}
+	entry.resetCacheState()
 }
 
 func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
@@ -338,11 +339,7 @@ func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []
 		if entry.lastAccess.IsZero() || now.Sub(entry.lastAccess) < idle {
 			continue
 		}
-		entry.isChildrenCached = false
-		entry.cachedExpiresTime = time.Time{}
-		entry.needsRefresh = false
-		entry.updateCount = 0
-		entry.updateWindowStart = time.Time{}
+		entry.resetCacheState()
 		dirs = append(dirs, entry.paths...)
 	}
 	return dirs
@@ -409,11 +406,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 				entry.paths[i] = targetPath
 			}
 		}
-		entry.isChildrenCached = false
-		entry.cachedExpiresTime = time.Time{}
-		entry.needsRefresh = false
-		entry.updateCount = 0
-		entry.updateWindowStart = time.Time{}
+		entry.resetCacheState()
 	} else {
 		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
