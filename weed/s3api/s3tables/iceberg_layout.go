@@ -3,6 +3,7 @@ package s3tables
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 
@@ -100,39 +101,50 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 	return nil
 }
 
-// validateMetadataFile validates files in the metadata/ directory
-func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
-	// Handle directory creation (path ending with "/")
-	if strings.HasSuffix(path, "/") {
-		// Validate that all intermediate subdirectories are valid
-		subdirs := strings.Split(strings.TrimSuffix(path, "/"), "/")
-		for _, subdir := range subdirs {
-			if subdir != "" && !isValidSubdirectory(subdir) {
+// validateDirectoryPath validates intermediate subdirectories in a path
+// isMetadata indicates if we're in the metadata directory (true) or data directory (false)
+func validateDirectoryPath(normalizedPath string, isMetadata bool) error {
+	subdirs := strings.Split(normalizedPath, "/")
+	for _, subdir := range subdirs {
+		if subdir == "" {
+			continue
+		}
+		// For metadata, only allow valid subdirectories
+		if isMetadata {
+			if !isValidSubdirectory(subdir) {
 				return &IcebergLayoutError{
 					Code:    ErrCodeInvalidIcebergLayout,
 					Message: "invalid subdirectory name in metadata path",
 				}
 			}
-		}
-		return nil
-	}
-
-	// Get the filename (last component)
-	parts := strings.Split(path, "/")
-	filename := parts[len(parts)-1]
-
-	// Validate intermediate subdirectories
-	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] != "" && !isValidSubdirectory(parts[i]) {
-			return &IcebergLayoutError{
-				Code:    ErrCodeInvalidIcebergLayout,
-				Message: "invalid subdirectory name in metadata path",
+		} else {
+			// For data, allow both partitions and valid subdirectories
+			if !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "invalid partition or subdirectory format in data path",
+				}
 			}
 		}
 	}
+	return nil
+}
 
-	// Check against allowed metadata file patterns
-	for _, pattern := range metadataFilePatterns {
+// validateFilePatterns validates a filename against allowed patterns
+// isMetadata indicates if we're validating metadata files (true) or data files (false)
+func validateFilePatterns(filename string, isMetadata bool) error {
+	var patterns []*regexp.Regexp
+	var errorMsg string
+
+	if isMetadata {
+		patterns = metadataFilePatterns
+		errorMsg = "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file"
+	} else {
+		patterns = dataFilePatterns
+		errorMsg = "invalid data file format: must be .parquet, .orc, or .avro"
+	}
+
+	for _, pattern := range patterns {
 		if pattern.MatchString(filename) {
 			return nil
 		}
@@ -140,54 +152,58 @@ func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
 
 	return &IcebergLayoutError{
 		Code:    ErrCodeInvalidIcebergLayout,
-		Message: "invalid metadata file format: must be a valid Iceberg metadata, manifest, or snapshot file",
+		Message: errorMsg,
 	}
+}
+
+// validateMetadataFile validates files in the metadata/ directory
+func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
+	// Detect if it's a directory (path ends with "/")
+	if strings.HasSuffix(path, "/") {
+		// Normalize by removing trailing slash
+		normalizedPath := strings.TrimSuffix(path, "/")
+		return validateDirectoryPath(normalizedPath, true)
+	}
+
+	// Split path to get filename and intermediate directories
+	parts := strings.Split(path, "/")
+	filename := parts[len(parts)-1]
+
+	// Validate intermediate subdirectories
+	if len(parts) > 1 {
+		normalizedPath := strings.TrimSuffix(path[:len(path)-len(filename)-1], "/")
+		if err := validateDirectoryPath(normalizedPath, true); err != nil {
+			return err
+		}
+	}
+
+	// Check against allowed metadata file patterns
+	return validateFilePatterns(filename, true)
 }
 
 // validateDataFile validates files in the data/ directory
 func (v *IcebergLayoutValidator) validateDataFile(path string) error {
-	// Handle directory creation (path ending with "/")
+	// Detect if it's a directory (path ends with "/")
 	if strings.HasSuffix(path, "/") {
-		// Validate that all intermediate subdirectories/partitions are valid
-		subdirs := strings.Split(strings.TrimSuffix(path, "/"), "/")
-		for _, subdir := range subdirs {
-			if subdir != "" && !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "invalid partition or subdirectory format in data path",
-				}
-			}
-		}
-		return nil
+		// Normalize by removing trailing slash
+		normalizedPath := strings.TrimSuffix(path, "/")
+		return validateDirectoryPath(normalizedPath, false)
 	}
 
+	// Split path to get filename and intermediate directories
 	parts := strings.Split(path, "/")
 	filename := parts[len(parts)-1]
 
 	// Validate partition directories and subdirectories if present
 	if len(parts) > 1 {
-		for i := 0; i < len(parts)-1; i++ {
-			// Allow nested data directories and partition directories
-			if parts[i] != "" && !partitionPathPattern.MatchString(parts[i]) && !isValidSubdirectory(parts[i]) {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "invalid partition or subdirectory format in data path",
-				}
-			}
+		normalizedPath := strings.TrimSuffix(path[:len(path)-len(filename)-1], "/")
+		if err := validateDirectoryPath(normalizedPath, false); err != nil {
+			return err
 		}
 	}
 
 	// Check against allowed data file patterns
-	for _, pattern := range dataFilePatterns {
-		if pattern.MatchString(filename) {
-			return nil
-		}
-	}
-
-	return &IcebergLayoutError{
-		Code:    ErrCodeInvalidIcebergLayout,
-		Message: "invalid data file format: must be .parquet, .orc, or .avro",
-	}
+	return validateFilePatterns(filename, false)
 }
 
 // isValidSubdirectory checks if a path component is a valid subdirectory name
@@ -309,29 +325,46 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 		Name:      name,
 	})
 	if err != nil {
-		// Table doesn't exist, reject the upload
+		// Distinguish between "not found" and other errors
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "table does not exist",
+			}
+		}
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table does not exist",
+			Message: "failed to verify table existence: " + err.Error(),
 		}
 	}
 
 	// Check if table has metadata indicating ICEBERG format
-	if resp.Entry != nil && resp.Entry.Extended != nil {
-		if metadataBytes, ok := resp.Entry.Extended[ExtendedKeyMetadata]; ok {
-			var metadata tableMetadataInternal
-			if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "failed to parse table metadata: " + err.Error(),
-				}
-			}
-			if metadata.Format != "ICEBERG" {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "table is not in ICEBERG format",
-				}
-			}
+	if resp.Entry == nil || resp.Entry.Extended == nil {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "table is not a valid ICEBERG table (missing metadata)",
+		}
+	}
+
+	metadataBytes, ok := resp.Entry.Extended[ExtendedKeyMetadata]
+	if !ok {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "table is not in ICEBERG format (missing format metadata)",
+		}
+	}
+
+	var metadata tableMetadataInternal
+	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "failed to parse table metadata: " + err.Error(),
+		}
+	}
+	if metadata.Format != "ICEBERG" {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "table is not in ICEBERG format",
 		}
 	}
 
