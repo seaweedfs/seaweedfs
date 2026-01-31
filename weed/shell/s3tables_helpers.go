@@ -9,12 +9,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc"
 )
 
-const shellAdminIdentity = s3_constants.AccountAdminId
+const s3TablesDefaultRegion = ""
 const timeFormat = "2006-01-02T15:04:05Z07:00"
 
 func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFilerClient) error) error {
@@ -24,13 +23,13 @@ func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFile
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
 
-func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, resp interface{}) error {
+func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, resp interface{}, accountID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return withFilerClient(commandEnv, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
 		mgrClient := s3tables.NewManagerClient(client)
-		return manager.Execute(ctx, mgrClient, operation, req, resp, shellAdminIdentity)
+		return manager.Execute(ctx, mgrClient, operation, req, resp, accountID)
 	})
 }
 
@@ -79,4 +78,12 @@ func parseS3TablesTagKeys(value string) ([]string, error) {
 		return nil, fmt.Errorf("tagKeys are required")
 	}
 	return keys, nil
+}
+
+func buildS3TablesBucketARN(bucketName, accountID string) (string, error) {
+	return s3tables.BuildBucketARN(s3TablesDefaultRegion, accountID, bucketName)
+}
+
+func buildS3TablesTableARN(bucketName, namespace, tableName, accountID string) (string, error) {
+	return s3tables.BuildTableARN(s3TablesDefaultRegion, accountID, bucketName, namespace, tableName)
 }
