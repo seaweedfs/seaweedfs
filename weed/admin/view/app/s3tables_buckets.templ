@@ -436,6 +436,9 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 		function parseTagsInput(input) {
 			if (!input) return {};
 			const tags = {};
+			const maxTags = 10;
+			const maxKeyLength = 128;
+			const maxValueLength = 256;
 			const parts = input.split(',');
 			for (const part of parts) {
 				const trimmedPart = part.trim();
@@ -447,7 +450,23 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 				}
 				const key = trimmedPart.slice(0, idx).trim();
 				const value = trimmedPart.slice(idx + 1).trim();
+				if (!key) {
+					alert('Invalid tag format. Use key=value, and key cannot be empty.');
+					return null;
+				}
+				if (key.length > maxKeyLength) {
+					alert(`Tag key length must be <= ${maxKeyLength}`);
+					return null;
+				}
+				if (value.length > maxValueLength) {
+					alert(`Tag value length must be <= ${maxValueLength}`);
+					return null;
+				}
 				tags[key] = value;
+				if (Object.keys(tags).length > maxTags) {
+					alert(`Too many tags. Max ${maxTags} tags allowed.`);
+					return null;
+				}
 			}
 			return tags;
 		}
