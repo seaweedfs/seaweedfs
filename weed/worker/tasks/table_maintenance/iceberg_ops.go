@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path"
 	"sort"
 	"strings"
@@ -143,7 +144,10 @@ func (mc *TableMaintenanceContext) listFilesWithPattern(ctx context.Context, dir
 	for {
 		entry, err := resp.Recv()
 		if err != nil {
-			break
+			if err == io.EOF {
+				break
+			}
+			return nil, err
 		}
 		name := entry.Entry.Name
 		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
@@ -169,7 +173,10 @@ func (mc *TableMaintenanceContext) listAllFiles(ctx context.Context, dir string)
 	for {
 		entry, err := resp.Recv()
 		if err != nil {
-			break
+			if err == io.EOF {
+				break
+			}
+			return nil, err
 		}
 		if entry.Entry.IsDirectory {
 			// Recurse into subdirectory
@@ -187,7 +194,10 @@ func (mc *TableMaintenanceContext) listAllFiles(ctx context.Context, dir string)
 	return files, nil
 }
 
-// readFileContent reads the content of a file
+// readFileContent reads the content of a file.
+// Note: This implementation handles inline content only. For chunked files (large metadata files),
+// a full implementation would need to use the filer read interface to assemble chunks from volume servers.
+// Iceberg metadata files are typically small (KB-MB range) and fit in inline content.
 func (mc *TableMaintenanceContext) readFileContent(ctx context.Context, filePath string) ([]byte, error) {
 	dir, name := splitPath(filePath)
 	resp, err := filer_pb.LookupEntry(ctx, mc.FilerClient, &filer_pb.LookupDirectoryEntryRequest{
@@ -199,14 +209,14 @@ func (mc *TableMaintenanceContext) readFileContent(ctx context.Context, filePath
 	}
 
 	// For small metadata files, the content may be inline
-	// For larger files, we need to read chunks
 	if len(resp.Entry.Content) > 0 {
 		return resp.Entry.Content, nil
 	}
 
-	// For files with chunks, we need to read from volume servers
-	// This is a simplified implementation - in production, use the full chunk reading logic
-	return nil, fmt.Errorf("file %s requires chunk reading (not inline)", filePath)
+	// For chunked files, we need to read from volume servers using the chunk reading API.
+	// This requires access to volume server clients which would be passed via context.
+	// For now, return an error - the caller should use the filer's HTTP read API for large files.
+	return nil, fmt.Errorf("file %s requires chunk reading - use filer HTTP API for large files", filePath)
 }
 
 // deleteFile deletes a single file
@@ -220,7 +230,12 @@ func (mc *TableMaintenanceContext) deleteFile(ctx context.Context, filePath stri
 	return err
 }
 
-// GetReferencedFiles returns all files referenced by the current table metadata
+// GetReferencedFiles returns all files referenced by the current table metadata.
+// IMPORTANT: This is a partial implementation. Full implementation requires:
+// 1. Parsing Avro manifest list files to extract manifest file paths
+// 2. Parsing Avro manifest files to extract data file paths
+// Currently only marks manifest list files as referenced. DO NOT use for orphan deletion
+// until manifest parsing is implemented via an Avro library (e.g., goavro).
 func (mc *TableMaintenanceContext) GetReferencedFiles(ctx context.Context, metadata *IcebergTableMetadata) (map[string]bool, error) {
 	referenced := make(map[string]bool)
 
@@ -230,10 +245,12 @@ func (mc *TableMaintenanceContext) GetReferencedFiles(ctx context.Context, metad
 			referenced[snapshot.ManifestList] = true
 		}
 
-		// TODO: Parse manifest list to get individual manifest files
-		// TODO: Parse manifests to get data files
-		// This requires reading Avro files, which is complex
-		// For now, we mark the manifest list as referenced
+		// NOTE: Full implementation would:
+		// 1. Read the manifest list Avro file
+		// 2. Extract all manifest file paths from it
+		// 3. For each manifest, read the Avro file
+		// 4. Extract all data file paths from the manifest entries
+		// This requires goavro or similar library for Avro deserialization
 	}
 
 	return referenced, nil
@@ -269,25 +286,31 @@ func (mc *TableMaintenanceContext) GetExpiredSnapshots(metadata *IcebergTableMet
 
 // GetSmallDataFiles returns data files smaller than the target size
 func (mc *TableMaintenanceContext) GetSmallDataFiles(ctx context.Context, targetSizeBytes int64) ([]string, error) {
-	// List all files in the data directory
-	dataFiles, err := mc.listAllFiles(ctx, mc.DataDir)
+	var smallFiles []string
+
+	// List all files in the data directory with their size information
+	resp, err := mc.FilerClient.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		Directory: mc.DataDir,
+		Limit:     10000,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	var smallFiles []string
-	for _, file := range dataFiles {
-		dir, name := splitPath(file)
-		resp, err := filer_pb.LookupEntry(ctx, mc.FilerClient, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		})
+	for {
+		entry, err := resp.Recv()
 		if err != nil {
-			continue
+			if err == io.EOF {
+				break
+			}
+			return nil, err
 		}
 
-		if resp.Entry.Attributes != nil && resp.Entry.Attributes.FileSize < uint64(targetSizeBytes) {
-			smallFiles = append(smallFiles, file)
+		if !entry.Entry.IsDirectory {
+			// Use the FileSize from the Entry attributes directly
+			if entry.Entry.Attributes != nil && entry.Entry.Attributes.FileSize < uint64(targetSizeBytes) {
+				smallFiles = append(smallFiles, path.Join(mc.DataDir, entry.Entry.Name))
+			}
 		}
 	}
 

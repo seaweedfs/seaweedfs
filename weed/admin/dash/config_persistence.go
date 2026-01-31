@@ -522,6 +522,16 @@ func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, err
 	return nil, fmt.Errorf("failed to unmarshal balance task configuration")
 }
 
+// defaultTableMaintenanceTaskPolicy returns the default table maintenance task policy
+func defaultTableMaintenanceTaskPolicy() *worker_pb.TaskPolicy {
+	return &worker_pb.TaskPolicy{
+		Enabled:               true,
+		MaxConcurrent:         2,
+		RepeatIntervalSeconds: 30 * 60,   // 30 minutes
+		CheckIntervalSeconds:  30 * 60,   // 30 minutes
+	}
+}
+
 // SaveTableMaintenanceTaskPolicy saves table maintenance task policy to protobuf file
 func (cp *ConfigPersistence) SaveTableMaintenanceTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	return cp.saveTaskConfig(TableMaintenanceConfigFile, policy)
@@ -531,12 +541,7 @@ func (cp *ConfigPersistence) SaveTableMaintenanceTaskPolicy(policy *worker_pb.Ta
 func (cp *ConfigPersistence) LoadTableMaintenanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	if cp.dataDir == "" {
 		// Return default policy if no data directory
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 30 * 60,   // 30 minutes
-			CheckIntervalSeconds:  30 * 60,   // 30 minutes
-		}, nil
+		return defaultTableMaintenanceTaskPolicy(), nil
 	}
 
 	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
@@ -545,12 +550,7 @@ func (cp *ConfigPersistence) LoadTableMaintenanceTaskPolicy() (*worker_pb.TaskPo
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		// Return default policy if file doesn't exist
-		return &worker_pb.TaskPolicy{
-			Enabled:               true,
-			MaxConcurrent:         2,
-			RepeatIntervalSeconds: 30 * 60,   // 30 minutes
-			CheckIntervalSeconds:  30 * 60,   // 30 minutes
-		}, nil
+		return defaultTableMaintenanceTaskPolicy(), nil
 	}
 
 	// Read file

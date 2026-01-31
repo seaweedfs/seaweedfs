@@ -2,6 +2,7 @@ package table_maintenance
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -50,13 +51,30 @@ func RegisterTableMaintenanceTask() {
 			tablePath := params.Sources[0].Node
 			tableBucket := params.Collection
 
-			// Parse job type from params if available
-			// TODO: Define TableMaintenanceTaskParams in protobuf to pass job type explicitly
-			// For now, default to compaction. In production, the job type would be determined
-			// by the table scanner based on the table's maintenance needs (see detection.go)
+			// Determine job type from source node format:
+			// Format: "job_type:table_path" (e.g., "compaction:/table-buckets/bucket/ns/table")
+			// If no prefix, default to compaction for backward compatibility.
+			// NOTE: A proper implementation would define TableMaintenanceTaskParams in
+			// weed/pb/worker.proto to pass job details explicitly, similar to VacuumTaskParams.
 			jobType := JobTypeCompaction
+			if colonIdx := strings.Index(tablePath, ":"); colonIdx > 0 && colonIdx < len(tablePath)-1 {
+				jobTypeStr := tablePath[:colonIdx]
+				tablePath = tablePath[colonIdx+1:]
+				switch TableMaintenanceJobType(jobTypeStr) {
+				case JobTypeCompaction:
+					jobType = JobTypeCompaction
+				case JobTypeSnapshotExpiration:
+					jobType = JobTypeSnapshotExpiration
+				case JobTypeOrphanCleanup:
+					jobType = JobTypeOrphanCleanup
+				case JobTypeManifestRewrite:
+					jobType = JobTypeManifestRewrite
+				default:
+					glog.Warningf("Unknown job type '%s', defaulting to compaction", jobTypeStr)
+				}
+			}
 
-			// Create a default maintenance job
+			// Create the maintenance job
 			job := &TableMaintenanceJob{
 				JobType:     jobType,
 				TableBucket: tableBucket,

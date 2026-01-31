@@ -1,6 +1,7 @@
 package table_maintenance
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -173,12 +174,16 @@ func (s *TableMaintenanceScanner) needsOrphanCleanup(table TableInfo) bool {
 	return table.DeletedFileCount > 0
 }
 
-// CreateTaskParams creates task parameters for a maintenance job
+// CreateTaskParams creates task parameters for a maintenance job.
+// The job type is encoded in the Node field as "job_type:table_path" format
+// to allow the worker to know which maintenance operation to perform.
 func CreateTaskParams(job *TableMaintenanceJob) *worker_pb.TaskParams {
+	// Encode job type in the node field: "job_type:table_path"
+	nodeValue := fmt.Sprintf("%s:%s", job.JobType, job.TablePath)
 	return &worker_pb.TaskParams{
 		Sources: []*worker_pb.TaskSource{
 			{
-				Node: job.TablePath,
+				Node: nodeValue,
 			},
 		},
 		VolumeId:   0, // Not volume-specific
