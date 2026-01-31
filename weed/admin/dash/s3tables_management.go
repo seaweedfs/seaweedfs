@@ -20,10 +20,17 @@ import (
 // S3Tables data structures for admin UI
 
 type S3TablesBucketsData struct {
-	Username     string                        `json:"username"`
-	Buckets      []s3tables.TableBucketSummary `json:"buckets"`
-	TotalBuckets int                           `json:"total_buckets"`
-	LastUpdated  time.Time                     `json:"last_updated"`
+	Username     string                  `json:"username"`
+	Buckets      []S3TablesBucketSummary `json:"buckets"`
+	TotalBuckets int                     `json:"total_buckets"`
+	LastUpdated  time.Time               `json:"last_updated"`
+}
+
+type S3TablesBucketSummary struct {
+	ARN            string    `json:"arn"`
+	Name           string    `json:"name"`
+	OwnerAccountID string    `json:"ownerAccountId"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type S3TablesNamespacesData struct {
@@ -69,7 +76,7 @@ func (s *AdminServer) executeS3TablesOperation(ctx context.Context, operation st
 // S3Tables data retrieval for pages
 
 func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucketsData, error) {
-	var buckets []s3tables.TableBucketSummary
+	var buckets []S3TablesBucketSummary
 	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
 			Directory:          s3tables.TablesPath,
@@ -107,10 +114,11 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 				glog.V(1).Infof("S3Tables: failed to build table bucket ARN for %s: %v", entry.Entry.Name, err)
 				continue
 			}
-			buckets = append(buckets, s3tables.TableBucketSummary{
-				ARN:       arn,
-				Name:      entry.Entry.Name,
-				CreatedAt: metadata.CreatedAt,
+			buckets = append(buckets, S3TablesBucketSummary{
+				ARN:            arn,
+				Name:           entry.Entry.Name,
+				OwnerAccountID: metadata.OwnerAccountID,
+				CreatedAt:      metadata.CreatedAt,
 			})
 		}
 		return nil

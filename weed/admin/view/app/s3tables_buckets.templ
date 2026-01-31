@@ -75,6 +75,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 								<thead>
 									<tr>
 										<th>Name</th>
+										<th>Owner</th>
 										<th>ARN</th>
 										<th>Created</th>
 										<th>Actions</th>
@@ -84,6 +85,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									for _, bucket := range data.Buckets {
 										<tr>
 											<td>{ bucket.Name }</td>
+											<td>{ bucket.OwnerAccountID }</td>
 											<td class="text-muted small">{ bucket.ARN }</td>
 											<td>{ bucket.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>
@@ -113,7 +115,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									}
 									if len(data.Buckets) == 0 {
 										<tr>
-											<td colspan="4" class="text-center text-muted py-4">
+											<td colspan="5" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No table buckets found</h5>
