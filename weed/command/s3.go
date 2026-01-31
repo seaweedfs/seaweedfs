@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -41,6 +42,7 @@ type S3Options struct {
 	port                      *int
 	portHttps                 *int
 	portGrpc                  *int
+	portIceberg               *int
 	config                    *string
 	iamConfig                 *string
 	domainName                *string
@@ -74,6 +76,7 @@ func init() {
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
+	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.allowedOrigins = cmdS3.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -312,6 +315,11 @@ func (s3opt *S3Options) startS3Server() bool {
 	}
 	defer s3ApiServer.Shutdown()
 
+	// Start Iceberg REST Catalog server if enabled
+	if *s3opt.portIceberg > 0 {
+		go s3opt.startIcebergServer(s3ApiServer)
+	}
+
 	if runtime.GOOS != "windows" {
 		localSocket := *s3opt.localSocket
 		if localSocket == "" {
@@ -463,4 +471,33 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	return true
 
+}
+
+// startIcebergServer starts the Iceberg REST Catalog server on a separate port.
+func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
+	icebergRouter := mux.NewRouter().SkipClean(true)
+
+	// Create Iceberg server using the S3ApiServer as filer client
+	icebergServer := iceberg.NewServer(s3ApiServer)
+	icebergServer.RegisterRoutes(icebergRouter)
+
+	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
+	icebergListener, _, err := util.NewIpAndLocalListeners(
+		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second)
+	if err != nil {
+		glog.Fatalf("Iceberg REST Catalog listener on %s error: %v", listenAddress, err)
+	}
+
+	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
+
+	httpS := newHttpServer(icebergRouter, nil)
+	if MiniClusterCtx != nil {
+		go func() {
+			<-MiniClusterCtx.Done()
+			httpS.Shutdown(context.Background())
+		}()
+	}
+	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
+		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
+	}
 }
