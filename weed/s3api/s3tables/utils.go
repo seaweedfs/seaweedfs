@@ -182,6 +182,7 @@ func ValidateBucketName(name string) error {
 }
 
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.
+// If region is empty, the ARN will omit the region field.
 func BuildBucketARN(region, accountID, bucketName string) (string, error) {
 	if bucketName == "" {
 		return "", fmt.Errorf("bucket name is required")
@@ -189,13 +190,42 @@ func BuildBucketARN(region, accountID, bucketName string) (string, error) {
 	if err := validateBucketName(bucketName); err != nil {
 		return "", err
 	}
-	if region == "" {
-		region = DefaultRegion
+	if accountID == "" {
+		accountID = DefaultAccountID
+	}
+	return buildARN(region, accountID, fmt.Sprintf("bucket/%s", bucketName)), nil
+}
+
+// BuildTableARN builds a table ARN with the provided region and account ID.
+func BuildTableARN(region, accountID, bucketName, namespace, tableName string) (string, error) {
+	if bucketName == "" {
+		return "", fmt.Errorf("bucket name is required")
+	}
+	if err := validateBucketName(bucketName); err != nil {
+		return "", err
+	}
+	if namespace == "" {
+		return "", fmt.Errorf("namespace is required")
+	}
+	normalizedNamespace, err := validateNamespace([]string{namespace})
+	if err != nil {
+		return "", err
+	}
+	if tableName == "" {
+		return "", fmt.Errorf("table name is required")
+	}
+	normalizedTable, err := validateTableName(tableName)
+	if err != nil {
+		return "", err
 	}
 	if accountID == "" {
 		accountID = DefaultAccountID
 	}
-	return fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", region, accountID, bucketName), nil
+	return buildARN(region, accountID, fmt.Sprintf("bucket/%s/table/%s/%s", bucketName, normalizedNamespace, normalizedTable)), nil
+}
+
+func buildARN(region, accountID, resourcePath string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:%s", region, accountID, resourcePath)
 }
 
 // ValidateTags validates tags for S3 Tables.
