@@ -395,11 +395,11 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 				entry.paths[i] = targetPath
 			}
 		}
-                entry.isChildrenCached = false
-                entry.cachedExpiresTime = time.Time{}
-                entry.needsRefresh = false
-                entry.updateCount = 0
-                entry.updateWindowStart = time.Time{}
+		entry.isChildrenCached = false
+		entry.cachedExpiresTime = time.Time{}
+		entry.needsRefresh = false
+		entry.updateCount = 0
+		entry.updateWindowStart = time.Time{}
 	} else {
 		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}
