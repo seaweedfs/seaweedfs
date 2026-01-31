@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // Permission represents a specific action permission
@@ -78,6 +79,11 @@ func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, re
 		return false
 	}
 
+	// Admin always has permission.
+	if principal == s3_constants.AccountAdminId {
+		return true
+	}
+
 	// Owner always has permission
 	if principal == owner {
 		return true
@@ -139,6 +145,11 @@ func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
 	// Deny access if identities are empty
 	if principal == "" || owner == "" {
 		return false
+	}
+
+	// Admin always has permission.
+	if principal == s3_constants.AccountAdminId {
+		return true
 	}
 
 	// Owner always has permission
