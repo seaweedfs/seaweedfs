@@ -1,6 +1,9 @@
 package s3tables
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestMatchesActionPattern(t *testing.T) {
 	tests := []struct {
@@ -84,6 +87,121 @@ func TestMatchesPrincipal(t *testing.T) {
 			result := matchesPrincipal(tt.principalSpec, tt.principal)
 			if result != tt.expected {
 				t.Errorf("matchesPrincipal(%v, %q) = %v, want %v", tt.principalSpec, tt.principal, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEvaluatePolicyWithConditions(t *testing.T) {
+	policy := &PolicyDocument{
+		Statement: []Statement{
+			{
+				Effect:    "Allow",
+				Principal: "*",
+				Action:    "s3tables:GetTable",
+				Condition: map[string]map[string]interface{}{
+					"StringEquals": {
+						"s3tables:namespace": "default",
+					},
+					"StringLike": {
+						"s3tables:tableName": "test_*",
+					},
+					"NumericGreaterThan": {
+						"aws:RequestTag/priority": "10",
+					},
+					"Bool": {
+						"aws:ResourceTag/is_public": "true",
+					},
+				},
+			},
+		},
+	}
+	policyBytes, _ := json.Marshal(policy)
+	policyStr := string(policyBytes)
+
+	tests := []struct {
+		name     string
+		ctx      *PolicyContext
+		expected bool
+	}{
+		{
+			"all conditions match",
+			&PolicyContext{
+				Namespace: "default",
+				TableName: "test_table",
+				RequestTags: map[string]string{
+					"priority": "15",
+				},
+				ResourceTags: map[string]string{
+					"is_public": "true",
+				},
+			},
+			true,
+		},
+		{
+			"namespace mismatch",
+			&PolicyContext{
+				Namespace: "other",
+				TableName: "test_table",
+				RequestTags: map[string]string{
+					"priority": "15",
+				},
+				ResourceTags: map[string]string{
+					"is_public": "true",
+				},
+			},
+			false,
+		},
+		{
+			"table name mismatch",
+			&PolicyContext{
+				Namespace: "default",
+				TableName: "other_table",
+				RequestTags: map[string]string{
+					"priority": "15",
+				},
+				ResourceTags: map[string]string{
+					"is_public": "true",
+				},
+			},
+			false,
+		},
+		{
+			"numeric condition failure",
+			&PolicyContext{
+				Namespace: "default",
+				TableName: "test_table",
+				RequestTags: map[string]string{
+					"priority": "5",
+				},
+				ResourceTags: map[string]string{
+					"is_public": "true",
+				},
+			},
+			false,
+		},
+		{
+			"bool condition failure",
+			&PolicyContext{
+				Namespace: "default",
+				TableName: "test_table",
+				RequestTags: map[string]string{
+					"priority": "15",
+				},
+				ResourceTags: map[string]string{
+					"is_public": "false",
+				},
+			},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// principal="user123", owner="owner123"
+			result := CheckPermissionWithContext("s3tables:GetTable", "user123", "owner123", policyStr, "", tt.ctx)
+			if result != tt.expected {
+				t.Errorf("CheckPermissionWithContext() = %v, want %v", result, tt.expected)
 			}
 		})
 	}

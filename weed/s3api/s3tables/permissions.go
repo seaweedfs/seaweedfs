@@ -298,119 +298,56 @@ func matchesConditions(conditions map[string]map[string]interface{}, ctx *Policy
 }
 
 func matchesConditionOperator(operator string, conditionValues map[string]interface{}, ctx *PolicyContext) bool {
-	switch operator {
-	case "StringEquals":
-		for key, value := range conditionValues {
-			if !matchesStringEqualsCondition(key, value, ctx) {
-				return false
-			}
-		}
-		return true
-	default:
+	evaluator, err := policy_engine.GetConditionEvaluator(operator)
+	if err != nil {
 		return false
 	}
+
+	for key, value := range conditionValues {
+		contextVals := getConditionContextValues(key, ctx)
+		if !evaluator.Evaluate(value, contextVals) {
+			return false
+		}
+	}
+	return true
 }
 
-func matchesStringEqualsCondition(key string, value interface{}, ctx *PolicyContext) bool {
+func getConditionContextValues(key string, ctx *PolicyContext) []string {
 	switch key {
 	case "s3tables:namespace":
-		return matchesStringOrList(ctx.Namespace, value)
+		return []string{ctx.Namespace}
 	case "s3tables:tableName":
-		return matchesStringOrList(ctx.TableName, value)
+		return []string{ctx.TableName}
 	case "s3tables:tableBucketName":
-		return matchesStringOrList(ctx.TableBucketName, value)
+		return []string{ctx.TableBucketName}
 	case "s3tables:SSEAlgorithm":
-		return matchesStringOrList(ctx.SSEAlgorithm, value)
+		return []string{ctx.SSEAlgorithm}
 	case "s3tables:KMSKeyArn":
-		return matchesStringOrList(ctx.KMSKeyArn, value)
+		return []string{ctx.KMSKeyArn}
 	case "s3tables:StorageClass":
-		return matchesStringOrList(ctx.StorageClass, value)
+		return []string{ctx.StorageClass}
 	case "aws:TagKeys":
-		return matchesStringSlice(ctx.TagKeys, value)
+		return ctx.TagKeys
 	}
 	if strings.HasPrefix(key, "aws:RequestTag/") {
 		tagKey := strings.TrimPrefix(key, "aws:RequestTag/")
-		return matchesTagValue(ctx.RequestTags, tagKey, value)
+		if val, ok := ctx.RequestTags[tagKey]; ok {
+			return []string{val}
+		}
 	}
 	if strings.HasPrefix(key, "aws:ResourceTag/") {
 		tagKey := strings.TrimPrefix(key, "aws:ResourceTag/")
-		return matchesTagValue(ctx.ResourceTags, tagKey, value)
+		if val, ok := ctx.ResourceTags[tagKey]; ok {
+			return []string{val}
+		}
 	}
 	if strings.HasPrefix(key, "s3tables:TableBucketTag/") {
 		tagKey := strings.TrimPrefix(key, "s3tables:TableBucketTag/")
-		return matchesTagValue(ctx.TableBucketTags, tagKey, value)
-	}
-	return false
-}
-
-func matchesTagValue(tags map[string]string, tagKey string, value interface{}) bool {
-	if tags == nil {
-		return false
-	}
-	tagValue, ok := tags[tagKey]
-	if !ok {
-		return false
-	}
-	return matchesStringOrList(tagValue, value)
-}
-
-func matchesStringOrList(actual string, value interface{}) bool {
-	switch v := value.(type) {
-	case string:
-		return actual == v
-	case []interface{}:
-		for _, item := range v {
-			if s, ok := item.(string); ok && actual == s {
-				return true
-			}
-		}
-		return false
-	case []string:
-		for _, item := range v {
-			if actual == item {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func matchesStringSlice(actual []string, value interface{}) bool {
-	switch v := value.(type) {
-	case string:
-		return containsString(actual, v)
-	case []interface{}:
-		for _, item := range v {
-			s, ok := item.(string)
-			if !ok {
-				return false
-			}
-			if !containsString(actual, s) {
-				return false
-			}
-		}
-		return true
-	case []string:
-		for _, item := range v {
-			if !containsString(actual, item) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+		if val, ok := ctx.TableBucketTags[tagKey]; ok {
+			return []string{val}
 		}
 	}
-	return false
+	return nil
 }
 
 // matchesResource checks if the resource ARN matches the statement's resource specification
