@@ -75,6 +75,11 @@ type Option struct {
 	RdmaMaxConcurrent int
 	RdmaTimeoutMs     int
 
+	// Directory cache refresh/eviction controls
+	DirHotWindowSec int
+	DirHotThreshold int
+	DirIdleEvictSec int
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -132,6 +137,19 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		)
 	}
 
+	dirHotWindow := 2 * time.Second
+	if option.DirHotWindowSec > 0 {
+		dirHotWindow = time.Duration(option.DirHotWindowSec) * time.Second
+	}
+	dirHotThreshold := 64
+	if option.DirHotThreshold > 0 {
+		dirHotThreshold = option.DirHotThreshold
+	}
+	dirIdleEvict := 10 * time.Minute
+	if option.DirIdleEvictSec > 0 {
+		dirIdleEvict = time.Duration(option.DirIdleEvictSec) * time.Second
+	}
+
 	wfs := &WFS{
 		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
 		option:          option,
@@ -142,9 +160,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
 		fhLockTable:     util.NewLockTable[FileHandleId](),
 		refreshingDirs:  make(map[util.FullPath]struct{}),
-		dirHotWindow:    2 * time.Second,
-		dirHotThreshold: 64,
-		dirIdleEvict:    10 * time.Minute,
+		dirHotWindow:    dirHotWindow,
+		dirHotThreshold: dirHotThreshold,
+		dirIdleEvict:    dirIdleEvict,
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
