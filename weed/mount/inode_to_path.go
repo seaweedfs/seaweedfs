@@ -179,13 +179,14 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 		return
 	}
 	path.isChildrenCached = true
-	path.lastAccess = time.Now()
-	path.lastRefresh = path.lastAccess
+	now := time.Now()
+	path.lastAccess = now
+	path.lastRefresh = now
 	path.updateCount = 0
 	path.needsRefresh = false
 	path.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
-		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec)
+		path.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
 }
 
