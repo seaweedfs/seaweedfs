@@ -1,6 +1,7 @@
 package table_maintenance
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/config"
@@ -36,14 +37,23 @@ func NewDefaultConfig() *Config {
 
 // ToTaskPolicy converts configuration to a TaskPolicy protobuf message
 func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
-	return &worker_pb.TaskPolicy{
+	policy := &worker_pb.TaskPolicy{
 		Enabled:               c.Enabled,
 		MaxConcurrent:         int32(c.MaxConcurrent),
 		RepeatIntervalSeconds: int32(c.ScanIntervalSeconds),
 		CheckIntervalSeconds:  int32(c.ScanIntervalMinutes * 60),
-		// Table maintenance doesn't have a specific protobuf config yet
-		// Would need to add TableMaintenanceTaskConfig to worker_pb
 	}
+
+	// Encode config-specific fields in Description as JSON
+	configData := map[string]interface{}{
+		"compaction_file_threshold": c.CompactionFileThreshold,
+		"snapshot_retention_days":   c.SnapshotRetentionDays,
+	}
+	if data, err := json.Marshal(configData); err == nil {
+		policy.Description = string(data)
+	}
+
+	return policy
 }
 
 // FromTaskPolicy loads configuration from a TaskPolicy protobuf message
@@ -56,6 +66,23 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	c.MaxConcurrent = int(policy.MaxConcurrent)
 	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
 	c.ScanIntervalMinutes = int(policy.CheckIntervalSeconds / 60)
+
+	// Decode config-specific fields from Description if present
+	if policy.Description != "" {
+		var configData map[string]interface{}
+		if err := json.Unmarshal([]byte(policy.Description), &configData); err == nil {
+			if val, ok := configData["compaction_file_threshold"]; ok {
+				if floatVal, ok := val.(float64); ok {
+					c.CompactionFileThreshold = int(floatVal)
+				}
+			}
+			if val, ok := configData["snapshot_retention_days"]; ok {
+				if floatVal, ok := val.(float64); ok {
+					c.SnapshotRetentionDays = int(floatVal)
+				}
+			}
+		}
+	}
 
 	return nil
 }

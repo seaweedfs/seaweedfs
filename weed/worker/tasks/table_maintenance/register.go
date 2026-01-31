@@ -74,6 +74,18 @@ func RegisterTableMaintenanceTask() {
 				}
 			}
 
+			// Parse namespace and tableName from tablePath
+			// Expected format: /table-buckets/bucketName/namespaceName/tableName
+			namespace := ""
+			tableName := ""
+			parts := strings.Split(tablePath, "/")
+			if len(parts) > 3 {
+				namespace = parts[3]
+			}
+			if len(parts) > 4 {
+				tableName = parts[4]
+			}
+
 			// Create the maintenance job
 			job := &TableMaintenanceJob{
 				JobType:     jobType,
@@ -86,8 +98,8 @@ func RegisterTableMaintenanceTask() {
 			return NewTableMaintenanceTask(
 				fmt.Sprintf("table-maintenance-%s-%d", tableBucket, time.Now().UnixNano()),
 				tableBucket,
-				"", // Namespace parsed from path if needed
-				"", // Table name parsed from path if needed
+				namespace,
+				tableName,
 				job,
 			), nil
 		},

@@ -407,6 +407,19 @@ func TestConfigPersistence(t *testing.T) {
 	if newConfig.MaxConcurrent != 4 {
 		t.Errorf("Expected MaxConcurrent 4 after round-trip, got %d", newConfig.MaxConcurrent)
 	}
+
+	// Verify custom fields are preserved (the fix for the review comment)
+	if newConfig.CompactionFileThreshold != 200 {
+		t.Errorf("Expected CompactionFileThreshold 200 after round-trip, got %d", newConfig.CompactionFileThreshold)
+	}
+
+	if newConfig.SnapshotRetentionDays != 14 {
+		t.Errorf("Expected SnapshotRetentionDays 14 after round-trip, got %d", newConfig.SnapshotRetentionDays)
+	}
+
+	if newConfig.ScanIntervalMinutes != 60 {
+		t.Errorf("Expected ScanIntervalMinutes 60 after round-trip, got %d", newConfig.ScanIntervalMinutes)
+	}
 }
 
 func TestIcebergOps_GetExpiredSnapshots(t *testing.T) {
