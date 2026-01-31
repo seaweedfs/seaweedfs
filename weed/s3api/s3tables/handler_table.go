@@ -368,6 +368,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		TableBucketName: bucketName,
 		Namespace:       namespace,
 		TableName:       tableName,
+		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
 	})
@@ -503,6 +504,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			nsAllowed := CheckPermissionWithContext("ListTables", accountID, nsMeta.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
 				TableBucketName: bucketName,
 				Namespace:       namespaceName,
+				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
 			})
 			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
