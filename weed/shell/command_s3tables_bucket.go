@@ -1,11 +1,15 @@
 package shell
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -85,6 +89,9 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 		}
 		if *account == "" {
 			return fmt.Errorf("-account is required")
+		}
+		if err := ensureNoS3BucketNameConflict(commandEnv, *name); err != nil {
+			return err
 		}
 		req := &s3tables.CreateTableBucketRequest{Name: *name}
 		if *tags != "" {
@@ -220,4 +227,28 @@ func (c *commandS3TablesBucket) Do(args []string, commandEnv *CommandEnv, writer
 		fmt.Fprintln(writer, "Bucket policy deleted")
 	}
 	return nil
+}
+
+func ensureNoS3BucketNameConflict(commandEnv *CommandEnv, bucketName string) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer configuration: %w", err)
+		}
+		filerBucketsPath := resp.DirBuckets
+		if filerBucketsPath == "" {
+			filerBucketsPath = s3_constants.DefaultBucketsPath
+		}
+		_, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: filerBucketsPath,
+			Name:      bucketName,
+		})
+		if err == nil {
+			return fmt.Errorf("bucket name %s is already used by an object store bucket", bucketName)
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	})
 }
