@@ -217,6 +217,20 @@ func (i *InodeToPath) HasInode(inode uint64) bool {
 	return found
 }
 
+func (i *InodeToPath) InvalidateAllChildrenCache() {
+	i.Lock()
+	defer i.Unlock()
+	for _, entry := range i.inode2path {
+		if entry.isDirectory && entry.isChildrenCached {
+			entry.isChildrenCached = false
+			entry.cachedExpiresTime = time.Time{}
+			entry.needsRefresh = false
+			entry.updateCount = 0
+			entry.updateWindowStart = time.Time{}
+		}
+	}
+}
+
 func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
