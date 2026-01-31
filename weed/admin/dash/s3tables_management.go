@@ -166,6 +166,85 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 	}, nil
 }
 
+// Iceberg Catalog data providers
+
+// GetIcebergCatalogData returns the Iceberg catalog overview data.
+// Each S3 Table Bucket is exposed as an Iceberg catalog.
+func (s *AdminServer) GetIcebergCatalogData(ctx context.Context) (IcebergCatalogData, error) {
+	bucketsData, err := s.GetS3TablesBucketsData(ctx)
+	if err != nil {
+		return IcebergCatalogData{}, err
+	}
+
+	catalogs := make([]IcebergCatalogInfo, 0, len(bucketsData.Buckets))
+	for _, bucket := range bucketsData.Buckets {
+		catalogs = append(catalogs, IcebergCatalogInfo{
+			Name:           bucket.Name,
+			ARN:            bucket.ARN,
+			OwnerAccountID: bucket.OwnerAccountID,
+			CreatedAt:      bucket.CreatedAt,
+		})
+	}
+
+	return IcebergCatalogData{
+		Catalogs:      catalogs,
+		TotalCatalogs: len(catalogs),
+		IcebergPort:   8181, // default Iceberg REST port
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// GetIcebergNamespacesData returns namespaces for an Iceberg catalog.
+func (s *AdminServer) GetIcebergNamespacesData(ctx context.Context, catalogName, bucketArn string) (IcebergNamespacesData, error) {
+	nsData, err := s.GetS3TablesNamespacesData(ctx, bucketArn)
+	if err != nil {
+		return IcebergNamespacesData{}, err
+	}
+
+	namespaces := make([]IcebergNamespaceInfo, 0, len(nsData.Namespaces))
+	for _, ns := range nsData.Namespaces {
+		name := ""
+		if len(ns.Namespace) > 0 {
+			name = strings.Join(ns.Namespace, ".")
+		}
+		namespaces = append(namespaces, IcebergNamespaceInfo{
+			Name:      name,
+			CreatedAt: ns.CreatedAt,
+		})
+	}
+
+	return IcebergNamespacesData{
+		CatalogName:     catalogName,
+		Namespaces:      namespaces,
+		TotalNamespaces: len(namespaces),
+		LastUpdated:     time.Now(),
+	}, nil
+}
+
+// GetIcebergTablesData returns tables for an Iceberg namespace.
+func (s *AdminServer) GetIcebergTablesData(ctx context.Context, catalogName, bucketArn, namespace string) (IcebergTablesData, error) {
+	tablesData, err := s.GetS3TablesTablesData(ctx, bucketArn, namespace)
+	if err != nil {
+		return IcebergTablesData{}, err
+	}
+
+	tables := make([]IcebergTableInfo, 0, len(tablesData.Tables))
+	for _, t := range tablesData.Tables {
+		tables = append(tables, IcebergTableInfo{
+			Name:      t.Name,
+			CreatedAt: t.CreatedAt,
+		})
+	}
+
+	return IcebergTablesData{
+		CatalogName:   catalogName,
+		NamespaceName: namespace,
+		Tables:        tables,
+		TotalTables:   len(tables),
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
 // API handlers
 
 func (s *AdminServer) ListS3TablesBucketsAPI(c *gin.Context) {

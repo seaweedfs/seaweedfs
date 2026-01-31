@@ -283,17 +283,17 @@ func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 		}
 		currentPath += "/" + part
 
-	// Special handling for bucket paths
-	displayName := part
-	if len(breadcrumbs) == 1 && part == "buckets" {
-		displayName = "Object Store Buckets"
-	} else if len(breadcrumbs) == 1 && part == "table-buckets" {
-		displayName = "Table Buckets"
-	} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
-		displayName = "📦 " + part // Add bucket icon to bucket name
-	} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/table-buckets/") {
-		displayName = "🧊 " + part
-	}
+		// Special handling for bucket paths
+		displayName := part
+		if len(breadcrumbs) == 1 && part == "buckets" {
+			displayName = "Object Store Buckets"
+		} else if len(breadcrumbs) == 1 && part == "table-buckets" {
+			displayName = "Table Buckets"
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
+			displayName = "📦 " + part // Add bucket icon to bucket name
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/table-buckets/") {
+			displayName = "🧊 " + part
+		}
 
 		breadcrumbs = append(breadcrumbs, BreadcrumbItem{
 			Name: displayName,
