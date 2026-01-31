@@ -4,6 +4,7 @@
 package iceberg
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -574,6 +575,9 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTable commits updates to a table.
+// TODO: Full implementation should process CommitTableRequest requirements and updates,
+// perform atomic metadata pointer swap, and store metadata JSON files.
+// Current implementation is a stub that acknowledges the request.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
@@ -584,8 +588,13 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For now, just acknowledge the update
-	// Full implementation would process requirements and updates
+	// Stub implementation: acknowledge the update without processing
+	// A full implementation would:
+	// 1. Parse CommitTableRequest from body
+	// 2. Validate requirements (current metadata state)
+	// 3. Apply updates (schema changes, snapshots, etc.)
+	// 4. Write new metadata.json file
+	// 5. Atomically update metadata-location pointer
 	bucketName := getBucketFromPrefix(r)
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
 
@@ -603,9 +612,20 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// generateUUID generates a simple UUID for table metadata.
+// generateUUID generates a random UUID (version 4) for table metadata.
 func generateUUID() string {
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
+		// Fallback to a less random but unique value
+		glog.Warningf("Iceberg: failed to generate random UUID, using fallback: %v", err)
+	}
+	// Set version (4) and variant (RFC 4122)
+	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uint32(0x12345678), uint16(0x1234), uint16(0x4567),
-		uint16(0x89ab), uint64(0xcdef01234567))
+		uint32(uuid[0])<<24|uint32(uuid[1])<<16|uint32(uuid[2])<<8|uint32(uuid[3]),
+		uint16(uuid[4])<<8|uint16(uuid[5]),
+		uint16(uuid[6])<<8|uint16(uuid[7]),
+		uint16(uuid[8])<<8|uint16(uuid[9]),
+		uint64(uuid[10])<<40|uint64(uuid[11])<<32|uint64(uuid[12])<<24|uint64(uuid[13])<<16|uint64(uuid[14])<<8|uint64(uuid[15]))
 }
