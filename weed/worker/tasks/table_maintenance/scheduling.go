@@ -3,7 +3,6 @@ package table_maintenance
 import (
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -83,17 +82,4 @@ func Scheduling(task *types.TaskInput, runningTasks []*types.TaskInput, availabl
 	}
 
 	return false
-}
-
-// CreateTaskFromDetectionResult creates typed task parameters from a detection result
-func CreateTaskFromDetectionResult(result *types.TaskDetectionResult) *worker_pb.TaskParams {
-	// For table maintenance, the source is the table path
-	return &worker_pb.TaskParams{
-		Sources: []*worker_pb.TaskSource{
-			{
-				Node: result.Server, // Table path
-			},
-		},
-		Collection: result.Collection, // Table bucket name
-	}
 }
