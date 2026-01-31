@@ -48,6 +48,8 @@ type MountOptions struct {
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
 
+	dirIdleEvictSec *int
+
 	// FUSE performance options
 	writebackCache *bool
 	asyncDio       *bool
@@ -106,6 +108,8 @@ func init() {
 	mountOptions.rdmaReadOnly = cmdMount.Flag.Bool("rdma.readOnly", false, "use RDMA for reads only (writes use HTTP)")
 	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
 	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
+
+	mountOptions.dirIdleEvictSec = cmdMount.Flag.Int("dirIdleEvictSec", 600, "seconds to evict idle cached directories (0 to disable)")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")

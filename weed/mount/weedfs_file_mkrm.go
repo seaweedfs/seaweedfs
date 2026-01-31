@@ -91,6 +91,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		// Only cache the entry if the parent directory is already cached.
 		// This avoids polluting the cache with partial directory data.
 		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
+			wfs.inodeToPath.TouchDirectory(dirFullPath)
 			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
 				return fmt.Errorf("local mknod %s: %w", entryFullPath, err)
 			}
@@ -153,6 +154,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		glog.V(3).Infof("local DeleteEntry %s: %v", entryFullPath, err)
 		return fuse.EIO
 	}
+	wfs.inodeToPath.TouchDirectory(dirFullPath)
 
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
