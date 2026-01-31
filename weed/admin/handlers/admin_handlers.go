@@ -543,19 +543,23 @@ func buildS3TablesBucketArn(bucketName string) (string, error) {
 	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
 }
 
-// ShowIcebergCatalog renders the Iceberg Catalog overview page
-func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
+// getUsername returns the username from context, defaulting to "admin" if not set
+func (h *AdminHandlers) getUsername(c *gin.Context) string {
 	username := c.GetString("username")
 	if username == "" {
 		username = "admin"
 	}
+	return username
+}
 
+// ShowIcebergCatalog renders the Iceberg Catalog overview page
+func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
 	data, err := h.adminServer.GetIcebergCatalogData(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg catalog data: " + err.Error()})
 		return
 	}
-	data.Username = username
+	data.Username = h.getUsername(c)
 
 	c.Header("Content-Type", "text/html")
 	component := app.IcebergCatalog(data)
@@ -567,11 +571,6 @@ func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
 
 // ShowIcebergNamespaces renders namespaces for an Iceberg catalog
 func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-
 	catalogName := c.Param("catalog")
 	arn, err := buildS3TablesBucketArn(catalogName)
 	if err != nil {
@@ -584,7 +583,7 @@ func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg namespaces: " + err.Error()})
 		return
 	}
-	data.Username = username
+	data.Username = h.getUsername(c)
 
 	c.Header("Content-Type", "text/html")
 	component := app.IcebergNamespaces(data)
@@ -596,11 +595,6 @@ func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
 
 // ShowIcebergTables renders tables for an Iceberg namespace
 func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
-
 	catalogName := c.Param("catalog")
 	namespace := c.Param("namespace")
 	arn, err := buildS3TablesBucketArn(catalogName)
@@ -614,7 +608,7 @@ func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg tables: " + err.Error()})
 		return
 	}
-	data.Username = username
+	data.Username = h.getUsername(c)
 
 	c.Header("Content-Type", "text/html")
 	component := app.IcebergTables(data)

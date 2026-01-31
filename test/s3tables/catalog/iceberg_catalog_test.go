@@ -301,13 +301,20 @@ SELECT 'Iceberg extension loaded successfully' as result;
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("DuckDB output: %s", output)
-		// This may fail if iceberg extension is not available in the Docker image
-		// which is expected - we're testing the basic setup
-		t.Logf("DuckDB test completed with error (may be expected): %v", err)
-	} else {
-		t.Logf("DuckDB output: %s", output)
-		if !strings.Contains(string(output), "Iceberg extension loaded successfully") {
-			t.Errorf("Expected success message in output")
+		// Check for expected errors in certain CI environments
+		outputStr := string(output)
+		if strings.Contains(outputStr, "iceberg extension is not available") ||
+			strings.Contains(outputStr, "Failed to load") {
+			t.Skip("Skipping DuckDB test: Iceberg extension not available in Docker image")
 		}
+		// Any other error is unexpected
+		t.Fatalf("DuckDB command failed unexpectedly. Output: %s\nError: %v", output, err)
+	}
+
+	// Verify the test completed successfully
+	outputStr := string(output)
+	t.Logf("DuckDB output: %s", outputStr)
+	if !strings.Contains(outputStr, "Iceberg extension loaded successfully") {
+		t.Errorf("Expected success message in output, got: %s", outputStr)
 	}
 }
