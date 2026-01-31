@@ -88,9 +88,11 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanPutTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, "") {
+	if !CheckPermissionWithContext("PutTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, "", bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table bucket policy")
 		return NewAuthError("PutTableBucketPolicy", principal, "not authorized to put table bucket policy")
 	}
@@ -161,9 +163,11 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanGetTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, string(policy)) {
+	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket policy")
 		return NewAuthError("GetTableBucketPolicy", principal, "not authorized to get table bucket policy")
 	}
@@ -232,9 +236,11 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanDeleteTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, bucketPolicy) {
+	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table bucket policy")
 		return NewAuthError("DeleteTableBucketPolicy", principal, "not authorized to delete table bucket policy")
 	}
@@ -326,9 +332,13 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanPutTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	if !CheckPermissionWithContext("PutTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table policy")
 		return NewAuthError("PutTablePolicy", principal, "not authorized to put table policy")
 	}
@@ -427,9 +437,13 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanGetTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	if !CheckPermissionWithContext("GetTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table policy")
 		return NewAuthError("GetTablePolicy", principal, "not authorized to get table policy")
 	}
@@ -510,9 +524,13 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanDeleteTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	if !CheckPermissionWithContext("DeleteTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table policy")
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
 	}
@@ -584,9 +602,11 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		// Check Permission inside the closure because we just got the ID
+		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
-		if !CanManageTags(principal, ownerAccountID, bucketPolicy) {
+		if !CheckPermissionWithContext("TagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+		}) {
 			return NewAuthError("TagResource", principal, "not authorized to tag resource")
 		}
 
@@ -688,9 +708,11 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			}
 		}
 
-		// Check Permission
+		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
-		if !CheckPermission("ListTagsForResource", principal, ownerAccountID, bucketPolicy) {
+		if !CheckPermissionWithContext("ListTagsForResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+		}) {
 			return NewAuthError("ListTagsForResource", principal, "not authorized to list tags for resource")
 		}
 
@@ -780,9 +802,11 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		// Check Permission
+		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
-		if !CanManageTags(principal, ownerAccountID, bucketPolicy) {
+		if !CheckPermissionWithContext("UntagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+		}) {
 			return NewAuthError("UntagResource", principal, "not authorized to untag resource")
 		}
 

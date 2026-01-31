@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,4 +235,30 @@ func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID s
 func isAuthError(err error) bool {
 	var authErr *AuthError
 	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
+}
+
+func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (map[string]string, error) {
+	data, err := h.getExtendedAttribute(ctx, client, path, ExtendedKeyTags)
+	if err != nil {
+		if errors.Is(err, ErrAttributeNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	tags := make(map[string]string)
+	if err := json.Unmarshal(data, &tags); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tags: %w", err)
+	}
+	return tags, nil
+}
+
+func mapKeys(tags map[string]string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	return keys
 }

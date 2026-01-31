@@ -90,11 +90,13 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	bucketPath := getTableBucketPath(bucketName)
 	namespacePolicy := ""
 	bucketPolicy := ""
+	bucketTags := map[string]string{}
+	var data []byte
 	var bucketMetadata tableBucketMetadata
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Fetch bucket metadata to use correct owner for bucket policy evaluation
-		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err == nil {
 			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
 				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
@@ -118,6 +120,11 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch bucket policy: %v", err)
 		}
+		if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
+			return err
+		} else if tags != nil {
+			bucketTags = tags
+		}
 
 		return nil
 	})
@@ -127,11 +134,23 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Check authorization: namespace policy OR bucket policy OR ownership
-	// Use namespace owner for namespace policy (consistent with namespace authorization)
-	nsAllowed := CanCreateTable(accountID, namespaceMetadata.OwnerAccountID, namespacePolicy)
-	// Use bucket owner for bucket policy (bucket policy applies to bucket-level operations)
-	bucketAllowed := CanCreateTable(accountID, bucketMetadata.OwnerAccountID, bucketPolicy)
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
+	nsAllowed := CheckPermissionWithContext("CreateTable", accountID, namespaceMetadata.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		RequestTags:     req.Tags,
+		TagKeys:         mapKeys(req.Tags),
+		TableBucketTags: bucketTags,
+	})
+	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		RequestTags:     req.Tags,
+		TagKeys:         mapKeys(req.Tags),
+		TableBucketTags: bucketTags,
+	})
 
 	if !nsAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table in this namespace")
@@ -290,6 +309,8 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	bucketPath := getTableBucketPath(bucketName)
 	tablePolicy := ""
 	bucketPolicy := ""
+	bucketTags := map[string]string{}
+	tableTags := map[string]string{}
 	var bucketMetadata tableBucketMetadata
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -310,6 +331,11 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch table policy: %v", err)
 		}
+		if tags, err := h.readTags(r.Context(), client, tablePath); err != nil {
+			return err
+		} else if tags != nil {
+			tableTags = tags
+		}
 
 		// Fetch bucket policy if it exists
 		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
@@ -317,6 +343,11 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 			bucketPolicy = string(policyData)
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+		if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
+			return err
+		} else if tags != nil {
+			bucketTags = tags
 		}
 
 		return nil
@@ -327,18 +358,26 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		return err
 	}
 
-	// Check authorization: table policy OR bucket policy OR ownership
-	// Use table owner for table policy (table-level access control)
-	tableAllowed := CanGetTable(accountID, metadata.OwnerAccountID, tablePolicy)
-	// Use bucket owner for bucket policy (bucket-level access control)
-	bucketAllowed := CanGetTable(accountID, bucketMetadata.OwnerAccountID, bucketPolicy)
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespace+"/"+tableName)
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
+	tableAllowed := CheckPermissionWithContext("GetTable", accountID, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespace,
+		TableName:       tableName,
+		ResourceTags:    tableTags,
+	})
+	bucketAllowed := CheckPermissionWithContext("GetTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespace,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+	})
 
 	if !tableAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, fmt.Sprintf("table %s not found", tableName))
 		return ErrAccessDenied
 	}
-
-	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespace+"/"+tableName)
 
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
@@ -412,6 +451,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			var nsMeta namespaceMetadata
 			var bucketMeta tableBucketMetadata
 			var namespacePolicy, bucketPolicy string
+			bucketTags := map[string]string{}
 
 			// Fetch namespace metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
@@ -446,10 +486,22 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			} else if !errors.Is(err, ErrAttributeNotFound) {
 				return fmt.Errorf("failed to fetch bucket policy: %v", err)
 			}
+			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
+				return err
+			} else if tags != nil {
+				bucketTags = tags
+			}
 
-			// Authorize listing: namespace policy OR bucket policy OR ownership
-			nsAllowed := CanListTables(accountID, nsMeta.OwnerAccountID, namespacePolicy)
-			bucketAllowed := CanListTables(accountID, bucketMeta.OwnerAccountID, bucketPolicy)
+			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
+			nsAllowed := CheckPermissionWithContext("ListTables", accountID, nsMeta.OwnerAccountID, namespacePolicy, bucketARN, &PolicyContext{
+				TableBucketName: bucketName,
+				Namespace:       namespaceName,
+			})
+			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+				TableBucketName: bucketName,
+				Namespace:       namespaceName,
+				TableBucketTags: bucketTags,
+			})
 			if !nsAllowed && !bucketAllowed {
 				return ErrAccessDenied
 			}
@@ -460,6 +512,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			bucketPath := getTableBucketPath(bucketName)
 			var bucketMeta tableBucketMetadata
 			var bucketPolicy string
+			bucketTags := map[string]string{}
 
 			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
@@ -477,9 +530,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			} else if !errors.Is(err, ErrAttributeNotFound) {
 				return fmt.Errorf("failed to fetch bucket policy: %v", err)
 			}
+			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
+				return err
+			} else if tags != nil {
+				bucketTags = tags
+			}
 
-			// Authorize listing: bucket policy OR ownership
-			if !CanListTables(accountID, bucketMeta.OwnerAccountID, bucketPolicy) {
+			bucketARN := h.generateTableBucketARN(bucketMeta.OwnerAccountID, bucketName)
+			if !CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+				TableBucketName: bucketName,
+				TableBucketTags: bucketTags,
+			}) {
 				return ErrAccessDenied
 			}
 
@@ -731,6 +792,10 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	// Check if table exists and enforce VersionToken if provided
 	var metadata tableMetadataInternal
 	var tablePolicy string
+	var bucketPolicy string
+	var bucketTags map[string]string
+	var tableTags map[string]string
+	var bucketMetadata tableBucketMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		if err != nil {
@@ -759,6 +824,33 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			tablePolicy = string(policyData)
 		}
 
+		tableTags, err = h.readTags(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+
+		bucketPath := getTableBucketPath(bucketName)
+		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err == nil {
+			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+			}
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+		}
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err != nil {
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
+			}
+		} else {
+			bucketPolicy = string(policyData)
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		if err != nil {
+			return err
+		}
+
 		return nil
 	})
 
@@ -773,9 +865,24 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	// Check permission using table and bucket policies
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanDeleteTable(principal, metadata.OwnerAccountID, tablePolicy) {
+	tableAllowed := CheckPermissionWithContext("DeleteTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+	})
+	bucketAllowed := CheckPermissionWithContext("DeleteTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+	})
+	if !tableAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
 		return NewAuthError("DeleteTable", principal, "not authorized to delete table")
 	}
