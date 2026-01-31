@@ -519,9 +519,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
-	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+	icebergPortStr := "disabled"
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
+	}
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",

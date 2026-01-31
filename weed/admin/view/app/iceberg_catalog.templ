@@ -14,7 +14,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<a href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
+				<a href={ templ.SafeURL("/v1/config") } target="_blank" class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-external-link-alt me-1"></i>REST API
 				</a>
 			</div>

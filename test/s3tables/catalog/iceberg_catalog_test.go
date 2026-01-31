@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,6 +35,18 @@ type TestEnvironment struct {
 func hasDocker() bool {
 	cmd := exec.Command("docker", "version")
 	return cmd.Run() == nil
+}
+
+// getFreePort returns an available ephemeral port
+func getFreePort() (int, error) {
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, err
+	}
+	defer listener.Close()
+	
+	addr := listener.Addr().(*net.TCPAddr)
+	return addr.Port, nil
 }
 
 // NewTestEnvironment creates a new test environment
@@ -71,15 +84,37 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
+	// Allocate free ephemeral ports for each service
+	s3Port, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for S3: %v", err)
+	}
+	icebergPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Iceberg: %v", err)
+	}
+	masterPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Master: %v", err)
+	}
+	filerPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Filer: %v", err)
+	}
+	volumePort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Volume: %v", err)
+	}
+
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
 		weedBinary:      weedBinary,
 		dataDir:         dataDir,
-		s3Port:          18333,
-		icebergPort:     18181,
-		masterPort:      19333,
-		filerPort:       18888,
-		volumePort:      18080,
+		s3Port:          s3Port,
+		icebergPort:     icebergPort,
+		masterPort:      masterPort,
+		filerPort:       filerPort,
+		volumePort:      volumePort,
 		dockerAvailable: hasDocker(),
 	}
 }
@@ -125,9 +160,10 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 // waitForService waits for a service to become available
 func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

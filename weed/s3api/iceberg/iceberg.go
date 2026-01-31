@@ -8,11 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -20,6 +24,9 @@ import (
 type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 }
+
+// uuidCounter is used as a fallback for UUID generation if rand.Read fails.
+var uuidCounter int64
 
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
@@ -134,7 +141,7 @@ func getBucketFromPrefix(r *http.Request) string {
 
 // buildTableBucketARN builds an ARN for a table bucket.
 func buildTableBucketARN(bucketName string) string {
-	arn, _ := s3tables.BuildBucketARN(s3tables.DefaultRegion, "000000000000", bucketName)
+	arn, _ := s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
 	return arn
 }
 
@@ -292,7 +299,12 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		glog.V(1).Infof("Iceberg: NamespaceExists error: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -577,7 +589,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 // handleUpdateTable commits updates to a table.
 // TODO: Full implementation should process CommitTableRequest requirements and updates,
 // perform atomic metadata pointer swap, and store metadata JSON files.
-// Current implementation is a stub that acknowledges the request.
+// For now, returns 501 Not Implemented as table update logic is not yet completed.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
@@ -588,36 +600,30 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stub implementation: acknowledge the update without processing
-	// A full implementation would:
-	// 1. Parse CommitTableRequest from body
-	// 2. Validate requirements (current metadata state)
-	// 3. Apply updates (schema changes, snapshots, etc.)
-	// 4. Write new metadata.json file
-	// 5. Atomically update metadata-location pointer
-	bucketName := getBucketFromPrefix(r)
-	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
-
-	metadata := TableMetadata{
-		FormatVersion: 2,
-		TableUUID:     generateUUID(),
-		Location:      location,
-	}
-
-	result := LoadTableResult{
-		MetadataLocation: location + "/metadata/v1.metadata.json",
-		Metadata:         metadata,
-		Config:           map[string]string{},
-	}
-	writeJSON(w, http.StatusOK, result)
+	// Table update/commit not implemented
+	writeError(w, http.StatusNotImplemented, "NotImplemented", "Table update/commit not implemented")
 }
 
 // generateUUID generates a random UUID (version 4) for table metadata.
 func generateUUID() string {
 	uuid := make([]byte, 16)
 	if _, err := rand.Read(uuid); err != nil {
-		// Fallback to a less random but unique value
-		glog.Warningf("Iceberg: failed to generate random UUID, using fallback: %v", err)
+		// Fallback: combine timestamp, PID, and atomic counter for uniqueness
+		glog.Warningf("Iceberg: failed to generate random UUID, using deterministic fallback: %v", err)
+		now := time.Now().UnixNano()
+		pid := int64(os.Getpid())
+		counter := atomic.AddInt64(&uuidCounter, 1)
+		
+		// Fill uuid with timestamp (8 bytes) + pid (4 bytes) + counter (4 bytes)
+		for i := 0; i < 8; i++ {
+			uuid[i] = byte((now >> uint(8*i)) & 0xff)
+		}
+		for i := 0; i < 4; i++ {
+			uuid[8+i] = byte((pid >> uint(8*i)) & 0xff)
+		}
+		for i := 0; i < 4; i++ {
+			uuid[12+i] = byte((counter >> uint(8*i)) & 0xff)
+		}
 	}
 	// Set version (4) and variant (RFC 4122)
 	uuid[6] = (uuid[6] & 0x0f) | 0x40

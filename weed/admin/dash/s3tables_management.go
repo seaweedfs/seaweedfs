@@ -189,7 +189,7 @@ func (s *AdminServer) GetIcebergCatalogData(ctx context.Context) (IcebergCatalog
 	return IcebergCatalogData{
 		Catalogs:      catalogs,
 		TotalCatalogs: len(catalogs),
-		IcebergPort:   8181, // default Iceberg REST port
+		IcebergPort:   8181, // default Iceberg REST port (can be customized at startup)
 		LastUpdated:   time.Now(),
 	}, nil
 }
