@@ -2,9 +2,11 @@ package dash
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +41,12 @@ type S3TablesTablesData struct {
 	LastUpdated time.Time               `json:"last_updated"`
 }
 
+type tableBucketMetadata struct {
+	Name           string    `json:"name"`
+	CreatedAt      time.Time `json:"createdAt"`
+	OwnerAccountID string    `json:"ownerAccountId"`
+}
+
 // S3Tables manager helpers
 
 const s3TablesAdminListLimit = 1000
@@ -58,23 +66,36 @@ func (s *AdminServer) executeS3TablesOperation(ctx context.Context, operation st
 
 // S3Tables data retrieval for pages
 
-func (s *AdminServer) GetS3TablesBucketsData() (S3TablesBucketsData, error) {
+func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucketsData, error) {
 	var resp s3tables.ListTableBucketsResponse
 	req := &s3tables.ListTableBucketsRequest{MaxBuckets: s3TablesAdminListLimit}
-	if err := s.executeS3TablesOperation(context.Background(), "ListTableBuckets", req, &resp); err != nil {
+	if err := s.executeS3TablesOperation(ctx, "ListTableBuckets", req, &resp); err != nil {
 		return S3TablesBucketsData{}, err
 	}
+	buckets := make([]s3tables.TableBucketSummary, 0, len(resp.TableBuckets))
+	for _, bucket := range resp.TableBuckets {
+		if bucket.ARN != "" {
+			if bucketName, err := s3tables.ParseBucketNameFromARN(bucket.ARN); err == nil && bucketName != "" {
+				if owner, err := s.getTableBucketOwner(ctx, bucketName); err == nil && owner != "" {
+					if arn, err := s3tables.BuildBucketARN(s3tables.DefaultRegion, owner, bucketName); err == nil {
+						bucket.ARN = arn
+					}
+				}
+			}
+		}
+		buckets = append(buckets, bucket)
+	}
 	return S3TablesBucketsData{
-		Buckets:      resp.TableBuckets,
-		TotalBuckets: len(resp.TableBuckets),
+		Buckets:      buckets,
+		TotalBuckets: len(buckets),
 		LastUpdated:  time.Now(),
 	}, nil
 }
 
-func (s *AdminServer) GetS3TablesNamespacesData(bucketArn string) (S3TablesNamespacesData, error) {
+func (s *AdminServer) GetS3TablesNamespacesData(ctx context.Context, bucketArn string) (S3TablesNamespacesData, error) {
 	var resp s3tables.ListNamespacesResponse
 	req := &s3tables.ListNamespacesRequest{TableBucketARN: bucketArn, MaxNamespaces: s3TablesAdminListLimit}
-	if err := s.executeS3TablesOperation(context.Background(), "ListNamespaces", req, &resp); err != nil {
+	if err := s.executeS3TablesOperation(ctx, "ListNamespaces", req, &resp); err != nil {
 		return S3TablesNamespacesData{}, err
 	}
 	return S3TablesNamespacesData{
@@ -85,14 +106,14 @@ func (s *AdminServer) GetS3TablesNamespacesData(bucketArn string) (S3TablesNames
 	}, nil
 }
 
-func (s *AdminServer) GetS3TablesTablesData(bucketArn, namespace string) (S3TablesTablesData, error) {
+func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, namespace string) (S3TablesTablesData, error) {
 	var resp s3tables.ListTablesResponse
 	var ns []string
 	if namespace != "" {
 		ns = []string{namespace}
 	}
 	req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: ns, MaxTables: s3TablesAdminListLimit}
-	if err := s.executeS3TablesOperation(context.Background(), "ListTables", req, &resp); err != nil {
+	if err := s.executeS3TablesOperation(ctx, "ListTables", req, &resp); err != nil {
 		return S3TablesTablesData{}, err
 	}
 	return S3TablesTablesData{
@@ -107,7 +128,7 @@ func (s *AdminServer) GetS3TablesTablesData(bucketArn, namespace string) (S3Tabl
 // API handlers
 
 func (s *AdminServer) ListS3TablesBucketsAPI(c *gin.Context) {
-	data, err := s.GetS3TablesBucketsData()
+	data, err := s.GetS3TablesBucketsData(c.Request.Context())
 	if err != nil {
 		writeS3TablesError(c, err)
 		return
@@ -117,8 +138,9 @@ func (s *AdminServer) ListS3TablesBucketsAPI(c *gin.Context) {
 
 func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
 	var req struct {
-		Name string            `json:"name"`
-		Tags map[string]string `json:"tags"`
+		Name  string            `json:"name"`
+		Tags  map[string]string `json:"tags"`
+		Owner string            `json:"owner"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
@@ -126,6 +148,11 @@ func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
 	}
 	if req.Name == "" {
 		c.JSON(400, gin.H{"error": "Bucket name is required"})
+		return
+	}
+	owner := strings.TrimSpace(req.Owner)
+	if len(owner) > MaxOwnerNameLength {
+		c.JSON(400, gin.H{"error": fmt.Sprintf("Owner name must be %d characters or less", MaxOwnerNameLength)})
 		return
 	}
 	if len(req.Tags) > 0 {
@@ -140,7 +167,83 @@ func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
 		writeS3TablesError(c, err)
 		return
 	}
+	if owner != "" {
+		if err := s.SetTableBucketOwner(c.Request.Context(), req.Name, owner); err != nil {
+			writeS3TablesError(c, err)
+			return
+		}
+	}
 	c.JSON(201, gin.H{"arn": resp.ARN})
+}
+
+func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner string) error {
+	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: s3tables.TablesPath,
+			Name:      bucketName,
+		})
+		if err != nil {
+			return fmt.Errorf("lookup table bucket %s: %w", bucketName, err)
+		}
+		if resp.Entry == nil {
+			return fmt.Errorf("table bucket %s not found", bucketName)
+		}
+		entry := resp.Entry
+		if entry.Extended == nil {
+			return fmt.Errorf("table bucket %s metadata missing", bucketName)
+		}
+		metaBytes, ok := entry.Extended[s3tables.ExtendedKeyMetadata]
+		if !ok {
+			return fmt.Errorf("table bucket %s metadata missing", bucketName)
+		}
+		var metadata tableBucketMetadata
+		if err := json.Unmarshal(metaBytes, &metadata); err != nil {
+			return fmt.Errorf("failed to parse table bucket metadata: %w", err)
+		}
+		metadata.OwnerAccountID = owner
+		updated, err := json.Marshal(&metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal table bucket metadata: %w", err)
+		}
+		entry.Extended[s3tables.ExtendedKeyMetadata] = updated
+		if _, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+			Directory: s3tables.TablesPath,
+			Entry:     entry,
+		}); err != nil {
+			return fmt.Errorf("failed to update table bucket owner: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *AdminServer) getTableBucketOwner(ctx context.Context, bucketName string) (string, error) {
+	var owner string
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: s3tables.TablesPath,
+			Name:      bucketName,
+		})
+		if err != nil {
+			return err
+		}
+		if resp.Entry == nil || resp.Entry.Extended == nil {
+			return nil
+		}
+		metaBytes, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadata]
+		if !ok {
+			return nil
+		}
+		var metadata tableBucketMetadata
+		if err := json.Unmarshal(metaBytes, &metadata); err != nil {
+			return err
+		}
+		owner = metadata.OwnerAccountID
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return owner, nil
 }
 
 func (s *AdminServer) DeleteS3TablesBucket(c *gin.Context) {
@@ -163,7 +266,7 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket query parameter is required"})
 		return
 	}
-	data, err := s.GetS3TablesNamespacesData(bucketArn)
+	data, err := s.GetS3TablesNamespacesData(c.Request.Context(), bucketArn)
 	if err != nil {
 		writeS3TablesError(c, err)
 		return
@@ -173,18 +276,12 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 
 func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 	var req struct {
-		BucketARN string `json:"bucket_arn" form:"bucket_arn"`
-		Name      string `json:"name" form:"name"`
+		BucketARN string `json:"bucket_arn"`
+		Name      string `json:"name"`
 	}
-	if err := c.ShouldBind(&req); err != nil && c.Request.ContentLength > 0 {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid request: " + err.Error()})
 		return
-	}
-	if req.BucketARN == "" {
-		req.BucketARN = c.Query("bucket")
-	}
-	if req.Name == "" {
-		req.Name = c.Query("name")
 	}
 	if req.BucketARN == "" || req.Name == "" {
 		c.JSON(400, gin.H{"error": "bucket_arn and name are required"})
@@ -221,7 +318,7 @@ func (s *AdminServer) ListS3TablesTablesAPI(c *gin.Context) {
 		return
 	}
 	namespace := c.Query("namespace")
-	data, err := s.GetS3TablesTablesData(bucketArn, namespace)
+	data, err := s.GetS3TablesTablesData(c.Request.Context(), bucketArn, namespace)
 	if err != nil {
 		writeS3TablesError(c, err)
 		return

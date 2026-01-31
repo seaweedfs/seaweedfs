@@ -183,23 +183,23 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			s3TablesApi := api.Group("/s3tables")
 			{
 				s3TablesApi.GET("/buckets", h.adminServer.ListS3TablesBucketsAPI)
-				s3TablesApi.POST("/buckets", h.adminServer.CreateS3TablesBucket)
-				s3TablesApi.DELETE("/buckets", h.adminServer.DeleteS3TablesBucket)
+				s3TablesApi.POST("/buckets", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesBucket)
+				s3TablesApi.DELETE("/buckets", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucket)
 				s3TablesApi.GET("/namespaces", h.adminServer.ListS3TablesNamespacesAPI)
-				s3TablesApi.POST("/namespaces", h.adminServer.CreateS3TablesNamespace)
-				s3TablesApi.DELETE("/namespaces", h.adminServer.DeleteS3TablesNamespace)
+				s3TablesApi.POST("/namespaces", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesNamespace)
+				s3TablesApi.DELETE("/namespaces", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesNamespace)
 				s3TablesApi.GET("/tables", h.adminServer.ListS3TablesTablesAPI)
-				s3TablesApi.POST("/tables", h.adminServer.CreateS3TablesTable)
-				s3TablesApi.DELETE("/tables", h.adminServer.DeleteS3TablesTable)
-				s3TablesApi.PUT("/bucket-policy", h.adminServer.PutS3TablesBucketPolicy)
+				s3TablesApi.POST("/tables", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesTable)
+				s3TablesApi.DELETE("/tables", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTable)
+				s3TablesApi.PUT("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesBucketPolicy)
 				s3TablesApi.GET("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy)
-				s3TablesApi.DELETE("/bucket-policy", h.adminServer.DeleteS3TablesBucketPolicy)
-				s3TablesApi.PUT("/table-policy", h.adminServer.PutS3TablesTablePolicy)
+				s3TablesApi.DELETE("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucketPolicy)
+				s3TablesApi.PUT("/table-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesTablePolicy)
 				s3TablesApi.GET("/table-policy", h.adminServer.GetS3TablesTablePolicy)
-				s3TablesApi.DELETE("/table-policy", h.adminServer.DeleteS3TablesTablePolicy)
-				s3TablesApi.PUT("/tags", h.adminServer.TagS3TablesResource)
+				s3TablesApi.DELETE("/table-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTablePolicy)
+				s3TablesApi.PUT("/tags", dash.RequireWriteAccess(), h.adminServer.TagS3TablesResource)
 				s3TablesApi.GET("/tags", h.adminServer.ListS3TablesTags)
-				s3TablesApi.DELETE("/tags", h.adminServer.UntagS3TablesResource)
+				s3TablesApi.DELETE("/tags", dash.RequireWriteAccess(), h.adminServer.UntagS3TablesResource)
 			}
 
 			// File management API routes
@@ -459,7 +459,7 @@ func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
 		username = "admin"
 	}
 
-	data, err := h.adminServer.GetS3TablesBucketsData()
+	data, err := h.adminServer.GetS3TablesBucketsData(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables buckets: " + err.Error()})
 		return
@@ -488,7 +488,7 @@ func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
 		return
 	}
 
-	data, err := h.adminServer.GetS3TablesNamespacesData(arn)
+	data, err := h.adminServer.GetS3TablesNamespacesData(c.Request.Context(), arn)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables namespaces: " + err.Error()})
 		return
@@ -518,7 +518,7 @@ func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
 		return
 	}
 
-	data, err := h.adminServer.GetS3TablesTablesData(arn, namespace)
+	data, err := h.adminServer.GetS3TablesTablesData(c.Request.Context(), arn, namespace)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables tables: " + err.Error()})
 		return

@@ -149,6 +149,15 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 							<input type="text" class="form-control" id="s3tablesBucketName" name="name" placeholder="table-bucket-name" required/>
 						</div>
 						<div class="mb-3">
+							<label for="s3tablesBucketOwner" class="form-label">Owner (Optional)</label>
+							<select class="form-select" id="s3tablesBucketOwner" name="owner">
+								<option value="">No owner (admin-only access)</option>
+							</select>
+							<div class="form-text">
+								The S3 identity that owns this table bucket. Non-admin users can only access table buckets they own.
+							</div>
+						</div>
+						<div class="mb-3">
 							<label for="s3tablesBucketTags" class="form-label">Tags</label>
 							<input type="text" class="form-control" id="s3tablesBucketTags" name="tags" placeholder="key1=value1,key2=value2"/>
 							<div class="form-text">Optional tags in key=value format.</div>
@@ -265,6 +274,27 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 			s3tablesBucketDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesBucketModal'));
 			s3tablesBucketPolicyModal = new bootstrap.Modal(document.getElementById('s3tablesBucketPolicyModal'));
 			s3tablesTagsModal = new bootstrap.Modal(document.getElementById('s3tablesTagsModal'));
+			const ownerSelect = document.getElementById('s3tablesBucketOwner');
+
+			document.getElementById('createS3TablesBucketModal').addEventListener('show.bs.modal', async function() {
+				if (ownerSelect.options.length <= 1) {
+					try {
+						const response = await fetch('/api/users');
+						const data = await response.json();
+						const users = data.users || [];
+						users.forEach(user => {
+							const option = document.createElement('option');
+							option.value = user.username;
+							option.textContent = user.username;
+							ownerSelect.appendChild(option);
+						});
+					} catch (error) {
+						console.error('Error fetching users for owner dropdown:', error);
+						ownerSelect.innerHTML = '<option value="">No owner (admin-only access)</option>';
+						ownerSelect.selectedIndex = 0;
+					}
+				}
+			});
 
 			document.querySelectorAll('.s3tables-delete-bucket-btn').forEach(button => {
 				button.addEventListener('click', function() {
@@ -293,10 +323,11 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 			document.getElementById('createS3TablesBucketForm').addEventListener('submit', async function(e) {
 				e.preventDefault();
 				const name = document.getElementById('s3tablesBucketName').value.trim();
+				const owner = ownerSelect.value;
 				const tagsInput = document.getElementById('s3tablesBucketTags').value.trim();
 				const tags = parseTagsInput(tagsInput);
 				if (tags === null) return;
-				const payload = { name: name, tags: tags };
+				const payload = { name: name, tags: tags, owner: owner };
 
 				try {
 					const response = await fetch('/api/s3tables/buckets', {
@@ -407,13 +438,16 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 			const tags = {};
 			const parts = input.split(',');
 			for (const part of parts) {
-				if (!part.trim()) continue;
-				const [key, value] = part.split('=');
-				if (!key || value === undefined) {
-					alert('Invalid tag format. Use key=value');
+				const trimmedPart = part.trim();
+				if (!trimmedPart) continue;
+				const idx = trimmedPart.indexOf('=');
+				if (idx <= 0) {
+					alert('Invalid tag format. Use key=value, and key cannot be empty.');
 					return null;
 				}
-				tags[key.trim()] = value.trim();
+				const key = trimmedPart.slice(0, idx).trim();
+				const value = trimmedPart.slice(idx + 1).trim();
+				tags[key] = value;
 			}
 			return tags;
 		}
