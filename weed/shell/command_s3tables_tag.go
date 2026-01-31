@@ -21,14 +21,17 @@ func (c *commandS3TablesTag) Name() string {
 func (c *commandS3TablesTag) Help() string {
 	return `manage s3tables tags
 
-# tag a resource
-s3tables.tag -put -arn <resource_arn> -tags key1=val1,key2=val2
+# tag a table bucket
+s3tables.tag -put -bucket <bucket> -account <account_id> -tags key1=val1,key2=val2
+
+# tag a table
+s3tables.tag -put -bucket <bucket> -account <account_id> -namespace <namespace> -name <table> -tags key1=val1,key2=val2
 
 # list tags for a resource
-s3tables.tag -list -arn <resource_arn>
+s3tables.tag -list -bucket <bucket> -account <account_id> [-namespace <namespace> -name <table>]
 
 # remove tags
-s3tables.tag -delete -arn <resource_arn> -keys key1,key2
+s3tables.tag -delete -bucket <bucket> -account <account_id> [-namespace <namespace> -name <table>] -keys key1,key2
 `
 }
 
@@ -42,7 +45,10 @@ func (c *commandS3TablesTag) Do(args []string, commandEnv *CommandEnv, writer io
 	list := cmd.Bool("list", false, "list tags")
 	del := cmd.Bool("delete", false, "delete tags")
 
-	arn := cmd.String("arn", "", "resource ARN")
+	bucket := cmd.String("bucket", "", "table bucket name")
+	account := cmd.String("account", "", "owner account id")
+	namespace := cmd.String("namespace", "", "namespace")
+	name := cmd.String("name", "", "table name")
 	tags := cmd.String("tags", "", "comma separated tags key=value")
 	keys := cmd.String("keys", "", "comma separated tag keys")
 
@@ -60,8 +66,24 @@ func (c *commandS3TablesTag) Do(args []string, commandEnv *CommandEnv, writer io
 	if count != 1 {
 		return fmt.Errorf("exactly one action must be specified")
 	}
-	if *arn == "" {
-		return fmt.Errorf("-arn is required")
+	if *bucket == "" {
+		return fmt.Errorf("-bucket is required")
+	}
+	if *account == "" {
+		return fmt.Errorf("-account is required")
+	}
+	resourceArn, err := buildS3TablesBucketARN(*bucket, *account)
+	if err != nil {
+		return err
+	}
+	if *namespace != "" || *name != "" {
+		if *namespace == "" || *name == "" {
+			return fmt.Errorf("-namespace and -name are required for table tags")
+		}
+		resourceArn, err = buildS3TablesTableARN(*bucket, *namespace, *name, *account)
+		if err != nil {
+			return err
+		}
 	}
 
 	switch {
@@ -73,15 +95,15 @@ func (c *commandS3TablesTag) Do(args []string, commandEnv *CommandEnv, writer io
 		if err != nil {
 			return err
 		}
-		req := &s3tables.TagResourceRequest{ResourceARN: *arn, Tags: parsed}
-		if err := executeS3Tables(commandEnv, "TagResource", req, nil); err != nil {
+		req := &s3tables.TagResourceRequest{ResourceARN: resourceArn, Tags: parsed}
+		if err := executeS3Tables(commandEnv, "TagResource", req, nil, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, "Tags updated")
 	case *list:
-		req := &s3tables.ListTagsForResourceRequest{ResourceARN: *arn}
+		req := &s3tables.ListTagsForResourceRequest{ResourceARN: resourceArn}
 		var resp s3tables.ListTagsForResourceResponse
-		if err := executeS3Tables(commandEnv, "ListTagsForResource", req, &resp); err != nil {
+		if err := executeS3Tables(commandEnv, "ListTagsForResource", req, &resp, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		if len(resp.Tags) == 0 {
@@ -99,8 +121,8 @@ func (c *commandS3TablesTag) Do(args []string, commandEnv *CommandEnv, writer io
 		if err != nil {
 			return err
 		}
-		req := &s3tables.UntagResourceRequest{ResourceARN: *arn, TagKeys: parsed}
-		if err := executeS3Tables(commandEnv, "UntagResource", req, nil); err != nil {
+		req := &s3tables.UntagResourceRequest{ResourceARN: resourceArn, TagKeys: parsed}
+		if err := executeS3Tables(commandEnv, "UntagResource", req, nil, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, "Tags removed")
