@@ -975,6 +975,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             // Get permissions with bucket scope applied
             const allActions = buildBucketPermissions('create');
             
+            if (allActions === null) {
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
+                return;
+            }
+
+            if (!allActions || allActions.length === 0) {
+                showAlert('At least one permission must be selected', 'error');
+                return;
+            }
+            
             const userData = {
                 username: formData.get('username'),
                 email: formData.get('email'),
@@ -1028,15 +1038,15 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             // Get permissions with bucket scope applied
             const allActions = buildBucketPermissions('edit');
             
-            // Validate that permissions are not empty
-            if (!allActions || allActions.length === 0) {
-                showAlert('At least one permission must be selected', 'error');
+            // Check for null (validation failure from buildBucketPermissions)
+            if (allActions === null) {
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
                 return;
             }
             
-            // Check for null (validation failure from buildBucketPermissionsNew)
-            if (allActions === null) {
-                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
+            // Validate that permissions are not empty
+            if (!allActions || allActions.length === 0) {
+                showAlert('At least one permission must be selected', 'error');
                 return;
             }
             
