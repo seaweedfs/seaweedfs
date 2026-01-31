@@ -24,18 +24,20 @@ const (
 	ConfigSubdir = "conf"
 
 	// Configuration file names (protobuf binary)
-	MaintenanceConfigFile     = "maintenance.pb"
-	VacuumTaskConfigFile      = "task_vacuum.pb"
-	ECTaskConfigFile          = "task_erasure_coding.pb"
-	BalanceTaskConfigFile     = "task_balance.pb"
-	ReplicationTaskConfigFile = "task_replication.pb"
+	MaintenanceConfigFile        = "maintenance.pb"
+	VacuumTaskConfigFile         = "task_vacuum.pb"
+	ECTaskConfigFile             = "task_erasure_coding.pb"
+	BalanceTaskConfigFile        = "task_balance.pb"
+	ReplicationTaskConfigFile    = "task_replication.pb"
+	TableMaintenanceConfigFile   = "task_table_maintenance.pb"
 
 	// JSON reference files
-	MaintenanceConfigJSONFile     = "maintenance.json"
-	VacuumTaskConfigJSONFile      = "task_vacuum.json"
-	ECTaskConfigJSONFile          = "task_erasure_coding.json"
-	BalanceTaskConfigJSONFile     = "task_balance.json"
-	ReplicationTaskConfigJSONFile = "task_replication.json"
+	MaintenanceConfigJSONFile        = "maintenance.json"
+	VacuumTaskConfigJSONFile         = "task_vacuum.json"
+	ECTaskConfigJSONFile             = "task_erasure_coding.json"
+	BalanceTaskConfigJSONFile        = "task_balance.json"
+	ReplicationTaskConfigJSONFile    = "task_replication.json"
+	TableMaintenanceConfigJSONFile   = "task_table_maintenance.json"
 
 	// Task persistence subdirectories and settings
 	TasksSubdir       = "tasks"
@@ -520,6 +522,53 @@ func (cp *ConfigPersistence) LoadBalanceTaskPolicy() (*worker_pb.TaskPolicy, err
 	return nil, fmt.Errorf("failed to unmarshal balance task configuration")
 }
 
+// SaveTableMaintenanceTaskPolicy saves table maintenance task policy to protobuf file
+func (cp *ConfigPersistence) SaveTableMaintenanceTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return cp.saveTaskConfig(TableMaintenanceConfigFile, policy)
+}
+
+// LoadTableMaintenanceTaskPolicy loads table maintenance task policy from protobuf file
+func (cp *ConfigPersistence) LoadTableMaintenanceTaskPolicy() (*worker_pb.TaskPolicy, error) {
+	if cp.dataDir == "" {
+		// Return default policy if no data directory
+		return &worker_pb.TaskPolicy{
+			Enabled:               true,
+			MaxConcurrent:         2,
+			RepeatIntervalSeconds: 30 * 60,   // 30 minutes
+			CheckIntervalSeconds:  30 * 60,   // 30 minutes
+		}, nil
+	}
+
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	configPath := filepath.Join(confDir, TableMaintenanceConfigFile)
+
+	// Check if file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Return default policy if file doesn't exist
+		return &worker_pb.TaskPolicy{
+			Enabled:               true,
+			MaxConcurrent:         2,
+			RepeatIntervalSeconds: 30 * 60,   // 30 minutes
+			CheckIntervalSeconds:  30 * 60,   // 30 minutes
+		}, nil
+	}
+
+	// Read file
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read table maintenance task config file: %w", err)
+	}
+
+	// Try to unmarshal as TaskPolicy
+	var policy worker_pb.TaskPolicy
+	if err := proto.Unmarshal(configData, &policy); err == nil {
+		glog.V(1).Infof("Loaded table maintenance task policy from %s", configPath)
+		return &policy, nil
+	}
+
+	return nil, fmt.Errorf("failed to unmarshal table maintenance task configuration")
+}
+
 // SaveReplicationTaskConfig saves replication task configuration to protobuf file
 func (cp *ConfigPersistence) SaveReplicationTaskConfig(config *ReplicationTaskConfig) error {
 	return cp.saveTaskConfig(ReplicationTaskConfigFile, config)
@@ -631,6 +680,8 @@ func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.T
 		return cp.SaveBalanceTaskPolicy(policy)
 	case "replication":
 		return cp.SaveReplicationTaskPolicy(policy)
+	case "table_maintenance":
+		return cp.SaveTableMaintenanceTaskPolicy(policy)
 	}
 	return fmt.Errorf("unknown task type: %s", taskType)
 }
