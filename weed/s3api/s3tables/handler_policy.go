@@ -90,8 +90,10 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, "", bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table bucket policy")
 		return NewAuthError("PutTableBucketPolicy", principal, "not authorized to put table bucket policy")
@@ -165,8 +167,10 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket policy")
 		return NewAuthError("GetTableBucketPolicy", principal, "not authorized to get table bucket policy")
@@ -238,8 +242,10 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table bucket policy")
 		return NewAuthError("DeleteTableBucketPolicy", principal, "not authorized to delete table bucket policy")
@@ -334,10 +340,12 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("PutTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table policy")
 		return NewAuthError("PutTablePolicy", principal, "not authorized to put table policy")
@@ -439,10 +447,12 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table policy")
 		return NewAuthError("GetTablePolicy", principal, "not authorized to get table policy")
@@ -526,10 +536,12 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 
 	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableName:       tableName,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table policy")
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
@@ -604,8 +616,10 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 
 		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("TagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
 			TableBucketName: bucketName,
+			IdentityActions: identityActions,
 		}) {
 			return NewAuthError("TagResource", principal, "not authorized to tag resource")
 		}
@@ -710,8 +724,10 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 
 		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("ListTagsForResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
 			TableBucketName: bucketName,
+			IdentityActions: identityActions,
 		}) {
 			return NewAuthError("ListTagsForResource", principal, "not authorized to list tags for resource")
 		}
@@ -804,8 +820,10 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 
 		resourceARN := req.ResourceARN
 		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
 		if !CheckPermissionWithContext("UntagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
 			TableBucketName: bucketName,
+			IdentityActions: identityActions,
 		}) {
 			return NewAuthError("UntagResource", principal, "not authorized to untag resource")
 		}

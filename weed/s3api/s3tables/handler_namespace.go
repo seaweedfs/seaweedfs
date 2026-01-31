@@ -82,10 +82,12 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("CreateNamespace", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
 		return ErrAccessDenied
@@ -217,10 +219,12 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 
 	bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("GetNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied
@@ -301,9 +305,11 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("ListNamespaces", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -482,10 +488,12 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 
 	bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("DeleteNamespace", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
+		IdentityActions: identityActions,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied

@@ -77,6 +77,7 @@ type PolicyContext struct {
 	Namespace       string
 	TableName       string
 	TableBucketName string
+	IdentityActions []string
 	RequestTags     map[string]string
 	ResourceTags    map[string]string
 	TableBucketTags map[string]string
@@ -115,6 +116,10 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 	// Owner always has permission
 	if principal == owner {
+		return true
+	}
+
+	if hasIdentityPermission(operation, ctx) {
 		return true
 	}
 
@@ -170,6 +175,31 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 	}
 
 	return hasAllow
+}
+
+func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.IdentityActions) == 0 {
+		return false
+	}
+	fullAction := operation
+	if !strings.Contains(operation, ":") {
+		fullAction = "s3tables:" + operation
+	}
+	candidates := []string{operation, fullAction}
+	if ctx.TableBucketName != "" {
+		candidates = append(candidates, operation+":"+ctx.TableBucketName, fullAction+":"+ctx.TableBucketName)
+	}
+	for _, action := range ctx.IdentityActions {
+		for _, candidate := range candidates {
+			if action == candidate {
+				return true
+			}
+			if strings.ContainsAny(action, "*?") && policy_engine.MatchesWildcard(action, candidate) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal

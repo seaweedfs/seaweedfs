@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -168,6 +169,44 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 		return accountID
 	}
 	return h.accountID
+}
+
+// getIdentityActions extracts the action list from the identity object in the request context.
+// Uses reflection to avoid import cycles with s3api package.
+func getIdentityActions(r *http.Request) []string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw == nil {
+		return nil
+	}
+
+	// Use reflection to access the Actions field to avoid import cycle
+	val := reflect.ValueOf(identityRaw)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil
+	}
+
+	actionsField := val.FieldByName("Actions")
+	if !actionsField.IsValid() || actionsField.Kind() != reflect.Slice {
+		return nil
+	}
+
+	// Convert actions to string slice
+	actions := make([]string, actionsField.Len())
+	for i := 0; i < actionsField.Len(); i++ {
+		action := actionsField.Index(i)
+		// Action is likely a custom type (e.g., type Action string)
+		// Convert to string using String() or direct string conversion
+		if action.Kind() == reflect.String {
+			actions[i] = action.String()
+		} else if action.CanInterface() {
+			// Try to convert via fmt.Sprint
+			actions[i] = fmt.Sprint(action.Interface())
+		}
+	}
+	return actions
 }
 
 // Request/Response helpers
