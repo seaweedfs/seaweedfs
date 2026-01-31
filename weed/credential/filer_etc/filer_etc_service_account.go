@@ -67,7 +67,7 @@ func (store *FilerEtcStore) saveServiceAccount(ctx context.Context, sa *iam_pb.S
 		return err
 	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := json.Marshal(sa)
+		data, err := json.MarshalIndent(sa, "", "  ")
 		if err != nil {
 			return err
 		}
