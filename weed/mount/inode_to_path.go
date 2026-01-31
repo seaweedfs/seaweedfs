@@ -249,7 +249,7 @@ func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
 }
 
 func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Time, window time.Duration, threshold int) bool {
-	if threshold <= 0 {
+	if threshold <= 0 || window <= 0 {
 		return false
 	}
 	i.Lock()
@@ -304,6 +304,9 @@ func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Ti
 	entry.updateCount = 0
 	entry.needsRefresh = false
 	entry.updateWindowStart = time.Time{}
+	if i.cacheMetaTtlSec > 0 {
+		entry.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
+	}
 }
 
 func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []util.FullPath {
