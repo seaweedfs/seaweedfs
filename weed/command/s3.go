@@ -482,7 +482,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
-	icebergListener, _, err := util.NewIpAndLocalListeners(
+	icebergListener, icebergLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second)
 	if err != nil {
 		glog.Fatalf("Iceberg REST Catalog listener on %s error: %v", listenAddress, err)
@@ -495,6 +495,14 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 		go func() {
 			<-MiniClusterCtx.Done()
 			httpS.Shutdown(context.Background())
+		}()
+	}
+	// Serve on localhost as well if we're bound to a different interface
+	if icebergLocalListener != nil {
+		go func() {
+			if err := httpS.Serve(icebergLocalListener); err != nil && err != http.ErrServerClosed {
+				glog.V(0).Infof("Iceberg localhost listener error: %v", err)
+			}
 		}()
 	}
 	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
