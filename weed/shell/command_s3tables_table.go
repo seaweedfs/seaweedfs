@@ -25,21 +25,21 @@ func (c *commandS3TablesTable) Help() string {
 	return `manage s3tables tables
 
 # create a table
-s3tables.table -create -bucket <table_bucket_arn> -namespace <namespace> -name <table> -format ICEBERG [-metadata metadata.json] [-tags key=value]
+s3tables.table -create -bucket <bucket> -account <account_id> -namespace <namespace> -name <table> -format ICEBERG [-metadata metadata.json] [-tags key=value]
 
 # list tables
-s3tables.table -list -bucket <table_bucket_arn> [-namespace <namespace>] [-prefix <prefix>] [-limit <n>] [-continuation <token>]
+s3tables.table -list -bucket <bucket> -account <account_id> [-namespace <namespace>] [-prefix <prefix>] [-limit <n>] [-continuation <token>]
 
 # get table details
-s3tables.table -get -bucket <table_bucket_arn> -namespace <namespace> -name <table>
+s3tables.table -get -bucket <bucket> -account <account_id> -namespace <namespace> -name <table>
 
 # delete table
-s3tables.table -delete -bucket <table_bucket_arn> -namespace <namespace> -name <table> [-version <token>]
+s3tables.table -delete -bucket <bucket> -account <account_id> -namespace <namespace> -name <table> [-version <token>]
 
 # manage table policy
-s3tables.table -put-policy -bucket <table_bucket_arn> -namespace <namespace> -name <table> -file policy.json
-s3tables.table -get-policy -bucket <table_bucket_arn> -namespace <namespace> -name <table>
-s3tables.table -delete-policy -bucket <table_bucket_arn> -namespace <namespace> -name <table>
+s3tables.table -put-policy -bucket <bucket> -account <account_id> -namespace <namespace> -name <table> -file policy.json
+s3tables.table -get-policy -bucket <bucket> -account <account_id> -namespace <namespace> -name <table>
+s3tables.table -delete-policy -bucket <bucket> -account <account_id> -namespace <namespace> -name <table>
 `
 }
 
@@ -57,7 +57,8 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 	getPolicy := cmd.Bool("get-policy", false, "get table policy")
 	deletePolicy := cmd.Bool("delete-policy", false, "delete table policy")
 
-	bucketArn := cmd.String("bucket", "", "table bucket ARN")
+	bucketName := cmd.String("bucket", "", "table bucket name")
+	account := cmd.String("account", "", "owner account id")
 	namespace := cmd.String("namespace", "", "namespace")
 	name := cmd.String("name", "", "table name")
 	format := cmd.String("format", "ICEBERG", "table format")
@@ -70,7 +71,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 	policyFile := cmd.String("file", "", "policy file (json)")
 
 	if err := cmd.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	actions := []*bool{create, list, get, deleteTable, putPolicy, getPolicy, deletePolicy}
@@ -83,8 +84,16 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 	if count != 1 {
 		return fmt.Errorf("exactly one action must be specified")
 	}
-	if *bucketArn == "" {
+	if *bucketName == "" {
 		return fmt.Errorf("-bucket is required")
+	}
+	if *account == "" {
+		return fmt.Errorf("-account is required")
+	}
+
+	bucketArn, err := buildS3TablesBucketARN(*bucketName, *account)
+	if err != nil {
+		return err
 	}
 
 	ns := strings.TrimSpace(*namespace)
@@ -107,7 +116,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 				return err
 			}
 		}
-		req := &s3tables.CreateTableRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name, Format: *format, Metadata: metadata}
+		req := &s3tables.CreateTableRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name, Format: *format, Metadata: metadata}
 		if *tags != "" {
 			parsed, err := parseS3TablesTags(*tags)
 			if err != nil {
@@ -116,7 +125,7 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 			req.Tags = parsed
 		}
 		var resp s3tables.CreateTableResponse
-		if err := executeS3Tables(commandEnv, "CreateTable", req, &resp); err != nil {
+		if err := executeS3Tables(commandEnv, "CreateTable", req, &resp, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintf(writer, "TableARN: %s\n", resp.TableARN)
@@ -126,9 +135,9 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 		if ns != "" {
 			nsList = []string{ns}
 		}
-		req := &s3tables.ListTablesRequest{TableBucketARN: *bucketArn, Namespace: nsList, Prefix: *prefix, ContinuationToken: *continuation, MaxTables: *limit}
+		req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: nsList, Prefix: *prefix, ContinuationToken: *continuation, MaxTables: *limit}
 		var resp s3tables.ListTablesResponse
-		if err := executeS3Tables(commandEnv, "ListTables", req, &resp); err != nil {
+		if err := executeS3Tables(commandEnv, "ListTables", req, &resp, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		if len(resp.Tables) == 0 {
@@ -147,9 +156,9 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 			fmt.Fprintf(writer, "ContinuationToken: %s\n", resp.ContinuationToken)
 		}
 	case *get:
-		req := &s3tables.GetTableRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name}
+		req := &s3tables.GetTableRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name}
 		var resp s3tables.GetTableResponse
-		if err := executeS3Tables(commandEnv, "GetTable", req, &resp); err != nil {
+		if err := executeS3Tables(commandEnv, "GetTable", req, &resp, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintf(writer, "Name: %s\n", resp.Name)
@@ -160,8 +169,8 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 		fmt.Fprintf(writer, "ModifiedAt: %s\n", resp.ModifiedAt.Format(timeFormat))
 		fmt.Fprintf(writer, "VersionToken: %s\n", resp.VersionToken)
 	case *deleteTable:
-		req := &s3tables.DeleteTableRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name, VersionToken: *version}
-		if err := executeS3Tables(commandEnv, "DeleteTable", req, nil); err != nil {
+		req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name, VersionToken: *version}
+		if err := executeS3Tables(commandEnv, "DeleteTable", req, nil, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, "Table deleted")
@@ -173,21 +182,21 @@ func (c *commandS3TablesTable) Do(args []string, commandEnv *CommandEnv, writer 
 		if err != nil {
 			return err
 		}
-		req := &s3tables.PutTablePolicyRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name, ResourcePolicy: string(content)}
-		if err := executeS3Tables(commandEnv, "PutTablePolicy", req, nil); err != nil {
+		req := &s3tables.PutTablePolicyRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name, ResourcePolicy: string(content)}
+		if err := executeS3Tables(commandEnv, "PutTablePolicy", req, nil, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, "Table policy updated")
 	case *getPolicy:
-		req := &s3tables.GetTablePolicyRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name}
+		req := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name}
 		var resp s3tables.GetTablePolicyResponse
-		if err := executeS3Tables(commandEnv, "GetTablePolicy", req, &resp); err != nil {
+		if err := executeS3Tables(commandEnv, "GetTablePolicy", req, &resp, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, resp.ResourcePolicy)
 	case *deletePolicy:
-		req := &s3tables.DeleteTablePolicyRequest{TableBucketARN: *bucketArn, Namespace: []string{ns}, Name: *name}
-		if err := executeS3Tables(commandEnv, "DeleteTablePolicy", req, nil); err != nil {
+		req := &s3tables.DeleteTablePolicyRequest{TableBucketARN: bucketArn, Namespace: []string{ns}, Name: *name}
+		if err := executeS3Tables(commandEnv, "DeleteTablePolicy", req, nil, *account); err != nil {
 			return parseS3TablesError(err)
 		}
 		fmt.Fprintln(writer, "Table policy deleted")
