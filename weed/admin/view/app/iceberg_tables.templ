@@ -1,0 +1,127 @@
+package app
+
+import (
+	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ IcebergTables(data dash.IcebergTablesData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<nav aria-label="breadcrumb">
+				<ol class="breadcrumb mb-0">
+					<li class="breadcrumb-item">
+						<a href="/object-store/iceberg">
+							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+						</a>
+					</li>
+					<li class="breadcrumb-item">
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", data.CatalogName)) }>
+							{ data.CatalogName }
+						</a>
+					</li>
+					<li class="breadcrumb-item active">{ data.NamespaceName }</li>
+				</ol>
+			</nav>
+		</h1>
+	</div>
+	<div id="iceberg-tables-content">
+		<!-- Stats Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Namespace
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ data.NamespaceName }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-folder fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-success shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+									Total Tables
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalTables) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-table fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Tables List -->
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-table me-2"></i>Tables
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover" width="100%" cellspacing="0">
+								<thead>
+									<tr>
+										<th>Table Name</th>
+										<th>Type</th>
+										<th>S3 Location</th>
+										<th>Created</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, table := range data.Tables {
+										<tr>
+											<td>
+												<i class="fas fa-table text-primary me-2"></i>
+												<strong>{ table.Name }</strong>
+											</td>
+											<td>
+												<span class="badge bg-info">Iceberg</span>
+											</td>
+											<td>
+												<code class="small">s3://{ data.CatalogName }/{ data.NamespaceName }/{ table.Name }/</code>
+											</td>
+											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
+										</tr>
+									}
+									if len(data.Tables) == 0 {
+										<tr>
+											<td colspan="4" class="text-center text-muted py-4">
+												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
+												<div>
+													<h5>No tables found</h5>
+													<p>Create tables via the Iceberg REST API.</p>
+												</div>
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}
