@@ -239,7 +239,7 @@ func ensureNoS3BucketNameConflict(commandEnv *CommandEnv, bucketName string) err
 		if filerBucketsPath == "" {
 			filerBucketsPath = s3_constants.DefaultBucketsPath
 		}
-		_, err = client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		_, err = filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: filerBucketsPath,
 			Name:      bucketName,
 		})
