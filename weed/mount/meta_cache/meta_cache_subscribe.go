@@ -77,6 +77,20 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		}
 		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
 		if err == nil {
+			if message.NewEntry != nil || message.OldEntry != nil {
+				if oldPath != "" {
+					parent, _ := oldPath.DirAndName()
+					mc.noteDirectoryUpdate(util.FullPath(parent))
+				}
+				if newEntry != nil {
+					newParent, _ := newEntry.DirAndName()
+					mc.noteDirectoryUpdate(util.FullPath(newParent))
+				}
+				if message.NewEntry != nil && message.NewEntry.IsDirectory {
+					childPath := util.NewFullPath(dir, message.NewEntry.Name)
+					mc.noteDirectoryUpdate(childPath)
+				}
+			}
 			if message.OldEntry != nil && message.NewEntry != nil {
 				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
 				mc.invalidateFunc(oldKey, message.OldEntry)

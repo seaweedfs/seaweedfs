@@ -220,6 +220,8 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		glog.V(0).Infof("Link: %v", err)
 		return
 	}
+	wfs.inodeToPath.TouchDirectory(oldDir)
+	wfs.inodeToPath.TouchDirectory(newDir)
 
 	return fuse.OK
 

@@ -102,6 +102,11 @@ type WFS struct {
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
+	refreshMu            sync.Mutex
+	refreshingDirs       map[util.FullPath]struct{}
+	dirHotWindow         time.Duration
+	dirHotThreshold      int
+	dirIdleEvict         time.Duration
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -128,14 +133,18 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs := &WFS{
-		RawFileSystem: fuse.NewDefaultRawFileSystem(),
-		option:        option,
-		signature:     util.RandomInt32(),
-		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
-		fhMap:         NewFileHandleToInode(),
-		dhMap:         NewDirectoryHandleToInode(),
-		filerClient:   filerClient, // nil for proxy mode, initialized for direct access
-		fhLockTable:   util.NewLockTable[FileHandleId](),
+		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
+		option:          option,
+		signature:       util.RandomInt32(),
+		inodeToPath:     NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
+		fhMap:           NewFileHandleToInode(),
+		dhMap:           NewDirectoryHandleToInode(),
+		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
+		fhLockTable:     util.NewLockTable[FileHandleId](),
+		refreshingDirs:  make(map[util.FullPath]struct{}),
+		dirHotWindow:    2 * time.Second,
+		dirHotThreshold: 64,
+		dirIdleEvict:    10 * time.Minute,
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
@@ -170,6 +179,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 						}
 					}
 				}
+			}
+		}, func(dirPath util.FullPath) {
+			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
+				wfs.maybeRefreshDirectory(dirPath)
 			}
 		})
 	grace.OnInterrupt(func() {
@@ -218,6 +231,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), follower)
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
+	go wfs.loopEvictIdleDirCache()
 
 	return nil
 }
@@ -331,6 +345,50 @@ func (wfs *WFS) ClearCacheDir() {
 	wfs.metaCache.Shutdown()
 	os.RemoveAll(wfs.option.getUniqueCacheDirForWrite())
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
+}
+
+func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
+	if !wfs.inodeToPath.NeedsRefresh(dirPath) {
+		return
+	}
+	now := time.Now()
+	wfs.refreshMu.Lock()
+	if _, exists := wfs.refreshingDirs[dirPath]; exists {
+		wfs.refreshMu.Unlock()
+		return
+	}
+	wfs.refreshingDirs[dirPath] = struct{}{}
+	wfs.refreshMu.Unlock()
+
+	go func() {
+		defer func() {
+			wfs.refreshMu.Lock()
+			delete(wfs.refreshingDirs, dirPath)
+			wfs.refreshMu.Unlock()
+		}()
+		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
+		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
+			glog.Warningf("refresh dir cache %s: %v", dirPath, err)
+			return
+		}
+		wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, now)
+	}()
+}
+
+func (wfs *WFS) loopEvictIdleDirCache() {
+	if wfs.dirIdleEvict <= 0 {
+		return
+	}
+	ticker := time.NewTicker(wfs.dirIdleEvict / 2)
+	defer ticker.Stop()
+	for range ticker.C {
+		dirs := wfs.inodeToPath.CollectEvictableDirs(time.Now(), wfs.dirIdleEvict)
+		for _, dir := range dirs {
+			if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dir); err != nil {
+				glog.V(2).Infof("evict dir cache %s: %v", dir, err)
+			}
+		}
+	}
 }
 
 func (option *Option) setupUniqueCacheDirectory() {

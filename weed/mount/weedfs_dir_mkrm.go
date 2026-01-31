@@ -71,6 +71,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		// Only cache the entry if the parent directory is already cached.
 		// This avoids polluting the cache with partial directory data.
 		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
+			wfs.inodeToPath.TouchDirectory(dirFullPath)
 			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
 				return fmt.Errorf("local mkdir dir %s: %w", entryFullPath, err)
 			}
@@ -122,6 +123,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 
 	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
 	wfs.inodeToPath.RemovePath(entryFullPath)
+	wfs.inodeToPath.TouchDirectory(dirFullPath)
 
 	return fuse.OK
 
