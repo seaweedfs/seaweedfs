@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -67,23 +68,52 @@ func (s *AdminServer) executeS3TablesOperation(ctx context.Context, operation st
 // S3Tables data retrieval for pages
 
 func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucketsData, error) {
-	var resp s3tables.ListTableBucketsResponse
-	req := &s3tables.ListTableBucketsRequest{MaxBuckets: s3TablesAdminListLimit}
-	if err := s.executeS3TablesOperation(ctx, "ListTableBuckets", req, &resp); err != nil {
-		return S3TablesBucketsData{}, err
-	}
-	buckets := make([]s3tables.TableBucketSummary, 0, len(resp.TableBuckets))
-	for _, bucket := range resp.TableBuckets {
-		if bucket.ARN != "" {
-			if bucketName, err := s3tables.ParseBucketNameFromARN(bucket.ARN); err == nil && bucketName != "" {
-				if owner, err := s.getTableBucketOwner(ctx, bucketName); err == nil && owner != "" {
-					if arn, err := s3tables.BuildBucketARN(s3tables.DefaultRegion, owner, bucketName); err == nil {
-						bucket.ARN = arn
-					}
-				}
-			}
+	var buckets []s3tables.TableBucketSummary
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+			Directory:          s3tables.TablesPath,
+			Limit:              uint32(s3TablesAdminListLimit * 2),
+			InclusiveStartFrom: true,
+		})
+		if err != nil {
+			return err
 		}
-		buckets = append(buckets, bucket)
+		for len(buckets) < s3TablesAdminListLimit {
+			entry, recvErr := resp.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return recvErr
+			}
+			if entry.Entry == nil || !entry.Entry.IsDirectory {
+				continue
+			}
+			if strings.HasPrefix(entry.Entry.Name, ".") {
+				continue
+			}
+			metaBytes, ok := entry.Entry.Extended[s3tables.ExtendedKeyMetadata]
+			if !ok {
+				continue
+			}
+			var metadata tableBucketMetadata
+			if err := json.Unmarshal(metaBytes, &metadata); err != nil {
+				continue
+			}
+			arn, err := s3tables.BuildBucketARN(s3tables.DefaultRegion, metadata.OwnerAccountID, entry.Entry.Name)
+			if err != nil {
+				continue
+			}
+			buckets = append(buckets, s3tables.TableBucketSummary{
+				ARN:       arn,
+				Name:      entry.Entry.Name,
+				CreatedAt: metadata.CreatedAt,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return S3TablesBucketsData{}, err
 	}
 	return S3TablesBucketsData{
 		Buckets:      buckets,
@@ -214,36 +244,6 @@ func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner
 		}
 		return nil
 	})
-}
-
-func (s *AdminServer) getTableBucketOwner(ctx context.Context, bucketName string) (string, error) {
-	var owner string
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3tables.TablesPath,
-			Name:      bucketName,
-		})
-		if err != nil {
-			return err
-		}
-		if resp.Entry == nil || resp.Entry.Extended == nil {
-			return nil
-		}
-		metaBytes, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadata]
-		if !ok {
-			return nil
-		}
-		var metadata tableBucketMetadata
-		if err := json.Unmarshal(metaBytes, &metadata); err != nil {
-			return err
-		}
-		owner = metadata.OwnerAccountID
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return owner, nil
 }
 
 func (s *AdminServer) DeleteS3TablesBucket(c *gin.Context) {
