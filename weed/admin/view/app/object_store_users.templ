@@ -457,6 +457,32 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Global variable to store available buckets
         var availableBuckets = [];
         var bucketPermissionCounter = 0;
+        const s3TablesPermissions = new Set([
+            'CreateTableBucket',
+            'GetTableBucket',
+            'ListTableBuckets',
+            'DeleteTableBucket',
+            'PutTableBucketPolicy',
+            'GetTableBucketPolicy',
+            'DeleteTableBucketPolicy',
+            'CreateNamespace',
+            'GetNamespace',
+            'ListNamespaces',
+            'DeleteNamespace',
+            'CreateTable',
+            'GetTable',
+            'ListTables',
+            'DeleteTable',
+            'PutTablePolicy',
+            'GetTablePolicy',
+            'DeleteTablePolicy',
+            'TagResource',
+            'ListTagsForResource',
+            'UntagResource'
+        ]);
+        function isS3TablesPermission(permission) {
+            return permission === 'S3TablesAdmin' || s3TablesPermissions.has(permission);
+        }
 
         // Load buckets
         async function loadBuckets() {
@@ -464,10 +490,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 const response = await fetch('/api/s3/buckets');
                 if (response.ok) {
                     const data = await response.json();
-                    availableBuckets = data.buckets || [];
+                    availableBuckets = (data.buckets || []).map(bucket => ({ name: bucket.name, type: 's3' }));
                     console.log('Loaded', availableBuckets.length, 'buckets');
-                    // Populate bucket selection dropdowns
-                    populateBucketSelections();
                 } else {
                     console.warn('Failed to load buckets');
                     availableBuckets = [];
@@ -476,6 +500,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 console.error('Error loading buckets:', error);
                 availableBuckets = [];
             }
+            try {
+                const response = await fetch('/api/s3tables/buckets');
+                if (response.ok) {
+                    const data = await response.json();
+                    const tableBuckets = (data.buckets || data.tableBuckets || []).map(bucket => ({ name: bucket.name, type: 's3tables' }));
+                    availableBuckets = availableBuckets.concat(tableBuckets);
+                } else {
+                    console.warn('Failed to load table buckets');
+                }
+            } catch (error) {
+                console.warn('Error loading table buckets:', error);
+            }
+            // Populate bucket selection dropdowns
+            populateBucketSelections();
         }
 
         // Load policies
@@ -557,7 +595,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     availableBuckets.forEach(bucket => {
                         const option = document.createElement('option');
                         option.value = bucket.name;
-                        option.textContent = bucket.name;
+                        option.textContent = bucket.type === 's3tables' ? `Table: ${bucket.name}` : bucket.name;
                         select.appendChild(option);
                     });
                 }
@@ -584,7 +622,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const globalBucketPerms = [];
             
             actions.forEach(action => {
-                if (action.includes(':')) {
+                if (action.startsWith('s3tables:')) {
+                    const actionValue = action.slice('s3tables:'.length);
+                    if (actionValue === '*') {
+                        globalBucketPerms.push('S3TablesAdmin');
+                        return;
+                    }
+                    const parts = actionValue.split(':');
+                    const perm = parts[0];
+                    const bucket = parts.length > 1 ? parts.slice(1).join(':').replace(/\/\*$/, '') : '';
+                    if (bucket) {
+                        bucketActions.push({ permission: perm, bucket: bucket });
+                    } else {
+                        globalBucketPerms.push(perm);
+                    }
+                } else if (action.includes(':')) {
                     const parts = action.split(':');
                     const perm = parts[0];
                     const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
@@ -627,10 +679,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             // Get selected permissions from the original multi-select
             const selectedPerms = Array.from(permSelect.selectedOptions).map(opt => opt.value);
             
-            // If Admin is selected, return just Admin (it overrides everything)
-            if (selectedPerms.includes('Admin')) {
-                return ['Admin'];
-            }
+            const hasAdmin = selectedPerms.includes('Admin');
+            const hasS3TablesAdmin = selectedPerms.includes('S3TablesAdmin');
             
             if (selectedPerms.length === 0) {
                 return [];
@@ -663,13 +713,31 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             if (applyToAll) {
                 // Return global permissions (no bucket specification)
-                return selectedPerms;
+                const actions = [];
+                if (hasAdmin) {
+                    actions.push('Admin');
+                }
+                if (hasS3TablesAdmin) {
+                    actions.push('s3tables:*');
+                }
+                selectedPerms.forEach(perm => {
+                    if (perm === 'Admin' || perm === 'S3TablesAdmin') {
+                        return;
+                    }
+                    if (isS3TablesPermission(perm)) {
+                        actions.push('s3tables:' + perm);
+                    } else {
+                        actions.push(perm);
+                    }
+                });
+                return actions;
             } else {
                 // Get selected specific buckets
                 const bucketSelect = document.getElementById(mode === 'edit' ? 'editSelectedBuckets' : 'selectedBuckets');
                 if (!bucketSelect) return null;
                 
                 const selectedBuckets = Array.from(bucketSelect.selectedOptions).map(opt => opt.value);
+                const tableBuckets = new Set(availableBuckets.filter(bucket => bucket.type === 's3tables').map(bucket => bucket.name));
                 
                 // Return null to signal validation failure if no buckets selected
                 if (selectedBuckets.length === 0) {
@@ -678,9 +746,24 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 
                 // Build bucket-scoped permissions
                 const actions = [];
+                if (hasAdmin) {
+                    actions.push('Admin');
+                }
+                if (hasS3TablesAdmin) {
+                    actions.push('s3tables:*');
+                }
                 selectedPerms.forEach(perm => {
+                    if (perm === 'Admin' || perm === 'S3TablesAdmin') {
+                        return;
+                    }
                     selectedBuckets.forEach(bucket => {
-                        actions.push(perm + ':' + bucket);
+                        if (isS3TablesPermission(perm)) {
+                            if (tableBuckets.has(bucket)) {
+                                actions.push('s3tables:' + perm + ':' + bucket);
+                            }
+                        } else if (!tableBuckets.has(bucket)) {
+                            actions.push(perm + ':' + bucket);
+                        }
                     });
                 });
                 
