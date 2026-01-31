@@ -30,9 +30,9 @@ var (
 	// Patterns for valid metadata files
 	metadataFilePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`^v\d+\.metadata\.json$`),                                 // Table metadata: v1.metadata.json, v2.metadata.json
-		regexp.MustCompile(`^snap-\d+-\d+-[a-f0-9-]+\.avro$`),                        // Snapshot manifests: snap-123-1-uuid.avro
-		regexp.MustCompile(`^[a-f0-9-]+-m\d+\.avro$`),                                // Manifest files: uuid-m0.avro
-		regexp.MustCompile(`^[a-f0-9-]+\.avro$`),                                     // General manifest files
+		regexp.MustCompile(`^snap-\d+-\d+-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.avro$`),                        // Snapshot manifests: snap-123-1-uuid.avro
+		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}-m\d+\.avro$`),                                // Manifest files: uuid-m0.avro
+		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.avro$`),                                     // General manifest files
 		regexp.MustCompile(`^version-hint\.text$`),                                   // Version hint file
 		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.metadata\.json$`), // UUID-named metadata
 	}
@@ -46,6 +46,9 @@ var (
 
 	// Data file partition path pattern (e.g., year=2024/month=01/)
 	partitionPathPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*=[^/]+$`)
+
+	// Pattern for valid subdirectory names (alphanumeric, underscore, hyphen, and UUID-style directories)
+	validSubdirectoryPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 )
 
 // IcebergLayoutValidator validates that files conform to Iceberg table layout
@@ -69,12 +72,6 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 	}
 
 	parts := strings.SplitN(relativePath, "/", 2)
-	if len(parts) == 0 {
-		return &IcebergLayoutError{
-			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "invalid file path structure",
-		}
-	}
 
 	topDir := parts[0]
 
@@ -159,8 +156,7 @@ func (v *IcebergLayoutValidator) validateDataFile(path string) error {
 // isValidSubdirectory checks if a path component is a valid subdirectory name
 func isValidSubdirectory(name string) bool {
 	// Allow alphanumeric, underscore, hyphen, and UUID-style directories
-	validSubdir := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	return validSubdir.MatchString(name)
+	return validSubdirectoryPattern.MatchString(name)
 }
 
 // IcebergLayoutError represents an Iceberg layout validation error
@@ -287,12 +283,16 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 	if resp.Entry != nil && resp.Entry.Extended != nil {
 		if metadataBytes, ok := resp.Entry.Extended[ExtendedKeyMetadata]; ok {
 			var metadata tableMetadataInternal
-			if err := json.Unmarshal(metadataBytes, &metadata); err == nil {
-				if metadata.Format != "ICEBERG" {
-					return &IcebergLayoutError{
-						Code:    ErrCodeInvalidIcebergLayout,
-						Message: "table is not in ICEBERG format",
-					}
+			if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "failed to parse table metadata: " + err.Error(),
+				}
+			}
+			if metadata.Format != "ICEBERG" {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "table is not in ICEBERG format",
 				}
 			}
 		}
