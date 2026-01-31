@@ -50,9 +50,15 @@ func RegisterTableMaintenanceTask() {
 			tablePath := params.Sources[0].Node
 			tableBucket := params.Collection
 
-			// Create a default maintenance job (actual job type would come from queue)
+			// Parse job type from params if available
+			// TODO: Define TableMaintenanceTaskParams in protobuf to pass job type explicitly
+			// For now, default to compaction. In production, the job type would be determined
+			// by the table scanner based on the table's maintenance needs (see detection.go)
+			jobType := JobTypeCompaction
+
+			// Create a default maintenance job
 			job := &TableMaintenanceJob{
-				JobType:     JobTypeCompaction,
+				JobType:     jobType,
 				TableBucket: tableBucket,
 				TablePath:   tablePath,
 				Priority:    types.TaskPriorityNormal,

@@ -25,7 +25,7 @@ func NewDefaultConfig() *Config {
 	return &Config{
 		BaseConfig: base.BaseConfig{
 			Enabled:             true,
-			ScanIntervalSeconds: 30 * 60, // 30 minutes
+			ScanIntervalSeconds: 24 * 60 * 60, // 24 hours
 			MaxConcurrent:       2,
 		},
 		ScanIntervalMinutes:     30,  // Scan every 30 minutes
@@ -68,8 +68,12 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	if persistence, ok := configPersistence.(interface {
 		LoadTableMaintenanceTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadTableMaintenanceTaskPolicy(); err == nil && policy != nil {
-			if err := config.FromTaskPolicy(policy); err == nil {
+		if policy, err := persistence.LoadTableMaintenanceTaskPolicy(); err != nil {
+			glog.Warningf("Failed to load table_maintenance configuration from persistence: %v", err)
+		} else if policy != nil {
+			if err := config.FromTaskPolicy(policy); err != nil {
+				glog.Warningf("Failed to parse table_maintenance configuration from persistence: %v", err)
+			} else {
 				glog.V(1).Infof("Loaded table_maintenance configuration from persistence")
 				return config
 			}

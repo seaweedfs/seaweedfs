@@ -122,26 +122,32 @@ func (t *TableMaintenanceTask) Execute(ctx context.Context, params *worker_pb.Ta
 	glog.Infof("Starting table maintenance task %s: %s on %s/%s/%s",
 		t.ID(), t.MaintenanceJob.JobType, t.TableBucket, t.Namespace, t.TableName)
 
-	defer func() {
-		if t.status == types.TaskStatusInProgress {
-			t.status = types.TaskStatusCompleted
-		}
-		glog.Infof("Table maintenance task %s completed with status: %s", t.ID(), t.status)
-	}()
-
+	// Execute the appropriate maintenance operation
+	var err error
 	switch t.MaintenanceJob.JobType {
 	case JobTypeCompaction:
-		return t.executeCompaction(ctx)
+		err = t.executeCompaction(ctx)
 	case JobTypeSnapshotExpiration:
-		return t.executeSnapshotExpiration(ctx)
+		err = t.executeSnapshotExpiration(ctx)
 	case JobTypeOrphanCleanup:
-		return t.executeOrphanCleanup(ctx)
+		err = t.executeOrphanCleanup(ctx)
 	case JobTypeManifestRewrite:
-		return t.executeManifestRewrite(ctx)
+		err = t.executeManifestRewrite(ctx)
 	default:
 		t.status = types.TaskStatusFailed
-		return fmt.Errorf("unknown job type: %s", t.MaintenanceJob.JobType)
+		err = fmt.Errorf("unknown job type: %s", t.MaintenanceJob.JobType)
 	}
+
+	// Set status based on execution result
+	if err != nil {
+		t.status = types.TaskStatusFailed
+	} else if t.status == types.TaskStatusInProgress {
+		// Only mark as completed if no error and still in progress
+		t.status = types.TaskStatusCompleted
+	}
+
+	glog.Infof("Table maintenance task %s completed with status: %s", t.ID(), t.status)
+	return err
 }
 
 // executeCompaction performs Iceberg table compaction

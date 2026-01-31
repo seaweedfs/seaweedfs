@@ -152,25 +152,18 @@ func (s *TableMaintenanceScanner) checkTableMaintenanceNeeds(bucketName string, 
 
 // needsCompaction checks if a table needs compaction
 func (s *TableMaintenanceScanner) needsCompaction(table TableInfo) bool {
-	threshold := 100 // Default threshold
-	if s.config != nil && s.config.CompactionFileThreshold > 0 {
-		threshold = s.config.CompactionFileThreshold
-	}
-	return table.DataFileCount > threshold
+	// Use config value directly - config is always set by NewTableMaintenanceScanner
+	return table.DataFileCount > s.config.CompactionFileThreshold
 }
 
 // needsSnapshotExpiration checks if a table has expired snapshots
 func (s *TableMaintenanceScanner) needsSnapshotExpiration(table TableInfo) bool {
-	retentionDays := 7 // Default retention
-	if s.config != nil && s.config.SnapshotRetentionDays > 0 {
-		retentionDays = s.config.SnapshotRetentionDays
-	}
-
 	if table.SnapshotCount <= 1 {
 		return false // Keep at least one snapshot
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	// Use config value directly - config is always set by NewTableMaintenanceScanner
+	cutoff := time.Now().AddDate(0, 0, -s.config.SnapshotRetentionDays)
 	return table.OldestSnapshot.Before(cutoff)
 }
 
