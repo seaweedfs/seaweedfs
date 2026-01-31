@@ -246,7 +246,13 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	}
 
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), follower)
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano(), func(lastTsNs int64, err error) {
+		glog.Warningf("meta events follow retry from %v: %v", time.Unix(0, lastTsNs), err)
+		if deleteErr := wfs.metaCache.DeleteFolderChildren(context.Background(), util.FullPath(wfs.option.FilerMountRootPath)); deleteErr != nil {
+			glog.Warningf("meta cache cleanup failed: %v", deleteErr)
+		}
+		wfs.inodeToPath.InvalidateAllChildrenCache()
+	}, follower)
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()

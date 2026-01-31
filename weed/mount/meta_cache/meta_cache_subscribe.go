@@ -43,7 +43,7 @@ func mergeProcessors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse
 	}
 }
 
-func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64, followers ...*MetadataFollower) error {
+func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64, onRetry func(lastTsNs int64, err error), followers ...*MetadataFollower) error {
 
 	var prefixes []string
 	for _, follower := range followers {
@@ -135,6 +135,9 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		metadataFollowOption.ClientEpoch++
 		return pb.WithFilerClientFollowMetadata(client, metadataFollowOption, mergeProcessors(processEventFn, followers...))
 	}, func(err error) bool {
+		if onRetry != nil {
+			onRetry(metadataFollowOption.StartTsNs, err)
+		}
 		glog.Errorf("follow metadata updates: %v", err)
 		return true
 	})
