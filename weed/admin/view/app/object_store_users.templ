@@ -642,7 +642,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     select.innerHTML = '';
                     availableBuckets.forEach(bucket => {
                         const option = document.createElement('option');
-                        option.value = bucket.name;
+                        option.value = bucket.type + ':' + bucket.name;
                         option.textContent = bucket.type === 's3tables' ? `Table: ${bucket.name}` : bucket.name;
                         select.appendChild(option);
                     });
@@ -680,7 +680,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const perm = parts[0];
                     const bucket = parts.length > 1 ? parts.slice(1).join(':').replace(/\/\*$/, '') : '';
                     if (bucket) {
-                        bucketActions.push({ permission: perm, bucket: bucket });
+                        bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket });
                     } else {
                         globalBucketPerms.push(perm);
                     }
@@ -688,7 +688,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const parts = action.split(':');
                     const perm = parts[0];
                     const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
-                    bucketActions.push({ permission: perm, bucket: bucket });
+                    bucketActions.push({ permission: perm, bucketId: 's3:' + bucket });
                 } else {
                     globalBucketPerms.push(action);
                 }
@@ -701,7 +701,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             } else if (bucketActions.length > 0) {
                 // Get unique permissions and buckets
                 const perms = [...new Set(bucketActions.map(ba => ba.permission))];
-                const buckets = [...new Set(bucketActions.map(ba => ba.bucket))];
+                const buckets = [...new Set(bucketActions.map(ba => ba.bucketId))];
                 
                 result.permissions = perms;
                 result.applyToAll = false;
@@ -709,6 +709,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
             
             return result;
+        }
+
+        function parseBucketOptionValue(value) {
+            if (value.startsWith('s3tables:')) {
+                return { type: 's3tables', name: value.slice('s3tables:'.length) };
+            }
+            if (value.startsWith('s3:')) {
+                return { type: 's3', name: value.slice('s3:'.length) };
+            }
+            return { type: 's3', name: value };
         }
 
         // Build bucket permission action strings using original permissions dropdown
@@ -784,8 +794,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 const bucketSelect = document.getElementById(mode === 'edit' ? 'editSelectedBuckets' : 'selectedBuckets');
                 if (!bucketSelect) return null;
                 
-                const selectedBuckets = Array.from(bucketSelect.selectedOptions).map(opt => opt.value);
-                const tableBuckets = new Set(availableBuckets.filter(bucket => bucket.type === 's3tables').map(bucket => bucket.name));
+                const selectedBuckets = [...new Set(Array.from(bucketSelect.selectedOptions).map(opt => opt.value))];
                 
                 // Return null to signal validation failure if no buckets selected
                 if (selectedBuckets.length === 0) {
@@ -805,17 +814,18 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         return;
                     }
                     selectedBuckets.forEach(bucket => {
+                        const bucketInfo = parseBucketOptionValue(bucket);
                         if (isS3TablesPermission(perm)) {
-                            if (tableBuckets.has(bucket)) {
-                                actions.push('s3tables:' + perm + ':' + bucket);
+                            if (bucketInfo.type === 's3tables') {
+                                actions.push('s3tables:' + perm + ':' + bucketInfo.name);
                             }
-                        } else if (!tableBuckets.has(bucket)) {
-                            actions.push(perm + ':' + bucket);
+                        } else if (bucketInfo.type === 's3') {
+                            actions.push(perm + ':' + bucketInfo.name);
                         }
                     });
                 });
                 
-                return actions;
+                return [...new Set(actions)];
             }
         }
 
