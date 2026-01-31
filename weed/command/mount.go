@@ -48,9 +48,6 @@ type MountOptions struct {
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
 
-	// Directory cache refresh/eviction controls
-	dirHotWindowSec *int
-	dirHotThreshold *int
 	dirIdleEvictSec *int
 
 	// FUSE performance options
@@ -112,9 +109,6 @@ func init() {
 	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
 	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
 
-	// Directory cache refresh/eviction flags
-	mountOptions.dirHotWindowSec = cmdMount.Flag.Int("dirHotWindowSec", 2, "seconds window to detect hot directory updates")
-	mountOptions.dirHotThreshold = cmdMount.Flag.Int("dirHotThreshold", 64, "update count threshold to refresh cached directory")
 	mountOptions.dirIdleEvictSec = cmdMount.Flag.Int("dirIdleEvictSec", 600, "seconds to evict idle cached directories (0 to disable)")
 
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")

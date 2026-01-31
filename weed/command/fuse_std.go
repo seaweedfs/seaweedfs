@@ -157,20 +157,6 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("cacheMetaTtlSec: %s", err))
 			}
-		case "dirHotWindowSec":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
-				intValue := int(parsed)
-				mountOptions.dirHotWindowSec = &intValue
-			} else {
-				panic(fmt.Errorf("dirHotWindowSec: %s", err))
-			}
-		case "dirHotThreshold":
-			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
-				intValue := int(parsed)
-				mountOptions.dirHotThreshold = &intValue
-			} else {
-				panic(fmt.Errorf("dirHotThreshold: %s", err))
-			}
 		case "dirIdleEvictSec":
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
 				intValue := int(parsed)

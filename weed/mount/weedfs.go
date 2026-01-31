@@ -76,8 +76,6 @@ type Option struct {
 	RdmaTimeoutMs     int
 
 	// Directory cache refresh/eviction controls
-	DirHotWindowSec int
-	DirHotThreshold int
 	DirIdleEvictSec int
 
 	uniqueCacheDirForRead  string
@@ -114,6 +112,12 @@ type WFS struct {
 	dirIdleEvict         time.Duration
 }
 
+const (
+	defaultDirHotWindow    = 2 * time.Second
+	defaultDirHotThreshold = 64
+	defaultDirIdleEvict    = 10 * time.Minute
+)
+
 func NewSeaweedFileSystem(option *Option) *WFS {
 	// Only create FilerClient for direct volume access modes
 	// When VolumeServerAccess == "filerProxy", all reads go through filer, so no volume lookup needed
@@ -137,16 +141,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		)
 	}
 
-	dirHotWindow := 2 * time.Second
-	if option.DirHotWindowSec > 0 {
-		dirHotWindow = time.Duration(option.DirHotWindowSec) * time.Second
-	}
-	dirHotThreshold := 64
-	if option.DirHotThreshold > 0 {
-		dirHotThreshold = option.DirHotThreshold
-	}
-	dirIdleEvict := 10 * time.Minute
-	if option.DirIdleEvictSec > 0 {
+	dirHotWindow := defaultDirHotWindow
+	dirHotThreshold := defaultDirHotThreshold
+	dirIdleEvict := defaultDirIdleEvict
+	if option.DirIdleEvictSec != 0 {
 		dirIdleEvict = time.Duration(option.DirIdleEvictSec) * time.Second
 	}
 
