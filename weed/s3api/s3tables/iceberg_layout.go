@@ -102,9 +102,34 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 
 // validateMetadataFile validates files in the metadata/ directory
 func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
+	// Handle directory creation (path ending with "/")
+	if strings.HasSuffix(path, "/") {
+		// Validate that all intermediate subdirectories are valid
+		subdirs := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		for _, subdir := range subdirs {
+			if subdir != "" && !isValidSubdirectory(subdir) {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "invalid subdirectory name in metadata path",
+				}
+			}
+		}
+		return nil
+	}
+
 	// Get the filename (last component)
 	parts := strings.Split(path, "/")
 	filename := parts[len(parts)-1]
+
+	// Validate intermediate subdirectories
+	for i := 0; i < len(parts)-1; i++ {
+		if parts[i] != "" && !isValidSubdirectory(parts[i]) {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid subdirectory name in metadata path",
+			}
+		}
+	}
 
 	// Check against allowed metadata file patterns
 	for _, pattern := range metadataFilePatterns {
@@ -121,20 +146,32 @@ func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
 
 // validateDataFile validates files in the data/ directory
 func (v *IcebergLayoutValidator) validateDataFile(path string) error {
+	// Handle directory creation (path ending with "/")
+	if strings.HasSuffix(path, "/") {
+		// Validate that all intermediate subdirectories/partitions are valid
+		subdirs := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		for _, subdir := range subdirs {
+			if subdir != "" && !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "invalid partition or subdirectory format in data path",
+				}
+			}
+		}
+		return nil
+	}
+
 	parts := strings.Split(path, "/")
 	filename := parts[len(parts)-1]
 
-	// Validate partition directories if present
+	// Validate partition directories and subdirectories if present
 	if len(parts) > 1 {
 		for i := 0; i < len(parts)-1; i++ {
 			// Allow nested data directories and partition directories
-			if !partitionPathPattern.MatchString(parts[i]) && parts[i] != "" {
-				// Allow plain subdirectories (bucket ID directories, etc.)
-				if !isValidSubdirectory(parts[i]) {
-					return &IcebergLayoutError{
-						Code:    ErrCodeInvalidIcebergLayout,
-						Message: "invalid partition path format in data directory",
-					}
+			if parts[i] != "" && !partitionPathPattern.MatchString(parts[i]) && !isValidSubdirectory(parts[i]) {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "invalid partition or subdirectory format in data path",
 				}
 			}
 		}
