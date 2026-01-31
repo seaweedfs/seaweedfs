@@ -146,6 +146,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	dirIdleEvict := defaultDirIdleEvict
 	if option.DirIdleEvictSec != 0 {
 		dirIdleEvict = time.Duration(option.DirIdleEvictSec) * time.Second
+	} else {
+		dirIdleEvict = 0
 	}
 
 	wfs := &WFS{
