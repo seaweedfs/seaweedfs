@@ -33,6 +33,7 @@ type Server struct {
 	filerClient   FilerClient
 	tablesManager *s3tables.Manager
 	prefix        string // optional prefix for routes
+	tableUUIDs    map[string]string // cache of table UUIDs: "bucket:namespace:table" -> UUID
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
@@ -42,6 +43,7 @@ func NewServer(filerClient FilerClient) *Server {
 		filerClient:   filerClient,
 		tablesManager: manager,
 		prefix:        "",
+		tableUUIDs:    make(map[string]string),
 	}
 }
 
@@ -83,13 +85,12 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 
 // parseNamespace parses the namespace from path parameter.
 // Iceberg uses unit separator (0x1F) for multi-level namespaces.
+// Note: mux already decodes URL-encoded path parameters, so we only split by unit separator.
 func parseNamespace(encoded string) []string {
 	if encoded == "" {
 		return nil
 	}
-	// Support both unit separator and URL-encoded version
-	decoded := strings.ReplaceAll(encoded, "%1F", "\x1F")
-	parts := strings.Split(decoded, "\x1F")
+	parts := strings.Split(encoded, "\x1F")
 	// Filter empty parts
 	result := make([]string, 0, len(parts))
 	for _, p := range parts {
@@ -126,6 +127,24 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 		},
 	}
 	writeJSON(w, status, resp)
+}
+
+// getOrCreateTableUUID returns the cached UUID for a table, or generates and caches a new one.
+// This ensures the UUID is stable across LoadTable calls for the lifetime of the server.
+// TODO: For production use, the UUID should be persisted in the S3 Tables metadata
+// so it survives server restarts.
+func (s *Server) getOrCreateTableUUID(bucketName string, namespace []string, tableName string) string {
+	// Create cache key from table location
+	key := fmt.Sprintf("%s:%s:%s", bucketName, strings.Join(namespace, "."), tableName)
+	
+	if uuid, exists := s.tableUUIDs[key]; exists {
+		return uuid
+	}
+	
+	// Generate new UUID and cache it
+	uuid := generateUUID()
+	s.tableUUIDs[key] = uuid
+	return uuid
 }
 
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
@@ -421,8 +440,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
 	bucketARN := buildTableBucketARN(bucketName)
 
-	// Create initial table metadata
-	tableUUID := generateUUID()
+	// Generate and cache table UUID for consistency
+	tableUUID := s.getOrCreateTableUUID(bucketName, namespace, req.Name)
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), req.Name)
 
 	metadata := TableMetadata{
@@ -503,7 +522,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
 	metadata := TableMetadata{
 		FormatVersion: 2,
-		TableUUID:     generateUUID(), // TODO: store and retrieve actual UUID
+		TableUUID:     s.getOrCreateTableUUID(bucketName, namespace, tableName),
 		Location:      location,
 	}
 
