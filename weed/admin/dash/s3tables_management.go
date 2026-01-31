@@ -202,6 +202,11 @@ func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
 	}
 	if owner != "" {
 		if err := s.SetTableBucketOwner(c.Request.Context(), req.Name, owner); err != nil {
+			deleteReq := &s3tables.DeleteTableBucketRequest{TableBucketARN: resp.ARN}
+			if deleteErr := s.executeS3TablesOperation(c.Request.Context(), "DeleteTableBucket", deleteReq, nil); deleteErr != nil {
+				c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to set table bucket owner: %v; rollback delete failed: %v", err, deleteErr)})
+				return
+			}
 			writeS3TablesError(c, err)
 			return
 		}
