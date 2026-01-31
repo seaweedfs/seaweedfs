@@ -33,7 +33,7 @@ jobs:
 
       - name: Run S3 Tables Integration Tests
         timeout-minutes: 25
-        working-directory: test/s3tables
+        working-directory: test/s3tables/table-buckets
         run: |
           set -x
           set -o pipefail
@@ -51,7 +51,7 @@ jobs:
 
       - name: Show test output on failure
         if: failure()
-        working-directory: test/s3tables
+        working-directory: test/s3tables/table-buckets
         run: |
           echo "=== Test Output ==="
           if [ -f test-output.log ]; then
@@ -66,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: s3-tables-test-logs
-          path: test/s3tables/test-output.log
+          path: test/s3tables/table-buckets/test-output.log
           retention-days: 3
 
   s3-tables-build-verification:
