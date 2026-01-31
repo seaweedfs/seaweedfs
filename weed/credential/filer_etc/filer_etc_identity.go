@@ -427,7 +427,7 @@ func (store *FilerEtcStore) DeleteAccessKey(ctx context.Context, username string
 
 func (store *FilerEtcStore) saveIdentity(ctx context.Context, identity *iam_pb.Identity) error {
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := json.Marshal(identity)
+		data, err := json.MarshalIndent(identity, "", "  ")
 		if err != nil {
 			return err
 		}

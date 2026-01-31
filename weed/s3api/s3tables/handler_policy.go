@@ -88,9 +88,13 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanPutTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, "") {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("PutTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, "", bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table bucket policy")
 		return NewAuthError("PutTableBucketPolicy", principal, "not authorized to put table bucket policy")
 	}
@@ -161,9 +165,13 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanGetTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, string(policy)) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("GetTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, string(policy), bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket policy")
 		return NewAuthError("GetTableBucketPolicy", principal, "not authorized to get table bucket policy")
 	}
@@ -232,9 +240,13 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanDeleteTableBucketPolicy(principal, bucketMetadata.OwnerAccountID, bucketPolicy) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("DeleteTableBucketPolicy", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table bucket policy")
 		return NewAuthError("DeleteTableBucketPolicy", principal, "not authorized to delete table bucket policy")
 	}
@@ -326,9 +338,15 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanPutTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("PutTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to put table policy")
 		return NewAuthError("PutTablePolicy", principal, "not authorized to put table policy")
 	}
@@ -427,9 +445,15 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanGetTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("GetTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table policy")
 		return NewAuthError("GetTablePolicy", principal, "not authorized to get table policy")
 	}
@@ -510,9 +534,15 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		return err
 	}
 
-	// Check permission
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
 	principal := h.getAccountID(r)
-	if !CanDeleteTablePolicy(principal, metadata.OwnerAccountID, bucketPolicy) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("DeleteTablePolicy", principal, metadata.OwnerAccountID, bucketPolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table policy")
 		return NewAuthError("DeleteTablePolicy", principal, "not authorized to delete table policy")
 	}
@@ -558,6 +588,8 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 	// Read existing tags and merge, AND check permissions based on metadata ownership
 	existingTags := make(map[string]string)
 	var bucketPolicy string
+	var bucketTags map[string]string
+	requestTagKeys := mapKeys(req.Tags)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -582,23 +614,36 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 			} else {
 				bucketPolicy = string(policyData)
 			}
-		}
-
-		// Check Permission inside the closure because we just got the ID
-		principal := h.getAccountID(r)
-		if !CanManageTags(principal, ownerAccountID, bucketPolicy) {
-			return NewAuthError("TagResource", principal, "not authorized to tag resource")
+			bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Read existing tags
 		data, err = h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
 		if err != nil {
-			if errors.Is(err, ErrAttributeNotFound) {
-				return nil // No existing tags, which is fine.
+			if !errors.Is(err, ErrAttributeNotFound) {
+				return err
 			}
-			return err // Propagate other errors.
+		} else if err := json.Unmarshal(data, &existingTags); err != nil {
+			return err
 		}
-		return json.Unmarshal(data, &existingTags)
+
+		resourceARN := req.ResourceARN
+		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
+		if !CheckPermissionWithContext("TagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+			TableBucketTags: bucketTags,
+			RequestTags:     req.Tags,
+			TagKeys:         requestTagKeys,
+			ResourceTags:    existingTags,
+			IdentityActions: identityActions,
+		}) {
+			return NewAuthError("TagResource", principal, "not authorized to tag resource")
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -662,6 +707,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 
 	tags := make(map[string]string)
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -686,12 +732,10 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			} else {
 				bucketPolicy = string(policyData)
 			}
-		}
-
-		// Check Permission
-		principal := h.getAccountID(r)
-		if !CheckPermission("ListTagsForResource", principal, ownerAccountID, bucketPolicy) {
-			return NewAuthError("ListTagsForResource", principal, "not authorized to list tags for resource")
+			bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+			if err != nil {
+				return err
+			}
 		}
 
 		data, err = h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
@@ -701,7 +745,22 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 			}
 			return err // Propagate other errors.
 		}
-		return json.Unmarshal(data, &tags)
+		if err := json.Unmarshal(data, &tags); err != nil {
+			return err
+		}
+
+		resourceARN := req.ResourceARN
+		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
+		if !CheckPermissionWithContext("ListTagsForResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+			TableBucketTags: bucketTags,
+			ResourceTags:    tags,
+			IdentityActions: identityActions,
+		}) {
+			return NewAuthError("ListTagsForResource", principal, "not authorized to list tags for resource")
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -754,6 +813,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 	// Read existing tags, check permission
 	tags := make(map[string]string)
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Read metadata for ownership check
 		data, err := h.getExtendedAttribute(r.Context(), client, resourcePath, ExtendedKeyMetadata)
@@ -778,12 +838,10 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			} else {
 				bucketPolicy = string(policyData)
 			}
-		}
-
-		// Check Permission
-		principal := h.getAccountID(r)
-		if !CanManageTags(principal, ownerAccountID, bucketPolicy) {
-			return NewAuthError("UntagResource", principal, "not authorized to untag resource")
+			bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+			if err != nil {
+				return err
+			}
 		}
 
 		data, err = h.getExtendedAttribute(r.Context(), client, resourcePath, extendedKey)
@@ -793,7 +851,23 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 			}
 			return err
 		}
-		return json.Unmarshal(data, &tags)
+		if err := json.Unmarshal(data, &tags); err != nil {
+			return err
+		}
+
+		resourceARN := req.ResourceARN
+		principal := h.getAccountID(r)
+		identityActions := getIdentityActions(r)
+		if !CheckPermissionWithContext("UntagResource", principal, ownerAccountID, bucketPolicy, resourceARN, &PolicyContext{
+			TableBucketName: bucketName,
+			TableBucketTags: bucketTags,
+			TagKeys:         req.TagKeys,
+			ResourceTags:    tags,
+			IdentityActions: identityActions,
+		}) {
+			return NewAuthError("UntagResource", principal, "not authorized to untag resource")
+		}
+		return nil
 	})
 
 	if err != nil {

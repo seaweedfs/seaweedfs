@@ -65,9 +65,13 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	// Check permission
+	bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
-	if !CanGetTableBucket(principal, metadata.OwnerAccountID, bucketPolicy) {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
 		return ErrAccessDenied
 	}
@@ -91,10 +95,12 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 		return err
 	}
 
-	// Check permission
 	principal := h.getAccountID(r)
 	accountID := h.getAccountID(r)
-	if !CanListTableBuckets(principal, accountID, "") {
+	identityActions := getIdentityActions(r)
+	if !CheckPermissionWithContext("ListTableBuckets", principal, accountID, "", "", &PolicyContext{
+		IdentityActions: identityActions,
+	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
 		return NewAuthError("ListTableBuckets", principal, "not authorized to list table buckets")
 	}
@@ -171,12 +177,28 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				if metadata.OwnerAccountID != accountID {
+				bucketPath := getTableBucketPath(entry.Entry.Name)
+				bucketPolicy := ""
+				policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+				if err != nil {
+					if !errors.Is(err, ErrAttributeNotFound) {
+						continue
+					}
+				} else {
+					bucketPolicy = string(policyData)
+				}
+
+				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
+				identityActions := getIdentityActions(r)
+				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+					TableBucketName: entry.Entry.Name,
+					IdentityActions: identityActions,
+				}) {
 					continue
 				}
 
 				buckets = append(buckets, TableBucketSummary{
-					ARN:       h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name),
+					ARN:       bucketARN,
 					Name:      entry.Entry.Name,
 					CreatedAt: metadata.CreatedAt,
 				})
@@ -267,9 +289,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			bucketPolicy = string(policyData)
 		}
 
-		// 2. Check permission
+		bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 		principal := h.getAccountID(r)
-		if !CanDeleteTableBucket(principal, metadata.OwnerAccountID, bucketPolicy) {
+		identityActions := getIdentityActions(r)
+		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+			TableBucketName: bucketName,
+			IdentityActions: identityActions,
+		}) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}
 

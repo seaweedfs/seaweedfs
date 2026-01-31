@@ -20,6 +20,7 @@ const (
 var (
 	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
 	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
+	tagPattern       = regexp.MustCompile(`^([\p{L}\p{Z}\p{N}_.:/=+\-@]*)$`)
 )
 
 // ARN parsing functions
@@ -172,6 +173,80 @@ func validateBucketName(name string) error {
 		}
 	}
 
+	return nil
+}
+
+// ValidateBucketName validates bucket name and returns an error if invalid.
+func ValidateBucketName(name string) error {
+	return validateBucketName(name)
+}
+
+// BuildBucketARN builds a bucket ARN with the provided region and account ID.
+// If region is empty, the ARN will omit the region field.
+func BuildBucketARN(region, accountID, bucketName string) (string, error) {
+	if bucketName == "" {
+		return "", fmt.Errorf("bucket name is required")
+	}
+	if err := validateBucketName(bucketName); err != nil {
+		return "", err
+	}
+	if accountID == "" {
+		accountID = DefaultAccountID
+	}
+	return buildARN(region, accountID, fmt.Sprintf("bucket/%s", bucketName)), nil
+}
+
+// BuildTableARN builds a table ARN with the provided region and account ID.
+func BuildTableARN(region, accountID, bucketName, namespace, tableName string) (string, error) {
+	if bucketName == "" {
+		return "", fmt.Errorf("bucket name is required")
+	}
+	if err := validateBucketName(bucketName); err != nil {
+		return "", err
+	}
+	if namespace == "" {
+		return "", fmt.Errorf("namespace is required")
+	}
+	normalizedNamespace, err := validateNamespace([]string{namespace})
+	if err != nil {
+		return "", err
+	}
+	if tableName == "" {
+		return "", fmt.Errorf("table name is required")
+	}
+	normalizedTable, err := validateTableName(tableName)
+	if err != nil {
+		return "", err
+	}
+	if accountID == "" {
+		accountID = DefaultAccountID
+	}
+	return buildARN(region, accountID, fmt.Sprintf("bucket/%s/table/%s/%s", bucketName, normalizedNamespace, normalizedTable)), nil
+}
+
+func buildARN(region, accountID, resourcePath string) string {
+	return fmt.Sprintf("arn:aws:s3tables:%s:%s:%s", region, accountID, resourcePath)
+}
+
+// ValidateTags validates tags for S3 Tables.
+func ValidateTags(tags map[string]string) error {
+	if len(tags) > 10 {
+		return fmt.Errorf("validate tags: %d tags more than 10", len(tags))
+	}
+	for k, v := range tags {
+		if len(k) > 128 {
+			return fmt.Errorf("validate tags: tag key longer than 128")
+		}
+		if !tagPattern.MatchString(k) {
+			return fmt.Errorf("validate tags key %s error, incorrect key", k)
+		}
+		if len(v) > 256 {
+			return fmt.Errorf("validate tags: tag value longer than 256")
+		}
+		if !tagPattern.MatchString(v) {
+			return fmt.Errorf("validate tags value %s error, incorrect value", v)
+		}
+	}
 	return nil
 }
 

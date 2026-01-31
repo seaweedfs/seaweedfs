@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // handleCreateTableBucket creates a new table bucket
@@ -34,10 +35,30 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 
 	bucketPath := getTableBucketPath(req.Name)
 
-	// Check if bucket already exists
-	exists := false
+	// Check if bucket already exists and ensure no conflict with object store buckets
+	tableBucketExists := false
+	s3BucketExists := false
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+		resp, err := client.GetFilerConfiguration(r.Context(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		bucketsPath := resp.DirBuckets
+		if bucketsPath == "" {
+			bucketsPath = s3_constants.DefaultBucketsPath
+		}
+		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: bucketsPath,
+			Name:      req.Name,
+		})
+		if err != nil {
+			if !errors.Is(err, filer_pb.ErrNotFound) {
+				return err
+			}
+		} else {
+			s3BucketExists = true
+		}
+		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: TablesPath,
 			Name:      req.Name,
 		})
@@ -47,7 +68,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			}
 			return err
 		}
-		exists = true
+		tableBucketExists = true
 		return nil
 	})
 
@@ -57,7 +78,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	if exists {
+	if s3BucketExists {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("bucket name %s is already used by an object store bucket", req.Name))
+		return fmt.Errorf("bucket name conflicts with object store bucket")
+	}
+
+	if tableBucketExists {
 		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
 		return fmt.Errorf("bucket already exists")
 	}

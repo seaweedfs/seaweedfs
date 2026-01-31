@@ -1,11 +1,13 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -169,6 +171,44 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	return h.accountID
 }
 
+// getIdentityActions extracts the action list from the identity object in the request context.
+// Uses reflection to avoid import cycles with s3api package.
+func getIdentityActions(r *http.Request) []string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw == nil {
+		return nil
+	}
+
+	// Use reflection to access the Actions field to avoid import cycle
+	val := reflect.ValueOf(identityRaw)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil
+	}
+
+	actionsField := val.FieldByName("Actions")
+	if !actionsField.IsValid() || actionsField.Kind() != reflect.Slice {
+		return nil
+	}
+
+	// Convert actions to string slice
+	actions := make([]string, actionsField.Len())
+	for i := 0; i < actionsField.Len(); i++ {
+		action := actionsField.Index(i)
+		// Action is likely a custom type (e.g., type Action string)
+		// Convert to string using String() or direct string conversion
+		if action.Kind() == reflect.String {
+			actions[i] = action.String()
+		} else if action.CanInterface() {
+			// Try to convert via fmt.Sprint
+			actions[i] = fmt.Sprint(action.Interface())
+		}
+	}
+	return actions
+}
+
 // Request/Response helpers
 
 func (h *S3TablesHandler) readRequestBody(r *http.Request, v interface{}) error {
@@ -234,4 +274,30 @@ func (h *S3TablesHandler) generateTableARN(ownerAccountID, bucketName, tableID s
 func isAuthError(err error) bool {
 	var authErr *AuthError
 	return errors.As(err, &authErr) || errors.Is(err, ErrAccessDenied)
+}
+
+func (h *S3TablesHandler) readTags(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) (map[string]string, error) {
+	data, err := h.getExtendedAttribute(ctx, client, path, ExtendedKeyTags)
+	if err != nil {
+		if errors.Is(err, ErrAttributeNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	tags := make(map[string]string)
+	if err := json.Unmarshal(data, &tags); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal tags: %w", err)
+	}
+	return tags, nil
+}
+
+func mapKeys(tags map[string]string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	return keys
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // Permission represents a specific action permission
@@ -65,21 +66,60 @@ func (pd *PolicyDocument) UnmarshalJSON(data []byte) error {
 }
 
 type Statement struct {
-	Effect    string      `json:"Effect"`    // "Allow" or "Deny"
-	Principal interface{} `json:"Principal"` // Can be string, []string, or map
-	Action    interface{} `json:"Action"`    // Can be string or []string
-	Resource  interface{} `json:"Resource"`  // Can be string or []string
+	Effect    string                            `json:"Effect"`    // "Allow" or "Deny"
+	Principal interface{}                       `json:"Principal"` // Can be string, []string, or map
+	Action    interface{}                       `json:"Action"`    // Can be string or []string
+	Resource  interface{}                       `json:"Resource"`  // Can be string or []string
+	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+}
+
+type PolicyContext struct {
+	Namespace       string
+	TableName       string
+	TableBucketName string
+	IdentityActions []string
+	RequestTags     map[string]string
+	ResourceTags    map[string]string
+	TableBucketTags map[string]string
+	TagKeys         []string
+	SSEAlgorithm    string
+	KMSKeyArn       string
+	StorageClass    string
 }
 
 // CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
 func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, resourceARN string) bool {
+	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, resourceARN, nil)
+}
+
+// CheckPermission checks if a principal has permission to perform an operation
+// (without resource-specific validation - for backward compatibility)
+func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
+	return CheckPermissionWithContext(operation, principal, owner, resourcePolicy, "", nil)
+}
+
+// CheckPermissionWithContext checks permission with optional resource and condition context.
+func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 	// Deny access if identities are empty
 	if principal == "" || owner == "" {
 		return false
 	}
 
+	// Admin always has permission.
+	if principal == s3_constants.AccountAdminId {
+		return true
+	}
+
+	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
+}
+
+func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
 	// Owner always has permission
 	if principal == owner {
+		return true
+	}
+
+	if hasIdentityPermission(operation, ctx) {
 		return true
 	}
 
@@ -121,6 +161,10 @@ func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, re
 			continue
 		}
 
+		if !matchesConditions(stmt.Condition, ctx) {
+			continue
+		}
+
 		// Statement matches - check effect
 		if stmt.Effect == "Allow" {
 			hasAllow = true
@@ -133,62 +177,29 @@ func CheckPermissionWithResource(operation, principal, owner, resourcePolicy, re
 	return hasAllow
 }
 
-// CheckPermission checks if a principal has permission to perform an operation
-// (without resource-specific validation - for backward compatibility)
-func CheckPermission(operation, principal, owner, resourcePolicy string) bool {
-	// Deny access if identities are empty
-	if principal == "" || owner == "" {
+func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
+	if ctx == nil || len(ctx.IdentityActions) == 0 {
 		return false
 	}
-
-	// Owner always has permission
-	if principal == owner {
-		return true
-	}
-
-	// If no policy is provided, deny access (default deny)
-	if resourcePolicy == "" {
-		return false
-	}
-
-	// Normalize operation to full IAM-style action name (e.g., "s3tables:CreateTableBucket")
-	// if not already prefixed
 	fullAction := operation
 	if !strings.Contains(operation, ":") {
 		fullAction = "s3tables:" + operation
 	}
-
-	// Parse and evaluate policy
-	var policy PolicyDocument
-	if err := json.Unmarshal([]byte(resourcePolicy), &policy); err != nil {
-		return false
+	candidates := []string{operation, fullAction}
+	if ctx.TableBucketName != "" {
+		candidates = append(candidates, operation+":"+ctx.TableBucketName, fullAction+":"+ctx.TableBucketName)
 	}
-
-	// Evaluate policy statements
-	// Default is deny, so we need an explicit allow
-	hasAllow := false
-
-	for _, stmt := range policy.Statement {
-		// Check if principal matches
-		if !matchesPrincipal(stmt.Principal, principal) {
-			continue
-		}
-
-		// Check if action matches (using normalized full action name)
-		if !matchesAction(stmt.Action, fullAction) {
-			continue
-		}
-
-		// Statement matches - check effect
-		if stmt.Effect == "Allow" {
-			hasAllow = true
-		} else if stmt.Effect == "Deny" {
-			// Explicit deny always wins
-			return false
+	for _, action := range ctx.IdentityActions {
+		for _, candidate := range candidates {
+			if action == candidate {
+				return true
+			}
+			if strings.ContainsAny(action, "*?") && policy_engine.MatchesWildcard(action, candidate) {
+				return true
+			}
 		}
 	}
-
-	return hasAllow
+	return false
 }
 
 // matchesPrincipal checks if the principal matches the statement's principal
@@ -269,6 +280,74 @@ func matchesActionPattern(pattern, action string) bool {
 	// Wildcard match using policy engine's wildcard matcher
 	// Supports both * (any sequence) and ? (single character) anywhere in the pattern
 	return policy_engine.MatchesWildcard(pattern, action)
+}
+
+func matchesConditions(conditions map[string]map[string]interface{}, ctx *PolicyContext) bool {
+	if len(conditions) == 0 {
+		return true
+	}
+	if ctx == nil {
+		return false
+	}
+	for operator, conditionValues := range conditions {
+		if !matchesConditionOperator(operator, conditionValues, ctx) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchesConditionOperator(operator string, conditionValues map[string]interface{}, ctx *PolicyContext) bool {
+	evaluator, err := policy_engine.GetConditionEvaluator(operator)
+	if err != nil {
+		return false
+	}
+
+	for key, value := range conditionValues {
+		contextVals := getConditionContextValues(key, ctx)
+		if !evaluator.Evaluate(value, contextVals) {
+			return false
+		}
+	}
+	return true
+}
+
+func getConditionContextValues(key string, ctx *PolicyContext) []string {
+	switch key {
+	case "s3tables:namespace":
+		return []string{ctx.Namespace}
+	case "s3tables:tableName":
+		return []string{ctx.TableName}
+	case "s3tables:tableBucketName":
+		return []string{ctx.TableBucketName}
+	case "s3tables:SSEAlgorithm":
+		return []string{ctx.SSEAlgorithm}
+	case "s3tables:KMSKeyArn":
+		return []string{ctx.KMSKeyArn}
+	case "s3tables:StorageClass":
+		return []string{ctx.StorageClass}
+	case "aws:TagKeys":
+		return ctx.TagKeys
+	}
+	if strings.HasPrefix(key, "aws:RequestTag/") {
+		tagKey := strings.TrimPrefix(key, "aws:RequestTag/")
+		if val, ok := ctx.RequestTags[tagKey]; ok {
+			return []string{val}
+		}
+	}
+	if strings.HasPrefix(key, "aws:ResourceTag/") {
+		tagKey := strings.TrimPrefix(key, "aws:ResourceTag/")
+		if val, ok := ctx.ResourceTags[tagKey]; ok {
+			return []string{val}
+		}
+	}
+	if strings.HasPrefix(key, "s3tables:TableBucketTag/") {
+		tagKey := strings.TrimPrefix(key, "s3tables:TableBucketTag/")
+		if val, ok := ctx.TableBucketTags[tagKey]; ok {
+			return []string{val}
+		}
+	}
+	return nil
 }
 
 // matchesResource checks if the resource ARN matches the statement's resource specification
