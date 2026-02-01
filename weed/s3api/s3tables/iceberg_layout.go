@@ -31,14 +31,14 @@ var (
 	}
 
 	// Patterns for valid metadata files
-	metadataFilePatterns = []*regexp.Regexp{
-		regexp.MustCompile(`^v\d+\.metadata\.json$`),                                 // Table metadata: v1.metadata.json, v2.metadata.json
-		regexp.MustCompile(`^snap-\d+-\d+-` + uuidPattern + `\.avro$`),               // Snapshot manifests: snap-123-1-uuid.avro
-		regexp.MustCompile(`^` + uuidPattern + `-m\d+\.avro$`),                       // Manifest files: uuid-m0.avro
-		regexp.MustCompile(`^` + uuidPattern + `\.avro$`),                            // General manifest files
-		regexp.MustCompile(`^version-hint\.text$`),                                   // Version hint file
-		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),                  // UUID-named metadata
-	}
+ 	metadataFilePatterns = []*regexp.Regexp{
+ 		regexp.MustCompile(`^v\d+\.metadata\.json$`),                                 // Table metadata: v1.metadata.json, v2.metadata.json
+ 		regexp.MustCompile(`^snap-\d+-\d+-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.avro$`), // Snapshot manifests: snap-123-1-uuid.avro
+ 		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}-m\d+\.avro$`),          // Manifest files: uuid-m0.avro
+ 		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.avro$`),             // General manifest files
+ 		regexp.MustCompile(`^version-hint\.text$`),                                   // Version hint file
+ 		regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.metadata\.json$`), // UUID-named metadata
+ 	}
 
 	// Patterns for valid data files
 	dataFilePatterns = []*regexp.Regexp{
