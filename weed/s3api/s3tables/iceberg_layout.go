@@ -159,54 +159,45 @@ func validateFilePatterns(filename string, isMetadata bool) error {
 	}
 }
 
-// validateMetadataFile validates files in the metadata/ directory
-func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
+// validateFile validates files with a unified logic for metadata and data directories
+// isMetadata indicates whether we're validating metadata files (true) or data files (false)
+// The logic is:
+//  1. If path ends with "/", it's a directory - validate all parts and return nil
+//  2. Otherwise, validate intermediate parts, then check the filename against patterns
+func (v *IcebergLayoutValidator) validateFile(path string, isMetadata bool) error {
 	// Detect if it's a directory (path ends with "/")
 	if strings.HasSuffix(path, "/") {
 		// Normalize by removing trailing slash
 		normalizedPath := strings.TrimSuffix(path, "/")
-		return validateDirectoryPath(normalizedPath, true)
+		return validateDirectoryPath(normalizedPath, isMetadata)
 	}
 
 	// Split path to get filename and intermediate directories
 	parts := strings.Split(path, "/")
 	filename := parts[len(parts)-1]
 
-	// Validate intermediate subdirectories
+	// Validate intermediate subdirectories if present
 	if len(parts) > 1 {
 		normalizedPath := strings.TrimSuffix(path[:len(path)-len(filename)-1], "/")
-		if err := validateDirectoryPath(normalizedPath, true); err != nil {
+		if err := validateDirectoryPath(normalizedPath, isMetadata); err != nil {
 			return err
 		}
 	}
 
-	// Check against allowed metadata file patterns
-	return validateFilePatterns(filename, true)
+	// Check against allowed file patterns
+	return validateFilePatterns(filename, isMetadata)
+}
+
+// validateMetadataFile validates files in the metadata/ directory
+// This is a thin wrapper that calls validateFile with isMetadata=true
+func (v *IcebergLayoutValidator) validateMetadataFile(path string) error {
+	return v.validateFile(path, true)
 }
 
 // validateDataFile validates files in the data/ directory
+// This is a thin wrapper that calls validateFile with isMetadata=false
 func (v *IcebergLayoutValidator) validateDataFile(path string) error {
-	// Detect if it's a directory (path ends with "/")
-	if strings.HasSuffix(path, "/") {
-		// Normalize by removing trailing slash
-		normalizedPath := strings.TrimSuffix(path, "/")
-		return validateDirectoryPath(normalizedPath, false)
-	}
-
-	// Split path to get filename and intermediate directories
-	parts := strings.Split(path, "/")
-	filename := parts[len(parts)-1]
-
-	// Validate partition directories and subdirectories if present
-	if len(parts) > 1 {
-		normalizedPath := strings.TrimSuffix(path[:len(path)-len(filename)-1], "/")
-		if err := validateDirectoryPath(normalizedPath, false); err != nil {
-			return err
-		}
-	}
-
-	// Check against allowed data file patterns
-	return validateFilePatterns(filename, false)
+	return v.validateFile(path, false)
 }
 
 // isValidSubdirectory checks if a path component is a valid subdirectory name
