@@ -24,11 +24,7 @@ func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, of
 
 		if blockRemaining <= 0 {
 			// move to next block
-			blockIndex++
-			if isLargeBlock && blockIndex == int(nLargeBlockRows)*DataShardsCount {
-				isLargeBlock = false
-				blockIndex = 0
-			}
+			blockIndex, isLargeBlock = moveToNextBlock(blockIndex, isLargeBlock, nLargeBlockRows)
 			innerBlockOffset = 0
 			continue
 		}
@@ -49,13 +45,19 @@ func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, of
 		intervals = append(intervals, interval)
 
 		size -= interval.Size
-		blockIndex += 1
-		if isLargeBlock && blockIndex == interval.LargeBlockRowsCount*DataShardsCount {
-			isLargeBlock = false
-			blockIndex = 0
-		}
+		blockIndex, isLargeBlock = moveToNextBlock(blockIndex, isLargeBlock, nLargeBlockRows)
 		innerBlockOffset = 0
 
+	}
+	return
+}
+
+func moveToNextBlock(blockIndex int, isLargeBlock bool, nLargeBlockRows int64) (nextBlockIndex int, nextIsLargeBlock bool) {
+	nextBlockIndex = blockIndex + 1
+	nextIsLargeBlock = isLargeBlock
+	if isLargeBlock && nextBlockIndex == int(nLargeBlockRows)*DataShardsCount {
+		nextIsLargeBlock = false
+		nextBlockIndex = 0
 	}
 	return
 }
