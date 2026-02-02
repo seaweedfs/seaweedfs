@@ -45,6 +45,7 @@ func TestIcebergLayoutValidator_ValidateFilePath(t *testing.T) {
 		{"invalid metadata file", "metadata/random.txt", true},
 		{"nested metadata directory", "metadata/nested/v1.metadata.json", true},
 		{"nested metadata directory no file", "metadata/nested/", true},
+		{"metadata subdir no slash", "metadata/nested", true},
 		{"invalid data file", "data/file.csv", true},
 		{"invalid data file json", "data/file.json", true},
 
@@ -101,7 +102,7 @@ func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
 		{"table bucket root", "/table-buckets/mybucket", false},
 		{"namespace dir", "/table-buckets/mybucket/myns", false},
 		{"table dir", "/table-buckets/mybucket/myns/mytable", false},
-		{"table dir with slash", "/table-buckets/mybucket/myns/mytable/", false},
+		{"table dir trailing slash", "/table-buckets/mybucket/myns/mytable/", false},
 
 		// Valid table bucket file uploads
 		{"valid parquet upload", "/table-buckets/mybucket/myns/mytable/data/file.parquet", false},

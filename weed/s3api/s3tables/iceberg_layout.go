@@ -197,11 +197,7 @@ func (v *IcebergLayoutValidator) validateFile(path string, isMetadata bool) erro
 	}
 
 	// Path could be for a directory without a trailing slash, e.g., "data/year=2024"
-	if isMetadata {
-		if isValidSubdirectory(filename) {
-			return nil
-		}
-	} else {
+	if !isMetadata {
 		if partitionPathPattern.MatchString(filename) || isValidSubdirectory(filename) {
 			return nil
 		}
