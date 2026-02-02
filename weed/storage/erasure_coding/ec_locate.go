@@ -28,6 +28,17 @@ func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, of
 			blockRemaining = smallBlockLength - innerBlockOffset
 		}
 
+		if blockRemaining <= 0 {
+			// move to next block
+			blockIndex++
+			if isLargeBlock && blockIndex == interval.LargeBlockRowsCount*DataShardsCount {
+				isLargeBlock = false
+				blockIndex = 0
+			}
+			innerBlockOffset = 0
+			continue
+		}
+
 		if int64(size) <= blockRemaining {
 			interval.Size = size
 			intervals = append(intervals, interval)
