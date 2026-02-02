@@ -87,9 +87,12 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 		}
 	}
 
-	// If it's just a directory creation, allow it
+	// If it's just a bare top-level key (no trailing slash and no subpath), reject it
 	if len(parts) == 1 {
-		return nil
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "must be a directory (use trailing slash) or contain a subpath",
+		}
 	}
 
 	remainingPath := parts[1]
@@ -110,26 +113,29 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 // validateDirectoryPath validates intermediate subdirectories in a path
 // isMetadata indicates if we're in the metadata directory (true) or data directory (false)
 func validateDirectoryPath(normalizedPath string, isMetadata bool) error {
+	if normalizedPath == "" {
+		return nil
+	}
+	// For metadata, reject any subdirectories (enforce flat structure under metadata/)
+	if isMetadata {
+		if strings.Contains(normalizedPath, "/") || normalizedPath != "" {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "metadata directory does not support subdirectories",
+			}
+		}
+	}
+
 	subdirs := strings.Split(normalizedPath, "/")
 	for _, subdir := range subdirs {
 		if subdir == "" {
 			continue
 		}
-		// For metadata, only allow valid subdirectories
-		if isMetadata {
-			if !isValidSubdirectory(subdir) {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "invalid subdirectory name in metadata path",
-				}
-			}
-		} else {
-			// For data, allow both partitions and valid subdirectories
-			if !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
-				return &IcebergLayoutError{
-					Code:    ErrCodeInvalidIcebergLayout,
-					Message: "invalid partition or subdirectory format in data path",
-				}
+		// For data, allow both partitions and valid subdirectories
+		if !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid partition or subdirectory format in data path",
 			}
 		}
 	}

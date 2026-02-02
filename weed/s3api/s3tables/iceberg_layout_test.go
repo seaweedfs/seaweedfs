@@ -33,26 +33,27 @@ func TestIcebergLayoutValidator_ValidateFilePath(t *testing.T) {
 		{"valid bucket subdirectory", "data/bucket0/file.parquet", false},
 
 		// Directories only
-		{"metadata directory", "metadata", false},
-		{"data directory", "data", false},
+		{"metadata directory bare", "metadata", true},
+		{"data directory bare", "data", true},
+		{"metadata directory with slash", "metadata/", false},
+		{"data directory with slash", "data/", false},
 
 		// Invalid paths
 		{"empty path", "", true},
 		{"invalid top dir", "invalid/file.parquet", true},
 		{"root file", "file.parquet", true},
 		{"invalid metadata file", "metadata/random.txt", true},
+		{"nested metadata directory", "metadata/nested/v1.metadata.json", true},
+		{"nested metadata directory no file", "metadata/nested/", true},
 		{"invalid data file", "data/file.csv", true},
 		{"invalid data file json", "data/file.json", true},
 
 		// Partition/subdirectory without trailing slashes
 		{"partition directory no slash", "data/year=2024", false},
 		{"data subdirectory no slash", "data/my_subdir", false},
-		{"metadata directory with slash", "metadata/", false},
-		{"data directory with slash", "data/", false},
 		{"multi-level partition", "data/event_date=2025-01-01/hour=00/file.parquet", false},
 		{"multi-level partition directory", "data/event_date=2025-01-01/hour=00/", false},
 		{"multi-level partition directory no slash", "data/event_date=2025-01-01/hour=00", false},
-		{"nested metadata directory", "metadata/backups/v1.metadata.json", false},
 	}
 
 	for _, tt := range tests {
