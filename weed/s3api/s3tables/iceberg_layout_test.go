@@ -55,6 +55,11 @@ func TestIcebergLayoutValidator_ValidateFilePath(t *testing.T) {
 		{"multi-level partition", "data/event_date=2025-01-01/hour=00/file.parquet", false},
 		{"multi-level partition directory", "data/event_date=2025-01-01/hour=00/", false},
 		{"multi-level partition directory no slash", "data/event_date=2025-01-01/hour=00", false},
+
+		// Double slashes
+		{"data double slash", "data//file.parquet", true},
+		{"data redundant slash", "data/year=2024//file.parquet", true},
+		{"metadata redundant slash", "metadata//v1.metadata.json", true},
 	}
 
 	for _, tt := range tests {

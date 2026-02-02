@@ -113,23 +113,21 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 // validateDirectoryPath validates intermediate subdirectories in a path
 // isMetadata indicates if we're in the metadata directory (true) or data directory (false)
 func validateDirectoryPath(normalizedPath string, isMetadata bool) error {
-	if normalizedPath == "" {
-		return nil
-	}
 	// For metadata, reject any subdirectories (enforce flat structure under metadata/)
 	if isMetadata {
-		if strings.Contains(normalizedPath, "/") || normalizedPath != "" {
-			return &IcebergLayoutError{
-				Code:    ErrCodeInvalidIcebergLayout,
-				Message: "metadata directory does not support subdirectories",
-			}
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "metadata directory does not support subdirectories",
 		}
 	}
 
 	subdirs := strings.Split(normalizedPath, "/")
 	for _, subdir := range subdirs {
 		if subdir == "" {
-			continue
+			return &IcebergLayoutError{
+				Code:    ErrCodeInvalidIcebergLayout,
+				Message: "invalid partition or subdirectory format in data path: empty segment",
+			}
 		}
 		// For data, allow both partitions and valid subdirectories
 		if !partitionPathPattern.MatchString(subdir) && !isValidSubdirectory(subdir) {
@@ -184,7 +182,10 @@ func (v *IcebergLayoutValidator) validateFile(path string, isMetadata bool) erro
 	filename := pathpkg.Base(path)
 
 	// Validate intermediate subdirectories if present
-	if dir := pathpkg.Dir(path); dir != "." {
+	// Find if there are intermediate directories by looking for the last slash
+	lastSlash := strings.LastIndex(path, "/")
+	if lastSlash != -1 {
+		dir := path[:lastSlash]
 		if err := validateDirectoryPath(dir, isMetadata); err != nil {
 			return err
 		}
