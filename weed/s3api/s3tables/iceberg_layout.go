@@ -278,6 +278,9 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 
 	// The last part is the path within the table (data/file.parquet or metadata/v1.json)
 	tableRelativePath := parts[3]
+	if tableRelativePath == "" {
+		return nil
+	}
 
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
 }
