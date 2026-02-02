@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	pathpkg "path"
 	"regexp"
 	"strings"
 
@@ -174,14 +175,11 @@ func (v *IcebergLayoutValidator) validateFile(path string, isMetadata bool) erro
 		return validateDirectoryPath(normalizedPath, isMetadata)
 	}
 
-	// Split path to get filename and intermediate directories
-	parts := strings.Split(path, "/")
-	filename := parts[len(parts)-1]
+	filename := pathpkg.Base(path)
 
 	// Validate intermediate subdirectories if present
-	if len(parts) > 1 {
-		normalizedPath := strings.TrimSuffix(path[:len(path)-len(filename)-1], "/")
-		if err := validateDirectoryPath(normalizedPath, isMetadata); err != nil {
+	if dir := pathpkg.Dir(path); dir != "." {
+		if err := validateDirectoryPath(dir, isMetadata); err != nil {
 			return err
 		}
 	}
@@ -303,7 +301,7 @@ func GetTableInfoFromPath(fullPath string) (bucket, namespace, table string) {
 		table = parts[2]
 	}
 
-	return bucket, namespace, table
+	return
 }
 
 // ValidateTableBucketUploadWithClient validates upload and checks that the table exists and is ICEBERG format
