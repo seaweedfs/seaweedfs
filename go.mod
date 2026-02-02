@@ -139,7 +139,7 @@ require (
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/jhump/protoreflect v1.17.0
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.1
 	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/minio/crc64nvme v1.1.1
