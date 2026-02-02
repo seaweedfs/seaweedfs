@@ -32,12 +32,12 @@ var (
 
 	// Patterns for valid metadata files
 	metadataFilePatterns = []*regexp.Regexp{
-		regexp.MustCompile(`^v\d+\.metadata\.json$`),                                 // Table metadata: v1.metadata.json, v2.metadata.json
-		regexp.MustCompile(`^snap-\d+-\d+-` + uuidPattern + `\.avro$`),               // Snapshot manifests: snap-123-1-uuid.avro
-		regexp.MustCompile(`^` + uuidPattern + `-m\d+\.avro$`),                       // Manifest files: uuid-m0.avro
-		regexp.MustCompile(`^` + uuidPattern + `\.avro$`),                            // General manifest files
-		regexp.MustCompile(`^version-hint\.text$`),                                   // Version hint file
-		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),                  // UUID-named metadata
+		regexp.MustCompile(`^v\d+\.metadata\.json$`),                   // Table metadata: v1.metadata.json, v2.metadata.json
+		regexp.MustCompile(`^snap-\d+-\d+-` + uuidPattern + `\.avro$`), // Snapshot manifests: snap-123-1-uuid.avro
+		regexp.MustCompile(`^` + uuidPattern + `-m\d+\.avro$`),         // Manifest files: uuid-m0.avro
+		regexp.MustCompile(`^` + uuidPattern + `\.avro$`),              // General manifest files
+		regexp.MustCompile(`^version-hint\.text$`),                     // Version hint file
+		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),    // UUID-named metadata
 	}
 
 	// Patterns for valid data files
@@ -187,7 +187,23 @@ func (v *IcebergLayoutValidator) validateFile(path string, isMetadata bool) erro
 	}
 
 	// Check against allowed file patterns
-	return validateFilePatterns(filename, isMetadata)
+	err := validateFilePatterns(filename, isMetadata)
+	if err == nil {
+		return nil
+	}
+
+	// Path could be for a directory without a trailing slash, e.g., "data/year=2024"
+	if isMetadata {
+		if isValidSubdirectory(filename) {
+			return nil
+		}
+	} else {
+		if partitionPathPattern.MatchString(filename) || isValidSubdirectory(filename) {
+			return nil
+		}
+	}
+
+	return err
 }
 
 // validateMetadataFile validates files in the metadata/ directory
