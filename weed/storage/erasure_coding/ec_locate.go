@@ -12,6 +12,7 @@ type Interval struct {
 	LargeBlockRowsCount int
 }
 
+// LocateData finds the intervals of data within erasure coding blocks for a given offset and size.
 func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64, size types.Size) (intervals []Interval) {
 	blockIndex, isLargeBlock, nLargeBlockRows, innerBlockOffset := locateOffset(largeBlockLength, smallBlockLength, shardDatSize, offset)
 
