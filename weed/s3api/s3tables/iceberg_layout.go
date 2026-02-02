@@ -394,10 +394,11 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 			Message: "failed to parse table metadata: " + err.Error(),
 		}
 	}
-	if metadata.Format != "ICEBERG" {
+	const TableFormatIceberg = "ICEBERG"
+	if metadata.Format != TableFormatIceberg {
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
-			Message: "table is not in ICEBERG format",
+			Message: "table is not in " + TableFormatIceberg + " format",
 		}
 	}
 
