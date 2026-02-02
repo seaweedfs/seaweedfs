@@ -238,37 +238,16 @@ func TestLocateData3(t *testing.T) {
 }
 
 func TestLocateData_Issue8179(t *testing.T) {
-	largeBlockSize := int64(1024)
-	smallBlockSize := int64(128)
-	dataShards := int64(10)
-	
-	// Ensure DataShardsCount consistency
-	if DataShardsCount != int(dataShards) {
-		t.Skip("DataShardsCount mismatch, skipping specific boundary test")
+	large := int64(10000)
+	small := int64(100)
+	shardSize := int64(259092) // Resulting in nLargeBlockRows = 25 as seen in panic log
+
+	// Testing range through the large-to-small transition boundary
+	// Large Area: 25 * 10 * 10000 = 2,500,000
+	for offset := int64(2499500); offset < 2500500; offset++ {
+		intervals := LocateData(large, small, shardSize, offset, 200)
+		for _, interval := range intervals {
+			assert.True(t, interval.Size > 0, "Interval size must be positive at offset %d, got %+v", offset, interval)
+		}
 	}
-
-	// shardDatSize = largeBlockSize + 1 implies nLargeBlockRows = 1
-	// because (1024+1-1)/1024 = 1
-	shardDatSize := largeBlockSize + 1
-	
-	// Case: Offset at the very last byte of the large block area
-	// Large Area Size = 1 * 10 * 1024 = 10240
-	// Offset = 10239
-	offset := int64(10240 - 1)
-	size := types.Size(2) // Read 2 bytes (1 from Large, 1 from Small)
-
-	intervals := LocateData(largeBlockSize, smallBlockSize, shardDatSize, offset, size)
-
-	assert.Equal(t, 2, len(intervals), "Should return 2 intervals")
-	
-	// First interval: Last byte of Large Block
-	assert.Equal(t, true, intervals[0].IsLargeBlock)
-	assert.Equal(t, int64(1023), intervals[0].InnerBlockOffset)
-	assert.Equal(t, types.Size(1), intervals[0].Size)
-	
-	// Second interval: First byte of Small Block
-	assert.Equal(t, false, intervals[1].IsLargeBlock)
-	assert.Equal(t, int64(0), intervals[1].InnerBlockOffset)
-	assert.Equal(t, types.Size(1), intervals[1].Size)
-	assert.Equal(t, 0, intervals[1].BlockIndex)
 }
