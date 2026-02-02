@@ -100,6 +100,8 @@ service VolumeServer {
     }
     rpc VolumeEcShardsInfo (VolumeEcShardsInfoRequest) returns (VolumeEcShardsInfoResponse) {
     }
+    rpc VolumeEcShardsVerify (VolumeEcShardsVerifyRequest) returns (VolumeEcShardsVerifyResponse) {
+    }
 
     // tiered storage
     rpc VolumeTierMoveDatToRemote (VolumeTierMoveDatToRemoteRequest) returns (stream VolumeTierMoveDatToRemoteResponse) {
@@ -477,6 +479,41 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+}
+
+message VolumeEcShardsVerifyRequest {
+    uint32 volume_id = 1;
+    string collection = 2;
+}
+
+message VolumeEcShardsVerifyResponse {
+    // True if Reed-Solomon verification passed for all blocks
+    bool verified = 1;
+
+    // Shard IDs that failed RS verification (only populated if verified=false)
+    // These shards should be rebuilt from other shards
+    repeated uint32 suspect_shard_ids = 2;
+
+    // Error message if verification could not be performed
+    string error_message = 3;
+
+    // True if needle-level verification was performed successfully
+    // False if .ecx file couldn't be read or needle reads failed
+    bool needles_verified = 4;
+
+    // Needle IDs that failed integrity checks (CRC mismatch or read failure)
+    repeated uint64 bad_needle_ids = 5;
+
+    // Corresponding cookies for bad needles (for file ID construction)
+    repeated uint32 bad_needle_cookies = 6;
+
+    // Shards containing corrupted needles
+    // NOTE: When RS verification passes but needles fail CRC, this indicates
+    // corruption occurred BEFORE EC encoding (e.g., during upload, in the original
+    // volume before EC conversion). These shards contain the bad data but are
+    // not themselves corrupt - they've faithfully preserved the already-corrupted
+    // needle data. Operators should investigate the source of the corruption.
+    repeated uint32 corrupted_shards = 7;
 }
 
 message ReadVolumeFileStatusRequest {

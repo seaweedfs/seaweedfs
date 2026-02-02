@@ -14,9 +14,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle.Needle, cookie types.Cookie) (int64, error) {
+func (s *Store) DeleteEcShardNeedle(ctx context.Context, ecVolume *erasure_coding.EcVolume, n *needle.Needle, cookie types.Cookie) (int64, error) {
 
-	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n, nil)
+	count, err := s.ReadEcShardNeedle(ctx, ecVolume.VolumeId, n, nil)
 
 	if err != nil {
 		return 0, err
