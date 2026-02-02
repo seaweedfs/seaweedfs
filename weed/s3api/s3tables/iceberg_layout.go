@@ -113,14 +113,15 @@ func (v *IcebergLayoutValidator) ValidateFilePath(relativePath string) error {
 // validateDirectoryPath validates intermediate subdirectories in a path
 // isMetadata indicates if we're in the metadata directory (true) or data directory (false)
 func validateDirectoryPath(normalizedPath string, isMetadata bool) error {
-	// For metadata, reject any subdirectories (enforce flat structure under metadata/)
 	if isMetadata {
+		// For metadata, reject any subdirectories (enforce flat structure under metadata/)
 		return &IcebergLayoutError{
 			Code:    ErrCodeInvalidIcebergLayout,
 			Message: "metadata directory does not support subdirectories",
 		}
 	}
 
+	// For data, validate each partition or subdirectory segment
 	subdirs := strings.Split(normalizedPath, "/")
 	for _, subdir := range subdirs {
 		if subdir == "" {
