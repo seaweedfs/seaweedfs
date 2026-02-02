@@ -118,6 +118,13 @@ func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
 		{"invalid file type", "/table-buckets/mybucket/myns/mytable/data/file.csv", true},
 		{"invalid top-level dir", "/table-buckets/mybucket/myns/mytable/invalid/file.parquet", true},
 		{"root file in table", "/table-buckets/mybucket/myns/mytable/file.parquet", true},
+
+		// Empty segment cases
+		{"empty bucket", "/table-buckets//myns/mytable/data/file.parquet", true},
+		{"empty namespace", "/table-buckets/mybucket//mytable/data/file.parquet", true},
+		{"empty table", "/table-buckets/mybucket/myns//data/file.parquet", true},
+		{"empty bucket dir", "/table-buckets//", true},
+		{"empty namespace dir", "/table-buckets/mybucket//", true},
 	}
 
 	for _, tt := range tests {

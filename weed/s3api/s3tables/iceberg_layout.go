@@ -270,8 +270,24 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 
 	// Need at least bucket/namespace/table/file
 	if len(parts) < 4 {
-		// Creating bucket, namespace, or table directories - allow
+		// Creating bucket, namespace, or table directories - allow only if preceding parts are non-empty
+		for i := 0; i < len(parts); i++ {
+			if parts[i] == "" {
+				return &IcebergLayoutError{
+					Code:    ErrCodeInvalidIcebergLayout,
+					Message: "bucket, namespace, and table segments cannot be empty",
+				}
+			}
+		}
 		return nil
+	}
+
+	// For full paths, also verify bucket, namespace, and table segments are non-empty
+	if parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "bucket, namespace, and table segments cannot be empty",
+		}
 	}
 
 	// The last part is the path within the table (data/file.parquet or metadata/v1.json)
