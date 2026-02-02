@@ -296,6 +296,14 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 		return nil
 	}
 
+	// Reject paths with empty segments (double slashes) within the table path
+	if strings.HasPrefix(tableRelativePath, "/") || strings.Contains(tableRelativePath, "//") {
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "bucket, namespace, and table segments cannot be empty",
+		}
+	}
+
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
 }
 

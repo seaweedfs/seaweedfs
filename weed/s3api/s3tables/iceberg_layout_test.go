@@ -125,6 +125,7 @@ func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
 		{"empty table", "/table-buckets/mybucket/myns//data/file.parquet", true},
 		{"empty bucket dir", "/table-buckets//", true},
 		{"empty namespace dir", "/table-buckets/mybucket//", true},
+		{"table double slash bypass", "/table-buckets/mybucket/myns/mytable//data/file.parquet", true},
 	}
 
 	for _, tt := range tests {
