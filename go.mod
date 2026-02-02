@@ -46,7 +46,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/klauspost/reedsolomon v1.13.0
 	github.com/kurin/blazer v0.5.3
 	github.com/linxGnu/grocksdb v1.10.3
