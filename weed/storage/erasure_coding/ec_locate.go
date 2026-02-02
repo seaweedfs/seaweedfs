@@ -52,14 +52,14 @@ func LocateData(largeBlockLength, smallBlockLength int64, shardDatSize int64, of
 	return
 }
 
-func moveToNextBlock(blockIndex int, isLargeBlock bool, nLargeBlockRows int64) (nextBlockIndex int, nextIsLargeBlock bool) {
-	nextBlockIndex = blockIndex + 1
-	nextIsLargeBlock = isLargeBlock
+func moveToNextBlock(blockIndex int, isLargeBlock bool, nLargeBlockRows int64) (int, bool) {
+	nextBlockIndex := blockIndex + 1
+	nextIsLargeBlock := isLargeBlock
 	if isLargeBlock && int64(nextBlockIndex) == nLargeBlockRows*DataShardsCount {
 		nextIsLargeBlock = false
 		nextBlockIndex = 0
 	}
-	return
+	return nextBlockIndex, nextIsLargeBlock
 }
 
 func locateOffset(largeBlockLength, smallBlockLength int64, shardDatSize int64, offset int64) (blockIndex int, isLargeBlock bool, nLargeBlockRows int64, innerBlockOffset int64) {

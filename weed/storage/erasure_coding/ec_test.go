@@ -243,8 +243,10 @@ func TestLocateData_Issue8179(t *testing.T) {
 	shardSize := int64(259092) // Resulting in nLargeBlockRows = 25 as seen in panic log
 
 	// Testing range through the large-to-small transition boundary
-	// Large Area: 25 * 10 * 10000 = 2,500,000
-	for offset := int64(2499500); offset < 2500500; offset++ {
+	nLargeBlockRows := (shardSize - 1) / large
+	largeAreaSize := nLargeBlockRows * int64(DataShardsCount) * large
+
+	for offset := largeAreaSize - 500; offset < largeAreaSize+500; offset++ {
 		intervals := LocateData(large, small, shardSize, offset, 200)
 		for _, interval := range intervals {
 			assert.True(t, interval.Size > 0, "Interval size must be positive at offset %d, got %+v", offset, interval)
