@@ -27,11 +27,19 @@ func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request, action s3api.
 	}
 
 	identityObj := s3_constants.GetIdentityFromContext(r)
-	if identity, ok := identityObj.(*s3api.Identity); ok {
-		if !identity.CanDo(action, bucketName, "") {
-			writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied")
-			return false
-		}
+	if identityObj == nil {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: missing identity")
+		return false
+	}
+	identity, ok := identityObj.(*s3api.Identity)
+	if !ok {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: invalid identity")
+		return false
+	}
+
+	if !identity.CanDo(action, bucketName, "") {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied")
+		return false
 	}
 	return true
 }
@@ -206,7 +214,7 @@ func buildTableBucketARN(bucketName string) string {
 // handleConfig returns catalog configuration.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_READ, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
 		return
 	}
 	config := CatalogConfig{
@@ -219,7 +227,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // handleListNamespaces lists namespaces in a catalog.
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_LIST, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -257,7 +265,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 // handleCreateNamespace creates a new namespace.
 func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_WRITE, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -312,7 +320,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_READ, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -356,7 +364,7 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_READ, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -394,7 +402,7 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_DELETE_BUCKET, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -436,7 +444,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_LIST, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -499,7 +507,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_WRITE, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -563,7 +571,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_READ, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -627,7 +635,7 @@ func (s *Server) handleTableExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_READ, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -663,7 +671,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_WRITE, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
 		return
 	}
 	bucketARN := buildTableBucketARN(bucketName)
@@ -695,7 +703,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 // handleUpdateTable commits updates to a table.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3api.ACTION_WRITE, bucketName) {
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
 		return
 	}
 	// Return 501 Not Implemented
