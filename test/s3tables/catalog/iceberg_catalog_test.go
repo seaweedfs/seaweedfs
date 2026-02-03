@@ -22,6 +22,7 @@ type TestEnvironment struct {
 	weedBinary      string
 	dataDir         string
 	s3Port          int
+	s3GrpcPort      int
 	icebergPort     int
 	masterPort      int
 	masterGrpcPort  int
@@ -96,6 +97,10 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	if err != nil {
 		t.Fatalf("Failed to get free port for Iceberg: %v", err)
 	}
+	s3GrpcPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for S3 gRPC: %v", err)
+	}
 	masterPort, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Master: %v", err)
@@ -116,6 +121,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	if err != nil {
 		t.Fatalf("Failed to get free port for Volume: %v", err)
 	}
+
 	volumeGrpcPort, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Volume gRPC: %v", err)
@@ -126,6 +132,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		weedBinary:      weedBinary,
 		dataDir:         dataDir,
 		s3Port:          s3Port,
+		s3GrpcPort:      s3GrpcPort,
 		icebergPort:     icebergPort,
 		masterPort:      masterPort,
 		masterGrpcPort:  masterGrpcPort,
@@ -162,6 +169,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-filer.port", fmt.Sprintf("%d", env.filerPort),
 		"-filer.port.grpc", fmt.Sprintf("%d", env.filerGrpcPort),
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
+		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-dir", env.dataDir,
 	)
@@ -265,6 +273,9 @@ func TestIcebergNamespaces(t *testing.T) {
 
 	env.StartSeaweedFS(t)
 
+	// Create the default table bucket first via S3
+	createTableBucket(t, env, "default")
+
 	// Test GET /v1/namespaces (should return empty list initially)
 	resp, err := http.Get(env.IcebergURL() + "/v1/namespaces")
 	if err != nil {
@@ -276,6 +287,33 @@ func TestIcebergNamespaces(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
 	}
+}
+
+// createTableBucket creates a table bucket via the S3Tables REST API
+func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
+	t.Helper()
+
+	// Use S3Tables REST API to create the bucket
+	endpoint := fmt.Sprintf("http://localhost:%d/buckets", env.s3Port)
+
+	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
+	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to create table bucket %s: %v", bucketName, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
+	}
+	t.Logf("Created table bucket %s", bucketName)
 }
 
 // TestDuckDBIntegration tests Iceberg catalog operations using DuckDB
@@ -315,9 +353,10 @@ SELECT 'Iceberg extension loaded successfully' as result;
 	cmd := exec.Command("docker", "run", "--rm",
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
 		"--add-host", "host.docker.internal:host-gateway",
+		"--entrypoint", "duckdb",
 		"duckdb/duckdb:latest",
-		"duckdb",
-		"-c", ".read /test/test.sql",
+		"-init", "/test/test.sql",
+		"-c", "SELECT 1",
 	)
 
 	output, err := cmd.CombinedOutput()
