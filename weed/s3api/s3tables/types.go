@@ -135,7 +135,8 @@ type IcebergSchema struct {
 }
 
 type IcebergMetadata struct {
-	Schema IcebergSchema `json:"schema"`
+	Schema    IcebergSchema `json:"schema"`
+	TableUUID string        `json:"tableUuid,omitempty"`
 }
 
 type TableMetadata struct {
@@ -177,15 +178,16 @@ type GetTableRequest struct {
 }
 
 type GetTableResponse struct {
-	Name             string    `json:"name"`
-	TableARN         string    `json:"tableARN"`
-	Namespace        []string  `json:"namespace"`
-	Format           string    `json:"format"`
-	CreatedAt        time.Time `json:"createdAt"`
-	ModifiedAt       time.Time `json:"modifiedAt"`
-	OwnerAccountID   string    `json:"ownerAccountId"`
-	MetadataLocation string    `json:"metadataLocation,omitempty"`
-	VersionToken     string    `json:"versionToken"`
+	Name             string         `json:"name"`
+	TableARN         string         `json:"tableARN"`
+	Namespace        []string       `json:"namespace"`
+	Format           string         `json:"format"`
+	CreatedAt        time.Time      `json:"createdAt"`
+	ModifiedAt       time.Time      `json:"modifiedAt"`
+	OwnerAccountID   string         `json:"ownerAccountId"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+	VersionToken     string         `json:"versionToken"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
 type ListTablesRequest struct {

@@ -4,16 +4,12 @@
 package iceberg
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -26,16 +22,11 @@ type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 }
 
-// uuidCounter is used as a fallback for UUID generation if rand.Read fails.
-var uuidCounter int64
-
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
-	filerClient    FilerClient
-	tablesManager  *s3tables.Manager
-	prefix         string            // optional prefix for routes
-	tableUUIDs     map[string]string // cache of table UUIDs: "bucket:namespace:table" -> UUID
-	tableUUIDsLock sync.RWMutex      // protects access to tableUUIDs map
+	filerClient   FilerClient
+	tablesManager *s3tables.Manager
+	prefix        string // optional prefix for routes
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
@@ -45,7 +36,6 @@ func NewServer(filerClient FilerClient) *Server {
 		filerClient:   filerClient,
 		tablesManager: manager,
 		prefix:        "",
-		tableUUIDs:    make(map[string]string),
 	}
 }
 
@@ -129,37 +119,6 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 		},
 	}
 	writeJSON(w, status, resp)
-}
-
-// getOrCreateTableUUID returns the cached UUID for a table, or generates and caches a new one.
-// This ensures the UUID is stable across LoadTable calls for the lifetime of the server.
-// TODO: For production use, the UUID should be persisted in the S3 Tables metadata
-// so it survives server restarts.
-func (s *Server) getOrCreateTableUUID(bucketName string, namespace []string, tableName string) string {
-	// Create cache key from table location
-	key := fmt.Sprintf("%s:%s:%s", bucketName, strings.Join(namespace, "."), tableName)
-
-	// Try read-lock first for fast path
-	s.tableUUIDsLock.RLock()
-	if uuid, exists := s.tableUUIDs[key]; exists {
-		s.tableUUIDsLock.RUnlock()
-		return uuid
-	}
-	s.tableUUIDsLock.RUnlock()
-
-	// Generate new UUID with write-lock
-	s.tableUUIDsLock.Lock()
-	defer s.tableUUIDsLock.Unlock()
-
-	// Double-check after acquiring write lock
-	if uuid, exists := s.tableUUIDs[key]; exists {
-		return uuid
-	}
-
-	// Generate and cache the new UUID
-	uuid := generateUUID()
-	s.tableUUIDs[key] = uuid
-	return uuid
 }
 
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
@@ -455,8 +414,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
 	bucketARN := buildTableBucketARN(bucketName)
 
-	// Generate and cache table UUID for consistency
-	tableUUID := s.getOrCreateTableUUID(bucketName, namespace, req.Name)
+	// Generate UUID for the new table
+	tableUUID := uuid.New().String()
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), req.Name)
 
 	metadata := TableMetadata{
@@ -471,6 +430,11 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		Namespace:      namespace,
 		Name:           req.Name,
 		Format:         "ICEBERG",
+		Metadata: &s3tables.TableMetadata{
+			Iceberg: &s3tables.IcebergMetadata{
+				TableUUID: tableUUID,
+			},
+		},
 	}
 	var createResp s3tables.CreateTableResponse
 
@@ -535,9 +499,18 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 
 	// Build table metadata
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	tableUUID := ""
+	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil {
+		tableUUID = getResp.Metadata.Iceberg.TableUUID
+	}
+	// Fallback if UUID is not found (e.g. for tables created before UUID persistence)
+	if tableUUID == "" {
+		tableUUID = uuid.New().String()
+	}
+
 	metadata := TableMetadata{
 		FormatVersion: 2,
-		TableUUID:     s.getOrCreateTableUUID(bucketName, namespace, tableName),
+		TableUUID:     tableUUID,
 		Location:      location,
 	}
 
@@ -621,51 +594,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTable commits updates to a table.
-// TODO: Full implementation should process CommitTableRequest requirements and updates,
-// perform atomic metadata pointer swap, and store metadata JSON files.
-// For now, returns 501 Not Implemented as table update logic is not yet completed.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	namespace := parseNamespace(vars["namespace"])
-	tableName := vars["table"]
-
-	if len(namespace) == 0 || tableName == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace and table name are required")
-		return
-	}
-
-	// Table update/commit not implemented
-	writeError(w, http.StatusNotImplemented, "NotImplemented", "Table update/commit not implemented")
-}
-
-// generateUUID generates a random UUID (version 4) for table metadata.
-func generateUUID() string {
-	uuid := make([]byte, 16)
-	if _, err := rand.Read(uuid); err != nil {
-		// Fallback: combine timestamp, PID, and atomic counter for uniqueness
-		glog.Warningf("Iceberg: failed to generate random UUID, using deterministic fallback: %v", err)
-		now := time.Now().UnixNano()
-		pid := int64(os.Getpid())
-		counter := atomic.AddInt64(&uuidCounter, 1)
-
-		// Fill uuid with timestamp (8 bytes) + pid (4 bytes) + counter (4 bytes)
-		for i := 0; i < 8; i++ {
-			uuid[i] = byte((now >> uint(8*i)) & 0xff)
-		}
-		for i := 0; i < 4; i++ {
-			uuid[8+i] = byte((pid >> uint(8*i)) & 0xff)
-		}
-		for i := 0; i < 4; i++ {
-			uuid[12+i] = byte((counter >> uint(8*i)) & 0xff)
-		}
-	}
-	// Set version (4) and variant (RFC 4122)
-	uuid[6] = (uuid[6] & 0x0f) | 0x40
-	uuid[8] = (uuid[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uint32(uuid[0])<<24|uint32(uuid[1])<<16|uint32(uuid[2])<<8|uint32(uuid[3]),
-		uint16(uuid[4])<<8|uint16(uuid[5]),
-		uint16(uuid[6])<<8|uint16(uuid[7]),
-		uint16(uuid[8])<<8|uint16(uuid[9]),
-		uint64(uuid[10])<<40|uint64(uuid[11])<<32|uint64(uuid[12])<<24|uint64(uuid[13])<<16|uint64(uuid[14])<<8|uint64(uuid[15]))
+	// Return 501 Not Implemented
+	writeError(w, http.StatusNotImplemented, "UnsupportedOperationException", "Table update/commit not implemented")
 }
