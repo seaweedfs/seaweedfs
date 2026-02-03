@@ -959,14 +959,58 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
-	// Load existing metadata
+	// Load existing metadata and policies for authorization
 	var metadata tableMetadataInternal
+	var tablePolicy string
+	var bucketPolicy string
+	var bucketTags map[string]string
+	var tableTags map[string]string
+	var bucketMetadata tableBucketMetadata
+
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// 1. Get Table Metadata
 		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal(data, &metadata)
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
+		}
+
+		// 2. Get Table Policy & Tags
+		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
+		if err == nil {
+			tablePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch table policy: %w", err)
+		}
+		tableTags, err = h.readTags(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+
+		// 3. Get Bucket Metadata, Policy & Tags
+		bucketPath := GetTableBucketPath(bucketName)
+		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err == nil {
+			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+			}
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+		}
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %w", err)
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	})
 
 	if err != nil {
@@ -978,9 +1022,37 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
+	// Authorization Check
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
+	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
+
+	tableAllowed := CheckPermissionWithContext("UpdateTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+		IdentityActions: identityActions,
+	})
+	bucketAllowed := CheckPermissionWithContext("UpdateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+		IdentityActions: identityActions,
+	})
+
+	if !tableAllowed && !bucketAllowed {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		return NewAuthError("UpdateTable", principal, "not authorized to update table")
+	}
+
 	// Check version token if provided
 	if req.VersionToken != "" && req.VersionToken != metadata.VersionToken {
-		h.writeError(w, http.StatusConflict, "ConflictException", "Version token mismatch")
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "Version token mismatch")
 		return ErrVersionTokenMismatch
 	}
 
@@ -1028,7 +1100,9 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.writeJSON(w, http.StatusOK, &UpdateTableResponse{
-		VersionToken: metadata.VersionToken,
+		TableARN:         tableARN,
+		MetadataLocation: metadata.MetadataLocation,
+		VersionToken:     metadata.VersionToken,
 	})
 	return nil
 }
