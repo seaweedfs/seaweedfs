@@ -88,28 +88,36 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
 			return
 		}
+
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
 			apiErr := s3err.GetAPIError(errCode)
 			errorType := "RESTException"
-			if apiErr.HTTPStatusCode == http.StatusForbidden {
+			switch apiErr.HTTPStatusCode {
+			case http.StatusForbidden:
 				errorType = "ForbiddenException"
-			} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
+			case http.StatusUnauthorized:
 				errorType = "NotAuthorizedException"
-			} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
+			case http.StatusBadRequest:
 				errorType = "BadRequestException"
-			} else if apiErr.HTTPStatusCode == http.StatusInternalServerError {
+			case http.StatusInternalServerError:
 				errorType = "InternalServerError"
 			}
 			writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
 			return
 		}
+
+		ctx := r.Context()
 		if identityName != "" {
-			r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identityName))
+			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
 		}
 		if identity != nil {
-			r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
+			ctx = s3_constants.SetIdentityInContext(ctx, identity)
 		}
+		if identityName != "" || identity != nil {
+			r = r.WithContext(ctx)
+		}
+
 		handler(w, r)
 	}
 }
