@@ -584,6 +584,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Build proper Iceberg table metadata using iceberg-go types
 	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	if metadata == nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
+	}
 
 	// Serialize metadata to JSON
 	metadataBytes, err := json.Marshal(metadata)
@@ -698,9 +702,14 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
 		if err != nil {
 			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
+			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
+			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
+			// For now, fallback to empty metadata
 			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 		}
 	} else {
+		// No full metadata, create synthetic
+		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
 		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 	}
 
@@ -850,7 +859,20 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		tableUUID = uuid.New()
 	}
 
-	currentMetadata := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	var currentMetadata table.Metadata
+	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
+		var err error
+		currentMetadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+		if err != nil {
+			glog.Errorf("Iceberg: Failed to parse current metadata for %s: %v", tableName, err)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata")
+			return
+		}
+	} else {
+		// Fallback for tables without persisted full metadata (legacy or error state)
+		currentMetadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	}
+
 	if currentMetadata == nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
 		return
