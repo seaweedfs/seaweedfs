@@ -178,9 +178,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if v != nil {
-		if err := json.NewEncoder(w).Encode(v); err != nil {
+		data, err := json.Marshal(v)
+		if err != nil {
 			glog.Errorf("Iceberg: failed to encode response: %v", err)
+			return
 		}
+		w.Write(data)
 	}
 }
 
@@ -309,6 +312,9 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		Namespace:  req.Namespace,
 		Properties: req.Properties,
 	}
+	if result.Properties == nil {
+		result.Properties = make(map[string]string)
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -351,7 +357,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 
 	result := GetNamespaceResponse{
 		Namespace:  namespace,
-		Properties: map[string]string{},
+		Properties: make(map[string]string),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -550,10 +556,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := loadTableResultJSON{
+	result := LoadTableResult{
 		MetadataLocation: createResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           iceberg.Properties{},
+		Config:           make(iceberg.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -612,10 +618,10 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 
 	metadata := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 
-	result := loadTableResultJSON{
+	result := LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           iceberg.Properties{},
+		Config:           make(iceberg.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -842,23 +848,6 @@ func newTableMetadata(
 	sortOrder *table.SortOrder,
 	props iceberg.Properties,
 ) table.Metadata {
-	// Create a v2 format metadata builder
-	builder, err := table.NewMetadataBuilder(2)
-	if err != nil {
-		glog.Errorf("Failed to create metadata builder: %v", err)
-		return nil
-	}
-
-	// Set UUID
-	if err := builder.SetUUID(tableUUID); err != nil {
-		glog.Errorf("Failed to set UUID: %v", err)
-	}
-
-	// Set location
-	if err := builder.SetLoc(location); err != nil {
-		glog.Errorf("Failed to set location: %v", err)
-	}
-
 	// Add schema - use provided or create empty schema
 	var s *iceberg.Schema
 	if schema != nil {
@@ -866,50 +855,33 @@ func newTableMetadata(
 	} else {
 		s = iceberg.NewSchema(0)
 	}
-	if err := builder.AddSchema(s); err != nil {
-		glog.Errorf("Failed to add schema: %v", err)
-	}
-	if err := builder.SetCurrentSchemaID(s.ID); err != nil {
-		glog.Errorf("Failed to set current schema: %v", err)
-	}
 
 	// Add partition spec
 	var pSpec *iceberg.PartitionSpec
 	if partitionSpec != nil {
 		pSpec = partitionSpec
 	} else {
-		unpartitioned := iceberg.NewPartitionSpec()
+		unpartitioned := iceberg.NewPartitionSpecID(0)
 		pSpec = &unpartitioned
-	}
-	if err := builder.AddPartitionSpec(pSpec, true); err != nil {
-		glog.Errorf("Failed to add partition spec: %v", err)
 	}
 
 	// Add sort order
+	var so table.SortOrder
 	if sortOrder != nil {
-		if err := builder.AddSortOrder(sortOrder); err != nil {
-			glog.Errorf("Failed to add sort order: %v", err)
-		}
+		so = *sortOrder
 	} else {
-		unsorted := table.UnsortedSortOrder
-		if err := builder.AddSortOrder(&unsorted); err != nil {
-			glog.Errorf("Failed to add unsorted order: %v", err)
-		}
+		so = table.UnsortedSortOrder
 	}
 
-	// Set properties
-	if props != nil {
-		for key, value := range props {
-			if err := builder.SetProperties(iceberg.Properties{key: value}); err != nil {
-				glog.Errorf("Failed to set property %s: %v", key, err)
-			}
-		}
+	// Create properties map if nil
+	if props == nil {
+		props = make(iceberg.Properties)
 	}
 
-	// Build the metadata
-	metadata, err := builder.Build()
+	// Create metadata directly using the constructor which ensures spec compliance for V2
+	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
 	if err != nil {
-		glog.Errorf("Failed to build metadata: %v", err)
+		glog.Errorf("Failed to create metadata: %v", err)
 		return nil
 	}
 

@@ -53,13 +53,13 @@ type CreateNamespaceRequest struct {
 // CreateNamespaceResponse is returned by POST /v1/namespaces.
 type CreateNamespaceResponse struct {
 	Namespace  Namespace         `json:"namespace"`
-	Properties map[string]string `json:"properties,omitempty"`
+	Properties map[string]string `json:"properties"`
 }
 
 // GetNamespaceResponse is returned by GET /v1/namespaces/{namespace}.
 type GetNamespaceResponse struct {
 	Namespace  Namespace         `json:"namespace"`
-	Properties map[string]string `json:"properties,omitempty"`
+	Properties map[string]string `json:"properties"`
 }
 
 // ListTablesResponse is returned by GET /v1/namespaces/{namespace}/tables.
@@ -80,12 +80,10 @@ type CreateTableRequest struct {
 	Properties    iceberg.Properties     `json:"properties,omitempty"`
 }
 
-// LoadTableResult is returned by GET/POST table endpoints.
-// Uses iceberg-go table.Metadata for proper spec compliance.
 type LoadTableResult struct {
 	MetadataLocation string             `json:"metadata-location,omitempty"`
 	Metadata         table.Metadata     `json:"metadata"`
-	Config           iceberg.Properties `json:"config,omitempty"`
+	Config           iceberg.Properties `json:"config"`
 }
 
 // loadTableResultAlias is used for custom JSON unmarshaling.
@@ -119,9 +117,9 @@ func (r *LoadTableResult) UnmarshalJSON(data []byte) error {
 
 // CommitTableRequest is sent to POST /v1/namespaces/{namespace}/tables/{table}.
 type CommitTableRequest struct {
-	Identifier   *TableIdentifier    `json:"identifier,omitempty"`
-	Requirements []table.Requirement `json:"requirements"`
-	Updates      []table.Update      `json:"updates"`
+	Identifier   *TableIdentifier   `json:"identifier,omitempty"`
+	Requirements table.Requirements `json:"requirements"`
+	Updates      table.Updates      `json:"updates"`
 }
 
 // CommitTableResponse is returned by POST table commit operations.
