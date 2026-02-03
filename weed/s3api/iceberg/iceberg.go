@@ -879,8 +879,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate all requirements against current metadata
-	for _, req := range req.Requirements {
-		if err := req.Validate(currentMetadata); err != nil {
+	for _, requirement := range req.Requirements {
+		if err := requirement.Validate(currentMetadata); err != nil {
 			writeError(w, http.StatusConflict, "CommitFailedException", "Requirement failed: "+err.Error())
 			return
 		}
