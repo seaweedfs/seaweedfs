@@ -316,6 +316,7 @@ SELECT 'Iceberg extension loaded successfully' as result;
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
 		"--add-host", "host.docker.internal:host-gateway",
 		"duckdb/duckdb:latest",
+		"duckdb",
 		"-c", ".read /test/test.sql",
 	)
 
