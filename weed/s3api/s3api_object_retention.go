@@ -549,14 +549,14 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	}
 
 	// Verify that the authenticated identity can perform this action
-	if identity != nil && identity.canDo(action, bucket, object) {
+	if identity != nil && identity.CanDo(action, bucket, object) {
 		return true
 	}
 
 	// Additional check: allow users with Admin action to bypass governance retention
 	// Use the proper S3 Admin action constant instead of generic isAdmin() method
 	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
-	if identity != nil && identity.canDo(adminAction, bucket, object) {
+	if identity != nil && identity.CanDo(adminAction, bucket, object) {
 		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
 		return true
 	}

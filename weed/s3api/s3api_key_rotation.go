@@ -72,7 +72,7 @@ func (s3a *S3ApiServer) rotateSSEKMSKey(entry *filer_pb.Entry, r *http.Request) 
 
 	// For SSE-KMS, we can potentially do metadata-only rotation
 	// if the KMS service supports key aliasing and the data encryption key can be re-wrapped
-	if s3a.canDoMetadataOnlyKMSRotation(srcKeyID, dstKeyID) {
+	if s3a.CanDoMetadataOnlyKMSRotation(srcKeyID, dstKeyID) {
 		return s3a.rotateSSEKMSMetadataOnly(entry, srcKeyID, dstKeyID)
 	}
 
@@ -80,8 +80,8 @@ func (s3a *S3ApiServer) rotateSSEKMSKey(entry *filer_pb.Entry, r *http.Request) 
 	return s3a.rotateSSEKMSChunks(entry, srcKeyID, dstKeyID, r)
 }
 
-// canDoMetadataOnlyKMSRotation determines if KMS key rotation can be done metadata-only
-func (s3a *S3ApiServer) canDoMetadataOnlyKMSRotation(srcKeyID, dstKeyID string) bool {
+// CanDoMetadataOnlyKMSRotation determines if KMS key rotation can be done metadata-only
+func (s3a *S3ApiServer) CanDoMetadataOnlyKMSRotation(srcKeyID, dstKeyID string) bool {
 	// For now, we'll be conservative and always re-encrypt
 	// In a full implementation, this would check if:
 	// 1. Both keys are in the same KMS instance

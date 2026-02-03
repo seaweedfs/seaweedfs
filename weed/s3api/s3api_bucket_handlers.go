@@ -94,7 +94,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 					hasPermission = (errCode == s3err.ErrNone)
 				} else {
 					// Use legacy authorization for non-JWT users
-					hasPermission = identity.canDo(s3_constants.ACTION_LIST, entry.Name, "")
+					hasPermission = identity.CanDo(s3_constants.ACTION_LIST, entry.Name, "")
 				}
 
 				if !hasPermission {

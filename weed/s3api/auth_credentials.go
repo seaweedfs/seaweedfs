@@ -1084,7 +1084,21 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+// AuthenticateRequest verifies the credentials in the request and returns the identity.
+// It bypasses permission checks (authorization).
+func (iam *IdentityAccessManagement) AuthenticateRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
+	if !iam.isAuthEnabled {
+		return &Identity{
+			Name:    "admin",
+			Account: &AccountAdmin,
+			Actions: []Action{s3_constants.ACTION_ADMIN},
+		}, s3err.ErrNone
+	}
+	ident, err, _ := iam.authenticateRequestInternal(r)
+	return ident, err
+}
+
+func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request) (*Identity, s3err.ErrorCode, authType) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
@@ -1138,6 +1152,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	if len(amzAuthType) > 0 {
 		r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 	}
+
+	return identity, s3Err, reqAuthType
+}
+
+// authRequestWithAuthType authenticates and then authorizes a request for a given action.
+func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err, reqAuthType
 	}
@@ -1274,7 +1295,7 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
+func (identity *Identity) CanDo(action Action, bucket string, objectKey string) bool {
 	if identity == nil {
 		return false
 	}
@@ -1507,7 +1528,7 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	// Traditional identities (with Actions from -s3.config) use legacy auth,
 	// JWT/STS identities (no Actions) use IAM authorization
 	if len(identity.Actions) > 0 {
-		if !identity.canDo(action, bucket, object) {
+		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone

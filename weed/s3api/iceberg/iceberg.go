@@ -13,13 +13,44 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
+
+func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request, action s3api.Action, bucketName string) bool {
+	identityName := s3_constants.GetIdentityNameFromContext(r)
+	if identityName == "" {
+		writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
+		return false
+	}
+
+	identityObj := s3_constants.GetIdentityFromContext(r)
+	if identityObj == nil {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: missing identity")
+		return false
+	}
+	identity, ok := identityObj.(*s3api.Identity)
+	if !ok {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: invalid identity")
+		return false
+	}
+
+	if !identity.CanDo(action, bucketName, "") {
+		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied")
+		return false
+	}
+	return true
+}
 
 // FilerClient provides access to the filer for storage operations.
 type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
+}
+
+type S3Authenticator interface {
+	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
 }
 
 // Server implements the Iceberg REST Catalog API.
@@ -27,52 +58,94 @@ type Server struct {
 	filerClient   FilerClient
 	tablesManager *s3tables.Manager
 	prefix        string // optional prefix for routes
+	authenticator S3Authenticator
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
-func NewServer(filerClient FilerClient) *Server {
+func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	manager := s3tables.NewManager()
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
 		prefix:        "",
+		authenticator: authenticator,
 	}
 }
 
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Configuration endpoint
-	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
+	router.HandleFunc("/v1/config", s.Auth(s.handleConfig)).Methods(http.MethodGet)
 
 	// Namespace endpoints
-	router.HandleFunc("/v1/namespaces", s.handleListNamespaces).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces", s.handleCreateNamespace).Methods(http.MethodPost)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleGetNamespace).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleNamespaceExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleDropNamespace).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
 
 	// Table endpoints
-	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.handleListTables).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.handleCreateTable).Methods(http.MethodPost)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleLoadTable).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleTableExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleDropTable).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleUpdateTable).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
 	// With prefix support
-	router.HandleFunc("/v1/{prefix}/namespaces", s.handleListNamespaces).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces", s.handleCreateNamespace).Methods(http.MethodPost)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleGetNamespace).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleNamespaceExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleDropNamespace).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.handleListTables).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.handleCreateTable).Methods(http.MethodPost)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleLoadTable).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleTableExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleDropTable).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleUpdateTable).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
 	glog.V(0).Infof("Registered Iceberg REST Catalog routes")
+}
+
+func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authenticator == nil {
+			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
+			return
+		}
+
+		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
+		if errCode != s3err.ErrNone {
+			apiErr := s3err.GetAPIError(errCode)
+			errorType := "RESTException"
+			switch apiErr.HTTPStatusCode {
+			case http.StatusForbidden:
+				errorType = "ForbiddenException"
+			case http.StatusUnauthorized:
+				errorType = "NotAuthorizedException"
+			case http.StatusBadRequest:
+				errorType = "BadRequestException"
+			case http.StatusInternalServerError:
+				errorType = "InternalServerError"
+			}
+			writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
+			return
+		}
+
+		if identityName != "" || identity != nil {
+			ctx := r.Context()
+			if identityName != "" {
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+			}
+			if identity != nil {
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			}
+			r = r.WithContext(ctx)
+		}
+
+		handler(w, r)
+	}
 }
 
 // parseNamespace parses the namespace from path parameter.
@@ -140,6 +213,10 @@ func buildTableBucketARN(bucketName string) string {
 
 // handleConfig returns catalog configuration.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
+		return
+	}
 	config := CatalogConfig{
 		Defaults:  map[string]string{},
 		Overrides: map[string]string{},
@@ -150,6 +227,9 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 // handleListNamespaces lists namespaces in a catalog.
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	// Use S3 Tables manager to list namespaces
@@ -185,16 +265,19 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 // handleCreateNamespace creates a new namespace.
 func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	var req CreateNamespaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
 		return
 	}
 
 	if len(req.Namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
@@ -212,7 +295,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			writeError(w, http.StatusConflict, "NamespaceAlreadyExistsException", err.Error())
+			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateNamespace error: %v", err)
@@ -232,11 +315,14 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	// Use S3 Tables manager to get namespace
@@ -278,6 +364,9 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	getReq := &s3tables.GetNamespaceRequest{
@@ -308,11 +397,14 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	deleteReq := &s3tables.DeleteNamespaceRequest{
@@ -347,11 +439,14 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	listReq := &s3tables.ListTablesRequest{
@@ -396,22 +491,25 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
 	var req CreateTableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Table name is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Table name is required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	// Generate UUID for the new table
@@ -445,7 +543,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			writeError(w, http.StatusConflict, "TableAlreadyExistsException", err.Error())
+			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -468,11 +566,14 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	tableName := vars["table"]
 
 	if len(namespace) == 0 || tableName == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace and table name are required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace and table name are required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	getReq := &s3tables.GetTableRequest{
@@ -534,6 +635,9 @@ func (s *Server) handleTableExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	getReq := &s3tables.GetTableRequest{
@@ -562,11 +666,14 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	tableName := vars["table"]
 
 	if len(namespace) == 0 || tableName == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace and table name are required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace and table name are required")
 		return
 	}
 
 	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
+		return
+	}
 	bucketARN := buildTableBucketARN(bucketName)
 
 	deleteReq := &s3tables.DeleteTableRequest{
@@ -595,6 +702,10 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateTable commits updates to a table.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
+	bucketName := getBucketFromPrefix(r)
+	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
+		return
+	}
 	// Return 501 Not Implemented
 	writeError(w, http.StatusNotImplemented, "UnsupportedOperationException", "Table update/commit not implemented")
 }

@@ -108,7 +108,7 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			description:            "STS identity should be denied when no IAM integration is available",
 		},
 		{
-			name: "Traditional identity with Actions - should use canDo",
+			name: "Traditional identity with Actions - should use CanDo",
 			identity: &Identity{
 				Name:    "traditional-user",
 				Account: &AccountAdmin,
@@ -117,10 +117,10 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			shouldCheckPermissions: true,
 			iamIntegration:         nil, // IAM integration not needed for traditional identities
 			expectedError:          s3err.ErrNone,
-			description:            "Traditional identity with Actions should use canDo check",
+			description:            "Traditional identity with Actions should use CanDo check",
 		},
 		{
-			name: "Traditional identity with Actions - canDo denies",
+			name: "Traditional identity with Actions - CanDo denies",
 			identity: &Identity{
 				Name:    "read-only-user",
 				Account: &AccountAdmin,
@@ -129,7 +129,7 @@ func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
 			shouldCheckPermissions: true,
 			iamIntegration:         nil,
 			expectedError:          s3err.ErrAccessDenied,
-			description:            "Traditional identity should be denied when canDo fails (PUT requires WRITE)",
+			description:            "Traditional identity should be denied when CanDo fails (PUT requires WRITE)",
 		},
 		{
 			name: "shouldCheckPermissions false - skip authorization",
