@@ -118,6 +118,7 @@ type tableMetadataInternal struct {
 	ModifiedAt       time.Time      `json:"modifiedAt"`
 	OwnerAccountID   string         `json:"ownerAccountId"`
 	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }

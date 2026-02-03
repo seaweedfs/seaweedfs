@@ -171,7 +171,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	if err == nil {
 		h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
 		return fmt.Errorf("table already exists")
-	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+	} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		return err
 	}
@@ -188,7 +188,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		ModifiedAt:     now,
 		OwnerAccountID: namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
 		VersionToken:   versionToken,
-		Metadata:       req.Metadata,
+		MetadataVersion: func() int {
+			if req.MetadataVersion > 0 {
+				return req.MetadataVersion
+			}
+			return 1
+		}(),
+		MetadataLocation: req.MetadataLocation,
+		Metadata:         req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -395,6 +402,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		ModifiedAt:       metadata.ModifiedAt,
 		OwnerAccountID:   metadata.OwnerAccountID,
 		MetadataLocation: metadata.MetadataLocation,
+		MetadataVersion:  metadata.MetadataVersion,
 		VersionToken:     metadata.VersionToken,
 		Metadata:         metadata.Metadata,
 	}
@@ -995,6 +1003,11 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	}
 	if req.MetadataLocation != "" {
 		metadata.MetadataLocation = req.MetadataLocation
+	}
+	if req.MetadataVersion > 0 {
+		metadata.MetadataVersion = req.MetadataVersion
+	} else if metadata.MetadataVersion == 0 {
+		metadata.MetadataVersion = 1
 	}
 	metadata.ModifiedAt = time.Now()
 	metadata.VersionToken = generateVersionToken()

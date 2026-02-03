@@ -4,12 +4,13 @@
 package iceberg
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
-	"strconv"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
@@ -150,6 +151,58 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		handler(w, r)
 	}
+}
+
+// saveMetadataFile saves the Iceberg metadata JSON file to the filer.
+// It constructs the correct filler path from the S3 location components.
+func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, tableName, metadataFileName string, content []byte) error {
+	// Construct filer path: /table-buckets/<bucket>/<namespace>/<table>/metadata/<filename>
+	// Note: s3tables.TablesPath is "/table-buckets"
+	filerPath := fmt.Sprintf("/table-buckets/%s/%s/%s/metadata", bucketName, namespace, tableName)
+
+	// Create context with timeout for file operations
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// Ensure metadata directory exists
+		// Using CreateEntry for directory creation to avoid interface casting issues
+		_, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName),
+			Entry: &filer_pb.Entry{
+				Name:        "metadata",
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0755 | os.ModeDir),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create metadata directory: %w", err)
+		}
+
+		// Write the file
+		// Using CreateEntry for file creation to avoid interface casting issues
+		_, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: filerPath,
+			Entry: &filer_pb.Entry{
+				Name: metadataFileName,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0644),
+					FileSize: uint64(len(content)),
+				},
+				Content: content,
+				Extended: map[string][]byte{
+					"Mime-Type": []byte("application/json"),
+				},
+			},
+		})
+		return err
+	})
 }
 
 // parseNamespace parses the namespace from path parameter.
@@ -539,11 +592,21 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 1. Save metadata file to filer
+	tableName := req.Name
+	metadataFileName := "v1.metadata.json" // Initial version is always 1
+	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
+		return
+	}
+
+	metadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s", bucketName, encodeNamespace(namespace), tableName, metadataFileName)
+
 	// Use S3 Tables manager to create table
 	createReq := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
-		Name:           req.Name,
+		Name:           tableName,
 		Format:         "ICEBERG",
 		Metadata: &s3tables.TableMetadata{
 			Iceberg: &s3tables.IcebergMetadata{
@@ -551,6 +614,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			},
 			FullMetadata: metadataBytes,
 		},
+		MetadataLocation: metadataLocation,
+		MetadataVersion:  1,
 	}
 	var createResp s3tables.CreateTableResponse
 
@@ -820,19 +885,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate new metadata location
-	metadataVersion := 1
-	if getResp.MetadataLocation != "" {
-		re := regexp.MustCompile(`/v(\d+)\.metadata\.json$`)
-		matches := re.FindStringSubmatch(getResp.MetadataLocation)
-		if len(matches) == 2 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				metadataVersion = v + 1
-			}
-		} else {
-			metadataVersion = 2 // Fallback if format is unexpected
-		}
-	}
+	// Determine next metadata version
+	metadataVersion := getResp.MetadataVersion + 1
 	metadataFileName := fmt.Sprintf("v%d.metadata.json", metadataVersion)
 	newMetadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s",
 		bucketName, encodeNamespace(namespace), tableName, metadataFileName)
@@ -841,6 +895,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	metadataBytes, err := json.Marshal(newMetadata)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
+		return
+	}
+
+	// 1. Save metadata file to filer
+	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
 
@@ -856,6 +916,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			},
 			FullMetadata: metadataBytes,
 		},
+		MetadataVersion:  metadataVersion,
 		MetadataLocation: newMetadataLocation,
 	}
 

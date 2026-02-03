@@ -160,12 +160,14 @@ type Table struct {
 }
 
 type CreateTableRequest struct {
-	TableBucketARN string            `json:"tableBucketARN"`
-	Namespace      []string          `json:"namespace"`
-	Name           string            `json:"name"`
-	Format         string            `json:"format"`
-	Metadata       *TableMetadata    `json:"metadata,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	TableBucketARN   string            `json:"tableBucketARN"`
+	Namespace        []string          `json:"namespace"`
+	Name             string            `json:"name"`
+	Format           string            `json:"format"`
+	Metadata         *TableMetadata    `json:"metadata,omitempty"`
+	MetadataVersion  int               `json:"metadataVersion,omitempty"`
+	MetadataLocation string            `json:"metadataLocation,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 }
 
 type CreateTableResponse struct {
@@ -191,6 +193,7 @@ type GetTableResponse struct {
 	OwnerAccountID   string         `json:"ownerAccountId"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
@@ -229,6 +232,7 @@ type UpdateTableRequest struct {
 	Name             string         `json:"name"`
 	VersionToken     string         `json:"versionToken,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataVersion  int            `json:"metadataVersion,omitempty"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 }
 
