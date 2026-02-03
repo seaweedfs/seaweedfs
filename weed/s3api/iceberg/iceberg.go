@@ -84,29 +84,31 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.authenticator != nil {
-			identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
-			if errCode != s3err.ErrNone {
-				apiErr := s3err.GetAPIError(errCode)
-				errorType := "RESTException"
-				if apiErr.HTTPStatusCode == http.StatusForbidden {
-					errorType = "ForbiddenException"
-				} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
-					errorType = "NotAuthorizedException"
-				} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
-					errorType = "BadRequestException"
-				} else if apiErr.HTTPStatusCode == http.StatusInternalServerError {
-					errorType = "InternalServerError"
-				}
-				writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
-				return
+		if s.authenticator == nil {
+			writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
+			return
+		}
+		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
+		if errCode != s3err.ErrNone {
+			apiErr := s3err.GetAPIError(errCode)
+			errorType := "RESTException"
+			if apiErr.HTTPStatusCode == http.StatusForbidden {
+				errorType = "ForbiddenException"
+			} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
+				errorType = "NotAuthorizedException"
+			} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
+				errorType = "BadRequestException"
+			} else if apiErr.HTTPStatusCode == http.StatusInternalServerError {
+				errorType = "InternalServerError"
 			}
-			if identityName != "" {
-				r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identityName))
-			}
-			if identity != nil {
-				r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
-			}
+			writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
+			return
+		}
+		if identityName != "" {
+			r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identityName))
+		}
+		if identity != nil {
+			r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
 		}
 		handler(w, r)
 	}
