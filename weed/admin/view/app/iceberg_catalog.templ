@@ -180,33 +180,33 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 					</div>
 					<div class="card-body">
 						<h6>DuckDB</h6>
-						<pre class="bg-light p-3 border rounded"><code>-- Install and load Iceberg extension
+						<pre class="bg-light p-3 border rounded"><code>{ `-- Install and load Iceberg extension
 INSTALL iceberg;
 LOAD iceberg;
 
 -- Create a catalog connection
 CREATE SECRET (
     TYPE ICEBERG,
-    ENDPOINT 'http://localhost:{ fmt.Sprintf("%d", data.IcebergPort) }',
+    ENDPOINT 'http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `',
     SCOPE 's3://my-table-bucket/'
 );
 
 -- Query tables
-SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');</code></pre>
+SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');` }</code></pre>
 
 						<h6 class="mt-4">Python (PyIceberg)</h6>
-						<pre class="bg-light p-3 border rounded"><code>from pyiceberg.catalog import load_catalog
+						<pre class="bg-light p-3 border rounded"><code>{ `from pyiceberg.catalog import load_catalog
 
 catalog = load_catalog(
     name="seaweedfs",
-    **{"{"}
+    **{
         "type": "rest",
-        "uri": "http://localhost:{ fmt.Sprintf("%d", data.IcebergPort) }",
-    {"}"}
+        "uri": "http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `",
+    }
 )
 
 # List namespaces
-namespaces = catalog.list_namespaces()</code></pre>
+namespaces = catalog.list_namespaces()` }</code></pre>
 					</div>
 				</div>
 			</div>
