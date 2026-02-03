@@ -29,8 +29,11 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 					<strong>Iceberg REST Catalog</strong>
 					<p class="mb-0 mt-1">
 						Connect your Iceberg clients (DuckDB, Spark, etc.) to:
-						<code>http://&lt;server&gt;:{fmt.Sprintf("%d", data.IcebergPort)}/v1</code>
+						<code>http://<span id="iceberg-host">localhost</span>:{fmt.Sprintf("%d", data.IcebergPort)}/v1</code>
 					</p>
+					<script>
+						document.getElementById('iceberg-host').innerText = window.location.hostname;
+					</script>
 				</div>
 			</div>
 		</div>

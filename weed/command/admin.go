@@ -211,7 +211,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	}()
 
 	// Start the admin server with all masters (UI enabled by default)
-	err := startAdminServer(ctx, a, true)
+	err := startAdminServer(ctx, a, true, 0)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -222,7 +222,7 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
 	// Set Gin mode
 	gin.SetMode(gin.ReleaseMode)
 
@@ -281,7 +281,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) 
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
