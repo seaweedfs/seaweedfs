@@ -107,14 +107,14 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-		if identityName != "" {
-			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
-		}
-		if identity != nil {
-			ctx = s3_constants.SetIdentityInContext(ctx, identity)
-		}
 		if identityName != "" || identity != nil {
+			ctx := r.Context()
+			if identityName != "" {
+				ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+			}
+			if identity != nil {
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			}
 			r = r.WithContext(ctx)
 		}
 
