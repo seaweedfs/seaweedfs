@@ -50,7 +50,10 @@ func TestCompactionToEmpty(t *testing.T) {
 	}
 
 	// 6. Verify the resulting .dat file size
-	datSize, _, _ := v.FileStat()
+	datSize, _, err := v.FileStat()
+	if err != nil {
+		t.Fatalf("file stat: %v", err)
+	}
 	if datSize != super_block.SuperBlockSize {
 		t.Errorf("expected dat file size %d, got %d", super_block.SuperBlockSize, datSize)
 	}
