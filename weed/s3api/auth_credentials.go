@@ -1288,7 +1288,7 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
+func (identity *Identity) CanDo(action Action, bucket string, objectKey string) bool {
 	if identity == nil {
 		return false
 	}
@@ -1521,7 +1521,7 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	// Traditional identities (with Actions from -s3.config) use legacy auth,
 	// JWT/STS identities (no Actions) use IAM authorization
 	if len(identity.Actions) > 0 {
-		if !identity.canDo(action, bucket, object) {
+		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone
