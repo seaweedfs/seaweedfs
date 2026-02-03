@@ -358,7 +358,7 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 	}
 
 	// Verify the table exists and has ICEBERG format by checking its metadata
-	tablePath := getTablePath(bucket, namespace, table)
+	tablePath := GetTablePath(bucket, namespace, table)
 	dir, name := splitPath(tablePath)
 
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{

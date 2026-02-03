@@ -43,7 +43,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	}
 
 	// Check if table bucket exists
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	var bucketMetadata tableBucketMetadata
 	var bucketPolicy string
 	var bucketTags map[string]string
@@ -93,7 +93,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		return ErrAccessDenied
 	}
 
-	namespacePath := getNamespacePath(bucketName, namespaceName)
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
 
 	// Check if namespace already exists
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -177,8 +177,8 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		return err
 	}
 
-	namespacePath := getNamespacePath(bucketName, namespaceName)
-	bucketPath := getTableBucketPath(bucketName)
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Get namespace and bucket policy
 	var metadata namespaceMetadata
@@ -264,7 +264,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		maxNamespaces = 100
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check permission (check bucket ownership)
 	var bucketMetadata tableBucketMetadata
@@ -446,8 +446,8 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		return err
 	}
 
-	namespacePath := getNamespacePath(bucketName, namespaceName)
-	bucketPath := getTableBucketPath(bucketName)
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check if namespace exists and get metadata for permission check
 	var metadata namespaceMetadata

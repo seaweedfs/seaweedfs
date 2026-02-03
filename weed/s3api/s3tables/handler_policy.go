@@ -66,7 +66,7 @@ func (h *S3TablesHandler) handlePutTableBucketPolicy(w http.ResponseWriter, r *h
 	}
 
 	// Check if bucket exists and get metadata for ownership check
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	var bucketMetadata tableBucketMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
@@ -133,7 +133,7 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	var policy []byte
 	var bucketMetadata tableBucketMetadata
 
@@ -204,7 +204,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check if bucket exists and get metadata for ownership check
 	var bucketMetadata tableBucketMetadata
@@ -301,8 +301,8 @@ func (h *S3TablesHandler) handlePutTablePolicy(w http.ResponseWriter, r *http.Re
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-	tablePath := getTablePath(bucketName, namespaceName, tableName)
-	bucketPath := getTableBucketPath(bucketName)
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	var metadata tableMetadataInternal
 	var bucketPolicy string
@@ -396,8 +396,8 @@ func (h *S3TablesHandler) handleGetTablePolicy(w http.ResponseWriter, r *http.Re
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-	tablePath := getTablePath(bucketName, namespaceName, tableName)
-	bucketPath := getTableBucketPath(bucketName)
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
+	bucketPath := GetTableBucketPath(bucketName)
 	var policy []byte
 	var metadata tableMetadataInternal
 	var bucketPolicy string
@@ -497,8 +497,8 @@ func (h *S3TablesHandler) handleDeleteTablePolicy(w http.ResponseWriter, r *http
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
-	tablePath := getTablePath(bucketName, namespaceName, tableName)
-	bucketPath := getTableBucketPath(bucketName)
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check if table exists
 	var metadata tableMetadataInternal
@@ -604,7 +604,7 @@ func (h *S3TablesHandler) handleTagResource(w http.ResponseWriter, r *http.Reque
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
-			bucketPath := getTableBucketPath(bucketName)
+			bucketPath := GetTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err != nil {
 				if !errors.Is(err, ErrAttributeNotFound) {
@@ -722,7 +722,7 @@ func (h *S3TablesHandler) handleListTagsForResource(w http.ResponseWriter, r *ht
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
-			bucketPath := getTableBucketPath(bucketName)
+			bucketPath := GetTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err != nil {
 				if !errors.Is(err, ErrAttributeNotFound) {
@@ -828,7 +828,7 @@ func (h *S3TablesHandler) handleUntagResource(w http.ResponseWriter, r *http.Req
 
 		// Fetch bucket policy if we have a bucket name
 		if bucketName != "" {
-			bucketPath := getTableBucketPath(bucketName)
+			bucketPath := GetTableBucketPath(bucketName)
 			policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err != nil {
 				if !errors.Is(err, ErrAttributeNotFound) {
@@ -914,13 +914,13 @@ func (h *S3TablesHandler) resolveResourcePath(resourceARN string) (path string, 
 	// Try parsing as table ARN first
 	bucketName, namespace, tableName, err := parseTableFromARN(resourceARN)
 	if err == nil {
-		return getTablePath(bucketName, namespace, tableName), ExtendedKeyTags, ResourceTypeTable, nil
+		return GetTablePath(bucketName, namespace, tableName), ExtendedKeyTags, ResourceTypeTable, nil
 	}
 
 	// Try parsing as bucket ARN
 	bucketName, err = parseBucketNameFromARN(resourceARN)
 	if err == nil {
-		return getTableBucketPath(bucketName), ExtendedKeyTags, ResourceTypeBucket, nil
+		return GetTableBucketPath(bucketName), ExtendedKeyTags, ResourceTypeBucket, nil
 	}
 
 	return "", "", "", fmt.Errorf("invalid resource ARN: %s", resourceARN)

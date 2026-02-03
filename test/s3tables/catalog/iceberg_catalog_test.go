@@ -171,6 +171,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
+		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
 	cmd.Stdout = os.Stdout

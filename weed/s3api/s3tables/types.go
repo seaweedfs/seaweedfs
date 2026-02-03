@@ -1,6 +1,9 @@
 package s3tables
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Table bucket types
 
@@ -140,7 +143,8 @@ type IcebergMetadata struct {
 }
 
 type TableMetadata struct {
-	Iceberg *IcebergMetadata `json:"iceberg,omitempty"`
+	Iceberg      *IcebergMetadata `json:"iceberg,omitempty"`
+	FullMetadata json.RawMessage  `json:"fullMetadata,omitempty"`
 }
 
 type Table struct {
@@ -156,12 +160,14 @@ type Table struct {
 }
 
 type CreateTableRequest struct {
-	TableBucketARN string            `json:"tableBucketARN"`
-	Namespace      []string          `json:"namespace"`
-	Name           string            `json:"name"`
-	Format         string            `json:"format"`
-	Metadata       *TableMetadata    `json:"metadata,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	TableBucketARN   string            `json:"tableBucketARN"`
+	Namespace        []string          `json:"namespace"`
+	Name             string            `json:"name"`
+	Format           string            `json:"format"`
+	Metadata         *TableMetadata    `json:"metadata,omitempty"`
+	MetadataVersion  int               `json:"metadataVersion,omitempty"`
+	MetadataLocation string            `json:"metadataLocation,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 }
 
 type CreateTableResponse struct {
@@ -187,6 +193,7 @@ type GetTableResponse struct {
 	OwnerAccountID   string         `json:"ownerAccountId"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
@@ -217,6 +224,22 @@ type DeleteTableRequest struct {
 	Namespace      []string `json:"namespace"`
 	Name           string   `json:"name"`
 	VersionToken   string   `json:"versionToken,omitempty"`
+}
+
+type UpdateTableRequest struct {
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	VersionToken     string         `json:"versionToken,omitempty"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataVersion  int            `json:"metadataVersion,omitempty"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+}
+
+type UpdateTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
 // Table policy types

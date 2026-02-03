@@ -4,11 +4,16 @@
 package iceberg
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -148,6 +153,86 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// saveMetadataFile saves the Iceberg metadata JSON file to the filer.
+// It constructs the correct filler path from the S3 location components.
+func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, tableName, metadataFileName string, content []byte) error {
+	// Construct filer path: /table-buckets/<bucket>/<namespace>/<table>/metadata/<filename>
+	// Note: s3tables.TablesPath is "/table-buckets"
+
+	// Create context with timeout for file operations
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// 1. Ensure table directory exists: /table-buckets/<bucket>/<namespace>/<table>
+		tableDir := fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName)
+		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace),
+			Entry: &filer_pb.Entry{
+				Name:        tableName,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0755 | os.ModeDir),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create table directory: %w", err)
+		}
+		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			return fmt.Errorf("failed to create table directory: %s", resp.Error)
+		}
+
+		// 2. Ensure metadata directory exists: /table-buckets/<bucket>/<namespace>/<table>/metadata
+		metadataDir := fmt.Sprintf("%s/metadata", tableDir)
+		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: tableDir,
+			Entry: &filer_pb.Entry{
+				Name:        "metadata",
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0755 | os.ModeDir),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create metadata directory: %w", err)
+		}
+		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			return fmt.Errorf("failed to create metadata directory: %s", resp.Error)
+		}
+
+		// 3. Write the file
+		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: metadataDir,
+			Entry: &filer_pb.Entry{
+				Name: metadataFileName,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0644),
+					FileSize: uint64(len(content)),
+				},
+				Content: content,
+				Extended: map[string][]byte{
+					"Mime-Type": []byte("application/json"),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to write metadata file context: %w", err)
+		}
+		if resp.Error != "" {
+			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
+		}
+		return nil
+	})
+}
+
 // parseNamespace parses the namespace from path parameter.
 // Iceberg uses unit separator (0x1F) for multi-level namespaces.
 // Note: mux already decodes URL-encoded path parameters, so we only split by unit separator.
@@ -176,9 +261,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if v != nil {
-		if err := json.NewEncoder(w).Encode(v); err != nil {
+		data, err := json.Marshal(v)
+		if err != nil {
 			glog.Errorf("Iceberg: failed to encode response: %v", err)
+			return
 		}
+		w.Write(data)
 	}
 }
 
@@ -303,9 +391,15 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Standardize property initialization for consistency with GetNamespace
+	props := req.Properties
+	if props == nil {
+		props = make(map[string]string)
+	}
+
 	result := CreateNamespaceResponse{
 		Namespace:  req.Namespace,
-		Properties: req.Properties,
+		Properties: props,
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -349,7 +443,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 
 	result := GetNamespaceResponse{
 		Namespace:  namespace,
-		Properties: map[string]string{},
+		Properties: make(map[string]string),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -513,30 +607,51 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	bucketARN := buildTableBucketARN(bucketName)
 
 	// Generate UUID for the new table
-	tableUUID := uuid.New().String()
+	tableUUID := uuid.New()
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), req.Name)
 
-	metadata := TableMetadata{
-		FormatVersion: 2,
-		TableUUID:     tableUUID,
-		Location:      location,
+	// Build proper Iceberg table metadata using iceberg-go types
+	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
+	if metadata == nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build table metadata")
+		return
 	}
+
+	// Serialize metadata to JSON
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
+		return
+	}
+
+	// 1. Save metadata file to filer
+	tableName := req.Name
+	metadataFileName := "v1.metadata.json" // Initial version is always 1
+	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
+		return
+	}
+
+	metadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s", bucketName, encodeNamespace(namespace), tableName, metadataFileName)
 
 	// Use S3 Tables manager to create table
 	createReq := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
-		Name:           req.Name,
+		Name:           tableName,
 		Format:         "ICEBERG",
 		Metadata: &s3tables.TableMetadata{
 			Iceberg: &s3tables.IcebergMetadata{
-				TableUUID: tableUUID,
+				TableUUID: tableUUID.String(),
 			},
+			FullMetadata: metadataBytes,
 		},
+		MetadataLocation: metadataLocation,
+		MetadataVersion:  1,
 	}
 	var createResp s3tables.CreateTableResponse
 
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateTable", createReq, &createResp, "")
 	})
@@ -551,10 +666,16 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use returned location if available, otherwise fallback to local one
+	finalLocation := createResp.MetadataLocation
+	if finalLocation == "" {
+		finalLocation = metadataLocation
+	}
+
 	result := LoadTableResult{
-		MetadataLocation: createResp.MetadataLocation,
+		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           map[string]string{},
+		Config:           make(iceberg.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -598,27 +719,38 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build table metadata
+	// Build table metadata using iceberg-go types
 	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
-	tableUUID := ""
-	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil {
-		tableUUID = getResp.Metadata.Iceberg.TableUUID
+	tableUUID := uuid.Nil
+	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
+		if parsed, err := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); err == nil {
+			tableUUID = parsed
+		}
 	}
-	// Fallback if UUID is not found (e.g. for tables created before UUID persistence)
-	if tableUUID == "" {
-		tableUUID = uuid.New().String()
-	}
+	// Use Nil UUID if not found in storage (legacy table)
+	// Stability is guaranteed by not generating random UUIDs on read
 
-	metadata := TableMetadata{
-		FormatVersion: 2,
-		TableUUID:     tableUUID,
-		Location:      location,
+	var metadata table.Metadata
+	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
+		var err error
+		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+		if err != nil {
+			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
+			// Attempt to reconstruct from IcebergMetadata if available, otherwise synthetic
+			// TODO: Extract schema/spec from getResp.Metadata.Iceberg if FullMetadata fails but partial info exists?
+			// For now, fallback to empty metadata
+			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		}
+	} else {
+		// No full metadata, create synthetic
+		// TODO: If we had stored schema in IcebergMetadata, we would pass it here
+		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 	}
 
 	result := LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           map[string]string{},
+		Config:           make(iceberg.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -701,11 +833,225 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTable commits updates to a table.
+// Implements the Iceberg REST Catalog commit protocol.
 func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	namespace := parseNamespace(vars["namespace"])
+	tableName := vars["table"]
+
+	if len(namespace) == 0 || tableName == "" {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace and table name are required")
+		return
+	}
+
 	bucketName := getBucketFromPrefix(r)
 	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
 		return
 	}
-	// Return 501 Not Implemented
-	writeError(w, http.StatusNotImplemented, "UnsupportedOperationException", "Table update/commit not implemented")
+
+	// Parse the commit request
+	var req CommitTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body: "+err.Error())
+		return
+	}
+
+	bucketARN := buildTableBucketARN(bucketName)
+
+	// First, load current table metadata
+	getReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var getResp s3tables.GetTableResponse
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, "")
+	})
+
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
+			return
+		}
+		glog.V(1).Infof("Iceberg: CommitTable GetTable error: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		return
+	}
+
+	// Build the current metadata
+	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	tableUUID := uuid.Nil
+	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
+		if parsed, err := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); err == nil {
+			tableUUID = parsed
+		}
+	}
+	if tableUUID == uuid.Nil {
+		tableUUID = uuid.New()
+	}
+
+	var currentMetadata table.Metadata
+	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
+		var err error
+		currentMetadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+		if err != nil {
+			glog.Errorf("Iceberg: Failed to parse current metadata for %s: %v", tableName, err)
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse current metadata")
+			return
+		}
+	} else {
+		// Fallback for tables without persisted full metadata (legacy or error state)
+		currentMetadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	}
+
+	if currentMetadata == nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to build current metadata")
+		return
+	}
+
+	// Validate all requirements against current metadata
+	for _, requirement := range req.Requirements {
+		if err := requirement.Validate(currentMetadata); err != nil {
+			writeError(w, http.StatusConflict, "CommitFailedException", "Requirement failed: "+err.Error())
+			return
+		}
+	}
+
+	// Apply updates using MetadataBuilder
+	builder, err := table.MetadataBuilderFromBase(currentMetadata, getResp.MetadataLocation)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to create metadata builder: "+err.Error())
+		return
+	}
+
+	for _, update := range req.Updates {
+		if err := update.Apply(builder); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Failed to apply update: "+err.Error())
+			return
+		}
+	}
+
+	// Build the new metadata
+	newMetadata, err := builder.Build()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Failed to build new metadata: "+err.Error())
+		return
+	}
+
+	// Determine next metadata version
+	metadataVersion := getResp.MetadataVersion + 1
+	metadataFileName := fmt.Sprintf("v%d.metadata.json", metadataVersion)
+	newMetadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s",
+		bucketName, encodeNamespace(namespace), tableName, metadataFileName)
+
+	// Serialize metadata to JSON
+	metadataBytes, err := json.Marshal(newMetadata)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
+		return
+	}
+
+	// 1. Save metadata file to filer
+	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
+		return
+	}
+
+	// Persist the new metadata and update the table reference
+	updateReq := &s3tables.UpdateTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+		VersionToken:   getResp.VersionToken,
+		Metadata: &s3tables.TableMetadata{
+			Iceberg: &s3tables.IcebergMetadata{
+				TableUUID: tableUUID.String(),
+			},
+			FullMetadata: metadataBytes,
+		},
+		MetadataVersion:  metadataVersion,
+		MetadataLocation: newMetadataLocation,
+	}
+
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		// 1. Write metadata file (this would normally be an S3 PutObject,
+		// but s3tables manager handles the metadata storage logic)
+		// For now, we assume s3tables.UpdateTable handles the reference update.
+		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateTable", updateReq, nil, "")
+	})
+
+	if err != nil {
+		glog.Errorf("Iceberg: CommitTable UpdateTable error: %v", err)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to commit table update: "+err.Error())
+		return
+	}
+
+	// Return the new metadata
+	result := CommitTableResponse{
+		MetadataLocation: newMetadataLocation,
+		Metadata:         newMetadata,
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// loadTableResultJSON is used for JSON serialization of LoadTableResult.
+// It wraps table.Metadata (which is an interface) for proper JSON output.
+type loadTableResultJSON struct {
+	MetadataLocation string             `json:"metadata-location,omitempty"`
+	Metadata         table.Metadata     `json:"metadata"`
+	Config           iceberg.Properties `json:"config,omitempty"`
+}
+
+// newTableMetadata creates a new table.Metadata object with the given parameters.
+// Uses iceberg-go's MetadataBuilder pattern for proper spec compliance.
+func newTableMetadata(
+	tableUUID uuid.UUID,
+	location string,
+	schema *iceberg.Schema,
+	partitionSpec *iceberg.PartitionSpec,
+	sortOrder *table.SortOrder,
+	props iceberg.Properties,
+) table.Metadata {
+	// Add schema - use provided or create empty schema
+	var s *iceberg.Schema
+	if schema != nil {
+		s = schema
+	} else {
+		s = iceberg.NewSchema(0)
+	}
+
+	// Add partition spec
+	var pSpec *iceberg.PartitionSpec
+	if partitionSpec != nil {
+		pSpec = partitionSpec
+	} else {
+		unpartitioned := iceberg.NewPartitionSpecID(0)
+		pSpec = &unpartitioned
+	}
+
+	// Add sort order
+	var so table.SortOrder
+	if sortOrder != nil {
+		so = *sortOrder
+	} else {
+		so = table.UnsortedSortOrder
+	}
+
+	// Create properties map if nil
+	if props == nil {
+		props = make(iceberg.Properties)
+	}
+
+	// Create metadata directly using the constructor which ensures spec compliance for V2
+	metadata, err := table.NewMetadataWithUUID(s, pSpec, so, location, props, tableUUID)
+	if err != nil {
+		glog.Errorf("Failed to create metadata: %v", err)
+		return nil
+	}
+
+	return metadata
 }
