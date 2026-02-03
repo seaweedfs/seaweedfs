@@ -911,7 +911,7 @@ s3:
   metricsPort: 9327
   # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
   # Set to a port number to enable, or 0/null to disable
-  icebergPort: 8181
+  icebergPort: null
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
