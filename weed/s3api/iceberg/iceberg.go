@@ -24,7 +24,7 @@ type FilerClient interface {
 }
 
 type S3Authenticator interface {
-	AuthenticateRequest(r *http.Request) (string, s3err.ErrorCode)
+	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
 }
 
 // Server implements the Iceberg REST Catalog API.
@@ -85,7 +85,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.authenticator != nil {
-			identityName, errCode := s.authenticator.AuthenticateRequest(r)
+			identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 			if errCode != s3err.ErrNone {
 				apiErr := s3err.GetAPIError(errCode)
 				errorType := "RESTException"
@@ -101,6 +101,9 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			}
 			if identityName != "" {
 				r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identityName))
+			}
+			if identity != nil {
+				r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
 			}
 		}
 		handler(w, r)
