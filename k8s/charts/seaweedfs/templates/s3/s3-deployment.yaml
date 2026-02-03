@@ -150,6 +150,9 @@ spec:
               -auditLogConfig=/etc/sw/s3_auditLogConfig.json \
               {{- end }}
               -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }} \
+              {{- if .Values.s3.icebergPort }}
+              -port.iceberg={{ .Values.s3.icebergPort }} \
+              {{- end }}
               {{- range .Values.s3.extraArgs }}
               {{ . }} \
               {{- end }}
@@ -191,6 +194,10 @@ spec:
             {{- if .Values.s3.httpsPort }}
             - containerPort: {{ .Values.s3.httpsPort }}
               name: swfs-s3-tls
+            {{- end }}
+            {{- if .Values.s3.icebergPort }}
+            - containerPort: {{ .Values.s3.icebergPort }}
+              name: swfs-iceberg
             {{- end }}
             {{- if .Values.s3.metricsPort }}
             - containerPort: {{ .Values.s3.metricsPort }}
