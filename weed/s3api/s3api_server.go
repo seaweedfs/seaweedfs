@@ -861,7 +861,7 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 // AuthenticateRequest authenticates the request and returns the identity name and object
 func (s3a *S3ApiServer) AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode) {
 	if s3a.iam == nil {
-		return "", nil, s3err.ErrNone
+		return "", nil, s3err.ErrAccessDenied
 	}
 	identity, err := s3a.iam.AuthenticateRequest(r)
 	if identity != nil {
