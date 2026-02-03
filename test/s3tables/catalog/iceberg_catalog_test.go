@@ -44,7 +44,7 @@ func getFreePort() (int, error) {
 		return 0, err
 	}
 	defer listener.Close()
-	
+
 	addr := listener.Addr().(*net.TCPAddr)
 	return addr.Port, nil
 }

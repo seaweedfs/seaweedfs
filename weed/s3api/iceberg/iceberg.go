@@ -31,11 +31,11 @@ var uuidCounter int64
 
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
-	filerClient      FilerClient
-	tablesManager    *s3tables.Manager
-	prefix           string // optional prefix for routes
-	tableUUIDs       map[string]string // cache of table UUIDs: "bucket:namespace:table" -> UUID
-	tableUUIDsLock   sync.RWMutex     // protects access to tableUUIDs map
+	filerClient    FilerClient
+	tablesManager  *s3tables.Manager
+	prefix         string            // optional prefix for routes
+	tableUUIDs     map[string]string // cache of table UUIDs: "bucket:namespace:table" -> UUID
+	tableUUIDsLock sync.RWMutex      // protects access to tableUUIDs map
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
@@ -138,7 +138,7 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 func (s *Server) getOrCreateTableUUID(bucketName string, namespace []string, tableName string) string {
 	// Create cache key from table location
 	key := fmt.Sprintf("%s:%s:%s", bucketName, strings.Join(namespace, "."), tableName)
-	
+
 	// Try read-lock first for fast path
 	s.tableUUIDsLock.RLock()
 	if uuid, exists := s.tableUUIDs[key]; exists {
@@ -146,16 +146,16 @@ func (s *Server) getOrCreateTableUUID(bucketName string, namespace []string, tab
 		return uuid
 	}
 	s.tableUUIDsLock.RUnlock()
-	
+
 	// Generate new UUID with write-lock
 	s.tableUUIDsLock.Lock()
 	defer s.tableUUIDsLock.Unlock()
-	
+
 	// Double-check after acquiring write lock
 	if uuid, exists := s.tableUUIDs[key]; exists {
 		return uuid
 	}
-	
+
 	// Generate and cache the new UUID
 	uuid := generateUUID()
 	s.tableUUIDs[key] = uuid
@@ -647,7 +647,7 @@ func generateUUID() string {
 		now := time.Now().UnixNano()
 		pid := int64(os.Getpid())
 		counter := atomic.AddInt64(&uuidCounter, 1)
-		
+
 		// Fill uuid with timestamp (8 bytes) + pid (4 bytes) + counter (4 bytes)
 		for i := 0; i < 8; i++ {
 			uuid[i] = byte((now >> uint(8*i)) & 0xff)
