@@ -713,7 +713,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	bucket := formValues.Get("bucket")
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
 	}
 

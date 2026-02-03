@@ -266,7 +266,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
-		if identity == nil || !identity.canDo(writeAcpAction, bucket, object) {
+		if identity == nil || !identity.CanDo(writeAcpAction, bucket, object) {
 			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
