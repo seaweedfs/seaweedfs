@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -18,12 +19,16 @@ const (
 
 type State struct {
 	FilePath string
+	Version  uint32
 	Pb       *volume_server_pb.VolumeServerState
+
+	updateMu sync.Mutex
 }
 
 func NewState(dir string) (*State, error) {
 	state := &State{
 		FilePath: filepath.Join(dir, StateFileName),
+		Version:  0,
 		Pb:       nil,
 	}
 
@@ -70,17 +75,26 @@ func (st *State) Save() error {
 	return nil
 }
 
-func (st *State) Update(state *volume_server_pb.VolumeServerState) error {
+func (st *State) Update(state *volume_server_pb.VolumeServerState, version uint32) error {
+	st.updateMu.Lock()
+	defer st.updateMu.Unlock()
+
 	if state == nil {
 		return nil
+	}
+	if version != st.Version {
+		return fmt.Errorf("version mismatch for VolumeServerState (got %d, want %d)", st.Version, version)
 	}
 
 	origState := st.Pb
 	st.Pb = state
+
 	err := st.Save()
 	if err != nil {
 		// restore the original state upon save failures, to avoid skew between in-memory and disk state protos.
 		st.Pb = origState
+	} else {
+		st.Version++
 	}
 
 	return err

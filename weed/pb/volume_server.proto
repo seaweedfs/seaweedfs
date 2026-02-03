@@ -284,15 +284,18 @@ message GetStateRequest {
 }
 message GetStateResponse {
     VolumeServerState state = 1;
+    uint32 state_version = 2;
 }
 
 message SetStateRequest {
-    // SetState updates *all* volume server flags at once. Retrieve state with GetState(),
+    // SetState updates *all* volume server flags at once. Retrieve state/version with GetState(),
     // modify individual flags as required, then call this RPC to update.
     VolumeServerState state = 1;
+    uint32 state_version = 2;
 }
 message SetStateResponse {
     VolumeServerState state = 1;
+    uint32 state_version = 2;
 }
 
 message VolumeCopyRequest {
