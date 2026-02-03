@@ -1149,7 +1149,7 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	return identity, s3Err, reqAuthType
 }
 
-// check whether the request has valid access keys
+// authRequestWithAuthType authenticates and then authorizes a request for a given action.
 func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
 	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
