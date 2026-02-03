@@ -89,7 +89,9 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			if errCode != s3err.ErrNone {
 				apiErr := s3err.GetAPIError(errCode)
 				errorType := "RESTException"
-				if apiErr.HTTPStatusCode == http.StatusForbidden || apiErr.HTTPStatusCode == http.StatusUnauthorized {
+				if apiErr.HTTPStatusCode == http.StatusForbidden {
+					errorType = "ForbiddenException"
+				} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
 					errorType = "NotAuthorizedException"
 				} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
 					errorType = "BadRequestException"
