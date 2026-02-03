@@ -47,21 +47,24 @@ func TestPyIcebergRestCatalog(t *testing.T) {
 	s3Endpoint := fmt.Sprintf("http://host.docker.internal:%d", env.s3Port)
 	warehouse := fmt.Sprintf("s3://%s/", bucketName)
 
+	// Build the test image first for faster repeated runs
+	buildCmd := exec.Command("docker", "build", "-t", "iceberg-rest-test", "-f", "Dockerfile.pyiceberg", ".")
+	buildCmd.Dir = testDir
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build test image: %v\n%s", err, string(out))
+	}
+
 	cmd := exec.Command("docker", "run", "--rm",
 		"--add-host", "host.docker.internal:host-gateway",
 		"-e", fmt.Sprintf("AWS_ACCESS_KEY_ID=%s", "test"),
 		"-e", fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", "test"),
 		"-e", fmt.Sprintf("AWS_ENDPOINT_URL=%s", s3Endpoint),
 		"-v", fmt.Sprintf("%s:/app:ro", testDir),
-		"python:3.11-slim",
-		"bash", "-c",
-		fmt.Sprintf(`
-			pip install --quiet pyiceberg[s3fs] && \
-			python3 /app/test_rest_catalog.py \
-				--catalog-url %s \
-				--warehouse %s \
-				--prefix %s
-		`, catalogURL, warehouse, bucketName),
+		"iceberg-rest-test",
+		"python3", "/app/test_rest_catalog.py",
+		"--catalog-url", catalogURL,
+		"--warehouse", warehouse,
+		"--prefix", bucketName,
 	)
 	cmd.Dir = testDir
 	cmd.Stdout = os.Stdout

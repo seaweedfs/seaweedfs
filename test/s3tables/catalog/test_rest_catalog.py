@@ -140,7 +140,8 @@ def test_table_update(catalog, prefix):
         if table.properties.get("test.property") == "test.value":
             print(f"  Property update verified")
         else:
-            print(f"  ? Property update not reflected (may be expected)")
+            print(f"  ! Property update failed or not persisted")
+            return False
         
     except Exception as e:
         print(f"  Table update failed: {e}")
