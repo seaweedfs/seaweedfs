@@ -158,17 +158,37 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, tableName, metadataFileName string, content []byte) error {
 	// Construct filer path: /table-buckets/<bucket>/<namespace>/<table>/metadata/<filename>
 	// Note: s3tables.TablesPath is "/table-buckets"
-	filerPath := fmt.Sprintf("/table-buckets/%s/%s/%s/metadata", bucketName, namespace, tableName)
 
 	// Create context with timeout for file operations
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Ensure metadata directory exists
-		// Using CreateEntry for directory creation to avoid interface casting issues
-		_, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
-			Directory: fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName),
+		// 1. Ensure table directory exists: /table-buckets/<bucket>/<namespace>/<table>
+		tableDir := fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName)
+		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace),
+			Entry: &filer_pb.Entry{
+				Name:        tableName,
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mtime:    time.Now().Unix(),
+					Crtime:   time.Now().Unix(),
+					FileMode: uint32(0755 | os.ModeDir),
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create table directory: %w", err)
+		}
+		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			return fmt.Errorf("failed to create table directory: %s", resp.Error)
+		}
+
+		// 2. Ensure metadata directory exists: /table-buckets/<bucket>/<namespace>/<table>/metadata
+		metadataDir := fmt.Sprintf("%s/metadata", tableDir)
+		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: tableDir,
 			Entry: &filer_pb.Entry{
 				Name:        "metadata",
 				IsDirectory: true,
@@ -182,11 +202,13 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 		if err != nil {
 			return fmt.Errorf("failed to create metadata directory: %w", err)
 		}
+		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			return fmt.Errorf("failed to create metadata directory: %s", resp.Error)
+		}
 
-		// Write the file
-		// Using CreateEntry for file creation to avoid interface casting issues
-		_, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
-			Directory: filerPath,
+		// 3. Write the file
+		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+			Directory: metadataDir,
 			Entry: &filer_pb.Entry{
 				Name: metadataFileName,
 				Attributes: &filer_pb.FuseAttributes{
@@ -201,7 +223,13 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 				},
 			},
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("failed to write metadata file context: %w", err)
+		}
+		if resp.Error != "" {
+			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
+		}
+		return nil
 	})
 }
 
@@ -638,8 +666,14 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use returned location if available, otherwise fallback to local one
+	finalLocation := createResp.MetadataLocation
+	if finalLocation == "" {
+		finalLocation = metadataLocation
+	}
+
 	result := LoadTableResult{
-		MetadataLocation: createResp.MetadataLocation,
+		MetadataLocation: finalLocation,
 		Metadata:         metadata,
 		Config:           make(iceberg.Properties),
 	}
