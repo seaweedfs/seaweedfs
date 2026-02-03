@@ -18,83 +18,110 @@ const (
 )
 
 type State struct {
-	FilePath string
-	Version  uint32
-	Pb       *volume_server_pb.VolumeServerState
+	filePath string
+	pb       *volume_server_pb.VolumeServerState
 
-	updateMu sync.Mutex
+	mu sync.Mutex
 }
 
 func NewState(dir string) (*State, error) {
 	state := &State{
-		FilePath: filepath.Join(dir, StateFileName),
-		Version:  0,
-		Pb:       nil,
+		filePath: filepath.Join(dir, StateFileName),
+		pb:       nil,
 	}
 
 	err := state.Load()
 	return state, err
 }
 
-func (st *State) Load() error {
-	st.Pb = &volume_server_pb.VolumeServerState{}
+func NewStateFromProto(filePath string, state *volume_server_pb.VolumeServerState) *State {
+	pb := &volume_server_pb.VolumeServerState{}
+	proto.Merge(pb, state)
 
-	if !util.FileExists(st.FilePath) {
-		glog.V(1).Infof("No preexisting store state at %s", st.FilePath)
+	return &State{
+		filePath: filePath,
+		pb:       pb,
+	}
+}
+
+func (st *State) Proto() *volume_server_pb.VolumeServerState {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	return st.pb
+}
+
+func (st *State) Load() error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	st.pb = &volume_server_pb.VolumeServerState{}
+
+	if !util.FileExists(st.filePath) {
+		glog.V(1).Infof("No preexisting store state at %s", st.filePath)
 		return nil
 	}
 
-	binPb, err := os.ReadFile(st.FilePath)
+	binPb, err := os.ReadFile(st.filePath)
 	if err != nil {
-		st.Pb = nil
-		return fmt.Errorf("failed to read store state from %s : %v", st.FilePath, err)
+		st.pb = nil
+		return fmt.Errorf("failed to read store state from %s : %v", st.filePath, err)
 	}
-	if err := proto.Unmarshal(binPb, st.Pb); err != nil {
-		st.Pb = nil
-		return fmt.Errorf("failed to parse store state from %s : %v", st.FilePath, err)
+	if err := proto.Unmarshal(binPb, st.pb); err != nil {
+		st.pb = nil
+		return fmt.Errorf("failed to parse store state from %s : %v", st.filePath, err)
 	}
 
-	glog.V(1).Infof("Got store state from %s: %v", st.FilePath, st.Pb)
+	glog.V(1).Infof("Got store state from %s: %v", st.filePath, st.pb)
+	return nil
+}
+
+func (st *State) save(locking bool) error {
+	if locking {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+	}
+
+	if st.pb == nil {
+		st.pb = &volume_server_pb.VolumeServerState{}
+	}
+
+	binPb, err := proto.Marshal(st.pb)
+	if err != nil {
+		return fmt.Errorf("failed to serialize store state %v: %s", st.pb, err)
+	}
+	if err := util.WriteFile(st.filePath, binPb, StateFileMode); err != nil {
+		return fmt.Errorf("failed to write store state to %s : %v", st.filePath, err)
+	}
+
+	glog.V(1).Infof("Saved store state %v to %s", st.pb, st.filePath)
 	return nil
 }
 
 func (st *State) Save() error {
-	if st.Pb == nil {
-		st.Pb = &volume_server_pb.VolumeServerState{}
-	}
-
-	binPb, err := proto.Marshal(st.Pb)
-	if err != nil {
-		return fmt.Errorf("failed to serialize store state %v: %s", st.Pb, err)
-	}
-	if err := util.WriteFile(st.FilePath, binPb, StateFileMode); err != nil {
-		return fmt.Errorf("failed to write store state to %s : %v", st.FilePath, err)
-	}
-
-	glog.V(1).Infof("Saved store state %v to %s", st.Pb, st.FilePath)
-	return nil
+	return st.save(true)
 }
 
-func (st *State) Update(state *volume_server_pb.VolumeServerState, version uint32) error {
-	st.updateMu.Lock()
-	defer st.updateMu.Unlock()
+func (st *State) Update(state *volume_server_pb.VolumeServerState) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
 	if state == nil {
 		return nil
 	}
-	if version != st.Version {
-		return fmt.Errorf("version mismatch for VolumeServerState (got %d, want %d)", st.Version, version)
+	if got, want := st.pb.GetVersion(), state.GetVersion(); got != want {
+		return fmt.Errorf("version mismatch for VolumeServerState (got %d, want %d)", got, want)
 	}
 
-	origState := st.Pb
-	st.Pb = state
+	origState := st.pb
+	st.pb = &volume_server_pb.VolumeServerState{}
+	proto.Merge(st.pb, state)
+	st.pb.Version = st.pb.GetVersion() + 1
 
-	err := st.Save()
+	err := st.save(false)
 	if err != nil {
 		// restore the original state upon save failures, to avoid skew between in-memory and disk state protos.
-		st.Pb = origState
-	} else {
-		st.Version++
+		st.pb = origState
 	}
 
 	return err

@@ -178,7 +178,7 @@ func (vs *VolumeServer) MaintenanceMode() bool {
 	if vs.store == nil {
 		return false
 	}
-	return vs.store.State.Pb.GetMaintenance()
+	return vs.store.State.Proto().GetMaintenance()
 }
 
 // Checks if a volume server is in maintenance mode, and returns an error explaining why.

@@ -9,8 +9,10 @@ import "remote.proto";
 
 // Persistent state for volume servers.
 message VolumeServerState {
-    // Whether the server is in maintenance (i.e. read-only) mode.
+    // whether the server is in maintenance (i.e. read-only) mode.
     bool maintenance = 1;
+    // incremental version counter
+    uint32 version = 2;
 }
 
 //////////////////////////////////////////////////
@@ -284,18 +286,15 @@ message GetStateRequest {
 }
 message GetStateResponse {
     VolumeServerState state = 1;
-    uint32 state_version = 2;
 }
 
 message SetStateRequest {
-    // SetState updates *all* volume server flags at once. Retrieve state/version with GetState(),
+    // SetState updates *all* volume server flags at once. Retrieve state with GetState(),
     // modify individual flags as required, then call this RPC to update.
     VolumeServerState state = 1;
-    uint32 state_version = 2;
 }
 message SetStateResponse {
     VolumeServerState state = 1;
-    uint32 state_version = 2;
 }
 
 message VolumeCopyRequest {

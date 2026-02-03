@@ -273,7 +273,7 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_server_pb.VolumeServerStatusRequest) (*volume_server_pb.VolumeServerStatusResponse, error) {
 
 	resp := &volume_server_pb.VolumeServerStatusResponse{
-		State:        vs.store.State.Pb,
+		State:        vs.store.State.Proto(),
 		MemoryStatus: stats.MemStat(),
 		Version:      version.Version(),
 		DataCenter:   vs.dataCenter,
