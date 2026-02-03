@@ -77,13 +77,13 @@ func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
 	createResp, err := client.CreateTableBucket(bucketName, nil)
 	require.NoError(t, err, "Failed to create table bucket")
 	assert.Contains(t, createResp.ARN, bucketName)
-	t.Logf("✓ Created table bucket: %s", createResp.ARN)
+	t.Logf("Created table bucket: %s", createResp.ARN)
 
 	// Get table bucket
 	getResp, err := client.GetTableBucket(createResp.ARN)
 	require.NoError(t, err, "Failed to get table bucket")
 	assert.Equal(t, bucketName, getResp.Name)
-	t.Logf("✓ Got table bucket: %s", getResp.Name)
+	t.Logf("Got table bucket: %s", getResp.Name)
 
 	// List table buckets
 	listResp, err := client.ListTableBuckets("", "", 0)
@@ -96,12 +96,12 @@ func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
 		}
 	}
 	assert.True(t, found, "Created bucket should appear in list")
-	t.Logf("✓ Listed table buckets, found %d buckets", len(listResp.TableBuckets))
+	t.Logf("Listed table buckets, found %d buckets", len(listResp.TableBuckets))
 
 	// Delete table bucket
 	err = client.DeleteTableBucket(createResp.ARN)
 	require.NoError(t, err, "Failed to delete table bucket")
-	t.Logf("✓ Deleted table bucket: %s", bucketName)
+	t.Logf("Deleted table bucket: %s", bucketName)
 
 	// Verify bucket is deleted
 	_, err = client.GetTableBucket(createResp.ARN)
@@ -123,13 +123,13 @@ func testNamespaceLifecycle(t *testing.T, client *S3TablesClient) {
 	createNsResp, err := client.CreateNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to create namespace")
 	assert.Equal(t, []string{namespaceName}, createNsResp.Namespace)
-	t.Logf("✓ Created namespace: %s", namespaceName)
+	t.Logf("Created namespace: %s", namespaceName)
 
 	// Get namespace
 	getNsResp, err := client.GetNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to get namespace")
 	assert.Equal(t, []string{namespaceName}, getNsResp.Namespace)
-	t.Logf("✓ Got namespace: %v", getNsResp.Namespace)
+	t.Logf("Got namespace: %v", getNsResp.Namespace)
 
 	// List namespaces
 	listNsResp, err := client.ListNamespaces(bucketARN, "", "", 0)
@@ -142,12 +142,12 @@ func testNamespaceLifecycle(t *testing.T, client *S3TablesClient) {
 		}
 	}
 	assert.True(t, found, "Created namespace should appear in list")
-	t.Logf("✓ Listed namespaces, found %d namespaces", len(listNsResp.Namespaces))
+	t.Logf("Listed namespaces, found %d namespaces", len(listNsResp.Namespaces))
 
 	// Delete namespace
 	err = client.DeleteNamespace(bucketARN, []string{namespaceName})
 	require.NoError(t, err, "Failed to delete namespace")
-	t.Logf("✓ Deleted namespace: %s", namespaceName)
+	t.Logf("Deleted namespace: %s", namespaceName)
 
 	// Verify namespace is deleted
 	_, err = client.GetNamespace(bucketARN, []string{namespaceName})
@@ -188,14 +188,14 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 	require.NoError(t, err, "Failed to create table")
 	assert.NotEmpty(t, createTableResp.TableARN)
 	assert.NotEmpty(t, createTableResp.VersionToken)
-	t.Logf("✓ Created table: %s (version: %s)", createTableResp.TableARN, createTableResp.VersionToken)
+	t.Logf("Created table: %s (version: %s)", createTableResp.TableARN, createTableResp.VersionToken)
 
 	// Get table
 	getTableResp, err := client.GetTable(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to get table")
 	assert.Equal(t, tableName, getTableResp.Name)
 	assert.Equal(t, "ICEBERG", getTableResp.Format)
-	t.Logf("✓ Got table: %s (format: %s)", getTableResp.Name, getTableResp.Format)
+	t.Logf("Got table: %s (format: %s)", getTableResp.Name, getTableResp.Format)
 
 	// List tables
 	listTablesResp, err := client.ListTables(bucketARN, []string{namespaceName}, "", "", 0)
@@ -208,12 +208,12 @@ func testTableLifecycle(t *testing.T, client *S3TablesClient) {
 		}
 	}
 	assert.True(t, found, "Created table should appear in list")
-	t.Logf("✓ Listed tables, found %d tables", len(listTablesResp.Tables))
+	t.Logf("Listed tables, found %d tables", len(listTablesResp.Tables))
 
 	// Delete table
 	err = client.DeleteTable(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to delete table")
-	t.Logf("✓ Deleted table: %s", tableName)
+	t.Logf("Deleted table: %s", tableName)
 
 	// Verify table is deleted
 	_, err = client.GetTable(bucketARN, []string{namespaceName}, tableName)
@@ -234,18 +234,18 @@ func testTableBucketPolicy(t *testing.T, client *S3TablesClient) {
 	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
 	err = client.PutTableBucketPolicy(bucketARN, policy)
 	require.NoError(t, err, "Failed to put table bucket policy")
-	t.Logf("✓ Put table bucket policy")
+	t.Logf("Put table bucket policy")
 
 	// Get bucket policy
 	getPolicyResp, err := client.GetTableBucketPolicy(bucketARN)
 	require.NoError(t, err, "Failed to get table bucket policy")
 	assert.Equal(t, policy, getPolicyResp.ResourcePolicy)
-	t.Logf("✓ Got table bucket policy")
+	t.Logf("Got table bucket policy")
 
 	// Delete bucket policy
 	err = client.DeleteTableBucketPolicy(bucketARN)
 	require.NoError(t, err, "Failed to delete table bucket policy")
-	t.Logf("✓ Deleted table bucket policy")
+	t.Logf("Deleted table bucket policy")
 
 	// Verify policy is deleted
 	_, err = client.GetTableBucketPolicy(bucketARN)
@@ -285,34 +285,34 @@ func testTablePolicy(t *testing.T, client *S3TablesClient) {
 	require.NoError(t, err, "Failed to create table")
 	defer client.DeleteTable(bucketARN, []string{namespaceName}, tableName)
 
-	t.Logf("✓ Created table: %s", createTableResp.TableARN)
+	t.Logf("Created table: %s", createTableResp.TableARN)
 
 	// Verify no policy exists initially
 	_, err = client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
 	assert.Error(t, err, "Policy should not exist initially")
-	t.Logf("✓ Verified no policy exists initially")
+	t.Logf("Verified no policy exists initially")
 
 	// Put table policy
 	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:*","Resource":"*"}]}`
 	err = client.PutTablePolicy(bucketARN, []string{namespaceName}, tableName, policy)
 	require.NoError(t, err, "Failed to put table policy")
-	t.Logf("✓ Put table policy")
+	t.Logf("Put table policy")
 
 	// Get table policy
 	getPolicyResp, err := client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to get table policy")
 	assert.Equal(t, policy, getPolicyResp.ResourcePolicy)
-	t.Logf("✓ Got table policy")
+	t.Logf("Got table policy")
 
 	// Delete table policy
 	err = client.DeleteTablePolicy(bucketARN, []string{namespaceName}, tableName)
 	require.NoError(t, err, "Failed to delete table policy")
-	t.Logf("✓ Deleted table policy")
+	t.Logf("Deleted table policy")
 
 	// Verify policy is deleted
 	_, err = client.GetTablePolicy(bucketARN, []string{namespaceName}, tableName)
 	assert.Error(t, err, "Policy should not exist after deletion")
-	t.Logf("✓ Verified policy deletion")
+	t.Logf("Verified policy deletion")
 }
 
 func testTagging(t *testing.T, client *S3TablesClient) {
@@ -330,25 +330,25 @@ func testTagging(t *testing.T, client *S3TablesClient) {
 	listTagsResp, err := client.ListTagsForResource(bucketARN)
 	require.NoError(t, err, "Failed to list tags")
 	assert.Equal(t, "test", listTagsResp.Tags["Environment"])
-	t.Logf("✓ Listed tags: %v", listTagsResp.Tags)
+	t.Logf("Listed tags: %v", listTagsResp.Tags)
 
 	// Add more tags
 	newTags := map[string]string{"Department": "Engineering"}
 	err = client.TagResource(bucketARN, newTags)
 	require.NoError(t, err, "Failed to tag resource")
-	t.Logf("✓ Added tags")
+	t.Logf("Added tags")
 
 	// Verify tags
 	listTagsResp, err = client.ListTagsForResource(bucketARN)
 	require.NoError(t, err, "Failed to list tags")
 	assert.Equal(t, "test", listTagsResp.Tags["Environment"])
 	assert.Equal(t, "Engineering", listTagsResp.Tags["Department"])
-	t.Logf("✓ Verified tags: %v", listTagsResp.Tags)
+	t.Logf("Verified tags: %v", listTagsResp.Tags)
 
 	// Remove a tag
 	err = client.UntagResource(bucketARN, []string{"Environment"})
 	require.NoError(t, err, "Failed to untag resource")
-	t.Logf("✓ Removed tag")
+	t.Logf("Removed tag")
 
 	// Verify tag is removed
 	listTagsResp, err = client.ListTagsForResource(bucketARN)
@@ -356,7 +356,7 @@ func testTagging(t *testing.T, client *S3TablesClient) {
 	_, hasEnvironment := listTagsResp.Tags["Environment"]
 	assert.False(t, hasEnvironment, "Environment tag should be removed")
 	assert.Equal(t, "Engineering", listTagsResp.Tags["Department"])
-	t.Logf("✓ Verified tag removal")
+	t.Logf("Verified tag removal")
 }
 
 func testTargetOperations(t *testing.T, client *S3TablesClient) {
