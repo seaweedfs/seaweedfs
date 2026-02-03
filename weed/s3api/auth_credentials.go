@@ -1084,7 +1084,14 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+// AuthenticateRequest verifies the credentials in the request and returns the identity.
+// It bypasses permission checks (authorization).
+func (iam *IdentityAccessManagement) AuthenticateRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
+	ident, err, _ := iam.authenticateRequestInternal(r)
+	return ident, err
+}
+
+func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request) (*Identity, s3err.ErrorCode, authType) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
@@ -1138,6 +1145,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	if len(amzAuthType) > 0 {
 		r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 	}
+
+	return identity, s3Err, reqAuthType
+}
+
+// check whether the request has valid access keys
+func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err, reqAuthType
 	}

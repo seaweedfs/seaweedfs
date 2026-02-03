@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -22,57 +23,90 @@ type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
 }
 
+type S3Authenticator interface {
+	AuthenticateRequest(r *http.Request) (string, s3err.ErrorCode)
+}
+
 // Server implements the Iceberg REST Catalog API.
 type Server struct {
 	filerClient   FilerClient
 	tablesManager *s3tables.Manager
 	prefix        string // optional prefix for routes
+	authenticator S3Authenticator
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
-func NewServer(filerClient FilerClient) *Server {
+func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 	manager := s3tables.NewManager()
 	return &Server{
 		filerClient:   filerClient,
 		tablesManager: manager,
 		prefix:        "",
+		authenticator: authenticator,
 	}
 }
 
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
 	// Configuration endpoint
-	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
+	router.HandleFunc("/v1/config", s.Auth(s.handleConfig)).Methods(http.MethodGet)
 
 	// Namespace endpoints
-	router.HandleFunc("/v1/namespaces", s.handleListNamespaces).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces", s.handleCreateNamespace).Methods(http.MethodPost)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleGetNamespace).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleNamespaceExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/namespaces/{namespace}", s.handleDropNamespace).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
 
 	// Table endpoints
-	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.handleListTables).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.handleCreateTable).Methods(http.MethodPost)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleLoadTable).Methods(http.MethodGet)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleTableExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleDropTable).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.handleUpdateTable).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
 	// With prefix support
-	router.HandleFunc("/v1/{prefix}/namespaces", s.handleListNamespaces).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces", s.handleCreateNamespace).Methods(http.MethodPost)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleGetNamespace).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleNamespaceExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.handleDropNamespace).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.handleListTables).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.handleCreateTable).Methods(http.MethodPost)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleLoadTable).Methods(http.MethodGet)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleTableExists).Methods(http.MethodHead)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleDropTable).Methods(http.MethodDelete)
-	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.handleUpdateTable).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleTableExists)).Methods(http.MethodHead)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
+	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
 	glog.V(0).Infof("Registered Iceberg REST Catalog routes")
+}
+
+func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.authenticator != nil {
+			identityName, errCode := s.authenticator.AuthenticateRequest(r)
+			if errCode != s3err.ErrNone {
+				apiErr := s3err.GetAPIError(errCode)
+				errorType := "RESTException"
+				if apiErr.HTTPStatusCode == http.StatusForbidden {
+					errorType = "ForbiddenException"
+				} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
+					errorType = "UnauthorizedException"
+				} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
+					errorType = "BadRequestException"
+				} else if apiErr.HTTPStatusCode == http.StatusInternalServerError {
+					errorType = "ServiceFailureException"
+				}
+				writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
+				return
+			}
+			if identityName != "" {
+				r = r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), identityName))
+			}
+		}
+		handler(w, r)
+	}
 }
 
 // parseNamespace parses the namespace from path parameter.
