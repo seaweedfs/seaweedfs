@@ -127,6 +127,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleGetTable(w, r, filerClient)
 	case "ListTables":
 		err = h.handleListTables(w, r, filerClient)
+	case "UpdateTable":
+		err = h.handleUpdateTable(w, r, filerClient)
 	case "DeleteTable":
 		err = h.handleDeleteTable(w, r, filerClient)
 

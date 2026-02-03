@@ -79,18 +79,18 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 
 // Path helpers
 
-// getTableBucketPath returns the filer path for a table bucket
-func getTableBucketPath(bucketName string) string {
+// GetTableBucketPath returns the filer path for a table bucket
+func GetTableBucketPath(bucketName string) string {
 	return path.Join(TablesPath, bucketName)
 }
 
-// getNamespacePath returns the filer path for a namespace
-func getNamespacePath(bucketName, namespace string) string {
+// GetNamespacePath returns the filer path for a namespace
+func GetNamespacePath(bucketName, namespace string) string {
 	return path.Join(TablesPath, bucketName, namespace)
 }
 
-// getTablePath returns the filer path for a table
-func getTablePath(bucketName, namespace, tableName string) string {
+// GetTablePath returns the filer path for a table
+func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
 }
 

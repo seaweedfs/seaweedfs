@@ -32,7 +32,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	var metadata tableBucketMetadata
 	var bucketPolicy string
@@ -177,7 +177,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				bucketPath := getTableBucketPath(entry.Entry.Name)
+				bucketPath := GetTableBucketPath(entry.Entry.Name)
 				bucketPolicy := ""
 				policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 				if err != nil {
@@ -261,7 +261,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check if bucket exists and perform ownership + emptiness check in one block
 	var metadata tableBucketMetadata

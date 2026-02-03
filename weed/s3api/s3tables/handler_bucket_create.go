@@ -33,7 +33,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	bucketPath := getTableBucketPath(req.Name)
+	bucketPath := GetTableBucketPath(req.Name)
 
 	// Check if bucket already exists and ensure no conflict with object store buckets
 	tableBucketExists := false

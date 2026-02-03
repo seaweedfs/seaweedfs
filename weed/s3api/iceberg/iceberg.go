@@ -532,6 +532,13 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// Build proper Iceberg table metadata using iceberg-go types
 	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
 
+	// Serialize metadata to JSON
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
+		return
+	}
+
 	// Use S3 Tables manager to create table
 	createReq := &s3tables.CreateTableRequest{
 		TableBucketARN: bucketARN,
@@ -542,11 +549,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			Iceberg: &s3tables.IcebergMetadata{
 				TableUUID: tableUUID.String(),
 			},
+			FullMetadata: metadataBytes,
 		},
 	}
 	var createResp s3tables.CreateTableResponse
 
-	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateTable", createReq, &createResp, "")
 	})
@@ -616,12 +624,20 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 			tableUUID = parsed
 		}
 	}
-	// Fallback if UUID is not found
-	if tableUUID == uuid.Nil {
-		tableUUID = uuid.New()
-	}
+	// Use Nil UUID if not found in storage (legacy table)
+	// Stability is guaranteed by not generating random UUIDs on read
 
-	metadata := newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	var metadata table.Metadata
+	if getResp.Metadata != nil && len(getResp.Metadata.FullMetadata) > 0 {
+		var err error
+		metadata, err = table.ParseMetadataBytes(getResp.Metadata.FullMetadata)
+		if err != nil {
+			glog.Warningf("Iceberg: Failed to parse persisted metadata for %s: %v", tableName, err)
+			metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+		}
+	} else {
+		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
+	}
 
 	result := LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
@@ -822,7 +838,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		bucketName, encodeNamespace(namespace), tableName, metadataFileName)
 
 	// Serialize metadata to JSON
-	_, err = json.Marshal(newMetadata)
+	metadataBytes, err := json.Marshal(newMetadata)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to serialize metadata: "+err.Error())
 		return
@@ -838,7 +854,9 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			Iceberg: &s3tables.IcebergMetadata{
 				TableUUID: tableUUID.String(),
 			},
+			FullMetadata: metadataBytes,
 		},
+		MetadataLocation: newMetadataLocation,
 	}
 
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {

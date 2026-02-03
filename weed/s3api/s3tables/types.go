@@ -1,6 +1,9 @@
 package s3tables
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Table bucket types
 
@@ -140,7 +143,8 @@ type IcebergMetadata struct {
 }
 
 type TableMetadata struct {
-	Iceberg *IcebergMetadata `json:"iceberg,omitempty"`
+	Iceberg      *IcebergMetadata `json:"iceberg,omitempty"`
+	FullMetadata json.RawMessage  `json:"fullMetadata,omitempty"`
 }
 
 type Table struct {
@@ -220,11 +224,12 @@ type DeleteTableRequest struct {
 }
 
 type UpdateTableRequest struct {
-	TableBucketARN string         `json:"tableBucketARN"`
-	Namespace      []string       `json:"namespace"`
-	Name           string         `json:"name"`
-	VersionToken   string         `json:"versionToken,omitempty"`
-	Metadata       *TableMetadata `json:"metadata,omitempty"`
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	VersionToken     string         `json:"versionToken,omitempty"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
 }
 
 type UpdateTableResponse struct {
