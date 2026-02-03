@@ -181,19 +181,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	versionToken := generateVersionToken()
 
 	metadata := &tableMetadataInternal{
-		Name:           tableName,
-		Namespace:      namespaceName,
-		Format:         req.Format,
-		CreatedAt:      now,
-		ModifiedAt:     now,
-		OwnerAccountID: namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
-		VersionToken:   versionToken,
-		MetadataVersion: func() int {
-			if req.MetadataVersion > 0 {
-				return req.MetadataVersion
-			}
-			return 1
-		}(),
+		Name:             tableName,
+		Namespace:        namespaceName,
+		Format:           req.Format,
+		CreatedAt:        now,
+		ModifiedAt:       now,
+		OwnerAccountID:   namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
+		VersionToken:     versionToken,
+		MetadataVersion:  max(req.MetadataVersion, 1),
 		MetadataLocation: req.MetadataLocation,
 		Metadata:         req.Metadata,
 	}
