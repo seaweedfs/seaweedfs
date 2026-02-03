@@ -42,6 +42,7 @@ type AdminOptions struct {
 	readOnlyUser     *string
 	readOnlyPassword *string
 	dataDir          *string
+	icebergPort      *int
 }
 
 func init() {
@@ -56,6 +57,7 @@ func init() {
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
+	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 }
 
 var cmdAdmin = &Command{
@@ -211,7 +213,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	}()
 
 	// Start the admin server with all masters (UI enabled by default)
-	err := startAdminServer(ctx, a, true)
+	err := startAdminServer(ctx, a, true, *a.icebergPort)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -222,7 +224,7 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
 	// Set Gin mode
 	gin.SetMode(gin.ReleaseMode)
 
@@ -281,7 +283,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool) 
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

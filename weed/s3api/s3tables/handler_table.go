@@ -396,6 +396,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		OwnerAccountID:   metadata.OwnerAccountID,
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
+		Metadata:         metadata.Metadata,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)

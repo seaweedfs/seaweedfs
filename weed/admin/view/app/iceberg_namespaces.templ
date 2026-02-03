@@ -1,0 +1,126 @@
+package app
+
+import (
+	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ IcebergNamespaces(data dash.IcebergNamespacesData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<nav aria-label="breadcrumb">
+				<ol class="breadcrumb mb-0">
+					<li class="breadcrumb-item">
+						<a href="/object-store/iceberg">
+							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+						</a>
+					</li>
+					<li class="breadcrumb-item active">{ data.CatalogName }</li>
+				</ol>
+			</nav>
+		</h1>
+	</div>
+	<div id="iceberg-namespaces-content">
+		<!-- Stats Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Catalog
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ data.CatalogName }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-snowflake fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-success shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+									Total Namespaces
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalNamespaces) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-folder fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Namespace List -->
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-folder me-2"></i>Namespaces
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover" width="100%" cellspacing="0">
+								<thead>
+									<tr>
+										<th>Namespace</th>
+										<th>REST Endpoint</th>
+										<th>Created</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, ns := range data.Namespaces {
+										<tr>
+											<td>
+												<i class="fas fa-folder text-warning me-2"></i>
+												<strong>{ ns.Name }</strong>
+											</td>
+											<td>
+												<code class="small">/v1/{ data.CatalogName }/namespaces/{ ns.Name }/tables</code>
+											</td>
+											<td>{ ns.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												<div class="btn-group btn-group-sm" role="group">
+													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) } title="Browse Tables">
+														<i class="fas fa-table"></i>
+													</a>
+												</div>
+											</td>
+										</tr>
+									}
+									if len(data.Namespaces) == 0 {
+										<tr>
+											<td colspan="4" class="text-center text-muted py-4">
+												<i class="fas fa-folder-open fa-3x mb-3 text-muted"></i>
+												<div>
+													<h5>No namespaces found</h5>
+													<p>Create namespaces via the Iceberg REST API or S3 Tables API.</p>
+												</div>
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+}

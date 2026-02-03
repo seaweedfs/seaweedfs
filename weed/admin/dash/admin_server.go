@@ -104,11 +104,12 @@ type AdminServer struct {
 	collectionStatsCacheThreshold time.Duration
 
 	s3TablesManager *s3tables.Manager
+	icebergPort     int
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -136,6 +137,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		configPersistence:             NewConfigPersistence(dataDir),
 		collectionStatsCacheThreshold: 30 * time.Second,
 		s3TablesManager:               newS3TablesManager(),
+		icebergPort:                   icebergPort,
 	}
 
 	// Initialize topic retention purger

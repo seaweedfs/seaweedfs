@@ -91,6 +91,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
 		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
 		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		protected.GET("/object-store/iceberg", h.ShowIcebergCatalog)
+		protected.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
+		protected.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -259,6 +262,9 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
 		r.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
 		r.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		r.GET("/object-store/iceberg", h.ShowIcebergCatalog)
+		r.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
+		r.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -454,10 +460,7 @@ func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
 
 // ShowS3TablesBuckets renders the S3 Tables buckets page
 func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	data, err := h.adminServer.GetS3TablesBucketsData(c.Request.Context())
 	if err != nil {
@@ -476,10 +479,7 @@ func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
 
 // ShowS3TablesNamespaces renders namespaces for a table bucket
 func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	bucketName := c.Param("bucket")
 	arn, err := buildS3TablesBucketArn(bucketName)
@@ -505,10 +505,7 @@ func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
 
 // ShowS3TablesTables renders tables for a namespace
 func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	bucketName := c.Param("bucket")
 	namespace := c.Param("namespace")
@@ -535,6 +532,81 @@ func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
 
 func buildS3TablesBucketArn(bucketName string) (string, error) {
 	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
+}
+
+// getUsername returns the username from context, defaulting to "admin" if not set
+func (h *AdminHandlers) getUsername(c *gin.Context) string {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	return username
+}
+
+// ShowIcebergCatalog renders the Iceberg Catalog overview page
+func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
+	data, err := h.adminServer.GetIcebergCatalogData(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg catalog data: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergCatalog(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowIcebergNamespaces renders namespaces for an Iceberg catalog
+func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
+	catalogName := c.Param("catalog")
+	arn, err := buildS3TablesBucketArn(catalogName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergNamespacesData(c.Request.Context(), catalogName, arn)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg namespaces: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergNamespaces(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowIcebergTables renders tables for an Iceberg namespace
+func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
+	catalogName := c.Param("catalog")
+	namespace := c.Param("namespace")
+	arn, err := buildS3TablesBucketArn(catalogName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergTablesData(c.Request.Context(), catalogName, arn, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg tables: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergTables(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket

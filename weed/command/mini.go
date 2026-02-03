@@ -222,6 +222,7 @@ func initMiniS3Flags() {
 	miniS3Options.port = cmdMini.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
+	miniS3Options.portIceberg = cmdMini.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	miniS3Options.allowedOrigins = cmdMini.Flag.String("s3.allowedOrigins", "*", "comma separated list of allowed origins")
 	miniS3Options.tlsPrivateKey = cmdMini.Flag.String("s3.key.file", "", "path to the TLS private key file")
@@ -463,6 +464,14 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 			flagName string
 			grpcPtr  *int
 		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc})
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			portConfigs = append(portConfigs, struct {
+				port     *int
+				name     string
+				flagName string
+				grpcPtr  *int
+			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
+		}
 	}
 	portConfigs = append(portConfigs, struct {
 		port     *int
@@ -510,9 +519,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
-	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+	icebergPortStr := "disabled"
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
+	}
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
@@ -704,7 +717,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
 	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port", "s3.iam.readOnly"}
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "s3.port.iceberg", "webdav.port", "admin.port", "s3.iam.readOnly"}
 	for _, flagName := range portFlagNames {
 		explicitPortFlags[flagName] = isFlagPassed(flagName)
 	}
@@ -982,7 +995,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI); err != nil {
+		var icebergPort int
+		if miniS3Options.portIceberg != nil {
+			icebergPort = *miniS3Options.portIceberg
+		}
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
