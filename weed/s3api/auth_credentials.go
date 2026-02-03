@@ -1087,6 +1087,13 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 // AuthenticateRequest verifies the credentials in the request and returns the identity.
 // It bypasses permission checks (authorization).
 func (iam *IdentityAccessManagement) AuthenticateRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
+	if !iam.isAuthEnabled {
+		return &Identity{
+			Name:    "admin",
+			Account: &AccountAdmin,
+			Actions: []Action{s3_constants.ACTION_ADMIN},
+		}, s3err.ErrNone
+	}
 	ident, err, _ := iam.authenticateRequestInternal(r)
 	return ident, err
 }

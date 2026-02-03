@@ -24,8 +24,11 @@ type TestEnvironment struct {
 	s3Port          int
 	icebergPort     int
 	masterPort      int
+	masterGrpcPort  int
 	filerPort       int
+	filerGrpcPort   int
 	volumePort      int
+	volumeGrpcPort  int
 	weedProcess     *exec.Cmd
 	weedCancel      context.CancelFunc
 	dockerAvailable bool
@@ -97,13 +100,25 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	if err != nil {
 		t.Fatalf("Failed to get free port for Master: %v", err)
 	}
+	masterGrpcPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Master gRPC: %v", err)
+	}
 	filerPort, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Filer: %v", err)
 	}
+	filerGrpcPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Filer gRPC: %v", err)
+	}
 	volumePort, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Volume: %v", err)
+	}
+	volumeGrpcPort, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for Volume gRPC: %v", err)
 	}
 
 	return &TestEnvironment{
@@ -113,8 +128,11 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		s3Port:          s3Port,
 		icebergPort:     icebergPort,
 		masterPort:      masterPort,
+		masterGrpcPort:  masterGrpcPort,
 		filerPort:       filerPort,
+		filerGrpcPort:   filerGrpcPort,
 		volumePort:      volumePort,
+		volumeGrpcPort:  volumeGrpcPort,
 		dockerAvailable: hasDocker(),
 	}
 }
@@ -138,8 +156,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
+		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
 		"-volume.port", fmt.Sprintf("%d", env.volumePort),
+		"-volume.port.grpc", fmt.Sprintf("%d", env.volumeGrpcPort),
 		"-filer.port", fmt.Sprintf("%d", env.filerPort),
+		"-filer.port.grpc", fmt.Sprintf("%d", env.filerGrpcPort),
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-dir", env.dataDir,
