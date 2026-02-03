@@ -89,14 +89,12 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 			if errCode != s3err.ErrNone {
 				apiErr := s3err.GetAPIError(errCode)
 				errorType := "RESTException"
-				if apiErr.HTTPStatusCode == http.StatusForbidden {
-					errorType = "ForbiddenException"
-				} else if apiErr.HTTPStatusCode == http.StatusUnauthorized {
-					errorType = "UnauthorizedException"
+				if apiErr.HTTPStatusCode == http.StatusForbidden || apiErr.HTTPStatusCode == http.StatusUnauthorized {
+					errorType = "NotAuthorizedException"
 				} else if apiErr.HTTPStatusCode == http.StatusBadRequest {
 					errorType = "BadRequestException"
 				} else if apiErr.HTTPStatusCode == http.StatusInternalServerError {
-					errorType = "ServiceFailureException"
+					errorType = "InternalServerError"
 				}
 				writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
 				return
@@ -223,12 +221,12 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateNamespaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
 		return
 	}
 
 	if len(req.Namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
@@ -246,7 +244,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			writeError(w, http.StatusConflict, "NamespaceAlreadyExistsException", err.Error())
+			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateNamespace error: %v", err)
@@ -266,7 +264,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
@@ -342,7 +340,7 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
@@ -381,7 +379,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
@@ -430,18 +428,18 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	namespace := parseNamespace(vars["namespace"])
 	if len(namespace) == 0 {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace is required")
 		return
 	}
 
 	var req CreateTableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Invalid request body")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body")
 		return
 	}
 
 	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Table name is required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Table name is required")
 		return
 	}
 
@@ -479,7 +477,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			writeError(w, http.StatusConflict, "TableAlreadyExistsException", err.Error())
+			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -502,7 +500,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	tableName := vars["table"]
 
 	if len(namespace) == 0 || tableName == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace and table name are required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace and table name are required")
 		return
 	}
 
@@ -596,7 +594,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	tableName := vars["table"]
 
 	if len(namespace) == 0 || tableName == "" {
-		writeError(w, http.StatusBadRequest, "BadRequest", "Namespace and table name are required")
+		writeError(w, http.StatusBadRequest, "BadRequestException", "Namespace and table name are required")
 		return
 	}
 
