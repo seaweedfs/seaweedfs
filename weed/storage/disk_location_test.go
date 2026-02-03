@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -75,5 +77,26 @@ func TestUnUsedSpace(t *testing.T) {
 	if unUsedSpace != 0 {
 		t.Errorf("unUsedSpace incorrect: %d != %d", unUsedSpace, 0)
 	}
+}
 
+func TestResolveVolumeIDs(t *testing.T) {
+	l := DiskLocation{
+		volumes: map[needle.VolumeId]*Volume{
+			0: &Volume{},
+			1: &Volume{},
+			2: &Volume{},
+		},
+		ecVolumes: map[needle.VolumeId]*erasure_coding.EcVolume{
+			3: &erasure_coding.EcVolume{},
+			4: &erasure_coding.EcVolume{},
+			5: &erasure_coding.EcVolume{},
+		},
+	}
+
+	if got, want := l.VolumeIds(), []needle.VolumeId{0, 1, 2}; !reflect.DeepEqual(got, want) {
+		t.Errorf("wanted volume IDs %v, got %v", want, got)
+	}
+	if got, want := l.EcVolumeIds(), []needle.VolumeId{3, 4, 5}; !reflect.DeepEqual(got, want) {
+		t.Errorf("wanted EC volume IDs %v, got %v", want, got)
+	}
 }
