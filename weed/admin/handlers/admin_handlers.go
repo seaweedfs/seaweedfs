@@ -460,10 +460,7 @@ func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
 
 // ShowS3TablesBuckets renders the S3 Tables buckets page
 func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	data, err := h.adminServer.GetS3TablesBucketsData(c.Request.Context())
 	if err != nil {
@@ -482,10 +479,7 @@ func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
 
 // ShowS3TablesNamespaces renders namespaces for a table bucket
 func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	bucketName := c.Param("bucket")
 	arn, err := buildS3TablesBucketArn(bucketName)
@@ -511,10 +505,7 @@ func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
 
 // ShowS3TablesTables renders tables for a namespace
 func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin"
-	}
+	username := h.getUsername(c)
 
 	bucketName := c.Param("bucket")
 	namespace := c.Param("namespace")

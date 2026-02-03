@@ -61,11 +61,11 @@ func TestCompactionToEmpty(t *testing.T) {
 	}
 
 	// Check if the file itself exists and is empty (except for superblock)
-	datFileContent, err := os.ReadFile(v.FileName(".dat"))
+	info, err := os.Stat(v.FileName(".dat"))
 	if err != nil {
-		t.Fatalf("read dat file: %v", err)
+		t.Fatalf("stat dat file: %v", err)
 	}
-	if len(datFileContent) != super_block.SuperBlockSize {
-		t.Fatalf("dat file physical size mismatch: expected %d, got %d", super_block.SuperBlockSize, len(datFileContent))
+	if info.Size() != int64(super_block.SuperBlockSize) {
+		t.Fatalf("dat file physical size mismatch: expected %d, got %d", super_block.SuperBlockSize, info.Size())
 	}
 }

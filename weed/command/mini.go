@@ -717,7 +717,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
 	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port", "s3.iam.readOnly"}
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "s3.port.iceberg", "webdav.port", "admin.port", "s3.iam.readOnly"}
 	for _, flagName := range portFlagNames {
 		explicitPortFlags[flagName] = isFlagPassed(flagName)
 	}
