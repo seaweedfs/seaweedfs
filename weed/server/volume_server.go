@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -170,4 +171,20 @@ func (vs *VolumeServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
+}
+
+// Returns whether a volume server is in maintenance (i.e. read-only) mode.
+func (vs *VolumeServer) MaintenanceMode() bool {
+	if vs.store == nil {
+		return false
+	}
+	return vs.store.State.Pb.GetMaintenance()
+}
+
+// Checks if a volume server is in maintenance mode, and returns an error explaining why.
+func (vs *VolumeServer) CheckMaintenanceMode() error {
+	if !vs.MaintenanceMode() {
+		return nil
+	}
+	return fmt.Errorf("volume server %s is in maintenance mode", vs.store.Id)
 }

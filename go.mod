@@ -5,7 +5,7 @@ go 1.24.9
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/pubsub v1.50.1
-	cloud.google.com/go/storage v1.59.1
+	cloud.google.com/go/storage v1.59.2
 	github.com/Shopify/sarama v1.38.1
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -46,7 +46,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12
 	github.com/karlseguin/ccache/v2 v2.0.8
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/klauspost/reedsolomon v1.13.0
 	github.com/kurin/blazer v0.5.3
 	github.com/linxGnu/grocksdb v1.10.3
@@ -133,13 +133,13 @@ require (
 	github.com/gin-contrib/sessions v1.0.4
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-ldap/ldap/v3 v3.4.12
-	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/jhump/protoreflect v1.17.0
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.1
 	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/minio/crc64nvme v1.1.1
@@ -152,7 +152,7 @@ require (
 	github.com/redis/go-redis/v9 v9.17.2
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.1
-	github.com/shirou/gopsutil/v4 v4.25.12
+	github.com/shirou/gopsutil/v4 v4.26.1
 	github.com/tarantool/go-tarantool/v2 v2.4.1
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0

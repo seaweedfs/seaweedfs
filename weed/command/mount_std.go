@@ -270,6 +270,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		RdmaReadOnly:      *option.rdmaReadOnly,
 		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
 		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
+		DirIdleEvictSec:   *option.dirIdleEvictSec,
 	})
 
 	// create mount root
