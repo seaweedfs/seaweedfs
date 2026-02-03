@@ -57,7 +57,7 @@ def test_namespace_operations(catalog, prefix):
     # List namespaces (should include our new one)
     namespaces = catalog.list_namespaces()
     if namespace in namespaces:
-        print(f"  Namespace appears in list")
+        print("  Namespace appears in list")
     else:
         print(f"  Namespace not found in list: {namespaces}")
         return False
@@ -96,12 +96,12 @@ def test_table_operations(catalog, prefix):
         print(f"  Created table: {table_id}")
     except TableAlreadyExistsError:
         print(f"  ! Table already exists: {table_id}")
-        table = catalog.load_table(table_id)
+        _ = catalog.load_table(table_id)
     
     # List tables
     tables = catalog.list_tables(namespace)
     if table_name in [t[1] for t in tables]:
-        print(f"  Table appears in list")
+        print("  Table appears in list")
     else:
         print(f"  Table not found in list: {tables}")
         return False
@@ -133,14 +133,14 @@ def test_table_update(catalog, prefix):
         with table.transaction() as transaction:
             transaction.set_properties({"test.property": "test.value"})
         
-        print(f"  Updated table properties")
+        print("  Updated table properties")
         
         # Reload and verify
         table = catalog.load_table(table_id)
         if table.properties.get("test.property") == "test.value":
-            print(f"  Property update verified")
+            print("  Property update verified")
         else:
-            print(f"  ! Property update failed or not persisted")
+            print("  ! Property update failed or not persisted")
             return False
         
     except Exception as e:

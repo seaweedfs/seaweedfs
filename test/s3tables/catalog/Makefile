@@ -18,7 +18,7 @@ build:
 # Uses default ports: S3=8333, Iceberg=8182
 mini: build
 	@echo "Starting SeaweedFS mini cluster..."
-	$(WEED_BIN) mini -s3.port.iceberg=8182
+	$(WEED_BIN) mini -s3.port.iceberg=8182 & echo $$! > weed-mini.pid; wait
 
 # Run all integration tests in this directory
 test: build
@@ -33,5 +33,5 @@ test-pyiceberg: build
 # Clean up temporary data and stop weed mini if running
 clean:
 	@echo "Cleaning up..."
-	@pkill -f "weed mini" || true
+	@test -f weed-mini.pid && kill $$(cat weed-mini.pid) && rm weed-mini.pid || true
 	@rm -rf /tmp/seaweed-iceberg-test-*
