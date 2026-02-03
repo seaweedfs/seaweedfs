@@ -219,6 +219,20 @@ type DeleteTableRequest struct {
 	VersionToken   string   `json:"versionToken,omitempty"`
 }
 
+type UpdateTableRequest struct {
+	TableBucketARN string         `json:"tableBucketARN"`
+	Namespace      []string       `json:"namespace"`
+	Name           string         `json:"name"`
+	VersionToken   string         `json:"versionToken,omitempty"`
+	Metadata       *TableMetadata `json:"metadata,omitempty"`
+}
+
+type UpdateTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
+}
+
 // Table policy types
 
 type PutTablePolicyRequest struct {
