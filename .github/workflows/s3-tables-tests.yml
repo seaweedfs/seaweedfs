@@ -84,10 +84,6 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
-      - name: Install SeaweedFS
-        run: |
-          go install -buildvcs=false ./weed
-
       - name: Run Iceberg Catalog Integration Tests
         timeout-minutes: 25
         working-directory: test/s3tables/catalog
@@ -100,8 +96,8 @@ jobs:
           df -h
           echo "=== Starting Iceberg Catalog Tests ==="
           
-          # Run Iceberg catalog integration tests
-          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+          # Run Iceberg catalog integration tests using Makefile (handles build)
+          make test 2>&1 | tee test-output.log || {
             echo "Iceberg catalog integration tests failed"
             exit 1
           }
