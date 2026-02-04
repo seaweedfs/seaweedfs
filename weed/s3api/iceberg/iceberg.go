@@ -236,7 +236,7 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to write metadata file context: %w", err)
+			return fmt.Errorf("failed to write metadata file: %w", err)
 		}
 		if resp.Error != "" {
 			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
