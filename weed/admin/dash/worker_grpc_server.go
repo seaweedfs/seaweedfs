@@ -52,7 +52,6 @@ type LogRequestContext struct {
 	TaskID     string
 	WorkerID   string
 	ResponseCh chan *worker_pb.TaskLogResponse
-	Timeout    time.Time
 }
 
 // WorkerConnection represents an active worker connection
@@ -444,6 +443,7 @@ func (s *WorkerGrpcServer) handleTaskCompletion(conn *WorkerConnection, completi
 
 		if completion.Success {
 			glog.V(1).Infof("Worker %s completed task %s successfully", conn.workerID, completion.TaskId)
+		} else {
 			glog.Errorf("Worker %s failed task %s: %s", conn.workerID, completion.TaskId, completion.ErrorMessage)
 		}
 
@@ -648,7 +648,6 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		TaskID:     taskID,
 		WorkerID:   workerID,
 		ResponseCh: responseCh,
-		Timeout:    time.Now().Add(logRequestTimeout),
 	}
 
 	s.logRequestsMutex.Lock()

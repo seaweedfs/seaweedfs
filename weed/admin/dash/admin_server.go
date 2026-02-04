@@ -1257,9 +1257,13 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		return nil, err
 	}
 
+	// Copy task and truncate assignment history for display
+	displayTask := *task
+	displayTask.AssignmentHistory = nil // History is provided separately in taskDetail
+
 	// Create task detail structure from the loaded task
 	taskDetail := &maintenance.TaskDetailData{
-		Task:              task,
+		Task:              &displayTask,
 		AssignmentHistory: task.AssignmentHistory, // Use assignment history from persisted task
 		ExecutionLogs:     []*maintenance.TaskExecutionLog{},
 		RelatedTasks:      []*maintenance.MaintenanceTask{},
