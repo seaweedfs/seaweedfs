@@ -18,6 +18,15 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
+const (
+	maxLogFetchLimit   = 1000
+	maxLogMessageSize  = 2000
+	maxLogFieldsCount  = 20
+	logRequestTimeout  = 10 * time.Second
+	logResponseTimeout = 2 * time.Second
+	logSendTimeout     = 5 * time.Second
+)
+
 // WorkerGrpcServer implements the WorkerService gRPC interface
 type WorkerGrpcServer struct {
 	worker_pb.UnimplementedWorkerServiceServer
@@ -446,7 +455,7 @@ func (s *WorkerGrpcServer) handleTaskCompletion(conn *WorkerConnection, completi
 // FetchAndSaveLogs retrieves logs from a worker and saves them to disk
 func (s *WorkerGrpcServer) FetchAndSaveLogs(workerID, taskID string) error {
 	// Fetch logs
-	workerLogs, err := s.RequestTaskLogs(workerID, taskID, 1000, "")
+	workerLogs, err := s.RequestTaskLogs(workerID, taskID, maxLogFetchLimit, "")
 	if err != nil {
 		glog.Warningf("Failed to fetch logs for task %s: %v", taskID, err)
 		return err
@@ -463,10 +472,26 @@ func (s *WorkerGrpcServer) FetchAndSaveLogs(workerID, taskID string) error {
 			TaskID:    taskID,
 			WorkerID:  workerID,
 		}
+
+		// Truncate very long messages to prevent rendering issues and disk bloat
+		if len(maintenanceLog.Message) > maxLogMessageSize {
+			maintenanceLog.Message = maintenanceLog.Message[:maxLogMessageSize] + "... (truncated)"
+		}
+
 		// carry structured fields if present
 		if len(workerLog.Fields) > 0 {
-			maintenanceLog.Fields = workerLog.Fields
+			maintenanceLog.Fields = make(map[string]string)
+			fieldCount := 0
+			for k, v := range workerLog.Fields {
+				if fieldCount >= maxLogFieldsCount {
+					maintenanceLog.Fields["..."] = fmt.Sprintf("(%d more fields truncated)", len(workerLog.Fields)-maxLogFieldsCount)
+					break
+				}
+				maintenanceLog.Fields[k] = v
+				fieldCount++
+			}
 		}
+
 		// carry optional progress/status
 		if workerLog.Progress != 0 {
 			p := float64(workerLog.Progress)
@@ -623,7 +648,7 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		TaskID:     taskID,
 		WorkerID:   workerID,
 		ResponseCh: responseCh,
-		Timeout:    time.Now().Add(10 * time.Second),
+		Timeout:    time.Now().Add(logRequestTimeout),
 	}
 
 	s.logRequestsMutex.Lock()
@@ -649,7 +674,7 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	select {
 	case conn.outgoing <- logRequest:
 		glog.V(1).Infof("Log request sent to worker %s for task %s", workerID, taskID)
-	case <-time.After(5 * time.Second):
+	case <-time.After(logSendTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
 		delete(s.pendingLogRequests, requestKey)
@@ -665,7 +690,7 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		}
 		glog.V(1).Infof("Received %d log entries for task %s from worker %s", len(response.LogEntries), taskID, workerID)
 		return response.LogEntries, nil
-	case <-time.After(2 * time.Second):
+	case <-time.After(logResponseTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
 		delete(s.pendingLogRequests, requestKey)

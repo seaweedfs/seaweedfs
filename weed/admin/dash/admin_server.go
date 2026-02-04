@@ -33,6 +33,17 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
 )
 
+const (
+	maxAssignmentHistoryDisplay = 50
+	maxLogMessageLength         = 2000
+	maxLogFields                = 20
+	maxRelatedTasksDisplay      = 50
+	maxRecentTasksDisplay       = 10
+	defaultCacheTimeout         = 10 * time.Second
+	defaultFilerCacheTimeout    = 30 * time.Second
+	defaultStatsCacheTimeout    = 30 * time.Second
+)
+
 // FilerConfig holds filer configuration needed for bucket operations
 type FilerConfig struct {
 	BucketsPath string
@@ -132,10 +143,10 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		templateFS:                    templateFS,
 		dataDir:                       dataDir,
 		grpcDialOption:                grpcDialOption,
-		cacheExpiration:               10 * time.Second,
-		filerCacheExpiration:          30 * time.Second, // Cache filers for 30 seconds
+		cacheExpiration:               defaultCacheTimeout,
+		filerCacheExpiration:          defaultFilerCacheTimeout,
 		configPersistence:             NewConfigPersistence(dataDir),
-		collectionStatsCacheThreshold: 30 * time.Second,
+		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 	}
@@ -1255,9 +1266,9 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		LastUpdated:       time.Now(),
 	}
 
-	// Truncate assignment history if it's too long (display last 50 only)
-	if len(taskDetail.AssignmentHistory) > 50 {
-		startIdx := len(taskDetail.AssignmentHistory) - 50
+	// Truncate assignment history if it's too long (display last N only)
+	if len(taskDetail.AssignmentHistory) > maxAssignmentHistoryDisplay {
+		startIdx := len(taskDetail.AssignmentHistory) - maxAssignmentHistoryDisplay
 		taskDetail.AssignmentHistory = taskDetail.AssignmentHistory[startIdx:]
 	}
 
@@ -1298,7 +1309,7 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 
 	// Get related tasks (other tasks on same volume/server)
 	if task.VolumeID != 0 || task.Server != "" {
-		allTasks := as.maintenanceManager.GetTasks("", "", 50) // Get recent tasks
+		allTasks := as.maintenanceManager.GetTasks("", "", maxRelatedTasksDisplay) // Get recent tasks
 		for _, relatedTask := range allTasks {
 			if relatedTask.ID != taskID &&
 				(relatedTask.VolumeID == task.VolumeID || relatedTask.Server == task.Server) {
@@ -1352,7 +1363,7 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	}
 
 	// Get recent tasks for this worker
-	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", 10)
+	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", maxRecentTasksDisplay)
 	var workerRecentTasks []*MaintenanceTask
 	for _, task := range recentTasks {
 		if task.WorkerID == workerID {
