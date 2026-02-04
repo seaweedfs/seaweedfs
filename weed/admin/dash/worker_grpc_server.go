@@ -23,8 +23,8 @@ const (
 	maxLogMessageSize  = 2000
 	maxLogFieldsCount  = 20
 	logRequestTimeout  = 10 * time.Second
-	logResponseTimeout = 2 * time.Second
-	logSendTimeout     = 5 * time.Second
+	logResponseTimeout = 30 * time.Second
+	logSendTimeout     = 10 * time.Second
 )
 
 // WorkerGrpcServer implements the WorkerService gRPC interface
@@ -98,8 +98,9 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	s.listener = listener
 	s.running = true
 
-	// Start cleanup routine
+	// Start background routines
 	go s.cleanupRoutine()
+	go s.activeLogFetchLoop()
 
 	// Start serving in a goroutine
 	go func() {
@@ -454,10 +455,27 @@ func (s *WorkerGrpcServer) handleTaskCompletion(conn *WorkerConnection, completi
 
 // FetchAndSaveLogs retrieves logs from a worker and saves them to disk
 func (s *WorkerGrpcServer) FetchAndSaveLogs(workerID, taskID string) error {
-	// Fetch logs
-	workerLogs, err := s.RequestTaskLogs(workerID, taskID, maxLogFetchLimit, "")
+	// Add a small initial delay to allow worker to finalize and sync logs
+	// especially when this is called immediately after TaskComplete
+	time.Sleep(300 * time.Millisecond)
+
+	var workerLogs []*worker_pb.TaskLogEntry
+	var err error
+
+	// Retry a few times if fetch fails, as logs might be in the middle of a terminal sync
+	for attempt := 1; attempt <= 3; attempt++ {
+		workerLogs, err = s.RequestTaskLogs(workerID, taskID, maxLogFetchLimit, "")
+		if err == nil {
+			break
+		}
+		if attempt < 3 {
+			glog.V(1).Infof("Fetch logs attempt %d failed for task %s: %v. Retrying in 1s...", attempt, taskID, err)
+			time.Sleep(1 * time.Second)
+		}
+	}
+
 	if err != nil {
-		glog.Warningf("Failed to fetch logs for task %s: %v", taskID, err)
+		glog.Warningf("Failed to fetch logs for task %s after 3 attempts: %v", taskID, err)
 		return err
 	}
 
@@ -763,4 +781,39 @@ func findClientAddress(ctx context.Context) string {
 		return ""
 	}
 	return pr.Addr.String()
+}
+
+// activeLogFetchLoop periodically fetches logs for all in-progress tasks
+func (s *WorkerGrpcServer) activeLogFetchLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopChan:
+			return
+		case <-ticker.C:
+			if !s.running || s.adminServer == nil || s.adminServer.maintenanceManager == nil {
+				continue
+			}
+
+			// Get all in-progress tasks
+			tasks := s.adminServer.maintenanceManager.GetTasks(maintenance.TaskStatusInProgress, "", 0)
+			if len(tasks) == 0 {
+				continue
+			}
+
+			glog.V(2).Infof("Background log fetcher: found %d in-progress tasks", len(tasks))
+			for _, task := range tasks {
+				if task.WorkerID != "" {
+					// Use a goroutine to avoid blocking the loop
+					go func(wID, tID string) {
+						if err := s.FetchAndSaveLogs(wID, tID); err != nil {
+							glog.V(2).Infof("Background log fetch failed for task %s on worker %s: %v", tID, wID, err)
+						}
+					}(task.WorkerID, task.ID)
+				}
+			}
+		}
+	}
 }
