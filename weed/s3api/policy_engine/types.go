@@ -104,21 +104,19 @@ func (p *PolicyDocument) UnmarshalJSON(data []byte) error {
 
 	// Try unmarshaling as []PolicyStatement first
 	var statements []PolicyStatement
-	errArray := json.Unmarshal(aux.Statement, &statements)
-	if errArray == nil {
+	if err := json.Unmarshal(aux.Statement, &statements); err == nil {
 		p.Statement = statements
 		return nil
 	}
 
 	// Try unmarshaling as single PolicyStatement
 	var statement PolicyStatement
-	errObject := json.Unmarshal(aux.Statement, &statement)
-	if errObject == nil {
+	if err := json.Unmarshal(aux.Statement, &statement); err == nil {
 		p.Statement = []PolicyStatement{statement}
 		return nil
 	}
 
-	return fmt.Errorf("Statement must be an array or a single object, but unmarshaling failed for both: as array: %v, as object: %v", errArray, errObject)
+	return fmt.Errorf("Statement must be an array or a single object")
 }
 
 // PolicyStatement represents a single policy statement
