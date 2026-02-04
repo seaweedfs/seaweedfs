@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1301,33 +1300,6 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		}
 	}
 
-	/* Background log fetching disabled to strictly enforce "read from disk only" policy
-	   and prevent timeouts when viewing tasks of potentially unresponsive workers.
-	   Logs are now only persisted upon task completion.
-
-	// For InProgress tasks, trigger an async background update of logs with cooldown
-	if task.Status == maintenance.TaskStatusInProgress && as.workerGrpcServer != nil && task.WorkerID != "" {
-		as.logFetchMutex.Lock()
-		lastFetch, ok := as.lastLogFetch[taskID]
-		shouldFetch := !ok || time.Since(lastFetch) > logFetchCooldown
-		if shouldFetch {
-			as.lastLogFetch[taskID] = time.Now()
-		}
-		as.logFetchMutex.Unlock()
-
-		if shouldFetch {
-			go func() {
-				err := as.workerGrpcServer.FetchAndSaveLogs(task.WorkerID, taskID)
-				if err != nil {
-					glog.V(1).Infof("Background log fetch for task %s failed: %v", taskID, err)
-					// Clear cooldown on failure so it can be retried sooner if requested?
-					// For now keep it to avoid spamming even on errors.
-				}
-			}()
-		}
-	}
-	*/
-
 	// Get related tasks (other tasks on same volume/server)
 	if task.VolumeID != 0 || task.Server != "" {
 		allTasks := as.maintenanceManager.GetTasks("", "", maxRelatedTasksDisplay) // Get recent tasks
@@ -1431,30 +1403,28 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	}, nil
 }
 
-// GetWorkerLogs fetches logs from a specific worker for a task
+// GetWorkerLogs fetches logs from a specific worker for a task (now reads from disk)
 func (as *AdminServer) GetWorkerLogs(c *gin.Context) {
 	workerID := c.Param("id")
 	taskID := c.Query("taskId")
-	maxEntriesStr := c.DefaultQuery("maxEntries", "100")
-	logLevel := c.DefaultQuery("logLevel", "")
 
-	maxEntries := int32(100)
-	if maxEntriesStr != "" {
-		if parsed, err := strconv.ParseInt(maxEntriesStr, 10, 32); err == nil {
-			maxEntries = int32(parsed)
-		}
-	}
-
-	if as.workerGrpcServer == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Worker gRPC server not available"})
+	// Check config persistence first
+	if as.configPersistence == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Config persistence not available"})
 		return
 	}
 
-	logs, err := as.workerGrpcServer.RequestTaskLogs(workerID, taskID, maxEntries, logLevel)
+	// Load logs strictly from disk to avoid timeouts and network dependency
+	// This matches the behavior of the Task Detail page
+	logs, err := as.configPersistence.LoadTaskExecutionLogs(taskID)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to get logs from worker: %v", err)})
-		return
+		glog.V(2).Infof("No execution logs found on disk for task %s: %v", taskID, err)
+		logs = []*maintenance.TaskExecutionLog{}
 	}
+
+	// Filter logs by workerID if strictly needed, but usually task logs are what we want
+	// The persistent logs struct (TaskExecutionLog) matches what the frontend expects for the detail view
+	// ensuring consistent display.
 
 	c.JSON(http.StatusOK, gin.H{"worker_id": workerID, "task_id": taskID, "logs": logs, "count": len(logs)})
 }
