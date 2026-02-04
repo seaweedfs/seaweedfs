@@ -93,12 +93,13 @@ Example Usage:
 	weed mini -dir=/data -master.port=9444  # Custom master port
 
 After starting, you can access:
-- Master UI:    http://localhost:9333
-- Volume Server: http://localhost:9340
-- Filer UI:     http://localhost:8888
-- S3 Endpoint:  http://localhost:8333
-- WebDAV:       http://localhost:7333
-- Admin UI:     http://localhost:23646
+- Master UI:       http://localhost:9333
+- Volume Server:   http://localhost:9340
+- Filer UI:        http://localhost:8888
+- S3 Endpoint:     http://localhost:8333
+- Iceberg Catalog: http://localhost:8181
+- WebDAV:          http://localhost:7333
+- Admin UI:        http://localhost:23646
 
 S3 Access:
 The S3 endpoint is available at http://localhost:8333. For client
@@ -1170,20 +1171,23 @@ func printWelcomeMessage() {
 	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
 	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
 	sb.WriteString("  All enabled components are running and ready to use:\n\n")
-	fmt.Fprintf(&sb, "    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
-	fmt.Fprintf(&sb, "    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	fmt.Fprintf(&sb, "    Master UI:       http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Filer UI:        http://%s:%d\n", *miniIp, *miniFilerOptions.port)
 	if *miniEnableS3 {
-		fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+		fmt.Fprintf(&sb, "    S3 Endpoint:     http://%s:%d\n", *miniIp, *miniS3Options.port)
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
+		}
 	}
 
 	if *miniEnableWebDAV {
-		fmt.Fprintf(&sb, "    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+		fmt.Fprintf(&sb, "    WebDAV:          http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
 	}
 	if *miniEnableAdminUI {
-		fmt.Fprintf(&sb, "    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
 	}
 
-	fmt.Fprintf(&sb, "    Volume Server:  http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
+	fmt.Fprintf(&sb, "    Volume Server:   http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
 
 	sb.WriteString("  Optimized Settings:\n")
 	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)

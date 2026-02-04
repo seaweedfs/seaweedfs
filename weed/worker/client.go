@@ -808,7 +808,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 		caps[i] = string(cap)
 	}
 
-	glog.V(3).Infof("📤 SENDING TASK REQUEST: Worker %s sending task request to admin server with capabilities: %v",
+	glog.V(3).Infof("SENDING TASK REQUEST: Worker %s sending task request to admin server with capabilities: %v",
 		workerID, capabilities)
 
 	msg := &worker_pb.WorkerMessage{
