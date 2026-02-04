@@ -945,7 +945,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         // Format and display logs with structured fields
         let logText = '';
         logs.forEach(entry => {
-            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+            let timestamp;
+            if (typeof entry.timestamp === 'string') {
+                timestamp = new Date(entry.timestamp).toISOString();
+            } else {
+                timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+            }
             const level = entry.level || 'INFO';
             const message = entry.message || '';
             
@@ -1011,7 +1016,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             let logContent = '';
             if (data.logs && data.logs.length > 0) {
                 data.logs.forEach(entry => {
-                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    let timestamp;
+                    if (typeof entry.timestamp === 'string') {
+                        timestamp = new Date(entry.timestamp).toISOString();
+                    } else {
+                        timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    }
                     const level = entry.level || 'INFO';
                     const message = entry.message || '';
                     
