@@ -166,48 +166,60 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// 1. Ensure table directory exists: /table-buckets/<bucket>/<namespace>/<table>
 		tableDir := fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName)
-		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+		_, err := filer_pb.LookupEntry(opCtx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace),
-			Entry: &filer_pb.Entry{
-				Name:        tableName,
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0755 | os.ModeDir),
-				},
-			},
+			Name:      tableName,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create table directory: %w", err)
-		}
-		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
-			return fmt.Errorf("failed to create table directory: %s", resp.Error)
+			resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+				Directory: fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace),
+				Entry: &filer_pb.Entry{
+					Name:        tableName,
+					IsDirectory: true,
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(0755 | os.ModeDir),
+					},
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create table directory: %w", err)
+			}
+			if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+				return fmt.Errorf("failed to create table directory: %s", resp.Error)
+			}
 		}
 
 		// 2. Ensure metadata directory exists: /table-buckets/<bucket>/<namespace>/<table>/metadata
 		metadataDir := fmt.Sprintf("%s/metadata", tableDir)
-		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+		_, err = filer_pb.LookupEntry(opCtx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: tableDir,
-			Entry: &filer_pb.Entry{
-				Name:        "metadata",
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0755 | os.ModeDir),
-				},
-			},
+			Name:      "metadata",
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create metadata directory: %w", err)
-		}
-		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
-			return fmt.Errorf("failed to create metadata directory: %s", resp.Error)
+			resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+				Directory: tableDir,
+				Entry: &filer_pb.Entry{
+					Name:        "metadata",
+					IsDirectory: true,
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(0755 | os.ModeDir),
+					},
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create metadata directory: %w", err)
+			}
+			if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+				return fmt.Errorf("failed to create metadata directory: %s", resp.Error)
+			}
 		}
 
 		// 3. Write the file
-		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 			Directory: metadataDir,
 			Entry: &filer_pb.Entry{
 				Name: metadataFileName,
