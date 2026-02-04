@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -43,7 +42,6 @@ const (
 	defaultCacheTimeout         = 10 * time.Second
 	defaultFilerCacheTimeout    = 30 * time.Second
 	defaultStatsCacheTimeout    = 30 * time.Second
-	logFetchCooldown            = 10 * time.Second
 )
 
 // FilerConfig holds filer configuration needed for bucket operations
@@ -118,10 +116,6 @@ type AdminServer struct {
 
 	s3TablesManager *s3tables.Manager
 	icebergPort     int
-
-	// Background log fetching tracking
-	lastLogFetch  map[string]time.Time
-	logFetchMutex sync.Mutex
 }
 
 // Type definitions moved to types.go
@@ -155,7 +149,6 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
-		lastLogFetch:                  make(map[string]time.Time),
 	}
 
 	// Initialize topic retention purger
@@ -1308,6 +1301,10 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		}
 	}
 
+	/* Background log fetching disabled to strictly enforce "read from disk only" policy
+	   and prevent timeouts when viewing tasks of potentially unresponsive workers.
+	   Logs are now only persisted upon task completion.
+
 	// For InProgress tasks, trigger an async background update of logs with cooldown
 	if task.Status == maintenance.TaskStatusInProgress && as.workerGrpcServer != nil && task.WorkerID != "" {
 		as.logFetchMutex.Lock()
@@ -1329,6 +1326,7 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 			}()
 		}
 	}
+	*/
 
 	// Get related tasks (other tasks on same volume/server)
 	if task.VolumeID != 0 || task.Server != "" {
