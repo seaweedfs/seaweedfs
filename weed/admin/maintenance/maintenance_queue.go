@@ -587,15 +587,35 @@ func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType Main
 			continue
 		}
 		tasks = append(tasks, task)
-		if limit > 0 && len(tasks) >= limit {
-			break
-		}
 	}
 
-	// Sort by creation time (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
-	})
+	// Sort based on status
+	if status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusCancelled {
+		sort.Slice(tasks, func(i, j int) bool {
+			t1 := tasks[i].CompletedAt
+			t2 := tasks[j].CompletedAt
+			if t1 == nil && t2 == nil {
+				return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+			}
+			if t1 == nil {
+				return false
+			}
+			if t2 == nil {
+				return true
+			}
+			return t1.After(*t2)
+		})
+	} else {
+		// Default to creation time (newest first)
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+		})
+	}
+
+	// Apply limit after sorting
+	if limit > 0 && len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
 
 	return tasks
 }

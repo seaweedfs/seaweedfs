@@ -230,7 +230,20 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Create router
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		if param.StatusCode == 200 {
+			return ""
+		}
+		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
+			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			param.StatusCode,
+			param.Latency,
+			param.ClientIP,
+			param.Method,
+			param.Path,
+			param.ErrorMessage,
+		)
+	}), gin.Recovery())
 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
