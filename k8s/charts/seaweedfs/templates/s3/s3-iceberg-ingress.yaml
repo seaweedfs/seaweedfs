@@ -1,3 +1,18 @@
+{{- define "seaweedfs.s3.iceberg.ingress.paths" -}}
+paths:
+- path: {{ .Values.s3.icebergIngress.path | quote }}
+  pathType: {{ .Values.s3.icebergIngress.pathType | quote }}
+  backend:
+    {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+    service:
+      name: {{ include "seaweedfs.componentName" (list . "s3") }}
+      port:
+        number: {{ .Values.s3.icebergPort }}
+    {{- else }}
+    serviceName: {{ include "seaweedfs.componentName" (list . "s3") }}
+    servicePort: {{ .Values.s3.icebergPort }}
+    {{- end }}
+{{- end -}}
 {{- if and .Values.s3.enabled .Values.s3.icebergPort .Values.s3.icebergIngress.enabled }}
 {{- $serviceName := include "seaweedfs.componentName" (list . "s3") }}
 {{- $hosts := list }}
@@ -35,37 +50,13 @@ spec:
     {{ .Values.s3.icebergIngress.tls | default list | toYaml | nindent 6}}
   rules:
 {{- if $hosts }}
-{{- range $hosts }}
-  - host: {{ . | quote }}
+{{- range $host := $hosts }}
+  - host: {{ $host | quote }}
     http:
-      paths:
-      - path: {{ $.Values.s3.icebergIngress.path | quote }}
-        pathType: {{ $.Values.s3.icebergIngress.pathType | quote }}
-        backend:
-{{- if semverCompare ">=1.19-0" $.Capabilities.KubeVersion.GitVersion }}
-          service:
-            name: {{ $serviceName }}
-            port:
-              number: {{ $.Values.s3.icebergPort }}
-{{- else }}
-          serviceName: {{ $serviceName }}
-          servicePort: {{ $.Values.s3.icebergPort }}
-{{- end }}
+      {{- include "seaweedfs.s3.iceberg.ingress.paths" $ | nindent 6 }}
 {{- end }}
 {{- else }}
   - http:
-      paths:
-      - path: {{ .Values.s3.icebergIngress.path | quote }}
-        pathType: {{ .Values.s3.icebergIngress.pathType | quote }}
-        backend:
-{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
-          service:
-            name: {{ $serviceName }}
-            port:
-              number: {{ .Values.s3.icebergPort }}
-{{- else }}
-          serviceName: {{ $serviceName }}
-          servicePort: {{ .Values.s3.icebergPort }}
-{{- end }}
+      {{- include "seaweedfs.s3.iceberg.ingress.paths" . | nindent 4 }}
 {{- end }}
 {{- end }}
