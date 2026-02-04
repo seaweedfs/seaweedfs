@@ -272,7 +272,7 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 	// If no task found, return nil
 	if selectedTask == nil {
-		glog.V(2).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
+		glog.V(4).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
 		return nil
 	}
 

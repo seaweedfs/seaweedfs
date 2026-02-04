@@ -799,7 +799,7 @@ func (w *Worker) requestTasks() {
 	}
 
 	if w.getAdmin() != nil {
-		glog.V(3).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
+		glog.V(4).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
 			w.id, currentLoad, w.config.MaxConcurrent, w.config.Capabilities)
 
 		task, err := w.getAdmin().RequestTask(w.id, w.config.Capabilities)
@@ -815,7 +815,7 @@ func (w *Worker) requestTasks() {
 				glog.Errorf("TASK HANDLING FAILED: Worker %s failed to handle task %s: %v", w.id, task.ID, err)
 			}
 		} else {
-			glog.V(3).Infof("NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
+			glog.V(4).Infof("NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
 		}
 	}
 }
@@ -868,7 +868,7 @@ func (w *Worker) connectionMonitorLoop() {
 				lastConnectionStatus = currentConnectionStatus
 			} else {
 				if currentConnectionStatus {
-					glog.V(3).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
+					glog.V(4).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
 				} else {
 					glog.V(1).Infof("CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
 				}
@@ -926,10 +926,10 @@ func (w *Worker) messageProcessingLoop() {
 			return
 		case message := <-incomingChan:
 			if message != nil {
-				glog.V(3).Infof("MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
+				glog.V(4).Infof("MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
 				w.processAdminMessage(message)
 			} else {
-				glog.V(3).Infof("NULL MESSAGE: Worker %s received nil message", w.id)
+				glog.V(4).Infof("NULL MESSAGE: Worker %s received nil message", w.id)
 			}
 		}
 	}
@@ -952,7 +952,7 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 	case *worker_pb.AdminMessage_TaskAssignment:
 		taskAssign := msg.TaskAssignment
 		if taskAssign.TaskId == "" {
-			glog.V(1).Infof("Worker %s received empty task assignment, going to sleep", w.id)
+			glog.V(4).Infof("Worker %s received empty task assignment, going to sleep", w.id)
 			return
 		}
 		glog.V(1).Infof("Worker %s received direct task assignment %s (type: %s, volume: %d)",

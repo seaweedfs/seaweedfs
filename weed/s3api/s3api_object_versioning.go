@@ -1094,6 +1094,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	// Set the original prefix in the response (not the normalized internal prefix)
 	result.Prefix = originalPrefix
 
+	glog.V(3).Infof("ListObjectVersionsHandler response: %+v", result)
 	writeSuccessResponseXML(w, r, result)
 }
 

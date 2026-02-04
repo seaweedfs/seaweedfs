@@ -117,6 +117,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		Buckets: listBuckets,
 	}
 
+	glog.V(3).Infof("ListBucketsHandler response: %+v", response)
 	writeSuccessResponseXML(w, r, response)
 }
 

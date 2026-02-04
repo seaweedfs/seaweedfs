@@ -109,6 +109,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 		responseV2.EncodingType = s3.EncodingTypeUrl
 	}
 
+	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
 	writeSuccessResponseXML(w, r, responseV2)
 }
 
@@ -155,6 +156,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	glog.V(3).Infof("ListObjectsV1Handler response: %+v", response)
 	writeSuccessResponseXML(w, r, response)
 }
 

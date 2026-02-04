@@ -418,7 +418,7 @@ func (s *WorkerGrpcServer) handleTaskRequest(conn *WorkerConnection, request *wo
 
 		select {
 		case conn.outgoing <- noTaskAssignment:
-			glog.V(2).Infof("Sent 'No Task' response to worker %s", conn.workerID)
+			glog.V(4).Infof("Sent 'No Task' response to worker %s", conn.workerID)
 		case <-time.After(time.Second):
 			// If we can't send, the worker will eventually time out and reconnect, which is fine
 		}
