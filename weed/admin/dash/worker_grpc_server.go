@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
@@ -434,10 +435,57 @@ func (s *WorkerGrpcServer) handleTaskCompletion(conn *WorkerConnection, completi
 
 		if completion.Success {
 			glog.V(1).Infof("Worker %s completed task %s successfully", conn.workerID, completion.TaskId)
-		} else {
 			glog.Errorf("Worker %s failed task %s: %s", conn.workerID, completion.TaskId, completion.ErrorMessage)
 		}
+
+		// Fetch and persist logs
+		go s.FetchAndSaveLogs(conn.workerID, completion.TaskId)
 	}
+}
+
+// FetchAndSaveLogs retrieves logs from a worker and saves them to disk
+func (s *WorkerGrpcServer) FetchAndSaveLogs(workerID, taskID string) error {
+	// Fetch logs
+	workerLogs, err := s.RequestTaskLogs(workerID, taskID, 1000, "")
+	if err != nil {
+		glog.Warningf("Failed to fetch logs for task %s: %v", taskID, err)
+		return err
+	}
+
+	// Convert logs
+	var maintenanceLogs []*maintenance.TaskExecutionLog
+	for _, workerLog := range workerLogs {
+		maintenanceLog := &maintenance.TaskExecutionLog{
+			Timestamp: time.Unix(workerLog.Timestamp, 0),
+			Level:     workerLog.Level,
+			Message:   workerLog.Message,
+			Source:    "worker",
+			TaskID:    taskID,
+			WorkerID:  workerID,
+		}
+		// carry structured fields if present
+		if len(workerLog.Fields) > 0 {
+			maintenanceLog.Fields = workerLog.Fields
+		}
+		// carry optional progress/status
+		if workerLog.Progress != 0 {
+			p := float64(workerLog.Progress)
+			maintenanceLog.Progress = &p
+		}
+		if workerLog.Status != "" {
+			maintenanceLog.Status = workerLog.Status
+		}
+		maintenanceLogs = append(maintenanceLogs, maintenanceLog)
+	}
+
+	// Persist logs
+	if s.adminServer.configPersistence != nil {
+		if err := s.adminServer.configPersistence.SaveTaskExecutionLogs(taskID, maintenanceLogs); err != nil {
+			glog.Errorf("Failed to persist logs for task %s: %v", taskID, err)
+			return err
+		}
+	}
+	return nil
 }
 
 // handleTaskLogResponse processes task log responses from workers
@@ -617,7 +665,7 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 		}
 		glog.V(1).Infof("Received %d log entries for task %s from worker %s", len(response.LogEntries), taskID, workerID)
 		return response.LogEntries, nil
-	case <-time.After(10 * time.Second):
+	case <-time.After(2 * time.Second):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
 		delete(s.pendingLogRequests, requestKey)

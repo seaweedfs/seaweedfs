@@ -1196,18 +1196,6 @@ func (as *AdminServer) GetAllMaintenanceTasks() ([]*maintenance.MaintenanceTask,
 	allTasks = append(allTasks, activeTasks...)
 	allTasks = append(allTasks, finishedTasks...)
 
-	// DEBUG: Print final order of finished tasks
-	if len(finishedTasks) > 0 {
-		fmt.Println("--- Final Finished Tasks Order ---")
-		for k, t := range finishedTasks {
-			ts := "nil"
-			if t.CompletedAt != nil {
-				ts = t.CompletedAt.Format(time.RFC3339)
-			}
-			fmt.Printf("[%d] ID:%s Status:%s CompletedAt:%s CreatedAt:%s\n", k, t.ID, t.Status, ts, t.CreatedAt.Format(time.RFC3339))
-		}
-	}
-
 	return allTasks, nil
 }
 
@@ -1288,77 +1276,24 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		}
 	}
 
-	// Get execution logs from worker if task is active/completed and worker is connected
-	if task.Status == maintenance.TaskStatusInProgress || task.Status == maintenance.TaskStatusCompleted {
-		if as.workerGrpcServer != nil && task.WorkerID != "" {
-			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
-			if err == nil && len(workerLogs) > 0 {
-				// Convert worker logs to maintenance logs
-				for _, workerLog := range workerLogs {
-					maintenanceLog := &maintenance.TaskExecutionLog{
-						Timestamp: time.Unix(workerLog.Timestamp, 0),
-						Level:     workerLog.Level,
-						Message:   workerLog.Message,
-						Source:    "worker",
-						TaskID:    taskID,
-						WorkerID:  task.WorkerID,
-					}
-					// Truncate very long messages to prevent rendering issues
-					if len(maintenanceLog.Message) > 2000 {
-						maintenanceLog.Message = maintenanceLog.Message[:2000] + "... (truncated)"
-					}
-					// carry structured fields if present
-					if len(workerLog.Fields) > 0 {
-						maintenanceLog.Fields = make(map[string]string)
-						fieldCount := 0
-						for k, v := range workerLog.Fields {
-							if fieldCount >= 20 {
-								maintenanceLog.Fields["..."] = fmt.Sprintf("(%d more fields truncated)", len(workerLog.Fields)-20)
-								break
-							}
-							maintenanceLog.Fields[k] = v
-							fieldCount++
-						}
-					}
-					// carry optional progress/status
-					if workerLog.Progress != 0 {
-						p := float64(workerLog.Progress)
-						maintenanceLog.Progress = &p
-					}
-					if workerLog.Status != "" {
-						maintenanceLog.Status = workerLog.Status
-					}
-					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
-				}
-			} else if err != nil {
-				// Add a diagnostic log entry when worker logs cannot be retrieved
-				diagnosticLog := &maintenance.TaskExecutionLog{
-					Timestamp: time.Now(),
-					Level:     "WARNING",
-					Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", err),
-					Source:    "admin",
-					TaskID:    taskID,
-					WorkerID:  task.WorkerID,
-				}
-				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
-				glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, err)
-			}
+	// Load execution logs from disk
+	if as.configPersistence != nil {
+		logs, err := as.configPersistence.LoadTaskExecutionLogs(taskID)
+		if err == nil {
+			taskDetail.ExecutionLogs = logs
 		} else {
-			// Add diagnostic information when worker is not available
-			reason := "worker gRPC server not available"
-			if task.WorkerID == "" {
-				reason = "no worker assigned to task"
-			}
-			diagnosticLog := &maintenance.TaskExecutionLog{
-				Timestamp: time.Now(),
-				Level:     "INFO",
-				Message:   fmt.Sprintf("Worker logs not available: %s", reason),
-				Source:    "admin",
-				TaskID:    taskID,
-				WorkerID:  task.WorkerID,
-			}
-			taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
+			glog.V(2).Infof("No execution logs found on disk for task %s", taskID)
 		}
+	}
+
+	// For InProgress tasks, trigger an async background update of logs
+	if task.Status == maintenance.TaskStatusInProgress && as.workerGrpcServer != nil && task.WorkerID != "" {
+		go func() {
+			err := as.workerGrpcServer.FetchAndSaveLogs(task.WorkerID, taskID)
+			if err != nil {
+				glog.V(1).Infof("Background log fetch for task %s failed: %v", taskID, err)
+			}
+		}()
 	}
 
 	// Get related tasks (other tasks on same volume/server)
