@@ -88,6 +88,37 @@ type PolicyDocument struct {
 	Statement []PolicyStatement `json:"Statement"`
 }
 
+// UnmarshalJSON implements json.Unmarshaler for PolicyDocument
+func (p *PolicyDocument) UnmarshalJSON(data []byte) error {
+	type Alias PolicyDocument
+	aux := &struct {
+		Statement json.RawMessage `json:"Statement"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Try unmarshaling as []PolicyStatement first
+	var statements []PolicyStatement
+	if err := json.Unmarshal(aux.Statement, &statements); err == nil {
+		p.Statement = statements
+		return nil
+	}
+
+	// Try unmarshaling as single PolicyStatement
+	var statement PolicyStatement
+	if err := json.Unmarshal(aux.Statement, &statement); err == nil {
+		p.Statement = []PolicyStatement{statement}
+		return nil
+	}
+
+	return fmt.Errorf("Statement must be an array or a single object")
+}
+
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
 	Sid         string               `json:"Sid,omitempty"`
