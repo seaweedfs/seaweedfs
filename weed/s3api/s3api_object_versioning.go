@@ -640,6 +640,24 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 				continue
 			}
 
+			// Handle special directories that should bypass delimiter logic
+			// This ensures .versions directories are processed as version containers
+			// rather than being rolled up into CommonPrefixes when a delimiter is used
+			if entry.IsDirectory {
+				// Skip .uploads directory
+				if strings.HasPrefix(entry.Name, s3_constants.MultipartUploadsFolder) {
+					continue
+				}
+
+				// Handle .versions directory
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					if err := vc.processVersionsDirectory(entryPath); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+
 			// Group into common prefixes if delimiter is found after the prefix
 			if vc.delimiter != "" {
 				fullKey := entryPath
