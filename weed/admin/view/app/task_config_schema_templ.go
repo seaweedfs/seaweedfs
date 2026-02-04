@@ -891,7 +891,7 @@ func getTaskConfigStringField(config interface{}, fieldName string) string {
 
 func getTaskNumberStep(field *config.Field) string {
 	if field.Type == config.FieldTypeFloat {
-		return "0.01"
+		return "any"
 	}
 	return "1"
 }
