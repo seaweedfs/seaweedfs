@@ -28,6 +28,7 @@ const (
 	VolumeScrubMode_UNKNOWN VolumeScrubMode = 0
 	VolumeScrubMode_INDEX   VolumeScrubMode = 1
 	VolumeScrubMode_FULL    VolumeScrubMode = 2
+	VolumeScrubMode_LOCAL   VolumeScrubMode = 3
 )
 
 // Enum value maps for VolumeScrubMode.
@@ -36,11 +37,13 @@ var (
 		0: "UNKNOWN",
 		1: "INDEX",
 		2: "FULL",
+		3: "LOCAL",
 	}
 	VolumeScrubMode_value = map[string]int32{
 		"UNKNOWN": 0,
 		"INDEX":   1,
 		"FULL":    2,
+		"LOCAL":   3,
 	}
 )
 
@@ -7180,11 +7183,12 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rstart_time_ns\x18\x01 \x01(\x03R\vstartTimeNs\x12$\n" +
 	"\x0eremote_time_ns\x18\x02 \x01(\x03R\fremoteTimeNs\x12 \n" +
 	"\fstop_time_ns\x18\x03 \x01(\x03R\n" +
-	"stopTimeNs*3\n" +
+	"stopTimeNs*>\n" +
 	"\x0fVolumeScrubMode\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\t\n" +
 	"\x05INDEX\x10\x01\x12\b\n" +
-	"\x04FULL\x10\x022\xfb(\n" +
+	"\x04FULL\x10\x02\x12\t\n" +
+	"\x05LOCAL\x10\x032\xfb(\n" +
 	"\fVolumeServer\x12\\\n" +
 	"\vBatchDelete\x12$.volume_server_pb.BatchDeleteRequest\x1a%.volume_server_pb.BatchDeleteResponse\"\x00\x12n\n" +
 	"\x11VacuumVolumeCheck\x12*.volume_server_pb.VacuumVolumeCheckRequest\x1a+.volume_server_pb.VacuumVolumeCheckResponse\"\x00\x12v\n" +

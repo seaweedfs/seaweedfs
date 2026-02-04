@@ -50,7 +50,7 @@ func (c *commandVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer io
 	nodesStr := volScrubCommand.String("node", "", "comma-separated list of volume server <host>:<port> (optional)")
 	volumeIDsStr := volScrubCommand.String("volumeId", "", "comma-separated volume IDs to process (optional)")
 	// TODO: switch default mode to LOCAL, once implemented.
-	mode := volScrubCommand.String("mode", "INDEX", "scrubbing mode (INDEX/FULL)")
+	mode := volScrubCommand.String("mode", "index", "scrubbing mode (index/local/full)")
 	// TODO: add per-node parallelization
 
 	if err = volScrubCommand.Parse(args); err != nil {
@@ -93,6 +93,8 @@ func (c *commandVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer io
 	switch strings.ToUpper(*mode) {
 	case "INDEX":
 		c.mode = volume_server_pb.VolumeScrubMode_INDEX
+	case "LOCAL":
+		c.mode = volume_server_pb.VolumeScrubMode_LOCAL
 	case "FULL":
 		c.mode = volume_server_pb.VolumeScrubMode_FULL
 	default:
