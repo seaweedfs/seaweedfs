@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
+
+// FilerAddressSetter is an interface for credential stores that need a dynamic filer address
+type FilerAddressSetter interface {
+	SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption)
+}
 
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
@@ -44,9 +50,15 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 	}, nil
 }
 
-// SetMasterClient sets the master client to enable propagation of changes to S3 servers
 func (cm *CredentialManager) SetMasterClient(masterClient *wdclient.MasterClient, grpcDialOption grpc.DialOption) {
 	cm.store = NewPropagatingCredentialStore(cm.store, masterClient, grpcDialOption)
+}
+
+// SetFilerAddressFunc sets the function to get the current filer address
+func (cm *CredentialManager) SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption) {
+	if s, ok := cm.store.(FilerAddressSetter); ok {
+		s.SetFilerAddressFunc(getFiler, grpcDialOption)
+	}
 }
 
 // GetStore returns the underlying credential store

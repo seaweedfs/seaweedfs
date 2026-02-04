@@ -164,50 +164,54 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 	defer cancel()
 
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		ensureDir := func(parent, name, errorContext string) error {
+			_, err := filer_pb.LookupEntry(opCtx, client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: parent,
+				Name:      name,
+			})
+			if err == nil {
+				return nil
+			}
+			if err != filer_pb.ErrNotFound {
+				return fmt.Errorf("lookup %s failed: %w", errorContext, err)
+			}
+
+			// If lookup fails with ErrNotFound, try to create the directory.
+			resp, createErr := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+				Directory: parent,
+				Entry: &filer_pb.Entry{
+					Name:        name,
+					IsDirectory: true,
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(0755 | os.ModeDir),
+					},
+				},
+			})
+			if createErr != nil {
+				return fmt.Errorf("failed to create %s: %w", errorContext, createErr)
+			}
+			if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+				return fmt.Errorf("failed to create %s: %s", errorContext, resp.Error)
+			}
+			return nil
+		}
+
 		// 1. Ensure table directory exists: /table-buckets/<bucket>/<namespace>/<table>
 		tableDir := fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName)
-		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
-			Directory: fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace),
-			Entry: &filer_pb.Entry{
-				Name:        tableName,
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0755 | os.ModeDir),
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create table directory: %w", err)
-		}
-		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
-			return fmt.Errorf("failed to create table directory: %s", resp.Error)
+		if err := ensureDir(fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace), tableName, "table directory"); err != nil {
+			return err
 		}
 
 		// 2. Ensure metadata directory exists: /table-buckets/<bucket>/<namespace>/<table>/metadata
 		metadataDir := fmt.Sprintf("%s/metadata", tableDir)
-		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
-			Directory: tableDir,
-			Entry: &filer_pb.Entry{
-				Name:        "metadata",
-				IsDirectory: true,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0755 | os.ModeDir),
-				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create metadata directory: %w", err)
-		}
-		if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
-			return fmt.Errorf("failed to create metadata directory: %s", resp.Error)
+		if err := ensureDir(tableDir, "metadata", "metadata directory"); err != nil {
+			return err
 		}
 
 		// 3. Write the file
-		resp, err = client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
+		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 			Directory: metadataDir,
 			Entry: &filer_pb.Entry{
 				Name: metadataFileName,
@@ -224,7 +228,7 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to write metadata file context: %w", err)
+			return fmt.Errorf("failed to write metadata file: %w", err)
 		}
 		if resp.Error != "" {
 			return fmt.Errorf("failed to write metadata file: %s", resp.Error)

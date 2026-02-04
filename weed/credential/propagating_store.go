@@ -34,6 +34,12 @@ func NewPropagatingCredentialStore(upstream CredentialStore, masterClient *wdcli
 	}
 }
 
+func (s *PropagatingCredentialStore) SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption) {
+	if setter, ok := s.CredentialStore.(FilerAddressSetter); ok {
+		setter.SetFilerAddressFunc(getFiler, grpcDialOption)
+	}
+}
+
 func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn func(context.Context, s3_pb.SeaweedS3IamCacheClient) error) {
 	if s.masterClient == nil {
 		return
