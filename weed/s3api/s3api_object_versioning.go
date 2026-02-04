@@ -706,16 +706,6 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
-	// Skip .uploads directory
-	if strings.HasPrefix(entry.Name, ".uploads") {
-		return nil
-	}
-
-	// Handle .versions directory
-	if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-		return vc.processVersionsDirectory(entryPath)
-	}
-
 	// Handle explicit S3 directory object
 	if entry.Attributes.Mime == s3_constants.FolderMimeType {
 		vc.processExplicitDirectory(entryPath, entry)
