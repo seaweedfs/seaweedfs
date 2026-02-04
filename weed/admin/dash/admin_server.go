@@ -779,7 +779,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 
 // ShowMaintenanceQueue displays the maintenance queue page
 func (as *AdminServer) ShowMaintenanceQueue(c *gin.Context) {
-	data, err := as.getMaintenanceQueueData()
+	data, err := as.GetMaintenanceQueueData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -868,7 +868,7 @@ func (as *AdminServer) TriggerMaintenanceScan(c *gin.Context) {
 
 // GetMaintenanceTasks returns all maintenance tasks
 func (as *AdminServer) GetMaintenanceTasks(c *gin.Context) {
-	tasks, err := as.getMaintenanceTasks()
+	tasks, err := as.GetAllMaintenanceTasks()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1032,9 +1032,9 @@ func (as *AdminServer) UpdateMaintenanceConfigData(config *maintenance.Maintenan
 
 // Helper methods for maintenance operations
 
-// getMaintenanceQueueData returns data for the maintenance queue UI
-func (as *AdminServer) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	tasks, err := as.getMaintenanceTasks()
+// GetMaintenanceQueueData returns data for the maintenance queue UI
+func (as *AdminServer) GetMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
+	tasks, err := as.GetAllMaintenanceTasks()
 	if err != nil {
 		return nil, err
 	}
@@ -1089,14 +1089,16 @@ func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, erro
 	return queueStats, nil
 }
 
-// getMaintenanceTasks returns all maintenance tasks
-func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
+// GetAllMaintenanceTasks returns all maintenance tasks
+func (as *AdminServer) GetAllMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
 	if as.maintenanceManager == nil {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
-	// Collect all tasks from memory across all statuses
-	allTasks := []*maintenance.MaintenanceTask{}
+	// 1. Collect all tasks from memory
+	tasksMap := make(map[string]*maintenance.MaintenanceTask)
+
+	// Collect from memory via GetTasks loop to ensure we catch everything
 	statuses := []maintenance.MaintenanceTaskStatus{
 		maintenance.TaskStatusPending,
 		maintenance.TaskStatusAssigned,
@@ -1108,26 +1110,101 @@ func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, er
 
 	for _, status := range statuses {
 		tasks := as.maintenanceManager.GetTasks(status, "", 0)
-		allTasks = append(allTasks, tasks...)
+		for _, t := range tasks {
+			tasksMap[t.ID] = t
+		}
 	}
 
-	// Also load any persisted tasks that might not be in memory
+	// 2. Merge persisted tasks
 	if as.configPersistence != nil {
 		persistedTasks, err := as.configPersistence.LoadAllTaskStates()
 		if err == nil {
-			// Add any persisted tasks not already in memory
-			for _, persistedTask := range persistedTasks {
-				found := false
-				for _, memoryTask := range allTasks {
-					if memoryTask.ID == persistedTask.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					allTasks = append(allTasks, persistedTask)
+			for _, t := range persistedTasks {
+				if _, exists := tasksMap[t.ID]; !exists {
+					tasksMap[t.ID] = t
 				}
 			}
+		}
+	}
+
+	// 3. Bucketize buckets
+	var pendingTasks, activeTasks, finishedTasks []*maintenance.MaintenanceTask
+
+	for _, t := range tasksMap {
+		switch t.Status {
+		case maintenance.TaskStatusPending:
+			pendingTasks = append(pendingTasks, t)
+		case maintenance.TaskStatusAssigned, maintenance.TaskStatusInProgress:
+			activeTasks = append(activeTasks, t)
+		case maintenance.TaskStatusCompleted, maintenance.TaskStatusFailed, maintenance.TaskStatusCancelled:
+			finishedTasks = append(finishedTasks, t)
+		default:
+			// Treat unknown as finished/archived? Or pending?
+			// Safest to add to finished so they appear somewhere
+			finishedTasks = append(finishedTasks, t)
+		}
+	}
+
+	// 4. Sort buckets
+	// Pending: Newest Created First
+	sort.Slice(pendingTasks, func(i, j int) bool {
+		return pendingTasks[i].CreatedAt.After(pendingTasks[j].CreatedAt)
+	})
+
+	// Active: Newest Created First (or StartedAt?)
+	sort.Slice(activeTasks, func(i, j int) bool {
+		return activeTasks[i].CreatedAt.After(activeTasks[j].CreatedAt)
+	})
+
+	// Finished: Newest Completed First
+	sort.Slice(finishedTasks, func(i, j int) bool {
+		t1 := finishedTasks[i].CompletedAt
+		t2 := finishedTasks[j].CompletedAt
+
+		// Handle nil completion times
+		if t1 == nil && t2 == nil {
+			// Both nil, fallback to CreatedAt
+			if !finishedTasks[i].CreatedAt.Equal(finishedTasks[j].CreatedAt) {
+				return finishedTasks[i].CreatedAt.After(finishedTasks[j].CreatedAt)
+			}
+			return finishedTasks[i].ID > finishedTasks[j].ID
+		}
+		if t1 == nil {
+			return false // t1 (nil) goes to bottom
+		}
+		if t2 == nil {
+			return true // t2 (nil) goes to bottom
+		}
+
+		// Compare completion times
+		if !t1.Equal(*t2) {
+			return t1.After(*t2)
+		}
+
+		// Fallback to CreatedAt if completion times are identical
+		if !finishedTasks[i].CreatedAt.Equal(finishedTasks[j].CreatedAt) {
+			return finishedTasks[i].CreatedAt.After(finishedTasks[j].CreatedAt)
+		}
+
+		// Final tie-breaker: ID
+		return finishedTasks[i].ID > finishedTasks[j].ID
+	})
+
+	// 5. Recombine
+	allTasks := make([]*maintenance.MaintenanceTask, 0, len(tasksMap))
+	allTasks = append(allTasks, pendingTasks...)
+	allTasks = append(allTasks, activeTasks...)
+	allTasks = append(allTasks, finishedTasks...)
+
+	// DEBUG: Print final order of finished tasks
+	if len(finishedTasks) > 0 {
+		fmt.Println("--- Final Finished Tasks Order ---")
+		for k, t := range finishedTasks {
+			ts := "nil"
+			if t.CompletedAt != nil {
+				ts = t.CompletedAt.Format(time.RFC3339)
+			}
+			fmt.Printf("[%d] ID:%s Status:%s CompletedAt:%s CreatedAt:%s\n", k, t.ID, t.Status, ts, t.CreatedAt.Format(time.RFC3339))
 		}
 	}
 
@@ -1190,6 +1267,12 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		LastUpdated:       time.Now(),
 	}
 
+	// Truncate assignment history if it's too long (display last 50 only)
+	if len(taskDetail.AssignmentHistory) > 50 {
+		startIdx := len(taskDetail.AssignmentHistory) - 50
+		taskDetail.AssignmentHistory = taskDetail.AssignmentHistory[startIdx:]
+	}
+
 	if taskDetail.AssignmentHistory == nil {
 		taskDetail.AssignmentHistory = []*maintenance.TaskAssignmentRecord{}
 	}
@@ -1220,11 +1303,21 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 						TaskID:    taskID,
 						WorkerID:  task.WorkerID,
 					}
+					// Truncate very long messages to prevent rendering issues
+					if len(maintenanceLog.Message) > 2000 {
+						maintenanceLog.Message = maintenanceLog.Message[:2000] + "... (truncated)"
+					}
 					// carry structured fields if present
 					if len(workerLog.Fields) > 0 {
-						maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
+						maintenanceLog.Fields = make(map[string]string)
+						fieldCount := 0
 						for k, v := range workerLog.Fields {
+							if fieldCount >= 20 {
+								maintenanceLog.Fields["..."] = fmt.Sprintf("(%d more fields truncated)", len(workerLog.Fields)-20)
+								break
+							}
 							maintenanceLog.Fields[k] = v
+							fieldCount++
 						}
 					}
 					// carry optional progress/status
@@ -1336,12 +1429,13 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	var totalDuration time.Duration
 	var completedTasks, failedTasks int
 	for _, task := range workerRecentTasks {
-		if task.Status == TaskStatusCompleted {
+		switch task.Status {
+		case TaskStatusCompleted:
 			completedTasks++
 			if task.StartedAt != nil && task.CompletedAt != nil {
 				totalDuration += task.CompletedAt.Sub(*task.StartedAt)
 			}
-		} else if task.Status == TaskStatusFailed {
+		case TaskStatusFailed:
 			failedTasks++
 		}
 	}

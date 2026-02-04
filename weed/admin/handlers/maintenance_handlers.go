@@ -492,66 +492,11 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	tasks, err := h.getMaintenanceTasks()
-	if err != nil {
-		return nil, err
-	}
-
-	workers, err := h.getMaintenanceWorkers()
-	if err != nil {
-		return nil, err
-	}
-
-	stats, err := h.getMaintenanceQueueStats()
-	if err != nil {
-		return nil, err
-	}
-
-	data := &maintenance.MaintenanceQueueData{
-		Tasks:       tasks,
-		Workers:     workers,
-		Stats:       stats,
-		LastUpdated: time.Now(),
-	}
-
-	return data, nil
-}
-
-func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	// Use the exported method from AdminServer
-	return h.adminServer.GetMaintenanceQueueStats()
-}
-
-func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	// Call the maintenance manager directly to get recent tasks (limit for performance)
 	if h.adminServer == nil {
-		return []*maintenance.MaintenanceTask{}, nil
+		return nil, nil
 	}
-
-	manager := h.adminServer.GetMaintenanceManager()
-	if manager == nil {
-		return []*maintenance.MaintenanceTask{}, nil
-	}
-
-	// Get recent tasks only (last 100) to prevent slow page loads
-	// Users can view more tasks via pagination if needed
-	allTasks := manager.GetTasks("", "", 100)
-	return allTasks, nil
-}
-
-func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
-	// Get workers from the admin server's maintenance manager
-	if h.adminServer == nil {
-		return []*maintenance.MaintenanceWorker{}, nil
-	}
-
-	if h.adminServer.GetMaintenanceManager() == nil {
-		return []*maintenance.MaintenanceWorker{}, nil
-	}
-
-	// Get workers from the maintenance manager
-	workers := h.adminServer.GetMaintenanceManager().GetWorkers()
-	return workers, nil
+	// Use the exported method from AdminServer used by the JSON API
+	return h.adminServer.GetMaintenanceQueueData()
 }
 
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
