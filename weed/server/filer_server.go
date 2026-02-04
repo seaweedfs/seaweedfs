@@ -258,6 +258,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	if fs.CredentialManager != nil {
 		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.grpcDialOption)
+		fs.CredentialManager.SetFilerAddressFunc(func() pb.ServerAddress {
+			return fs.option.Host
+		}, fs.grpcDialOption)
 	}
 
 	return fs, nil
