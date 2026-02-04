@@ -707,6 +707,9 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	err = taskInstance.Execute(ctx, task.TypedParams)
 
 	// Report completion
+	if fileLogger != nil {
+		fileLogger.Sync()
+	}
 	if err != nil {
 		w.completeTask(task.ID, false, err.Error())
 		w.cmds <- workerCommand{
@@ -718,14 +721,15 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 			fileLogger.Error("Task %s failed: %v", task.ID, err)
 		}
 	} else {
+		if fileLogger != nil {
+			fileLogger.Info("Task %s completed successfully", task.ID)
+			fileLogger.Sync()
+		}
 		w.completeTask(task.ID, true, "")
 		w.cmds <- workerCommand{
 			action: ActionIncTaskComplete,
 		}
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
-		if fileLogger != nil {
-			fileLogger.Info("Task %s completed successfully", task.ID)
-		}
 	}
 }
 
