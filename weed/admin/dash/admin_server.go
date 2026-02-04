@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,7 @@ const (
 	defaultCacheTimeout         = 10 * time.Second
 	defaultFilerCacheTimeout    = 30 * time.Second
 	defaultStatsCacheTimeout    = 30 * time.Second
+	logFetchCooldown            = 10 * time.Second
 )
 
 // FilerConfig holds filer configuration needed for bucket operations
@@ -116,6 +118,10 @@ type AdminServer struct {
 
 	s3TablesManager *s3tables.Manager
 	icebergPort     int
+
+	// Background log fetching tracking
+	lastLogFetch  map[string]time.Time
+	logFetchMutex sync.Mutex
 }
 
 // Type definitions moved to types.go
@@ -149,6 +155,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
+		lastLogFetch:                  make(map[string]time.Time),
 	}
 
 	// Initialize topic retention purger
@@ -1301,14 +1308,26 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		}
 	}
 
-	// For InProgress tasks, trigger an async background update of logs
+	// For InProgress tasks, trigger an async background update of logs with cooldown
 	if task.Status == maintenance.TaskStatusInProgress && as.workerGrpcServer != nil && task.WorkerID != "" {
-		go func() {
-			err := as.workerGrpcServer.FetchAndSaveLogs(task.WorkerID, taskID)
-			if err != nil {
-				glog.V(1).Infof("Background log fetch for task %s failed: %v", taskID, err)
-			}
-		}()
+		as.logFetchMutex.Lock()
+		lastFetch, ok := as.lastLogFetch[taskID]
+		shouldFetch := !ok || time.Since(lastFetch) > logFetchCooldown
+		if shouldFetch {
+			as.lastLogFetch[taskID] = time.Now()
+		}
+		as.logFetchMutex.Unlock()
+
+		if shouldFetch {
+			go func() {
+				err := as.workerGrpcServer.FetchAndSaveLogs(task.WorkerID, taskID)
+				if err != nil {
+					glog.V(1).Infof("Background log fetch for task %s failed: %v", taskID, err)
+					// Clear cooldown on failure so it can be retried sooner if requested?
+					// For now keep it to avoid spamming even on errors.
+				}
+			}()
+		}
 	}
 
 	// Get related tasks (other tasks on same volume/server)

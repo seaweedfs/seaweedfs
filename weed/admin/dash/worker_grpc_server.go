@@ -651,6 +651,10 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	}
 
 	s.logRequestsMutex.Lock()
+	if _, exists := s.pendingLogRequests[requestKey]; exists {
+		s.logRequestsMutex.Unlock()
+		return nil, fmt.Errorf("a log request for task %s is already in progress", taskID)
+	}
 	s.pendingLogRequests[requestKey] = requestContext
 	s.logRequestsMutex.Unlock()
 
@@ -676,7 +680,9 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	case <-time.After(logSendTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
-		delete(s.pendingLogRequests, requestKey)
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
 		s.logRequestsMutex.Unlock()
 		return nil, fmt.Errorf("timeout sending log request to worker %s", workerID)
 	}
@@ -692,7 +698,9 @@ func (s *WorkerGrpcServer) RequestTaskLogs(workerID, taskID string, maxEntries i
 	case <-time.After(logResponseTimeout):
 		// Clean up pending request on timeout
 		s.logRequestsMutex.Lock()
-		delete(s.pendingLogRequests, requestKey)
+		if s.pendingLogRequests[requestKey] == requestContext {
+			delete(s.pendingLogRequests, requestKey)
+		}
 		s.logRequestsMutex.Unlock()
 		return nil, fmt.Errorf("timeout waiting for log response from worker %s", workerID)
 	}
