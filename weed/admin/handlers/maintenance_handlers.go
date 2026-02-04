@@ -39,6 +39,11 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
 
+	if h.adminServer == nil {
+		c.String(http.StatusInternalServerError, "Admin server not initialized")
+		return
+	}
+
 	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
 	if err != nil {
 		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
@@ -111,6 +116,10 @@ func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 
 // ShowMaintenanceWorkers displays the maintenance workers page
 func (h *MaintenanceHandlers) ShowMaintenanceWorkers(c *gin.Context) {
+	if h.adminServer == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Admin server not initialized"})
+		return
+	}
 	workersData, err := h.adminServer.GetMaintenanceWorkersData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -339,6 +348,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 			glog.Warningf("Failed to save task config to protobuf file: %v", err)
 			// Don't fail the request, just log the warning
 		}
+	} else if h.adminServer == nil {
+		glog.Warningf("Failed to save task config: admin server not initialized")
 	}
 
 	// Trigger a configuration reload in the maintenance manager
@@ -493,18 +504,24 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
 	if h.adminServer == nil {
-		return nil, nil
+		return nil, fmt.Errorf("admin server not initialized")
 	}
 	// Use the exported method from AdminServer used by the JSON API
 	return h.adminServer.GetMaintenanceQueueData()
 }
 
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
+	if h.adminServer == nil {
+		return nil, fmt.Errorf("admin server not initialized")
+	}
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.GetMaintenanceConfigData()
 }
 
 func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
+	if h.adminServer == nil {
+		return fmt.Errorf("admin server not initialized")
+	}
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.UpdateMaintenanceConfigData(config)
 }
