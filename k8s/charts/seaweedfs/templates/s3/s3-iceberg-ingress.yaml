@@ -14,7 +14,6 @@ paths:
     {{- end }}
 {{- end -}}
 {{- if and .Values.s3.enabled .Values.s3.icebergPort .Values.s3.icebergIngress.enabled }}
-{{- $serviceName := include "seaweedfs.componentName" (list . "s3") }}
 {{- $hosts := list }}
 {{- if kindIs "slice" .Values.s3.icebergIngress.host }}
   {{- $hosts = .Values.s3.icebergIngress.host }}
