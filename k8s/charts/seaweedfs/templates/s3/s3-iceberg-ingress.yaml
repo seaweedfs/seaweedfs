@@ -28,7 +28,9 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: s3-iceberg
 spec:
+  {{- if .Values.s3.icebergIngress.className }}
   ingressClassName: {{ .Values.s3.icebergIngress.className | quote }}
+  {{- end }}
   tls:
     {{ .Values.s3.icebergIngress.tls | default list | toYaml | nindent 6}}
   rules:
