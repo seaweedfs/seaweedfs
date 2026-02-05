@@ -287,6 +287,18 @@ func TestPolicyValidation(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Valid policy with single statement object",
+			policyJSON: `{
+				"Version": "2012-10-17",
+				"Statement": {
+					"Effect": "Allow",
+					"Action": "s3:GetObject",
+					"Resource": "arn:aws:s3:::test-bucket/*"
+				}
+			}`,
+			expectError: false,
+		},
+		{
 			name: "Invalid version",
 			policyJSON: `{
 				"Version": "2008-10-17",
