@@ -455,6 +455,9 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 							float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024),
 							nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
 					}
+					if isGood, wasFound := vidMap[v.Id]; wasFound && !isGood {
+						noFreeDisk--
+					}
 					vidMap[v.Id] = true
 				}
 			}
