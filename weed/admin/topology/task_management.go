@@ -66,11 +66,17 @@ func (at *ActiveTopology) CompleteTask(taskID string) error {
 
 	task, exists := at.assignedTasks[taskID]
 	if !exists {
-		return fmt.Errorf("assigned task %s not found", taskID)
+		// If not in assigned tasks, check pending tasks
+		if task, exists = at.pendingTasks[taskID]; exists {
+			delete(at.pendingTasks, taskID)
+		} else {
+			return fmt.Errorf("task %s not found in assigned or pending tasks", taskID)
+		}
+	} else {
+		delete(at.assignedTasks, taskID)
 	}
 
 	// Release reserved capacity by moving task to completed state
-	delete(at.assignedTasks, taskID)
 	task.Status = TaskStatusCompleted
 	task.CompletedAt = time.Now()
 	at.recentTasks[taskID] = task
