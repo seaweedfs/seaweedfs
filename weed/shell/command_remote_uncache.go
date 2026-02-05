@@ -151,6 +151,9 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 }
 
 func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
+	if entry.Attributes == nil {
+		return false
+	}
 	if *ff.include != "" {
 		if ok, _ := filepath.Match(*ff.include, entry.Name); !ok {
 			return false

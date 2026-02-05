@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"flag"
 	"testing"
 	"time"
 
@@ -72,13 +71,29 @@ func TestFileFilter_matches_minCacheAge(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name:        "nil attributes, should not match",
+			minCacheAge: 3600,
+			entry: &filer_pb.Entry{
+				Attributes: nil,
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fs := flag.NewFlagSet("test", flag.ContinueOnError)
-			ff := newFileFilter(fs)
-			ff.minCacheAge = &tt.minCacheAge
+			defaultString := ""
+			defaultInt64 := int64(-1)
+			ff := &FileFilter{
+				include:     &defaultString,
+				exclude:     &defaultString,
+				minSize:     &defaultInt64,
+				maxSize:     &defaultInt64,
+				minAge:      &defaultInt64,
+				maxAge:      &defaultInt64,
+				minCacheAge: &tt.minCacheAge,
+			}
 
 			if got := ff.matches(tt.entry); got != tt.want {
 				t.Errorf("FileFilter.matches() = %v, want %v", got, tt.want)
