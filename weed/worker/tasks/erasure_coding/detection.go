@@ -241,13 +241,15 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			results = append(results, result)
 		} else {
 			// Count debug reasons
+			if metric.Age < quietThreshold {
+				skippedQuietTime++
+			}
+			if metric.FullnessRatio < ecConfig.FullnessRatio {
+				skippedFullness++
+			}
+
 			if debugCount < 5 { // Limit to avoid spam
-				if metric.Age < quietThreshold {
-					skippedQuietTime++
-				}
-				if metric.FullnessRatio < ecConfig.FullnessRatio {
-					skippedFullness++
-				}
+				// Logic moved outside
 			}
 			debugCount++
 		}
@@ -256,7 +258,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 {
 		totalVolumes := len(metrics)
-		glog.V(1).Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+		glog.Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
 
 		// Show details for first few volumes

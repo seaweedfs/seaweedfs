@@ -1053,6 +1053,15 @@ s3:
     annotations: {}
     tls: []
 
+  icebergIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
 sftp:
   enabled: false
   imageOverride: null
