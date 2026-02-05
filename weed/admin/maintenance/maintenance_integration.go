@@ -305,6 +305,7 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	}
 
 	return &TaskDetectionResult{
+		TaskID:      result.TaskID,
 		TaskType:    existingType,
 		VolumeID:    result.VolumeID,
 		Server:      result.Server,

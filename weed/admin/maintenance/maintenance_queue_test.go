@@ -351,3 +351,54 @@ func TestCanScheduleTaskNow_WithPolicy(t *testing.T) {
 		t.Errorf("Expected canScheduleTaskNow to return false when at policy limit, got true")
 	}
 }
+
+func TestMaintenanceQueue_ActiveTopologySync(t *testing.T) {
+	// Setup Policy
+	policy := &MaintenancePolicy{
+		TaskPolicies:        make(map[string]*worker_pb.TaskPolicy),
+		GlobalMaxConcurrent: 10,
+	}
+
+	// Setup Queue and Integration
+	mq := NewMaintenanceQueue(policy)
+	// We handle the integration manually to avoid complex setup
+	// integration := NewMaintenanceIntegration(mq, policy)
+	// mq.SetIntegration(integration)
+
+	// 2. Verify ID Preservation in AddTasksFromResults
+	originalID := "ec_task_123"
+	results := []*TaskDetectionResult{
+		{
+			TaskID:      originalID,
+			TaskType:    MaintenanceTaskType("erasure_coding"),
+			VolumeID:    100,
+			Server:      "server1",
+			Priority:    PriorityNormal,
+			TypedParams: &worker_pb.TaskParams{},
+		},
+	}
+
+	mq.AddTasksFromResults(results)
+
+	// Verify task exists with correct ID
+	queuedTask, exists := mq.tasks[originalID]
+	if !exists {
+		t.Errorf("Task with original ID %s not found in queue", originalID)
+	} else {
+		if queuedTask.ID != originalID {
+			t.Errorf("Task ID mismatch: expected %s, got %s", originalID, queuedTask.ID)
+		}
+	}
+
+	// 3. Verify AddTask preserves ID
+	manualTask := &MaintenanceTask{
+		ID:     "manual_id_456",
+		Type:   MaintenanceTaskType("vacuum"),
+		Status: TaskStatusPending,
+	}
+	mq.AddTask(manualTask)
+
+	if manualTask.ID != "manual_id_456" {
+		t.Errorf("AddTask overwrote ID: expected manual_id_456, got %s", manualTask.ID)
+	}
+}
