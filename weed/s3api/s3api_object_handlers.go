@@ -1515,13 +1515,15 @@ func writeZeroBytes(w io.Writer, n int64) error {
 // SSE-C multipart encryption differs from SSE-KMS/SSE-S3:
 //
 // 1. Encryption: CreateSSECEncryptedReader generates a RANDOM IV per part
-//   - Each part starts with a fresh random IV
+//   - Each part starts with a fresh random IV (NOT derived from a base IV)
 //   - CTR counter starts from 0 for each part: counter₀, counter₁, counter₂, ...
-//   - PartOffset is stored in metadata to describe where this chunk sits in that stream
+//   - PartOffset is stored in metadata to describe where this chunk sits in that encrypted stream
 //
-// 2. Decryption: Use the stored IV and advance the CTR stream by PartOffset
-//   - We must align the CTR counter to the chunk's offset within the encrypted stream
-//   - Do NOT call calculateIVWithOffset (used by SSE-KMS/SSE-S3 with base IVs)
+// 2. Decryption: Use the stored per-part IV and advance the CTR by PartOffset
+//   - CreateSSECDecryptedReaderWithOffset internally uses calculateIVWithOffset to advance
+//     the CTR counter to reach PartOffset within the per-part encrypted stream
+//   - calculateIVWithOffset is applied to the per-part IV, NOT to derive a global base IV
+//   - Do NOT compute a single base IV for all parts (unlike SSE-KMS/SSE-S3)
 //
 // This contrasts with SSE-KMS/SSE-S3 which use: base IV + calculateIVWithOffset(ChunkOffset)
 func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, customerKey *SSECustomerKey) (io.Reader, error) {
