@@ -352,7 +352,7 @@ func TestCanScheduleTaskNow_WithPolicy(t *testing.T) {
 	}
 }
 
-func TestMaintenanceQueue_ActiveTopologySync(t *testing.T) {
+func TestMaintenanceQueue_TaskIDPreservation(t *testing.T) {
 	// Setup Policy
 	policy := &MaintenancePolicy{
 		TaskPolicies:        make(map[string]*worker_pb.TaskPolicy),
