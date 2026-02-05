@@ -318,7 +318,16 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	if mq.integration != nil {
 		if at := mq.integration.GetActiveTopology(); at != nil {
 			if err := at.AssignTask(selectedTask.ID); err != nil {
-				glog.Warningf("Failed to update ActiveTopology for task assignment %s: %v", selectedTask.ID, err)
+				glog.Warningf("Failed to update ActiveTopology for task assignment %s: %v. Rolling back assignment.", selectedTask.ID, err)
+				// Rollback assignment in MaintenanceQueue
+				selectedTask.Status = TaskStatusPending
+				selectedTask.WorkerID = ""
+				selectedTask.StartedAt = nil
+				if len(selectedTask.AssignmentHistory) > 0 {
+					selectedTask.AssignmentHistory = selectedTask.AssignmentHistory[:len(selectedTask.AssignmentHistory)-1]
+				}
+				// Return nil so the task is not removed from pendingTasks and not returned to the worker
+				return nil
 			}
 		}
 	}

@@ -529,3 +529,121 @@ func TestMaintenanceQueue_ActiveTopologySync(t *testing.T) {
 		t.Errorf("Capacity should have returned to 10 after completion, got %d", capacityAfterComplete)
 	}
 }
+
+func TestMaintenanceQueue_AssignTaskRollback(t *testing.T) {
+	// Setup Policy
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance": {MaxConcurrent: 1},
+		},
+		GlobalMaxConcurrent: 10,
+	}
+
+	// Setup Queue and Integration
+	mq := NewMaintenanceQueue(policy)
+	integration := NewMaintenanceIntegration(mq, policy)
+	mq.SetIntegration(integration)
+
+	// Get Topology
+	at := integration.GetActiveTopology()
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										DiskId:         1,
+										VolumeCount:    1,
+										MaxVolumeCount: 1, // Only 1 slot
+										VolumeInfos: []*master_pb.VolumeInformationMessage{
+											{Id: 100, Collection: "col1"},
+										},
+									},
+									"hdd2": {
+										DiskId:         2,
+										VolumeCount:    0,
+										MaxVolumeCount: 0, // NO CAPACITY for target
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	taskID := "rollback_test_123"
+
+	// 1. Add task to MaintenanceQueue ONLY
+	// It's not in ActiveTopology, so AssignTask will fail with "pending task not found"
+	mq.AddTask(&MaintenanceTask{
+		ID:         taskID,
+		Type:       MaintenanceTaskType("balance"),
+		VolumeID:   100,
+		Server:     "server1",
+		Collection: "col1",
+		TypedParams: &worker_pb.TaskParams{
+			TaskId: taskID,
+			Targets: []*worker_pb.TaskTarget{
+				{Node: "server1", DiskId: 2},
+			},
+		},
+	})
+
+	// 2. Setup worker
+	mq.workers["worker1"] = &MaintenanceWorker{
+		ID:            "worker1",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance"},
+		MaxConcurrent: 10,
+	}
+
+	// 3. Try to get next task
+	taskFound := mq.GetNextTask("worker1", []MaintenanceTaskType{"balance"})
+
+	// 4. Verify GetNextTask returned nil due to ActiveTopology.AssignTask failure
+	if taskFound != nil {
+		t.Errorf("Expected GetNextTask to return nil, got task %s", taskFound.ID)
+	}
+
+	// 5. Verify the task in MaintenanceQueue is rolled back to pending
+	mq.mutex.RLock()
+	task, exists := mq.tasks[taskID]
+	mq.mutex.RUnlock()
+
+	if !exists {
+		t.Fatalf("Task %s should still exist in MaintenanceQueue", taskID)
+	}
+	if task.Status != TaskStatusPending {
+		t.Errorf("Expected task status %v, got %v", TaskStatusPending, task.Status)
+	}
+	if task.WorkerID != "" {
+		t.Errorf("Expected task WorkerID to be empty, got %s", task.WorkerID)
+	}
+	if len(task.AssignmentHistory) != 0 {
+		t.Errorf("Expected assignment history to be empty, got %d records", len(task.AssignmentHistory))
+	}
+
+	// 6. Verify the task is still in pendingTasks slice
+	mq.mutex.RLock()
+	foundInPending := false
+	for _, pt := range mq.pendingTasks {
+		if pt.ID == taskID {
+			foundInPending = true
+			break
+		}
+	}
+	mq.mutex.RUnlock()
+
+	if !foundInPending {
+		t.Errorf("Task %s should still be in pendingTasks slice", taskID)
+	}
+}
