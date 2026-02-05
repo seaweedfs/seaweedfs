@@ -2,6 +2,7 @@ package maintenance
 
 import (
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -527,6 +528,232 @@ func TestMaintenanceQueue_ActiveTopologySync(t *testing.T) {
 	capacityAfterComplete := at.GetEffectiveAvailableCapacity("server1", 2)
 	if capacityAfterComplete != 10 {
 		t.Errorf("Capacity should have returned to 10 after completion, got %d", capacityAfterComplete)
+	}
+}
+
+func TestMaintenanceQueue_StaleWorkerCapacityRelease(t *testing.T) {
+	// Setup
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance": {MaxConcurrent: 1},
+		},
+	}
+	mq := NewMaintenanceQueue(policy)
+	integration := NewMaintenanceIntegration(mq, policy)
+	mq.SetIntegration(integration)
+	at := integration.GetActiveTopology()
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd1": {DiskId: 1, VolumeCount: 1, MaxVolumeCount: 10},
+									"hdd2": {DiskId: 2, VolumeCount: 0, MaxVolumeCount: 10},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	taskID := "stale_test_123"
+	at.AddPendingTask(topology.TaskSpec{
+		TaskID:       taskID,
+		TaskType:     topology.TaskTypeBalance,
+		VolumeID:     100,
+		VolumeSize:   1024,
+		Sources:      []topology.TaskSourceSpec{{ServerID: "server1", DiskID: 1}},
+		Destinations: []topology.TaskDestinationSpec{{ServerID: "server1", DiskID: 2}},
+	})
+
+	mq.AddTask(&MaintenanceTask{
+		ID:       taskID,
+		Type:     "balance",
+		VolumeID: 100,
+		Server:   "server1",
+		TypedParams: &worker_pb.TaskParams{
+			TaskId:  taskID,
+			Targets: []*worker_pb.TaskTarget{{Node: "server1", DiskId: 2}},
+		},
+	})
+
+	mq.workers["worker1"] = &MaintenanceWorker{
+		ID:            "worker1",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance"},
+		MaxConcurrent: 1,
+		LastHeartbeat: time.Now(),
+	}
+
+	// Assign task
+	mq.GetNextTask("worker1", []MaintenanceTaskType{"balance"})
+
+	// Verify capacity reserved (9 left)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
+		t.Errorf("Expected capacity 9, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+
+	// Make worker stale
+	mq.workers["worker1"].LastHeartbeat = time.Now().Add(-1 * time.Hour)
+
+	// Remove stale workers
+	mq.RemoveStaleWorkers(10 * time.Minute)
+
+	// Verify capacity released (back to 10)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 10 {
+		t.Errorf("Expected capacity 10 after removing stale worker, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+}
+
+func TestMaintenanceManager_CancelTaskCapacityRelease(t *testing.T) {
+	// Setup Manager
+	config := DefaultMaintenanceConfig()
+	mm := NewMaintenanceManager(nil, config)
+	integration := mm.scanner.integration
+	mq := mm.queue
+	at := integration.GetActiveTopology()
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd1": {DiskId: 1, VolumeCount: 1, MaxVolumeCount: 10},
+									"hdd2": {DiskId: 2, VolumeCount: 0, MaxVolumeCount: 10},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	taskID := "cancel_test_123"
+	// Note: AddPendingTask reserves capacity
+	at.AddPendingTask(topology.TaskSpec{
+		TaskID:       taskID,
+		TaskType:     topology.TaskTypeBalance,
+		VolumeID:     100,
+		VolumeSize:   1024,
+		Sources:      []topology.TaskSourceSpec{{ServerID: "server1", DiskID: 1}},
+		Destinations: []topology.TaskDestinationSpec{{ServerID: "server1", DiskID: 2}},
+	})
+
+	mq.AddTask(&MaintenanceTask{
+		ID:       taskID,
+		Type:     "balance",
+		VolumeID: 100,
+		Server:   "server1",
+		TypedParams: &worker_pb.TaskParams{
+			TaskId:  taskID,
+			Targets: []*worker_pb.TaskTarget{{Node: "server1", DiskId: 2}},
+		},
+	})
+
+	// Verify capacity reserved (9 left)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
+		t.Errorf("Expected capacity 9, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+
+	// Cancel task
+	err := mm.CancelTask(taskID)
+	if err != nil {
+		t.Fatalf("Failed to cancel task: %v", err)
+	}
+
+	// Verify capacity released (back to 10)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 10 {
+		t.Errorf("Expected capacity 10 after cancelling task, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+}
+
+type MockPersistence struct {
+	tasks []*MaintenanceTask
+}
+
+func (m *MockPersistence) SaveTaskState(task *MaintenanceTask) error                { return nil }
+func (m *MockPersistence) LoadTaskState(taskID string) (*MaintenanceTask, error)    { return nil, nil }
+func (m *MockPersistence) LoadAllTaskStates() ([]*MaintenanceTask, error)           { return m.tasks, nil }
+func (m *MockPersistence) DeleteTaskState(taskID string) error                      { return nil }
+func (m *MockPersistence) CleanupCompletedTasks() error                             { return nil }
+func (m *MockPersistence) SaveTaskPolicy(taskType string, policy *TaskPolicy) error { return nil }
+
+func TestMaintenanceQueue_LoadTasksCapacitySync(t *testing.T) {
+	// Setup
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance": {MaxConcurrent: 1},
+		},
+	}
+	mq := NewMaintenanceQueue(policy)
+	integration := NewMaintenanceIntegration(mq, policy)
+	mq.SetIntegration(integration)
+	at := integration.GetActiveTopology()
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd1": {DiskId: 1, VolumeCount: 1, MaxVolumeCount: 10},
+									"hdd2": {DiskId: 2, VolumeCount: 0, MaxVolumeCount: 10},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	// Setup mock persistence with a pending task
+	taskID := "load_test_123"
+	mockTask := &MaintenanceTask{
+		ID:     taskID,
+		Type:   "balance",
+		Status: TaskStatusPending,
+		TypedParams: &worker_pb.TaskParams{
+			TaskId:  taskID,
+			Sources: []*worker_pb.TaskSource{{Node: "server1", DiskId: 1}},
+			Targets: []*worker_pb.TaskTarget{{Node: "server1", DiskId: 2}},
+		},
+	}
+	mq.SetPersistence(&MockPersistence{tasks: []*MaintenanceTask{mockTask}})
+
+	// Load tasks
+	err := mq.LoadTasksFromPersistence()
+	if err != nil {
+		t.Fatalf("Failed to load tasks: %v", err)
+	}
+
+	// Verify capacity is reserved in ActiveTopology after loading (9 left)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
+		t.Errorf("Expected capacity 9 after loading tasks, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
 	}
 }
 
