@@ -643,6 +643,7 @@ enum VolumeScrubMode {
     UNKNOWN = 0;
     INDEX = 1;
     FULL = 2;
+    LOCAL = 3;
 }
 
 message ScrubVolumeRequest {

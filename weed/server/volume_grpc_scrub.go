@@ -36,6 +36,8 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
 			files, serrs = v.CheckIndex()
+		case volume_server_pb.VolumeScrubMode_LOCAL:
+			files, serrs = scrubVolumeLocal(ctx, v)
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, serrs = scrubVolumeFull(ctx, v)
 		default:
@@ -61,8 +63,12 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 	return res, nil
 }
 
+func scrubVolumeLocal(ctx context.Context, v *storage.Volume) (int64, []error) {
+	return 0, []error{fmt.Errorf("scrubVolumeLocal(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
+}
+
 func scrubVolumeFull(ctx context.Context, v *storage.Volume) (int64, []error) {
-	return 0, []error{fmt.Errorf("scrubVolumeFull(): not implemented")}
+	return 0, []error{fmt.Errorf("scrubVolumeFull(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
 }
 
 func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {
@@ -94,6 +100,8 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		case volume_server_pb.VolumeScrubMode_INDEX:
 			// index scrubs do not verify individual EC shards
 			files, serrs = v.CheckIndex()
+		case volume_server_pb.VolumeScrubMode_LOCAL:
+			files, shardInfos, serrs = scrubEcVolumeLocal(ctx, v)
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, shardInfos, serrs = scrubEcVolumeFull(ctx, v)
 		default:
@@ -121,6 +129,10 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 	return res, nil
 }
 
-func scrubEcVolumeFull(ctx context.Context, ecv *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
-	return 0, nil, []error{fmt.Errorf("scrubEcVolumeFull(): not implemented")}
+func scrubEcVolumeLocal(ctx context.Context, v *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
+	return 0, nil, []error{fmt.Errorf("scrubEcVolumeLocal(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
+}
+
+func scrubEcVolumeFull(ctx context.Context, v *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
+	return 0, nil, []error{fmt.Errorf("scrubEcVolumeFull(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
 }
