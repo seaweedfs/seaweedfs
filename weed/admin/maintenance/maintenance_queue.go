@@ -315,9 +315,11 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	selectedTask.StartedAt = &now
 
 	// Notify ActiveTopology to reserve capacity (move from pending to assigned)
-	if mq.integration != nil && mq.integration.GetActiveTopology() != nil {
-		if err := mq.integration.GetActiveTopology().AssignTask(selectedTask.ID); err != nil {
-			glog.Warningf("Failed to update ActiveTopology for task assignment %s: %v", selectedTask.ID, err)
+	if mq.integration != nil {
+		if at := mq.integration.GetActiveTopology(); at != nil {
+			if err := at.AssignTask(selectedTask.ID); err != nil {
+				glog.Warningf("Failed to update ActiveTopology for task assignment %s: %v", selectedTask.ID, err)
+			}
 		}
 	}
 
