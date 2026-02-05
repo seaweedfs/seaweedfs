@@ -284,6 +284,7 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
@@ -295,8 +296,91 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
 	return &copy
+}
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *MemoryStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	// Verify policy exists
+	if _, exists := store.policies[policyName]; !exists {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			return credential.ErrPolicyAlreadyAttached
+		}
+	}
+
+	user.PolicyNames = append(user.PolicyNames, policyName)
+	return nil
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *MemoryStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	found := false
+	var newPolicies []string
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicies = append(newPolicies, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	user.PolicyNames = newPolicies
+	return nil
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *MemoryStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return nil, credential.ErrUserNotFound
+	}
+
+	// Return copy to prevent mutation
+	result := make([]string, len(user.PolicyNames))
+	copy(result, user.PolicyNames)
+	return result, nil
 }

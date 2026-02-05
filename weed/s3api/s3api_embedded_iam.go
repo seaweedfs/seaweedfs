@@ -89,6 +89,11 @@ type (
 	iamListServiceAccountsResponse  = iamlib.ListServiceAccountsResponse
 	iamGetServiceAccountResponse    = iamlib.GetServiceAccountResponse
 	iamUpdateServiceAccountResponse = iamlib.UpdateServiceAccountResponse
+	// Managed policy attachment response types
+	iamAttachUserPolicyResponse        = iamlib.AttachUserPolicyResponse
+	iamDetachUserPolicyResponse        = iamlib.DetachUserPolicyResponse
+	iamListAttachedUserPoliciesResponse = iamlib.ListAttachedUserPoliciesResponse
+	iamAttachedPolicy                   = iamlib.AttachedPolicy
 )
 
 // Helper function wrappers using shared package
@@ -908,6 +913,126 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("service account %s not found", saId)}
 }
 
+// extractPolicyNameFromArn extracts policy name from ARN
+// ARN format: arn:aws:iam:::policy/PolicyName or arn:aws:iam::account:policy/PolicyName
+func extractPolicyNameFromArn(arn string) string {
+	parts := strings.Split(arn, "/")
+	if len(parts) >= 2 && strings.Contains(arn, ":policy/") {
+		return parts[len(parts)-1]
+	}
+	return ""
+}
+
+// AttachUserPolicy attaches a managed policy to a user
+func (e *EmbeddedIamApi) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamAttachUserPolicyResponse, *iamError) {
+	var resp iamAttachUserPolicyResponse
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	if policyArn == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyArn is required")}
+	}
+
+	// Extract policy name from ARN
+	policyName := extractPolicyNameFromArn(policyArn)
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN format")}
+	}
+
+	// Verify policy exists
+	ctx := context.Background()
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil || policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	// Find user and attach policy
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			// Check if already attached - idempotent success
+			for _, p := range ident.PolicyNames {
+				if p == policyName {
+					return resp, nil
+				}
+			}
+			ident.PolicyNames = append(ident.PolicyNames, policyName)
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (e *EmbeddedIamApi) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamDetachUserPolicyResponse, *iamError) {
+	var resp iamDetachUserPolicyResponse
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	if policyArn == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyArn is required")}
+	}
+
+	policyName := extractPolicyNameFromArn(policyArn)
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN format")}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			found := false
+			var newPolicies []string
+			for _, p := range ident.PolicyNames {
+				if p == policyName {
+					found = true
+				} else {
+					newPolicies = append(newPolicies, p)
+				}
+			}
+			if !found {
+				return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s is not attached to user %s", policyName, userName)}
+			}
+			ident.PolicyNames = newPolicies
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// ListAttachedUserPolicies lists managed policies attached to a user
+func (e *EmbeddedIamApi) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamListAttachedUserPoliciesResponse, *iamError) {
+	var resp iamListAttachedUserPoliciesResponse
+	userName := values.Get("UserName")
+
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			for _, policyName := range ident.PolicyNames {
+				resp.ListAttachedUserPoliciesResult.AttachedPolicies = append(
+					resp.ListAttachedUserPoliciesResult.AttachedPolicies,
+					&iamAttachedPolicy{
+						PolicyName: policyName,
+						PolicyArn:  fmt.Sprintf("arn:aws:iam:::policy/%s", policyName),
+					},
+				)
+			}
+			return resp, nil
+		}
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
 // According to AWS documentation: "If you do not specify a user name, IAM determines the user name
 // implicitly based on the Amazon Web Services access key ID signing the request."
@@ -1057,7 +1182,7 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 	action := values.Get("Action")
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount", "ListAttachedUserPolicies":
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -1177,6 +1302,23 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 		if iamErr != nil {
 			return nil, iamErr
 		}
+	// Managed policy attachment actions
+	case "AttachUserPolicy":
+		response, iamErr = e.AttachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "DetachUserPolicy":
+		response, iamErr = e.DetachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "ListAttachedUserPolicies":
+		response, iamErr = e.ListAttachedUserPolicies(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
 	default:
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}

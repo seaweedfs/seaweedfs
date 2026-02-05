@@ -202,3 +202,31 @@ type UpdateServiceAccountResponse struct {
 	CommonResponse
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateServiceAccountResponse"`
 }
+
+// AttachUserPolicyResponse is the response for AttachUserPolicy action.
+type AttachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AttachUserPolicyResponse"`
+}
+
+// DetachUserPolicyResponse is the response for DetachUserPolicy action.
+type DetachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DetachUserPolicyResponse"`
+}
+
+// AttachedPolicy represents a managed policy attached to a user.
+type AttachedPolicy struct {
+	PolicyName string `xml:"PolicyName"`
+	PolicyArn  string `xml:"PolicyArn"`
+}
+
+// ListAttachedUserPoliciesResponse is the response for ListAttachedUserPolicies action.
+type ListAttachedUserPoliciesResponse struct {
+	CommonResponse
+	XMLName                        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAttachedUserPoliciesResponse"`
+	ListAttachedUserPoliciesResult struct {
+		AttachedPolicies []*AttachedPolicy `xml:"AttachedPolicies>member"`
+		IsTruncated      bool              `xml:"IsTruncated"`
+	} `xml:"ListAttachedUserPoliciesResult"`
+}

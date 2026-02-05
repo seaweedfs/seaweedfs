@@ -15,6 +15,9 @@ var (
 	ErrUserAlreadyExists      = errors.New("user already exists")
 	ErrAccessKeyNotFound      = errors.New("access key not found")
 	ErrServiceAccountNotFound = errors.New("service account not found")
+	ErrPolicyNotFound         = errors.New("policy not found")
+	ErrPolicyAlreadyAttached  = errors.New("policy already attached")
+	ErrPolicyNotAttached      = errors.New("policy not attached to user")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
@@ -80,6 +83,14 @@ type CredentialStore interface {
 	GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error)
 	ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error)
 	GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error)
+
+	// User Policy Attachment Management
+	// AttachUserPolicy attaches a managed policy to a user by policy name
+	AttachUserPolicy(ctx context.Context, username string, policyName string) error
+	// DetachUserPolicy detaches a managed policy from a user
+	DetachUserPolicy(ctx context.Context, username string, policyName string) error
+	// ListAttachedUserPolicies returns the list of policy names attached to a user
+	ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error)
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()

@@ -216,3 +216,18 @@ func (cm *CredentialManager) GetServiceAccount(ctx context.Context, id string) (
 func (cm *CredentialManager) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
 	return cm.store.ListServiceAccounts(ctx)
 }
+
+// AttachUserPolicy attaches a managed policy to a user
+func (cm *CredentialManager) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	return cm.store.AttachUserPolicy(ctx, username, policyName)
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (cm *CredentialManager) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	return cm.store.DetachUserPolicy(ctx, username, policyName)
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (cm *CredentialManager) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	return cm.store.ListAttachedUserPolicies(ctx, username)
+}
