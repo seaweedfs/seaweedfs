@@ -757,6 +757,101 @@ func TestMaintenanceQueue_LoadTasksCapacitySync(t *testing.T) {
 	}
 }
 
+func TestMaintenanceQueue_RetryCapacitySync(t *testing.T) {
+	// Setup
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance": {MaxConcurrent: 1},
+		},
+	}
+	mq := NewMaintenanceQueue(policy)
+	integration := NewMaintenanceIntegration(mq, policy)
+	mq.SetIntegration(integration)
+	at := integration.GetActiveTopology()
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd1": {DiskId: 1, VolumeCount: 1, MaxVolumeCount: 10},
+									"hdd2": {DiskId: 2, VolumeCount: 0, MaxVolumeCount: 10},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	taskID := "retry_test_123"
+	// 1. Add task
+	at.AddPendingTask(topology.TaskSpec{
+		TaskID:       taskID,
+		TaskType:     topology.TaskTypeBalance,
+		VolumeID:     100,
+		VolumeSize:   1024,
+		Sources:      []topology.TaskSourceSpec{{ServerID: "server1", DiskID: 1}},
+		Destinations: []topology.TaskDestinationSpec{{ServerID: "server1", DiskID: 2}},
+	})
+
+	mq.AddTask(&MaintenanceTask{
+		ID:         taskID,
+		Type:       "balance",
+		VolumeID:   100,
+		Server:     "server1",
+		MaxRetries: 3,
+		TypedParams: &worker_pb.TaskParams{
+			TaskId:  taskID,
+			Sources: []*worker_pb.TaskSource{{Node: "server1", DiskId: 1}},
+			Targets: []*worker_pb.TaskTarget{{Node: "server1", DiskId: 2}},
+		},
+	})
+
+	mq.workers["worker1"] = &MaintenanceWorker{
+		ID:            "worker1",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance"},
+		MaxConcurrent: 1,
+		LastHeartbeat: time.Now(),
+	}
+
+	// 2. Assign task
+	mq.GetNextTask("worker1", []MaintenanceTaskType{"balance"})
+
+	// Verify capacity reserved (9 left)
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
+		t.Errorf("Initial assignment: Expected capacity 9, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+
+	// 3. Complete with error (trigger retry)
+	mq.CompleteTask(taskID, "simulated failure")
+
+	// 4. Verify state after failure
+	task := mq.tasks[taskID]
+	if task.Status != TaskStatusPending {
+		t.Errorf("Expected status pending for retry, got %v", task.Status)
+	}
+	if task.RetryCount != 1 {
+		t.Errorf("Expected retry count 1, got %d", task.RetryCount)
+	}
+
+	// 5. Verify capacity in ActiveTopology
+	// It should first release (back to 10) and then re-reserve (SyncTask) because it's pending again.
+	// So it should still be 9.
+	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
+		t.Errorf("After retry sync: Expected capacity 9, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	}
+}
+
 func TestMaintenanceQueue_AssignTaskRollback(t *testing.T) {
 	// Setup Policy
 	policy := &MaintenancePolicy{
