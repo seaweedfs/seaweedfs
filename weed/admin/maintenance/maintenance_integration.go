@@ -305,6 +305,7 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	}
 
 	return &TaskDetectionResult{
+		TaskID:      result.TaskID,
 		TaskType:    existingType,
 		VolumeID:    result.VolumeID,
 		Server:      result.Server,
@@ -523,19 +524,25 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 	var estimatedSize int64
 
 	if task.TypedParams != nil {
+		// Calculate storage impact for this task type
+		// Volume size is not currently used for Balance/Vacuum impact and is not stored in MaintenanceTask
+		sourceImpact, targetImpact := topology.CalculateTaskStorageImpact(topology.TaskType(string(taskType)), 0)
+
 		// Use unified sources and targets from TaskParams
 		for _, src := range task.TypedParams.Sources {
 			sources = append(sources, topology.TaskSource{
-				SourceServer: src.Node,
-				SourceDisk:   src.DiskId,
+				SourceServer:  src.Node,
+				SourceDisk:    src.DiskId,
+				StorageChange: sourceImpact,
 			})
 			// Sum estimated size from all sources
 			estimatedSize += int64(src.EstimatedSize)
 		}
 		for _, target := range task.TypedParams.Targets {
 			destinations = append(destinations, topology.TaskDestination{
-				TargetServer: target.Node,
-				TargetDisk:   target.DiskId,
+				TargetServer:  target.Node,
+				TargetDisk:    target.DiskId,
+				StorageChange: targetImpact,
 			})
 		}
 

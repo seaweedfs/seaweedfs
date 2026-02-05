@@ -603,6 +603,13 @@ func (mm *MaintenanceManager) CancelTask(taskID string) error {
 			}
 		}
 
+		// Notify ActiveTopology to release capacity
+		if mm.scanner != nil && mm.scanner.integration != nil {
+			if at := mm.scanner.integration.GetActiveTopology(); at != nil {
+				_ = at.CompleteTask(taskID)
+			}
+		}
+
 		glog.V(2).Infof("Cancelled task %s", taskID)
 		return nil
 	}
