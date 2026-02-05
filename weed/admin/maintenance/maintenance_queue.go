@@ -356,10 +356,12 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 
 	// Notify ActiveTopology to release capacity (move from assigned to recent)
 	// We do this for both success and failure cases to release the capacity
-	if mq.integration != nil && mq.integration.GetActiveTopology() != nil {
-		if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
-			// Ignore error as task might not be in ActiveTopology (e.g. after restart)
-			_ = mq.integration.GetActiveTopology().CompleteTask(taskID)
+	if mq.integration != nil {
+		if at := mq.integration.GetActiveTopology(); at != nil {
+			if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
+				// Ignore error as task might not be in ActiveTopology (e.g. after restart)
+				_ = at.CompleteTask(taskID)
+			}
 		}
 	}
 
