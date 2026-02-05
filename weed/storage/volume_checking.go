@@ -14,6 +14,28 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+func (v *Volume) CheckIndex() (int64, []error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	idxFileName := v.FileName(".idx")
+	idxFile, err := os.OpenFile(idxFileName, os.O_RDONLY, 0644)
+	if err != nil {
+		return 0, []error{fmt.Errorf("failed to open IDX file %s for volume %v: %v", idxFileName, v.Id, err)}
+	}
+	defer idxFile.Close()
+
+	idxStat, err := idxFile.Stat()
+	if err != nil {
+		return 0, []error{fmt.Errorf("failed to stat IDX file %s for volume %v: %v", idxFileName, v.Id, err)}
+	}
+	if idxStat.Size() == 0 {
+		return 0, []error{fmt.Errorf("zero-size IDX file for volume %v at %s", v.Id, idxFileName)}
+	}
+
+	return idx.CheckIndexFile(idxFile, idxStat.Size(), v.Version())
+}
+
 func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uint64, err error) {
 	var indexSize int64
 	if indexSize, err = verifyIndexFileIntegrity(indexFile); err != nil {
