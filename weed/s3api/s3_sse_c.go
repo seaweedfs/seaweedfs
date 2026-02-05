@@ -263,18 +263,13 @@ func CreateSSECDecryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKe
 
 // createCTRStreamWithOffset creates a CTR stream positioned at a specific counter offset
 func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint64) cipher.Stream {
-	// Create a copy of the IV to avoid modifying the original
-	offsetIV := make([]byte, len(iv))
-	copy(offsetIV, iv)
-
-	// Calculate the counter offset in blocks (AES block size is 16 bytes)
-	blockOffset := counterOffset / 16
-
-	// Add the block offset to the counter portion of the IV
-	// In AES-CTR, the last 8 bytes of the IV are typically used as the counter
-	addCounterToIV(offsetIV, blockOffset)
-
-	return cipher.NewCTR(block, offsetIV)
+	adjustedIV, skip := calculateIVWithOffset(iv, int64(counterOffset))
+	stream := cipher.NewCTR(block, adjustedIV)
+	if skip > 0 {
+		dummy := make([]byte, skip)
+		stream.XORKeyStream(dummy, dummy)
+	}
+	return stream
 }
 
 // addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
