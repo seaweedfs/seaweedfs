@@ -90,6 +90,11 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 				}
 			}
 		}
+
+		// Sync task with ActiveTopology for capacity tracking
+		if mq.integration != nil {
+			mq.integration.SyncTask(task)
+		}
 	}
 
 	// Sort pending tasks by priority and schedule time
