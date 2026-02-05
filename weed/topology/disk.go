@@ -283,11 +283,9 @@ func (d *Disk) ToDiskInfo() *master_pb.DiskInfo {
 	for _, v := range volumes {
 		m.VolumeInfos = append(m.VolumeInfos, v.ToVolumeInformationMessage())
 	}
-	d.ecShardsLock.RLock()
-	for _, ecv := range d.ecShards {
+	for _, ecv := range ecShards {
 		m.EcShardInfos = append(m.EcShardInfos, ecv.ToVolumeEcShardInformationMessage())
 	}
-	d.ecShardsLock.RUnlock()
 	return m
 }
 
