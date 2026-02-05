@@ -136,6 +136,7 @@ type FileFilter struct {
 	minAge      *int64
 	maxAge      *int64
 	minCacheAge *int64
+	now         int64
 }
 
 func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
@@ -147,6 +148,7 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds (created time)")
 	ff.maxAge = remoteMountCommand.Int64("maxAge", -1, "maximum file age in seconds (created time)")
 	ff.minCacheAge = remoteMountCommand.Int64("minCacheAge", -1, "minimum file cache age in seconds (last cached time)")
+	ff.now = time.Now().Unix()
 	return
 }
 
@@ -175,12 +177,12 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 		}
 	}
 	if *ff.minAge != -1 {
-		if entry.Attributes.Crtime+*ff.minAge > time.Now().Unix() {
+		if entry.Attributes.Crtime+*ff.minAge > ff.now {
 			return false
 		}
 	}
 	if *ff.maxAge != -1 {
-		if entry.Attributes.Crtime+*ff.maxAge < time.Now().Unix() {
+		if entry.Attributes.Crtime+*ff.maxAge < ff.now {
 			return false
 		}
 	}
@@ -189,7 +191,7 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 		if entry.RemoteEntry != nil && entry.RemoteEntry.LastLocalSyncTsNs > 0 {
 			lastCachedTime = entry.RemoteEntry.LastLocalSyncTsNs / 1e9
 		}
-		if lastCachedTime+*ff.minCacheAge > time.Now().Unix() {
+		if lastCachedTime+*ff.minCacheAge > ff.now {
 			return false
 		}
 	}

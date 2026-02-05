@@ -93,6 +93,7 @@ func TestFileFilter_matches_minCacheAge(t *testing.T) {
 				minAge:      &defaultInt64,
 				maxAge:      &defaultInt64,
 				minCacheAge: &tt.minCacheAge,
+				now:         now,
 			}
 
 			if got := ff.matches(tt.entry); got != tt.want {
