@@ -36,7 +36,8 @@ func (c *commandRemoteUncache) Help() string {
 	remote.uncache -dir=/xxx/some/sub/dir -include=*.pdf
 	remote.uncache -dir=/xxx/some/sub/dir -exclude=*.txt
 	remote.uncache -minSize=1024000    # uncache files larger than 100K
-	remote.uncache -minAge=3600        # uncache files older than 1 hour
+	remote.uncache -minAge=3600        # uncache files older than 1 hour (created time)
+	remote.uncache -minCacheAge=3600   # uncache files older than 1 hour (cached time)
 
 `
 }
@@ -128,12 +129,13 @@ func (c *commandRemoteUncache) uncacheContentData(commandEnv *CommandEnv, writer
 }
 
 type FileFilter struct {
-	include *string
-	exclude *string
-	minSize *int64
-	maxSize *int64
-	minAge  *int64
-	maxAge  *int64
+	include     *string
+	exclude     *string
+	minSize     *int64
+	maxSize     *int64
+	minAge      *int64
+	maxAge      *int64
+	minCacheAge *int64
 }
 
 func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
@@ -142,8 +144,9 @@ func newFileFilter(remoteMountCommand *flag.FlagSet) (ff *FileFilter) {
 	ff.exclude = remoteMountCommand.String("exclude", "", "pattens of file names, e.g., *.pdf, *.html, ab?d.txt")
 	ff.minSize = remoteMountCommand.Int64("minSize", -1, "minimum file size in bytes")
 	ff.maxSize = remoteMountCommand.Int64("maxSize", -1, "maximum file size in bytes")
-	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds")
-	ff.maxAge = remoteMountCommand.Int64("maxAge", -1, "maximum file age in seconds")
+	ff.minAge = remoteMountCommand.Int64("minAge", -1, "minimum file age in seconds (created time)")
+	ff.maxAge = remoteMountCommand.Int64("maxAge", -1, "maximum file age in seconds (created time)")
+	ff.minCacheAge = remoteMountCommand.Int64("minCacheAge", -1, "minimum file cache age in seconds (last cached time)")
 	return
 }
 
@@ -175,6 +178,15 @@ func (ff *FileFilter) matches(entry *filer_pb.Entry) bool {
 	}
 	if *ff.maxAge != -1 {
 		if entry.Attributes.Crtime+*ff.maxAge < time.Now().Unix() {
+			return false
+		}
+	}
+	if *ff.minCacheAge != -1 {
+		lastCachedTime := entry.Attributes.Crtime
+		if entry.RemoteEntry != nil && entry.RemoteEntry.LastLocalSyncTsNs > 0 {
+			lastCachedTime = entry.RemoteEntry.LastLocalSyncTsNs / 1e9
+		}
+		if lastCachedTime+*ff.minCacheAge > time.Now().Unix() {
 			return false
 		}
 	}
