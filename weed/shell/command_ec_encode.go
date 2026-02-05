@@ -438,36 +438,24 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 				}
 
 				// check free disk space
-				if good, found := vidMap[v.Id]; found {
-					if good {
-						if diskInfo.FreeVolumeCount < 2 {
-							glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
-							if verbose {
-								fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
-									v.Id, dn.Id, diskInfo.FreeVolumeCount)
-							}
-							vidMap[v.Id] = false
-							noFreeDisk++
-						}
+				if diskInfo.FreeVolumeCount < 2 {
+					glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+					if verbose {
+						fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
+							v.Id, dn.Id, diskInfo.FreeVolumeCount)
 					}
-				} else {
-					if diskInfo.FreeVolumeCount < 2 {
-						glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
-						if verbose {
-							fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
-								v.Id, dn.Id, diskInfo.FreeVolumeCount)
-						}
+					if _, found := vidMap[v.Id]; !found {
 						vidMap[v.Id] = false
 						noFreeDisk++
-					} else {
-						if verbose {
-							fmt.Printf("selected volume %d on %s: size %.1f MB (%.1f%% full), last modified %d seconds ago, free volumes: %d\n",
-								v.Id, dn.Id, float64(v.Size)/(1024*1024),
-								float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024),
-								nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
-						}
-						vidMap[v.Id] = true
 					}
+				} else {
+					if verbose {
+						fmt.Printf("selected volume %d on %s: size %.1f MB (%.1f%% full), last modified %d seconds ago, free volumes: %d\n",
+							v.Id, dn.Id, float64(v.Size)/(1024*1024),
+							float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024),
+							nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
+					}
+					vidMap[v.Id] = true
 				}
 			}
 		}
