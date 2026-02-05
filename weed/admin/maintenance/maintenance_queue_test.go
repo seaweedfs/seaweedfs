@@ -3,6 +3,8 @@ package maintenance
 import (
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
@@ -400,5 +402,130 @@ func TestMaintenanceQueue_TaskIDPreservation(t *testing.T) {
 
 	if manualTask.ID != "manual_id_456" {
 		t.Errorf("AddTask overwrote ID: expected manual_id_456, got %s", manualTask.ID)
+	}
+}
+
+func TestMaintenanceQueue_ActiveTopologySync(t *testing.T) {
+	// Setup Policy
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance": {MaxConcurrent: 1},
+		},
+		GlobalMaxConcurrent: 10,
+	}
+
+	// Setup Queue and Integration
+	mq := NewMaintenanceQueue(policy)
+	integration := NewMaintenanceIntegration(mq, policy)
+	mq.SetIntegration(integration)
+
+	// 4. Verify ActiveTopology Synchronization (Assign and Complete)
+	// Get and Setup Topology
+	at := integration.GetActiveTopology()
+	if at == nil {
+		t.Fatalf("ActiveTopology not found in integration")
+	}
+
+	topologyInfo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				Id: "dc1",
+				RackInfos: []*master_pb.RackInfo{
+					{
+						Id: "rack1",
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							{
+								Id: "server1",
+								DiskInfos: map[string]*master_pb.DiskInfo{
+									"hdd": {
+										DiskId:         1,
+										VolumeCount:    1,
+										MaxVolumeCount: 10,
+										VolumeInfos: []*master_pb.VolumeInformationMessage{
+											{Id: 100, Collection: "col1"},
+										},
+									},
+									"hdd2": {
+										DiskId:         2,
+										VolumeCount:    0,
+										MaxVolumeCount: 10,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	at.UpdateTopology(topologyInfo)
+
+	// Add pending task to ActiveTopology
+	taskID := "sync_test_123"
+	err := at.AddPendingTask(topology.TaskSpec{
+		TaskID:     taskID,
+		TaskType:   topology.TaskTypeBalance,
+		VolumeID:   100,
+		VolumeSize: 1024 * 1024,
+		Sources: []topology.TaskSourceSpec{
+			{ServerID: "server1", DiskID: 1},
+		},
+		Destinations: []topology.TaskDestinationSpec{
+			{ServerID: "server1", DiskID: 2},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to add pending task to ActiveTopology: %v", err)
+	}
+
+	// Add the same task to MaintenanceQueue
+	mq.AddTask(&MaintenanceTask{
+		ID:         taskID,
+		Type:       MaintenanceTaskType("balance"),
+		VolumeID:   100,
+		Server:     "server1",
+		Collection: "col1",
+		TypedParams: &worker_pb.TaskParams{
+			TaskId: taskID,
+			Targets: []*worker_pb.TaskTarget{
+				{Node: "server1", DiskId: 2},
+			},
+		},
+	})
+
+	// Check initial available capacity on destination disk (server1:2)
+	// server1:2 has MaxVolumeCount=10, VolumeCount=0.
+	// Capacity should be 9 because AddPendingTask already reserved 1 slot.
+	capacityBefore := at.GetEffectiveAvailableCapacity("server1", 2)
+	if capacityBefore != 9 {
+		t.Errorf("Expected capacity 9 after AddPendingTask, got %d", capacityBefore)
+	}
+
+	// 5. Verify AssignTask (via GetNextTask)
+	mq.workers["worker1"] = &MaintenanceWorker{
+		ID:            "worker1",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance"},
+		MaxConcurrent: 10,
+	}
+
+	taskFound := mq.GetNextTask("worker1", []MaintenanceTaskType{"balance"})
+	if taskFound == nil || taskFound.ID != taskID {
+		t.Fatalf("Expected to get task %s, got %+v", taskID, taskFound)
+	}
+
+	// Capacity should still be 9 on destination disk (server1:2)
+	capacityAfterAssign := at.GetEffectiveAvailableCapacity("server1", 2)
+	if capacityAfterAssign != 9 {
+		t.Errorf("Capacity should still be 9 after assignment, got %d", capacityAfterAssign)
+	}
+
+	// 6. Verify CompleteTask
+	mq.CompleteTask(taskID, "")
+
+	// Capacity should be released back to 10
+	capacityAfterComplete := at.GetEffectiveAvailableCapacity("server1", 2)
+	if capacityAfterComplete != 10 {
+		t.Errorf("Capacity should have returned to 10 after completion, got %d", capacityAfterComplete)
 	}
 }
