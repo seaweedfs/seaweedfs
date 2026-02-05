@@ -741,6 +741,13 @@ func (mq *MaintenanceQueue) RemoveStaleWorkers(timeout time.Duration) int {
 					task.Error = "Worker became unavailable"
 					completedTime := time.Now()
 					task.CompletedAt = &completedTime
+
+					// Notify ActiveTopology to release capacity
+					if mq.integration != nil {
+						if at := mq.integration.GetActiveTopology(); at != nil {
+							_ = at.CompleteTask(task.ID)
+						}
+					}
 				}
 			}
 
