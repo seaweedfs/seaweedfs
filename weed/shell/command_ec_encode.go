@@ -439,14 +439,13 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 
 				// check free disk space
 				if diskInfo.FreeVolumeCount < 2 {
-					glog.V(0).Infof("skip %s %d on %s, no free disk", v.Collection, v.Id, dn.Id)
+					glog.V(0).Infof("replica %s %d on %s has no free disk", v.Collection, v.Id, dn.Id)
 					if verbose {
-						fmt.Printf("skip volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
+						fmt.Printf("skip replica of volume %d on %s: insufficient free disk space (free volumes: %d, required: 2)\n",
 							v.Id, dn.Id, diskInfo.FreeVolumeCount)
 					}
 					if _, found := vidMap[v.Id]; !found {
 						vidMap[v.Id] = false
-						noFreeDisk++
 					}
 				} else {
 					if verbose {
@@ -454,9 +453,6 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 							v.Id, dn.Id, float64(v.Size)/(1024*1024),
 							float64(v.Size)*100/(float64(volumeSizeLimitMb)*1024*1024),
 							nowUnixSeconds-v.ModifiedAtSecond, diskInfo.FreeVolumeCount)
-					}
-					if isGood, wasFound := vidMap[v.Id]; wasFound && !isGood {
-						noFreeDisk--
 					}
 					vidMap[v.Id] = true
 				}
@@ -467,6 +463,8 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 	for vid, good := range vidMap {
 		if good {
 			vids = append(vids, needle.VolumeId(vid))
+		} else {
+			noFreeDisk++
 		}
 	}
 
