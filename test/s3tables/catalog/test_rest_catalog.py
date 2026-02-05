@@ -188,16 +188,30 @@ def main():
     print(f"Prefix: {args.prefix}")
     print()
     
-    # Load the REST catalog
-    catalog = load_catalog(
-        "rest",
-        **{
-            "type": "rest",
-            "uri": args.catalog_url,
-            "warehouse": args.warehouse,
-            "prefix": args.prefix,
-        }
-    )
+    # Load the REST catalog with retries to handle possible delay in catalog server readiness
+    import time
+    max_retries = 10
+    catalog = None
+    for attempt in range(max_retries):
+        try:
+            catalog = load_catalog(
+                "rest",
+                **{
+                    "type": "rest",
+                    "uri": args.catalog_url,
+                    "warehouse": args.warehouse,
+                    "prefix": args.prefix,
+                }
+            )
+            print(f"Successfully connected to catalog on attempt {attempt + 1}")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"  Attempt {attempt + 1} failed, retrying in 2s... ({e})")
+                time.sleep(2)
+            else:
+                print(f"  All {max_retries} attempts failed.")
+                raise e
     
     # Run tests
     tests = [
