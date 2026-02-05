@@ -422,6 +422,58 @@ func TestMultipartSSEMixedScenarios(t *testing.T) {
 	})
 }
 
+func TestSSECLargeObjectChunkReassembly(t *testing.T) {
+	keyPair := GenerateTestSSECKey(1)
+	customerKey := &SSECustomerKey{
+		Algorithm: "AES256",
+		Key:       keyPair.Key,
+		KeyMD5:    keyPair.KeyMD5,
+	}
+
+	const chunkSize = 8 * 1024 * 1024 // matches putToFiler chunk size
+	totalSize := chunkSize*2 + 3*1024*1024
+	plaintext := make([]byte, totalSize)
+	for i := range plaintext {
+		plaintext[i] = byte(i % 251)
+	}
+
+	encryptedReader, iv, err := CreateSSECEncryptedReader(bytes.NewReader(plaintext), customerKey)
+	if err != nil {
+		t.Fatalf("Failed to create encrypted reader: %v", err)
+	}
+	encryptedData, err := io.ReadAll(encryptedReader)
+	if err != nil {
+		t.Fatalf("Failed to read encrypted data: %v", err)
+	}
+
+	var reconstructed bytes.Buffer
+	offset := int64(0)
+	for offset < int64(len(encryptedData)) {
+		end := offset + chunkSize
+		if end > int64(len(encryptedData)) {
+			end = int64(len(encryptedData))
+		}
+
+		chunkIV := make([]byte, len(iv))
+		copy(chunkIV, iv)
+		chunkReader := bytes.NewReader(encryptedData[offset:end])
+		decryptedReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, chunkIV, uint64(offset))
+		if decErr != nil {
+			t.Fatalf("Failed to create decrypted reader for offset %d: %v", offset, decErr)
+		}
+		decryptedChunk, decErr := io.ReadAll(decryptedReader)
+		if decErr != nil {
+			t.Fatalf("Failed to read decrypted chunk at offset %d: %v", offset, decErr)
+		}
+		reconstructed.Write(decryptedChunk)
+		offset = end
+	}
+
+	if !bytes.Equal(reconstructed.Bytes(), plaintext) {
+		t.Fatalf("Reconstructed data mismatch: expected %d bytes, got %d", len(plaintext), reconstructed.Len())
+	}
+}
+
 // TestMultipartSSEPerformance tests performance characteristics of SSE with multipart
 func TestMultipartSSEPerformance(t *testing.T) {
 	if testing.Short() {
