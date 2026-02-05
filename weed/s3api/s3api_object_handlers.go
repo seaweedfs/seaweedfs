@@ -3242,27 +3242,32 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				// Deserialize the SSE-C metadata stored in the unified metadata field
 				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseMetadata())
 				if decErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}
 
 				// Decode the IV from the metadata
 				iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV)
 				if ivErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), ivErr)
 				}
 
 				partOffset := ssecMetadata.PartOffset
 				if partOffset < 0 {
+					chunkReader.Close()
 					return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunk.GetFileIdString())
 				}
 
 				// Use stored IV and advance CTR stream by PartOffset within the encrypted stream
 				decryptedReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, iv, uint64(partOffset))
 				if decErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to create SSE-C decrypted reader for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}
 				readers = append(readers, decryptedReader)
 			} else {
+				chunkReader.Close()
 				return nil, fmt.Errorf("SSE-C chunk %s missing required metadata", chunk.GetFileIdString())
 			}
 		} else {
