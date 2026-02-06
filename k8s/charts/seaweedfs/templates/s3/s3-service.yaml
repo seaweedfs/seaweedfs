@@ -16,6 +16,9 @@ metadata:
 {{- end }}
 spec:
   internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
+  {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) (or .Values.s3.trafficDistribution .Values.filer.s3.trafficDistribution) }}
+  trafficDistribution: {{ include "seaweedfs.trafficDistribution" . }}
+  {{- end }}
   ports:
   - name: "swfs-s3"
     port: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
