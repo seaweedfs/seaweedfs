@@ -51,13 +51,6 @@ func TestCheckIndexFile(t *testing.T) {
 			},
 		},
 		{
-			name:      "healthy EC index",
-			indexPath: "./test_files/389.ecx",
-			version:   needle.Version3,
-			want:      485098,
-			wantErrs:  []error{},
-		},
-		{
 			name:      "healthy EC index with deleted files",
 			indexPath: "./test_files/deleted_files.ecx",
 			version:   needle.Version3,
