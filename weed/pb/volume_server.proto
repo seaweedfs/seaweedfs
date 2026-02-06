@@ -9,8 +9,10 @@ import "remote.proto";
 
 // Persistent state for volume servers.
 message VolumeServerState {
-    // Whether the server is in maintenance (i.e. read-only) mode.
+    // whether the server is in maintenance (i.e. read-only) mode.
     bool maintenance = 1;
+    // incremental version counter
+    uint32 version = 2;
 }
 
 //////////////////////////////////////////////////

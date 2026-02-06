@@ -160,9 +160,9 @@ func NewStore(
 
 func (s *Store) LoadState() error {
 	err := s.State.Load()
-	if s.State.Pb != nil && err == nil {
+	if s.State.Proto() != nil && err == nil {
 		select {
-		case s.StateUpdateChan <- s.State.Pb:
+		case s.StateUpdateChan <- s.State.Proto():
 		default:
 			glog.V(2).Infof("StateUpdateChan full during LoadState, state will be reported in heartbeat")
 		}
@@ -171,15 +171,15 @@ func (s *Store) LoadState() error {
 }
 
 func (s *Store) SaveState() error {
-	if s.State.Pb == nil {
+	if s.State.Proto() == nil {
 		glog.Warningf("tried to save empty state for store %s", s.Id)
 		return nil
 	}
 
 	err := s.State.Save()
-	if s.State.Pb != nil && err == nil {
+	if s.State.Proto() != nil && err == nil {
 		select {
-		case s.StateUpdateChan <- s.State.Pb:
+		case s.StateUpdateChan <- s.State.Proto():
 		default:
 			glog.V(2).Infof("StateUpdateChan full during SaveState, state will be reported in heartbeat")
 		}

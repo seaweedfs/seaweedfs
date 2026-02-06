@@ -77,8 +77,10 @@ func (VolumeScrubMode) EnumDescriptor() ([]byte, []int) {
 // Persistent state for volume servers.
 type VolumeServerState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Whether the server is in maintenance (i.e. read-only) mode.
-	Maintenance   bool `protobuf:"varint,1,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	// whether the server is in maintenance (i.e. read-only) mode.
+	Maintenance bool `protobuf:"varint,1,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	// incremental version counter
+	Version       uint32 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -118,6 +120,13 @@ func (x *VolumeServerState) GetMaintenance() bool {
 		return x.Maintenance
 	}
 	return false
+}
+
+func (x *VolumeServerState) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
 }
 
 type BatchDeleteRequest struct {
@@ -1858,7 +1867,7 @@ func (x *GetStateResponse) GetState() *VolumeServerState {
 
 type SetStateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// SetState updates *all* volume server flags at once. Retrieve state with GetState(),
+	// SetState updates *all* volume server flags at once. Retrieve state/version with GetState(),
 	// modify individual flags as required, then call this RPC to update.
 	State         *VolumeServerState `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -6690,9 +6699,10 @@ var File_volume_server_proto protoreflect.FileDescriptor
 
 const file_volume_server_proto_rawDesc = "" +
 	"\n" +
-	"\x13volume_server.proto\x12\x10volume_server_pb\x1a\fremote.proto\"5\n" +
+	"\x13volume_server.proto\x12\x10volume_server_pb\x1a\fremote.proto\"O\n" +
 	"\x11VolumeServerState\x12 \n" +
-	"\vmaintenance\x18\x01 \x01(\bR\vmaintenance\"[\n" +
+	"\vmaintenance\x18\x01 \x01(\bR\vmaintenance\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\rR\aversion\"[\n" +
 	"\x12BatchDeleteRequest\x12\x19\n" +
 	"\bfile_ids\x18\x01 \x03(\tR\afileIds\x12*\n" +
 	"\x11skip_cookie_check\x18\x02 \x01(\bR\x0fskipCookieCheck\"O\n" +

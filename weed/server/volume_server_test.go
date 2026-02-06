@@ -42,11 +42,8 @@ func TestMaintenanceMode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vs := VolumeServer{
 				store: &storage.Store{
-					Id: "test_1234",
-					State: &storage.State{
-						FilePath: "/some/path.pb",
-						Pb:       tc.pb,
-					},
+					Id:    "test_1234",
+					State: storage.NewStateFromProto("/some/path.pb", tc.pb),
 				},
 			}
 
