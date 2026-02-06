@@ -23,7 +23,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
-
 // FilerClient provides access to the filer for storage operations.
 type FilerClient interface {
 	WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error
@@ -312,8 +311,8 @@ func getBucketFromPrefix(r *http.Request) string {
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
 	}
-	// Default bucket if no prefix - use "warehouse" for Iceberg
-	return "warehouse"
+	// Default bucket if no prefix - use "default" for Iceberg
+	return "default"
 }
 
 // buildTableBucketARN builds an ARN for a table bucket.
@@ -1026,14 +1025,6 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		Metadata:         newMetadata,
 	}
 	writeJSON(w, http.StatusOK, result)
-}
-
-// loadTableResultJSON is used for JSON serialization of LoadTableResult.
-// It wraps table.Metadata (which is an interface) for proper JSON output.
-type loadTableResultJSON struct {
-	MetadataLocation string             `json:"metadata-location,omitempty"`
-	Metadata         table.Metadata     `json:"metadata"`
-	Config           iceberg.Properties `json:"config,omitempty"`
 }
 
 // newTableMetadata creates a new table.Metadata object with the given parameters.
