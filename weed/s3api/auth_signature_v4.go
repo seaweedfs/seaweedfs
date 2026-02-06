@@ -24,7 +24,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
