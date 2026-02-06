@@ -311,8 +311,8 @@ func getBucketFromPrefix(r *http.Request) string {
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
 	}
-	// Default bucket if no prefix - use "default" for Iceberg
-	return "default"
+	// Default bucket if no prefix - use "warehouse" for Iceberg
+	return "warehouse"
 }
 
 // buildTableBucketARN builds an ARN for a table bucket.
