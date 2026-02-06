@@ -99,10 +99,16 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	}
 
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
-	if _, err := os.Stat(weedBinary); os.IsNotExist(err) {
-		weedBinary = "weed"
-		if _, err := exec.LookPath(weedBinary); err != nil {
-			t.Skip("weed binary not found, skipping integration test")
+	info, err := os.Stat(weedBinary)
+	if err != nil || info.IsDir() {
+		// Try looking for weed/weed/weed
+		weedBinary = filepath.Join(seaweedDir, "weed", "weed", "weed")
+		info, err = os.Stat(weedBinary)
+		if err != nil || info.IsDir() {
+			weedBinary = "weed"
+			if _, err := exec.LookPath(weedBinary); err != nil {
+				t.Skip("weed binary not found, skipping integration test")
+			}
 		}
 	}
 
