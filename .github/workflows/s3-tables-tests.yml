@@ -146,7 +146,7 @@ jobs:
 
       - name: Run Trino Iceberg Catalog Integration Tests
         timeout-minutes: 25
-        working-directory: test/s3/catalog_trino
+        working-directory: test/s3tables/catalog_trino
         run: |
           set -x
           set -o pipefail
@@ -164,7 +164,7 @@ jobs:
 
       - name: Show test output on failure
         if: failure()
-        working-directory: test/s3/catalog_trino
+        working-directory: test/s3tables/catalog_trino
         run: |
           echo "=== Test Output ==="
           if [ -f test-output.log ]; then
@@ -179,7 +179,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: trino-iceberg-catalog-test-logs
-          path: test/s3/catalog_trino/test-output.log
+          path: test/s3tables/catalog_trino/test-output.log
           retention-days: 3
 
   s3-tables-build-verification:
