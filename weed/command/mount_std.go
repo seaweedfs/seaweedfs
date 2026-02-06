@@ -188,6 +188,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
 		EnableAcl: true,
 	}
+	if *option.defaultPermissions {
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "default_permissions")
+	}
 	if *option.nonempty {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "nonempty")
 	}
@@ -216,8 +219,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
 	}
 
-	fuseMountOptions.EnableWriteback = *option.writebackCache
-	fuseMountOptions.EnableAsyncDio = *option.asyncDio
+  if option.writebackCache != nil {
+	  fuseMountOptions.EnableWriteback = *option.writebackCache
+  }
+  if option.asyncDio != nil {
+	  fuseMountOptions.EnableAsyncDio = *option.asyncDio
+  }
 	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}
