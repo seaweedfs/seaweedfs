@@ -9,7 +9,156 @@ option java_outer_classname = "IamProto";
 //////////////////////////////////////////////////
 
 service SeaweedIdentityAccessManagement {
+    // Configuration Management
+    rpc GetConfiguration (GetConfigurationRequest) returns (GetConfigurationResponse);
+    rpc PutConfiguration (PutConfigurationRequest) returns (PutConfigurationResponse);
+    
+    // User Management
+    rpc CreateUser (CreateUserRequest) returns (CreateUserResponse);
+    rpc GetUser (GetUserRequest) returns (GetUserResponse);
+    rpc UpdateUser (UpdateUserRequest) returns (UpdateUserResponse);
+    rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
+    rpc ListUsers (ListUsersRequest) returns (ListUsersResponse);
+    
+    // Access Key Management
+    rpc CreateAccessKey (CreateAccessKeyRequest) returns (CreateAccessKeyResponse);
+    rpc DeleteAccessKey (DeleteAccessKeyRequest) returns (DeleteAccessKeyResponse);
+    rpc GetUserByAccessKey (GetUserByAccessKeyRequest) returns (GetUserByAccessKeyResponse);
+    
+    // Policy Management
+    rpc PutPolicy (PutPolicyRequest) returns (PutPolicyResponse);
+    rpc GetPolicy (GetPolicyRequest) returns (GetPolicyResponse);
+    rpc ListPolicies (ListPoliciesRequest) returns (ListPoliciesResponse);
+    rpc DeletePolicy (DeletePolicyRequest) returns (DeletePolicyResponse);
 
+    // Service Account Management
+    rpc CreateServiceAccount (CreateServiceAccountRequest) returns (CreateServiceAccountResponse);
+    rpc UpdateServiceAccount (UpdateServiceAccountRequest) returns (UpdateServiceAccountResponse);
+    rpc DeleteServiceAccount (DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse);
+    rpc GetServiceAccount (GetServiceAccountRequest) returns (GetServiceAccountResponse);
+    rpc ListServiceAccounts (ListServiceAccountsRequest) returns (ListServiceAccountsResponse);
+    rpc GetServiceAccountByAccessKey (GetServiceAccountByAccessKeyRequest) returns (GetServiceAccountByAccessKeyResponse);
+}
+
+//////////////////////////////////////////////////
+// Configuration Management Messages
+
+message GetConfigurationRequest {
+}
+
+message GetConfigurationResponse {
+    S3ApiConfiguration configuration = 1;
+}
+
+message PutConfigurationRequest {
+    S3ApiConfiguration configuration = 1;
+}
+
+message PutConfigurationResponse {
+}
+
+//////////////////////////////////////////////////
+// User Management Messages
+
+message CreateUserRequest {
+    Identity identity = 1;
+}
+
+message CreateUserResponse {
+}
+
+message GetUserRequest {
+    string username = 1;
+}
+
+message GetUserResponse {
+    Identity identity = 1;
+}
+
+message UpdateUserRequest {
+    string username = 1;
+    Identity identity = 2;
+}
+
+message UpdateUserResponse {
+}
+
+message DeleteUserRequest {
+    string username = 1;
+}
+
+message DeleteUserResponse {
+}
+
+message ListUsersRequest {
+}
+
+message ListUsersResponse {
+    repeated string usernames = 1;
+}
+
+//////////////////////////////////////////////////
+// Access Key Management Messages
+
+message CreateAccessKeyRequest {
+    string username = 1;
+    Credential credential = 2;
+}
+
+message CreateAccessKeyResponse {
+}
+
+message DeleteAccessKeyRequest {
+    string username = 1;
+    string access_key = 2;
+}
+
+message DeleteAccessKeyResponse {
+}
+
+message GetUserByAccessKeyRequest {
+    string access_key = 1;
+}
+
+message GetUserByAccessKeyResponse {
+    Identity identity = 1;
+}
+
+message ListAccessKeysRequest {
+    string username = 1;
+}
+
+message ListAccessKeysResponse {
+    repeated Credential access_keys = 1;
+}
+
+// User Policy Management Messages
+message PutUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+    string policy_document = 3;
+}
+
+message PutUserPolicyResponse {
+}
+
+message GetUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+}
+
+message GetUserPolicyResponse {
+    string username = 1;
+    string policy_name = 2;
+    string policy_document = 3;
+}
+
+message DeleteUserPolicyRequest {
+    string username = 1;
+    string policy_name = 2;
+}
+
+message DeleteUserPolicyResponse {
 }
 
 //////////////////////////////////////////////////
@@ -18,6 +167,7 @@ message S3ApiConfiguration {
     repeated Identity identities = 1;
     repeated Account accounts = 2;
     repeated ServiceAccount service_accounts = 3;
+    repeated Policy policies = 4;
 }
 
 message Identity {
@@ -27,6 +177,7 @@ message Identity {
     Account account = 4;
     bool disabled = 5;  // User status: false = enabled (default), true = disabled
     repeated string service_account_ids = 6;  // IDs of service accounts owned by this user
+    repeated string policy_names = 7;
 }
 
 message Credential {
@@ -55,21 +206,106 @@ message ServiceAccount {
     string created_by = 9;             // Who created this service account
 }
 
-/*
+message PutPolicyRequest {
+    string name = 1;
+    string content = 2;
+}
+
+message PutPolicyResponse {
+}
+
+message GetPolicyRequest {
+    string name = 1;
+}
+
+message GetPolicyResponse {
+    string name = 1;
+    string content = 2;
+}
+
+message ListPoliciesRequest {
+}
+
+message ListPoliciesResponse {
+    repeated Policy policies = 1;
+}
+
+message DeletePolicyRequest {
+    string name = 1;
+}
+
+message DeletePolicyResponse {
+}
+
 message Policy {
-    repeated Statement statements = 1;
+    string name = 1;
+    string content = 2; // JSON content of the policy
 }
 
-message Statement {
-    repeated Action action = 1;
-    repeated Resource resource = 2;
+//////////////////////////////////////////////////
+// Service Account Messages
+
+message CreateServiceAccountRequest {
+    ServiceAccount service_account = 1;
 }
 
-message Action {
-    string action = 1;
+message CreateServiceAccountResponse {
 }
-message Resource {
-    string bucket = 1;
-    // string path = 2;
+
+message UpdateServiceAccountRequest {
+    string id = 1;
+    ServiceAccount service_account = 2;
 }
-*/
+
+message UpdateServiceAccountResponse {
+}
+
+message DeleteServiceAccountRequest {
+    string id = 1;
+}
+
+message DeleteServiceAccountResponse {
+}
+
+message GetServiceAccountRequest {
+    string id = 1;
+}
+
+message GetServiceAccountResponse {
+    ServiceAccount service_account = 1;
+}
+
+message ListServiceAccountsRequest {
+}
+
+message ListServiceAccountsResponse {
+    repeated ServiceAccount service_accounts = 1;
+}
+
+message GetServiceAccountByAccessKeyRequest {
+    string access_key = 1;
+}
+
+message GetServiceAccountByAccessKeyResponse {
+    ServiceAccount service_account = 1;
+}
+
+
+//////////////////////////////////////////////////
+// S3 IAM Cache Management
+// Designed for unidirectional propagation from Filer to S3 Servers
+
+
+message PutIdentityRequest {
+    Identity identity = 1;
+}
+
+message PutIdentityResponse {
+}
+
+message RemoveIdentityRequest {
+    string username = 1;
+}
+
+message RemoveIdentityResponse {
+}

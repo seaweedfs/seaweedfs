@@ -39,6 +39,11 @@ func NewMaintenanceHandlers(adminServer *dash.AdminServer) *MaintenanceHandlers 
 func (h *MaintenanceHandlers) ShowTaskDetail(c *gin.Context) {
 	taskID := c.Param("id")
 
+	if h.adminServer == nil {
+		c.String(http.StatusInternalServerError, "Admin server not initialized")
+		return
+	}
+
 	taskDetail, err := h.adminServer.GetMaintenanceTaskDetail(taskID)
 	if err != nil {
 		glog.Errorf("DEBUG ShowTaskDetail: error getting task detail for %s: %v", taskID, err)
@@ -111,6 +116,10 @@ func (h *MaintenanceHandlers) ShowMaintenanceQueue(c *gin.Context) {
 
 // ShowMaintenanceWorkers displays the maintenance workers page
 func (h *MaintenanceHandlers) ShowMaintenanceWorkers(c *gin.Context) {
+	if h.adminServer == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Admin server not initialized"})
+		return
+	}
 	workersData, err := h.adminServer.GetMaintenanceWorkersData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -339,6 +348,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 			glog.Warningf("Failed to save task config to protobuf file: %v", err)
 			// Don't fail the request, just log the warning
 		}
+	} else if h.adminServer == nil {
+		glog.Warningf("Failed to save task config: admin server not initialized")
 	}
 
 	// Trigger a configuration reload in the maintenance manager
@@ -492,74 +503,25 @@ func (h *MaintenanceHandlers) UpdateMaintenanceConfig(c *gin.Context) {
 // Helper methods that delegate to AdminServer
 
 func (h *MaintenanceHandlers) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	tasks, err := h.getMaintenanceTasks()
-	if err != nil {
-		return nil, err
-	}
-
-	workers, err := h.getMaintenanceWorkers()
-	if err != nil {
-		return nil, err
-	}
-
-	stats, err := h.getMaintenanceQueueStats()
-	if err != nil {
-		return nil, err
-	}
-
-	data := &maintenance.MaintenanceQueueData{
-		Tasks:       tasks,
-		Workers:     workers,
-		Stats:       stats,
-		LastUpdated: time.Now(),
-	}
-
-	return data, nil
-}
-
-func (h *MaintenanceHandlers) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	// Use the exported method from AdminServer
-	return h.adminServer.GetMaintenanceQueueStats()
-}
-
-func (h *MaintenanceHandlers) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	// Call the maintenance manager directly to get recent tasks (limit for performance)
 	if h.adminServer == nil {
-		return []*maintenance.MaintenanceTask{}, nil
+		return nil, fmt.Errorf("admin server not initialized")
 	}
-
-	manager := h.adminServer.GetMaintenanceManager()
-	if manager == nil {
-		return []*maintenance.MaintenanceTask{}, nil
-	}
-
-	// Get recent tasks only (last 100) to prevent slow page loads
-	// Users can view more tasks via pagination if needed
-	allTasks := manager.GetTasks("", "", 100)
-	return allTasks, nil
-}
-
-func (h *MaintenanceHandlers) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
-	// Get workers from the admin server's maintenance manager
-	if h.adminServer == nil {
-		return []*maintenance.MaintenanceWorker{}, nil
-	}
-
-	if h.adminServer.GetMaintenanceManager() == nil {
-		return []*maintenance.MaintenanceWorker{}, nil
-	}
-
-	// Get workers from the maintenance manager
-	workers := h.adminServer.GetMaintenanceManager().GetWorkers()
-	return workers, nil
+	// Use the exported method from AdminServer used by the JSON API
+	return h.adminServer.GetMaintenanceQueueData()
 }
 
 func (h *MaintenanceHandlers) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
+	if h.adminServer == nil {
+		return nil, fmt.Errorf("admin server not initialized")
+	}
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.GetMaintenanceConfigData()
 }
 
 func (h *MaintenanceHandlers) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
+	if h.adminServer == nil {
+		return fmt.Errorf("admin server not initialized")
+	}
 	// Delegate to AdminServer's real persistence method
 	return h.adminServer.UpdateMaintenanceConfigData(config)
 }

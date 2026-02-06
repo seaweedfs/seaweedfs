@@ -39,8 +39,8 @@ global:
   replicationPlacement: "001"
   extraEnvironmentVars:
     WEED_CLUSTER_DEFAULT: "sw"
-    WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
-    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
+    WEED_CLUSTER_SW_MASTER: "{{ include \"seaweedfs.cluster.masterAddress\" . }}"
+    WEED_CLUSTER_SW_FILER: "{{ include \"seaweedfs.cluster.filerAddress\" . }}"
     # WEED_JWT_SIGNING_KEY:
     #   secretKeyRef:
     #     name: seaweedfs-signing-key
@@ -544,6 +544,30 @@ volume:
     failureThreshold: 100
     timeoutSeconds: 30
 
+  ingress:
+    enabled: false
+    className: ""
+    host: "volume.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/app-root: /ui/index.html
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Volume'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-volume/">'; #add base url
+      #   sub_filter '="/' '="./';                               #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
+
 # Map of named volume groups for topology-aware deployments.
 # Each key inherits all fields from the `volume` section but can override
 # them locally—for example, replicas, nodeSelector, dataCenter, etc.
@@ -867,7 +891,7 @@ filer:
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
     auditLogConfig: {}
-    # You may specify buckets to be created during the install process.
+    # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
     # createBuckets:
     #   - name: bucket-a
@@ -885,6 +909,9 @@ s3:
   # add additional https port
   httpsPort: 0
   metricsPort: 9327
+  # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
+  # Set to a port number to enable, or 0/null to disable
+  icebergPort: null
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -892,6 +919,13 @@ s3:
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
   auditLogConfig: {}
+  # You may specify buckets to be created during the install or upgrade process.
+  # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+  # createBuckets:
+  #   - name: bucket-a
+  #     anonymousRead: true
+  #   - name: bucket-b
+  #     anonymousRead: false
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
@@ -1016,6 +1050,15 @@ s3:
     path: "/"
     pathType: Prefix
     # additional ingress annotations for the s3 endpoint
+    annotations: {}
+    tls: []
+
+  icebergIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
     annotations: {}
     tls: []
 

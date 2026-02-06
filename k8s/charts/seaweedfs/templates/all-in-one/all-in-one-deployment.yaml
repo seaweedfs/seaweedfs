@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-all-in-one
+  name: {{ include "seaweedfs.fullname" . }}-all-in-one
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -98,13 +98,13 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
+              value: "{{ include "seaweedfs.fullname" . }}"
             {{- if .Values.allInOne.extraEnvironmentVars }}
             {{- range $key, $value := .Values.allInOne.extraEnvironmentVars }}
             {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
               {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 }}
@@ -117,7 +117,7 @@ spec:
             {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
               {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 }}
@@ -421,7 +421,7 @@ spec:
             type: DirectoryOrCreate
           {{- else if eq .Values.allInOne.data.type "persistentVolumeClaim" }}
           persistentVolumeClaim:
-            claimName: {{ template "seaweedfs.name" . }}-all-in-one-data
+            claimName: {{ include "seaweedfs.fullname" . }}-all-in-one-data
           {{- else if eq .Values.allInOne.data.type "existingClaim" }}
           persistentVolumeClaim:
             claimName: {{ .Values.allInOne.data.claimName }}
@@ -432,47 +432,47 @@ spec:
         - name: config-s3-users
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-s3-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret) }}
+            secretName: {{ default (printf "%s-s3-secret" (include "seaweedfs.fullname" .)) (or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret) }}
         {{- end }}
         {{- if .Values.allInOne.sftp.enabled }}
         - name: config-ssh
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-sftp-ssh-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.sftp.existingSshConfigSecret .Values.sftp.existingSshConfigSecret) }}
+            secretName: {{ default (printf "%s-sftp-ssh-secret" (include "seaweedfs.fullname" .)) (or .Values.allInOne.sftp.existingSshConfigSecret .Values.sftp.existingSshConfigSecret) }}
         {{- if or .Values.allInOne.sftp.enableAuth .Values.sftp.enableAuth }}
         - name: config-users
           secret:
             defaultMode: 420
-            secretName: {{ default (printf "%s-sftp-secret" (include "seaweedfs.name" .)) (or .Values.allInOne.sftp.existingConfigSecret .Values.sftp.existingConfigSecret) }}
+            secretName: {{ default (printf "%s-sftp-secret" (include "seaweedfs.fullname" .)) (or .Values.allInOne.sftp.existingConfigSecret .Values.sftp.existingConfigSecret) }}
         {{- end }}
         {{- end }}
         {{- if .Values.filer.notificationConfig }}
         - name: notification-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-notification-config
+            name: {{ include "seaweedfs.fullname" . }}-notification-config
         {{- end }}
         - name: master-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-master-config
+            name: {{ include "seaweedfs.fullname" . }}-master-config
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.allInOne.extraVolumes . | nindent 8 }}
       {{- if .Values.allInOne.nodeSelector }}

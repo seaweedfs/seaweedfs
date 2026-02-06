@@ -11,10 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	iam_pb "github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -57,6 +55,12 @@ var (
 	createdInitialIAM bool // Track if initial IAM config was created from env vars
 	// Track which port flags were explicitly passed on CLI before config file is applied
 	explicitPortFlags map[string]bool
+	miniEnableWebDAV  *bool
+	miniEnableS3      *bool
+	miniEnableAdminUI *bool
+	miniS3IamReadOnly *bool
+	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
+	MiniClusterCtx context.Context
 )
 
 func init() {
@@ -89,12 +93,13 @@ Example Usage:
 	weed mini -dir=/data -master.port=9444  # Custom master port
 
 After starting, you can access:
-- Master UI:    http://localhost:9333
-- Volume Server: http://localhost:9340
-- Filer UI:     http://localhost:8888
-- S3 Endpoint:  http://localhost:8333
-- WebDAV:       http://localhost:7333
-- Admin UI:     http://localhost:23646
+- Master UI:       http://localhost:9333
+- Volume Server:   http://localhost:9340
+- Filer UI:        http://localhost:8888
+- S3 Endpoint:     http://localhost:8333
+- Iceberg Catalog: http://localhost:8181
+- WebDAV:          http://localhost:7333
+- Admin UI:        http://localhost:23646
 
 S3 Access:
 The S3 endpoint is available at http://localhost:8333. For client
@@ -135,6 +140,10 @@ func initMiniCommonFlags() {
 	miniOptions.memprofile = cmdMini.Flag.String("memprofile", "", "memory profile output file")
 	miniOptions.debug = cmdMini.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:6060/debug/pprof/goroutine?debug=2")
 	miniOptions.debugPort = cmdMini.Flag.Int("debug.port", 6060, "http port for debugging")
+	miniEnableWebDAV = cmdMini.Flag.Bool("webdav", true, "enable WebDAV server")
+	miniEnableS3 = cmdMini.Flag.Bool("s3", true, "enable S3 server")
+	miniEnableAdminUI = cmdMini.Flag.Bool("admin.ui", true, "enable Admin UI")
+	miniS3IamReadOnly = cmdMini.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
 }
 
 // initMiniMasterFlags initializes Master server flag options
@@ -214,6 +223,7 @@ func initMiniS3Flags() {
 	miniS3Options.port = cmdMini.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
+	miniS3Options.portIceberg = cmdMini.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	miniS3Options.allowedOrigins = cmdMini.Flag.String("s3.allowedOrigins", "*", "comma separated list of allowed origins")
 	miniS3Options.tlsPrivateKey = cmdMini.Flag.String("s3.key.file", "", "path to the TLS private key file")
@@ -228,6 +238,7 @@ func initMiniS3Flags() {
 	miniS3Options.concurrentUploadLimitMB = cmdMini.Flag.Int("s3.concurrentUploadLimitMB", 0, "limit total concurrent upload size")
 	miniS3Options.concurrentFileUploadLimit = cmdMini.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads")
 	miniS3Options.enableIam = cmdMini.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same port")
+	miniS3Options.iamReadOnly = miniS3IamReadOnly
 	miniS3Options.dataCenter = cmdMini.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	miniS3Options.cipher = cmdMini.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	miniS3Options.config = miniS3Config
@@ -446,10 +457,35 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 		{miniMasterOptions.port, "Master", "master.port", miniMasterOptions.portGrpc},
 		{miniFilerOptions.port, "Filer", "filer.port", miniFilerOptions.portGrpc},
 		{miniOptions.v.port, "Volume", "volume.port", miniOptions.v.portGrpc},
-		{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc},
-		{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
-		{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort},
 	}
+	if *miniEnableS3 {
+		portConfigs = append(portConfigs, struct {
+			port     *int
+			name     string
+			flagName string
+			grpcPtr  *int
+		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc})
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			portConfigs = append(portConfigs, struct {
+				port     *int
+				name     string
+				flagName string
+				grpcPtr  *int
+			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
+		}
+	}
+	portConfigs = append(portConfigs, struct {
+		port     *int
+		name     string
+		flagName string
+		grpcPtr  *int
+	}{miniWebDavOptions.port, "WebDAV", "webdav.port", nil},
+		struct {
+			port     *int
+			name     string
+			flagName string
+			grpcPtr  *int
+		}{miniAdminOptions.port, "Admin", "admin.port", miniAdminOptions.grpcPort})
 
 	// First, reserve all gRPC ports that will be calculated to prevent HTTP port allocation from using them
 	// This prevents collisions like: HTTP port moves to X, then gRPC port is calculated as Y where Y == X
@@ -484,9 +520,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
-	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+	icebergPortStr := "disabled"
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
+	}
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
@@ -512,9 +552,19 @@ func initializeGrpcPortsOnIP(bindIp string) {
 		{miniMasterOptions.port, miniMasterOptions.portGrpc, "Master"},
 		{miniFilerOptions.port, miniFilerOptions.portGrpc, "Filer"},
 		{miniOptions.v.port, miniOptions.v.portGrpc, "Volume"},
-		{miniS3Options.port, miniS3Options.portGrpc, "S3"},
-		{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"},
 	}
+	if *miniEnableS3 {
+		grpcConfigs = append(grpcConfigs, struct {
+			httpPort *int
+			grpcPort *int
+			name     string
+		}{miniS3Options.port, miniS3Options.portGrpc, "S3"})
+	}
+	grpcConfigs = append(grpcConfigs, struct {
+		httpPort *int
+		grpcPort *int
+		name     string
+	}{miniAdminOptions.port, miniAdminOptions.grpcPort, "Admin"})
 
 	for _, config := range grpcConfigs {
 		if config.grpcPort == nil {
@@ -668,7 +718,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
 	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port"}
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "s3.port.iceberg", "webdav.port", "admin.port", "s3.iam.readOnly"}
 	for _, flagName := range portFlagNames {
 		explicitPortFlags[flagName] = isFlagPassed(flagName)
 	}
@@ -787,7 +837,12 @@ func runMini(cmd *Command, args []string) bool {
 	// Save configuration to file for persistence and documentation
 	saveMiniConfiguration(*miniDataFolders)
 
-	select {}
+	if MiniClusterCtx != nil {
+		<-MiniClusterCtx.Done()
+	} else {
+		select {}
+	}
+	return true
 }
 
 // startMiniServices starts all mini services with proper dependency coordination
@@ -821,17 +876,28 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
 	// Start S3 and WebDAV in parallel (both depend on filer)
-	go startMiniService("S3", func() {
-		startS3Service()
-	}, *miniS3Options.port)
+	if *miniEnableS3 {
+		go startMiniService("S3", func() {
+			startS3Service()
+		}, *miniS3Options.port)
+	}
 
-	go startMiniService("WebDAV", func() {
-		miniWebDavOptions.startWebDav()
-	}, *miniWebDavOptions.port)
+	if *miniEnableWebDAV {
+		go startMiniService("WebDAV", func() {
+			miniWebDavOptions.startWebDav()
+		}, *miniWebDavOptions.port)
+	}
 
-	// Wait for both S3 and WebDAV to be ready
-	waitForServiceReady("S3", *miniS3Options.port, bindIp)
-	waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	// Wait for services to be ready
+	if *miniEnableS3 {
+		waitForServiceReady("S3", *miniS3Options.port, bindIp)
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+		}
+	}
+	if *miniEnableWebDAV {
+		waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
+	}
 
 	// Start Admin with worker (depends on master, filer, S3, WebDAV)
 	go startMiniAdminWithWorker(allServicesReady)
@@ -846,6 +912,7 @@ func startMiniService(name string, fn func(), port int) {
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
 func waitForServiceReady(name string, port int, bindIp string) {
 	address := fmt.Sprintf("http://%s:%d", bindIp, port)
+	healthAddr := getHealthCheckAddr(address)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -853,7 +920,7 @@ func waitForServiceReady(name string, port int, bindIp string) {
 	}
 
 	for attempt < maxAttempts {
-		resp, err := client.Get(address)
+		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
 			glog.Infof("%s service is ready at %s", name, address)
@@ -875,37 +942,7 @@ func startS3Service() {
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	if accessKey != "" && secretKey != "" {
-		user := "mini"
-		iamCfg := &iam_pb.S3ApiConfiguration{}
-		ident := &iam_pb.Identity{Name: user}
-		ident.Credentials = append(ident.Credentials, &iam_pb.Credential{AccessKey: accessKey, SecretKey: secretKey})
-		ident.Actions = append(ident.Actions, "Admin")
-		iamCfg.Identities = append(iamCfg.Identities, ident)
-
-		iamPath := filepath.Join(*miniDataFolders, "iam_config.json")
-
-		// Check if IAM config file already exists
-		if _, err := os.Stat(iamPath); err == nil {
-			// File exists, skip writing to preserve existing configuration
-			glog.V(1).Infof("IAM config file already exists at %s, preserving existing configuration", iamPath)
-			*miniIamConfig = iamPath
-		} else if os.IsNotExist(err) {
-			// File does not exist, create and write new configuration
-			f, err := os.OpenFile(iamPath, os.O_CREATE|os.O_WRONLY, 0600)
-			if err != nil {
-				glog.Fatalf("failed to create IAM config file %s: %v", iamPath, err)
-			}
-			defer f.Close()
-			if err := filer.ProtoToText(f, iamCfg); err != nil {
-				glog.Fatalf("failed to write IAM config to %s: %v", iamPath, err)
-			}
-			*miniIamConfig = iamPath
-			createdInitialIAM = true // Mark that we created initial IAM config
-			glog.V(1).Infof("Created initial IAM config at %s", iamPath)
-		} else {
-			// Error checking file existence
-			glog.Fatalf("failed to check IAM config file existence at %s: %v", iamPath, err)
-		}
+		createdInitialIAM = true
 	}
 
 	miniS3Options.localFilerSocket = miniFilerOptions.localSocket
@@ -916,7 +953,12 @@ func startS3Service() {
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
-	ctx := context.Background()
+	var ctx context.Context
+	if MiniClusterCtx != nil {
+		ctx = MiniClusterCtx
+	} else {
+		ctx = context.Background()
+	}
 
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
@@ -958,7 +1000,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions); err != nil {
+		var icebergPort int
+		if miniS3Options.portIceberg != nil {
+			icebergPort = *miniS3Options.portIceberg
+		}
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -980,7 +1026,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
 func waitForAdminServerReady(adminAddr string) error {
-	healthAddr := fmt.Sprintf("%s/health", adminAddr)
+	healthAddr := getHealthCheckAddr(fmt.Sprintf("%s/health", adminAddr))
 	maxAttempts := 60 // 60 * 500ms = 30 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -991,7 +1037,7 @@ func waitForAdminServerReady(adminAddr string) error {
 		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
-			glog.V(1).Infof("Admin server is ready at %s", adminAddr)
+			glog.Infof("Admin server is ready at %s", adminAddr)
 			return nil
 		}
 		attempt++
@@ -999,6 +1045,12 @@ func waitForAdminServerReady(adminAddr string) error {
 	}
 
 	return fmt.Errorf("admin server did not become ready at %s after %d attempts", adminAddr, maxAttempts)
+}
+func getHealthCheckAddr(addr string) string {
+	if strings.Contains(addr, "://0.0.0.0:") {
+		return strings.Replace(addr, "://0.0.0.0:", "://127.0.0.1:", 1)
+	}
+	return addr
 }
 
 // waitForWorkerReady polls the worker's gRPC port to ensure the worker has fully initialized
@@ -1089,6 +1141,12 @@ func startMiniWorker() {
 	// Metrics server is already started in the main init function above, so no need to start it again here
 
 	// Start the worker
+	if MiniClusterCtx != nil {
+		go func() {
+			<-MiniClusterCtx.Done()
+			workerInstance.Stop()
+		}()
+	}
 	err = workerInstance.Start()
 	if err != nil {
 		glog.Fatalf("Failed to start worker: %v", err)
@@ -1096,32 +1154,6 @@ func startMiniWorker() {
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
-
-const welcomeMessageTemplate = `
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      SeaweedFS Mini - All-in-One Mode                         ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-  All components are running and ready to use:
-
-    Master UI:      http://%s:%d
-    Filer UI:       http://%s:%d
-    S3 Endpoint:    http://%s:%d
-    WebDAV:         http://%s:%d
-    Admin UI:       http://%s:%d
-    Volume Server:  http://%s:%d
-
-  Optimized Settings:
-    • Volume size limit: %dMB
-    • Volume max: auto (based on free disk space)
-    • Pre-stop seconds: 1 (faster shutdown)
-    • Master peers: none (single master mode)
-    • Admin UI for management and maintenance tasks
-
-  Data Directory: %s
-
-  Press Ctrl+C to stop all components
-`
 
 const credentialsInstructionTemplate = `
   To create S3 credentials, you have two options:
@@ -1138,28 +1170,60 @@ const credentialsInstructionTemplate = `
 `
 
 const credentialsCreatedMessage = `
-  Initial S3 credentials created:
-    user: mini
-    Note: credentials have been written to the IAM configuration file.
+  Initial S3 credentials loaded from environment variables.
 `
 
 // printWelcomeMessage prints the welcome message after all services are running
 func printWelcomeMessage() {
-	fmt.Printf(welcomeMessageTemplate,
-		*miniIp, *miniMasterOptions.port,
-		*miniIp, *miniFilerOptions.port,
-		*miniIp, *miniS3Options.port,
-		*miniIp, *miniWebDavOptions.port,
-		*miniIp, *miniAdminOptions.port,
-		*miniIp, *miniOptions.v.port,
-		*miniMasterOptions.volumeSizeLimitMB,
-		*miniDataFolders,
-	)
+	var sb strings.Builder
+
+	sb.WriteString("╔═══════════════════════════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
+	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
+	sb.WriteString("  All enabled components are running and ready to use:\n\n")
+	fmt.Fprintf(&sb, "    Master UI:       http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Filer UI:        http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	if *miniEnableS3 {
+		fmt.Fprintf(&sb, "    S3 Endpoint:     http://%s:%d\n", *miniIp, *miniS3Options.port)
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
+		}
+	}
+
+	if *miniEnableWebDAV {
+		fmt.Fprintf(&sb, "    WebDAV:          http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+	}
+	if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+	}
+
+	fmt.Fprintf(&sb, "    Volume Server:   http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
+
+	sb.WriteString("  Optimized Settings:\n")
+	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)
+	sb.WriteString("    • Volume max: auto (based on free disk space)\n")
+	sb.WriteString("    • Pre-stop seconds: 1 (faster shutdown)\n")
+	sb.WriteString("    • Master peers: none (single master mode)\n")
+
+	if *miniEnableAdminUI {
+		sb.WriteString("    • Admin UI for management and maintenance tasks\n")
+	}
+
+	fmt.Fprintf(&sb, "\n  Data Directory: %s\n\n", *miniDataFolders)
+	sb.WriteString("  Press Ctrl+C to stop all components")
 
 	if createdInitialIAM {
-		fmt.Print(credentialsCreatedMessage)
+		sb.WriteString(credentialsCreatedMessage)
+	} else if *miniEnableAdminUI {
+		fmt.Fprintf(&sb, credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
 	} else {
-		fmt.Printf(credentialsInstructionTemplate, *miniIp, *miniAdminOptions.port)
+		sb.WriteString("\n  To create S3 credentials, use environment variables:\n\n")
+		sb.WriteString("    export AWS_ACCESS_KEY_ID=your-access-key\\n")
+		sb.WriteString("    export AWS_SECRET_ACCESS_KEY=your-secret-key\\n")
+		sb.WriteString("    weed mini -dir=/data\\n")
+		sb.WriteString("    This will create initial credentials for the 'mini' user.\\n")
 	}
+
+	fmt.Print(sb.String())
 	fmt.Println("")
 }

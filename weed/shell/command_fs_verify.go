@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -20,7 +22,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"go.uber.org/atomic"
-	"slices"
 )
 
 func init() {
@@ -280,7 +281,7 @@ func (c *commandFsVerify) verifyEntry(path string, chunks []*filer_pb.FileChunk,
 func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errCount uint64, err error) {
 	timeNowAtSec := time.Now().Unix()
 	return fileCount, errCount, doTraverseBfsAndSaving(c.env, c.writer, path, false,
-		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if c.modifyTimeAgoAtSec > 0 {
 				if entry.Entry.Attributes != nil && c.modifyTimeAgoAtSec < timeNowAtSec-entry.Entry.Attributes.Mtime {
 					return nil
@@ -292,14 +293,18 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			if len(dataChunks) > 0 {
-				outputChan <- &ItemEntry{
+				select {
+				case outputChan <- &ItemEntry{
 					chunks: dataChunks,
 					path:   util.NewFullPath(entry.Dir, entry.Entry.Name),
+				}:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 			return nil
 		},
-		func(outputChan chan interface{}) {
+		func(outputChan chan interface{}) error {
 			var wg sync.WaitGroup
 			itemErrCount := atomic.NewUint64(0)
 			for itemEntry := range outputChan {
@@ -314,5 +319,6 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 			}
 			wg.Wait()
 			errCount = itemErrCount.Load()
+			return nil
 		})
 }

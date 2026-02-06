@@ -157,8 +157,10 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
             })
             .then(response => {
                 if (response.status === 401) {
-                    alert('Authentication required. Please log in first.');
-                    window.location.href = '/login';
+                    showAlert('Authentication required. Please log in first.', 'warning');
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 2000);
                     return;
                 }
                 return response.json();
@@ -166,20 +168,20 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
             .then(data => {
                 if (!data) return; // Skip if redirected to login
                 if (data.success) {
-                    alert('Configuration saved successfully!');
+                    showAlert('Configuration saved successfully!', 'success');
                     location.reload();
                 } else {
-                    alert('Error saving configuration: ' + (data.error || 'Unknown error'));
+                    showAlert('Error saving configuration: ' + (data.error || 'Unknown error'), 'error');
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error saving configuration: ' + error.message);
+                showAlert('Error saving configuration: ' + error.message, 'error');
             });
         }
 
         function resetToDefaults() {
-            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+            showConfirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.', function() {
                 fetch('/maintenance/config/defaults', {
                     method: 'POST',
                     headers: {
@@ -189,17 +191,17 @@ templ MaintenanceConfigSchema(data *maintenance.MaintenanceConfigData, schema *m
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Configuration reset to defaults!');
+                        showAlert('Configuration reset to defaults!', 'success');
                         location.reload();
                     } else {
-                        alert('Error resetting configuration: ' + (data.error || 'Unknown error'));
+                        showAlert('Error resetting configuration: ' + (data.error || 'Unknown error'), 'error');
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    alert('Error resetting configuration: ' + error.message);
+                    showAlert('Error resetting configuration: ' + error.message, 'error');
                 });
-            }
+            });
         }
     </script>
 }

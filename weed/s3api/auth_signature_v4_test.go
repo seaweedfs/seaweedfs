@@ -1,9 +1,70 @@
 package s3api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+func TestExtractV4AuthInfoFromHeader_S3Tables(t *testing.T) {
+	now := time.Now().UTC()
+	dateStr := now.Format(iso8601Format)
+
+	tests := []struct {
+		name           string
+		service        string
+		body           string
+		expectAutoHash bool
+	}{
+		{
+			name:           "s3 service should not auto-hash",
+			service:        "s3",
+			body:           "hello",
+			expectAutoHash: false,
+		},
+		{
+			name:           "s3tables service should auto-hash",
+			service:        "s3tables",
+			body:           "hello",
+			expectAutoHash: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := bytes.NewReader([]byte(tt.body))
+			req, _ := http.NewRequest(http.MethodPost, "http://localhost/", body)
+
+			authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/%s/us-east-1/%s/aws4_request, SignedHeaders=host, Signature=dummy",
+				now.Format(yyyymmdd), tt.service)
+			req.Header.Set("Authorization", authHeader)
+			req.Header.Set("x-amz-date", dateStr)
+
+			authInfo, errCode := extractV4AuthInfoFromHeader(req)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("extractV4AuthInfoFromHeader failed: %v", errCode)
+			}
+
+			if tt.expectAutoHash {
+				expectedHash := sha256.Sum256([]byte(tt.body))
+				expectedHashStr := hex.EncodeToString(expectedHash[:])
+				if authInfo.HashedPayload != expectedHashStr {
+					t.Errorf("Expected auto-hashed payload %s, got %s", expectedHashStr, authInfo.HashedPayload)
+				}
+			} else {
+				if authInfo.HashedPayload != emptySHA256 {
+					t.Errorf("Expected non-auto-hashed payload %s (emptySHA256), got %s", emptySHA256, authInfo.HashedPayload)
+				}
+			}
+		})
+	}
+}
 
 func TestBuildPathWithForwardedPrefix(t *testing.T) {
 	tests := []struct {

@@ -70,19 +70,33 @@ func createS3Client(endpoint string) *s3.S3 {
 	return s3.New(sess)
 }
 
-// skipIfNotRunning skips the test if the servers aren't running
-func skipIfNotRunning(t *testing.T) {
+// checkServersRunning ensures the servers are running and fails if they aren't
+func checkServersRunning(t *testing.T) {
 	resp, err := http.Get(primaryEndpoint)
-	if err != nil {
-		t.Skipf("Primary SeaweedFS not running at %s: %v", primaryEndpoint, err)
-	}
+	require.NoErrorf(t, err, "Primary SeaweedFS not running at %s", primaryEndpoint)
 	resp.Body.Close()
 
 	resp, err = http.Get(remoteEndpoint)
-	if err != nil {
-		t.Skipf("Remote SeaweedFS not running at %s: %v", remoteEndpoint, err)
-	}
+	require.NoErrorf(t, err, "Remote SeaweedFS not running at %s", remoteEndpoint)
 	resp.Body.Close()
+}
+
+// stripLogs removes SeaweedFS log lines from the output
+func stripLogs(output string) string {
+	lines := strings.Split(output, "\n")
+	var filtered []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > 0 && (trimmed[0] == 'I' || trimmed[0] == 'W' || trimmed[0] == 'E' || trimmed[0] == 'F') && len(trimmed) > 5 && isDigit(trimmed[1]) {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func isDigit(b byte) bool {
+	return b >= '0' && b <= '9'
 }
 
 // runWeedShell executes a weed shell command
@@ -90,11 +104,62 @@ func runWeedShell(t *testing.T, command string) (string, error) {
 	cmd := exec.Command(weedBinary, "shell", "-master=localhost:"+primaryMasterPort)
 	cmd.Stdin = strings.NewReader(command + "\nexit\n")
 	output, err := cmd.CombinedOutput()
+	result := stripLogs(string(output))
 	if err != nil {
-		t.Logf("weed shell command '%s' failed: %v, output: %s", command, err, string(output))
-		return string(output), err
+		t.Logf("weed shell command '%s' failed: %v, output: %s", command, err, result)
+		return result, err
 	}
-	return string(output), nil
+	return result, nil
+}
+
+// runWeedShellWithOutput executes a weed shell command and returns output even on error
+func runWeedShellWithOutput(t *testing.T, command string) (output string, err error) {
+	cmd := exec.Command(weedBinary, "shell", "-master=localhost:"+primaryMasterPort)
+	cmd.Stdin = strings.NewReader(command + "\nexit\n")
+	outputBytes, err := cmd.CombinedOutput()
+	output = stripLogs(string(outputBytes))
+	if err != nil {
+		t.Logf("weed shell command '%s' output: %s", command, output)
+	}
+	return output, err
+}
+
+// createTestFile creates a test file with specific content via S3
+func createTestFile(t *testing.T, key string, size int) []byte {
+	data := make([]byte, size)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+	uploadToPrimary(t, key, data)
+	return data
+}
+
+// verifyFileContent verifies file content matches expected data
+func verifyFileContent(t *testing.T, key string, expected []byte) {
+	actual := getFromPrimary(t, key)
+	assert.Equal(t, expected, actual, "file content mismatch for %s", key)
+}
+
+// waitForCondition waits for a condition to be true with timeout
+func waitForCondition(t *testing.T, condition func() bool, timeout time.Duration, message string) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("Timeout waiting for: %s", message)
+	return false
+}
+
+// fileExists checks if a file exists via S3
+func fileExists(t *testing.T, key string) bool {
+	_, err := getPrimaryClient().HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(testBucket),
+		Key:    aws.String(key),
+	})
+	return err == nil
 }
 
 // uploadToPrimary uploads an object to the primary SeaweedFS (local write)
@@ -137,7 +202,7 @@ func uncacheLocal(t *testing.T, pattern string) {
 // 2. Uncache (push to remote, remove local chunks)
 // 3. Read (triggers caching from remote)
 func TestRemoteCacheBasic(t *testing.T) {
-	skipIfNotRunning(t)
+	checkServersRunning(t)
 
 	testKey := fmt.Sprintf("test-basic-%d.txt", time.Now().UnixNano())
 	testData := []byte("Hello, this is test data for remote caching!")
@@ -178,7 +243,7 @@ func TestRemoteCacheBasic(t *testing.T) {
 // TestRemoteCacheConcurrent tests that concurrent reads of the same
 // remote object only trigger ONE caching operation (singleflight deduplication)
 func TestRemoteCacheConcurrent(t *testing.T) {
-	skipIfNotRunning(t)
+	checkServersRunning(t)
 
 	testKey := fmt.Sprintf("test-concurrent-%d.txt", time.Now().UnixNano())
 	// Use larger data to make caching take measurable time
@@ -257,7 +322,7 @@ func TestRemoteCacheConcurrent(t *testing.T) {
 
 // TestRemoteCacheLargeObject tests caching of larger objects
 func TestRemoteCacheLargeObject(t *testing.T) {
-	skipIfNotRunning(t)
+	checkServersRunning(t)
 
 	testKey := fmt.Sprintf("test-large-%d.bin", time.Now().UnixNano())
 	// 5MB object
@@ -293,7 +358,7 @@ func TestRemoteCacheLargeObject(t *testing.T) {
 
 // TestRemoteCacheRangeRequest tests that range requests work after caching
 func TestRemoteCacheRangeRequest(t *testing.T) {
-	skipIfNotRunning(t)
+	checkServersRunning(t)
 
 	testKey := fmt.Sprintf("test-range-%d.txt", time.Now().UnixNano())
 	testData := []byte("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -325,7 +390,7 @@ func TestRemoteCacheRangeRequest(t *testing.T) {
 
 // TestRemoteCacheNotFound tests that non-existent objects return proper errors
 func TestRemoteCacheNotFound(t *testing.T) {
-	skipIfNotRunning(t)
+	checkServersRunning(t)
 
 	testKey := fmt.Sprintf("non-existent-object-%d", time.Now().UnixNano())
 

@@ -2,10 +2,11 @@ package util
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestAsyncPool(t *testing.T) {

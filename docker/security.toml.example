@@ -1,0 +1,34 @@
+# Put this file to one of the location, with descending priority
+#    ./security.toml
+#    $HOME/.seaweedfs/security.toml
+#    /etc/seaweedfs/security.toml
+# this file is read by master, volume server, filer, and worker
+
+# comma separated origins allowed to make requests to the filer and s3 gateway. 
+# enter in this format: https://domain.com, or http://localhost:port
+[cors.allowed_origins]
+values = "*"
+
+# this jwt signing key is read by master and volume server, and it is used for write operations:
+# - the Master server generates the JWT, which can be used to write a certain file on a volume server
+# - the Volume server validates the JWT on writing
+# the jwt defaults to expire after 10 seconds.
+# [jwt.signing]
+# key = "V1JJVEVTRUNSRVRFWEFNUExFMTIzNDU2Nzg5MDEy" # Example: WRITESECRETEXAMPLE123456789012
+# this jwt signing key is read by master and volume server, and it is used for read operations:
+# - the Master server generates the JWT, which can be used to read a certain file on a volume server
+# - the Volume server validates the JWT on reading
+# [jwt.signing.read]
+# key = "UkVBRFNFQ1JFVUVYQU1QTEUxMjM0NTY3ODkwMTI=" # Example: READSECRETEXAMPLE123456789012
+# If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
+# - f.e. the S3 API Shim generates the JWT
+# - the Filer server validates the JWT on writing
+# the jwt defaults to expire after 10 seconds.
+# [jwt.filer_signing]
+# key = "RklMRVJXUklURVNFQ1JFVEVYQU1QTEUxMjM0NTY3OA==" # Example: FILERWRITESECRETEXAMPLE12345678
+# If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
+# - f.e. the S3 API Shim generates the JWT
+# - the Filer server validates the JWT on reading
+# the jwt defaults to expire after 10 seconds.
+# [jwt.filer_signing.read]
+# key = "RklMRVJSRUFEU0VDUkVURVhBTVBMRTEyMzQ1Njc4OQ==" # Example: FILERREADSECRETEXAMPLE123456789

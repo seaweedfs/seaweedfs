@@ -173,4 +173,3 @@ func TestEncryptedVolumeCopyScenario(t *testing.T) {
 		t.Log("✓ All chunk metadata properly preserved for encrypted volume copy scenario")
 	})
 }
-

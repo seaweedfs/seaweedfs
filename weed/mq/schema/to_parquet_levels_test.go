@@ -1,9 +1,10 @@
 package schema
 
 import (
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestToParquetLevels(t *testing.T) {

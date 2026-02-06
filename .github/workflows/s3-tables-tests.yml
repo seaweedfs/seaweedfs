@@ -1,0 +1,284 @@
+name: "S3 Tables Integration Tests"
+
+on:
+  pull_request:
+  
+concurrency:
+  group: ${{ github.head_ref }}/s3-tables-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+
+jobs:
+  s3-tables-tests:
+    name: S3 Tables Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run S3 Tables Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/table-buckets
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting S3 Tables Tests ==="
+          
+          # Run S3 Tables integration tests
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "S3 Tables integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/table-buckets
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+          
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: s3-tables-test-logs
+          path: test/s3tables/table-buckets/test-output.log
+          retention-days: 3
+
+  iceberg-catalog-tests:
+    name: Iceberg Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Run Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Iceberg Catalog Tests ==="
+          
+          # Run Iceberg catalog integration tests using Makefile (handles build)
+          make test 2>&1 | tee test-output.log || {
+            echo "Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+          
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: iceberg-catalog-test-logs
+          path: test/s3tables/catalog/test-output.log
+          retention-days: 3
+
+  s3-tables-build-verification:
+    name: S3 Tables Build Verification
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Verify S3 Tables Package Builds
+        run: |
+          set -x
+          echo "=== Building S3 Tables package ==="
+          go build ./weed/s3api/s3tables || {
+            echo "S3 Tables package build failed"
+            exit 1
+          }
+          echo "S3 Tables package built successfully"
+
+      - name: Verify S3 API Integration Builds
+        run: |
+          set -x
+          echo "=== Building S3 API with S3 Tables integration ==="
+          go build ./weed/s3api || {
+            echo "S3 API build with S3 Tables failed"
+            exit 1
+          }
+          echo "S3 API with S3 Tables integration built successfully"
+
+      - name: Run Go Tests for S3 Tables Package
+        run: |
+          set -x
+          echo "=== Running Go unit tests for S3 Tables ==="
+          go test -v -race -timeout 5m ./weed/s3api/s3tables/... || {
+            echo "S3 Tables unit tests failed"
+            exit 1
+          }
+          echo "S3 Tables unit tests passed"
+
+      - name: Verify Iceberg Package Builds
+        run: |
+          set -x
+          echo "=== Building Iceberg package ==="
+          go build ./weed/s3api/iceberg || {
+            echo "Iceberg package build failed"
+            exit 1
+          }
+          echo "Iceberg package built successfully"
+
+      - name: Run Go Tests for Iceberg Package
+        run: |
+          set -x
+          echo "=== Running Go unit tests for Iceberg ==="
+          go test -v -race -timeout 5m ./weed/s3api/iceberg/... || {
+            echo "Iceberg unit tests failed"
+            exit 1
+          }
+          echo "Iceberg unit tests passed"
+
+  s3-tables-fmt-check:
+    name: S3 Tables Format Check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Check Go Format
+        run: |
+          set -x
+          echo "=== Checking S3 Tables Go format ==="
+          unformatted=$(gofmt -l ./weed/s3api/s3tables)
+          if [ -n "$unformatted" ]; then
+            echo "Go format check failed - files need formatting"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All S3 Tables files are properly formatted"
+
+      - name: Check S3 Tables Test Format
+        run: |
+          set -x
+          echo "=== Checking S3 Tables test format ==="
+          unformatted=$(gofmt -l ./test/s3tables)
+          if [ -n "$unformatted" ]; then
+            echo "Go format check failed for tests"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All S3 Tables test files are properly formatted"
+
+      - name: Check Iceberg Format
+        run: |
+          set -x
+          echo "=== Checking Iceberg Go format ==="
+          unformatted=$(gofmt -l ./weed/s3api/iceberg)
+          if [ -n "$unformatted" ]; then
+            echo "Go format check failed for Iceberg - files need formatting"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All Iceberg files are properly formatted"
+
+  s3-tables-vet:
+    name: S3 Tables Go Vet Check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Run Go Vet
+        run: |
+          set -x
+          echo "=== Running go vet on S3 Tables package ==="
+          go vet ./weed/s3api/s3tables/... || {
+            echo "go vet check failed"
+            exit 1
+          }
+          echo "go vet checks passed"
+
+      - name: Run Go Vet on Tests
+        run: |
+          set -x
+          echo "=== Running go vet on S3 Tables tests ==="
+          go vet ./test/s3tables/... || {
+            echo "go vet check failed for tests"
+            exit 1
+          }
+          echo "go vet checks passed for tests"
+
+      - name: Run Go Vet on Iceberg
+        run: |
+          set -x
+          echo "=== Running go vet on Iceberg package ==="
+          go vet ./weed/s3api/iceberg/... || {
+            echo "go vet check failed for Iceberg"
+            exit 1
+          }
+          echo "go vet checks passed for Iceberg"

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -22,8 +23,40 @@ const (
 
 // Package-level regex cache for performance optimization
 var (
-	regexCache   = make(map[string]*regexp.Regexp)
-	regexCacheMu sync.RWMutex
+	regexCache            = make(map[string]*regexp.Regexp)
+	regexCacheMu          sync.RWMutex
+	policyVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+	safePolicyVariables   = map[string]bool{
+		// AWS standard identity variables
+		"aws:username":             true,
+		"aws:userid":               true,
+		"aws:PrincipalArn":         true,
+		"aws:PrincipalAccount":     true,
+		"aws:principaltype":        true,
+		"aws:FederatedProvider":    true,
+		"aws:PrincipalServiceName": true,
+		// SAML identity variables
+		"saml:username": true,
+		"saml:sub":      true,
+		"saml:aud":      true,
+		"saml:iss":      true,
+		// OIDC/JWT identity variables
+		"oidc:sub": true,
+		"oidc:aud": true,
+		"oidc:iss": true,
+		// JWT identity variables
+		"jwt:preferred_username": true,
+		"jwt:sub":                true,
+		"jwt:iss":                true,
+		"jwt:aud":                true,
+		// AWS request context (not from headers)
+		"aws:SourceIp":        true,
+		"aws:SecureTransport": true,
+		"aws:CurrentTime":     true,
+		"s3:prefix":           true,
+		"s3:delimiter":        true,
+		"s3:max-keys":         true,
+	}
 )
 
 // PolicyEngine evaluates policies against requests
@@ -72,19 +105,37 @@ type Statement struct {
 	NotPrincipal interface{} `json:"NotPrincipal,omitempty"`
 
 	// Action specifies the actions this statement applies to
-	Action []string `json:"Action"`
+	Action StringList `json:"Action"`
 
 	// NotAction specifies actions this statement does NOT apply to
-	NotAction []string `json:"NotAction,omitempty"`
+	NotAction StringList `json:"NotAction,omitempty"`
 
 	// Resource specifies the resources this statement applies to
-	Resource []string `json:"Resource"`
+	Resource StringList `json:"Resource"`
 
 	// NotResource specifies resources this statement does NOT apply to
-	NotResource []string `json:"NotResource,omitempty"`
+	NotResource StringList `json:"NotResource,omitempty"`
 
 	// Condition specifies conditions for when this statement applies
 	Condition map[string]map[string]interface{} `json:"Condition,omitempty"`
+}
+
+// StringList handles fields that can be a string or a list of strings
+type StringList []string
+
+// UnmarshalJSON implements custom unmarshalling for StringList
+func (sl *StringList) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*sl = []string{s}
+		return nil
+	}
+	var sa []string
+	if err := json.Unmarshal(data, &sa); err == nil {
+		*sl = sa
+		return nil
+	}
+	return fmt.Errorf("invalid string list")
 }
 
 // EvaluationContext provides context for policy evaluation
@@ -360,16 +411,94 @@ func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCt
 	return result, nil
 }
 
+// EvaluateTrustPolicy evaluates a trust policy document directly (without storing it)
+// This is used for AssumeRole/AssumeRoleWithWebIdentity trust policy validation
+func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *PolicyDocument, evalCtx *EvaluationContext) (*EvaluationResult, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if evalCtx == nil {
+		return nil, fmt.Errorf("evaluation context cannot be nil")
+	}
+
+	if trustPolicy == nil {
+		return nil, fmt.Errorf("trust policy cannot be nil")
+	}
+
+	result := &EvaluationResult{
+		Effect: Effect(e.config.DefaultEffect),
+		EvaluationDetails: &EvaluationDetails{
+			Principal:         evalCtx.Principal,
+			Action:            evalCtx.Action,
+			Resource:          evalCtx.Resource,
+			PoliciesEvaluated: []string{"trust-policy"},
+		},
+	}
+
+	var matchingStatements []StatementMatch
+	explicitDeny := false
+	hasAllow := false
+
+	// Evaluate each statement in the trust policy
+	for _, statement := range trustPolicy.Statement {
+		if e.statementMatches(&statement, evalCtx) {
+			match := StatementMatch{
+				PolicyName:   "trust-policy",
+				StatementSid: statement.Sid,
+				Effect:       Effect(statement.Effect),
+				Reason:       "Principal, Action, and Condition matched",
+			}
+			matchingStatements = append(matchingStatements, match)
+
+			if statement.Effect == "Deny" {
+				explicitDeny = true
+			} else if statement.Effect == "Allow" {
+				hasAllow = true
+			}
+		}
+	}
+
+	result.MatchingStatements = matchingStatements
+
+	// AWS IAM evaluation logic:
+	// 1. If there's an explicit Deny, the result is Deny
+	// 2. If there's an Allow and no Deny, the result is Allow
+	// 3. Otherwise, use the default effect
+	if explicitDeny {
+		result.Effect = EffectDeny
+	} else if hasAllow {
+		result.Effect = EffectAllow
+	}
+
+	return result, nil
+}
+
 // statementMatches checks if a statement matches the evaluation context
 func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
+	// Check principal match (for trust policies)
+	// If Principal field is present, it must match
+	if statement.Principal != nil {
+		if !e.matchesPrincipal(statement.Principal, evalCtx) {
+			return false
+		}
+	}
+
 	// Check action match
 	if !e.matchesActions(statement.Action, evalCtx.Action, evalCtx) {
 		return false
 	}
 
-	// Check resource match
-	if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
-		return false
+	// Check resource match (optional for trust policies)
+	// For STS trust policy evaluations (AssumeRole*), resource matching should be skipped
+	// Trust policies typically don't include Resource, and enforcing resource matching
+	// here may cause valid trust statements to be rejected.
+	if strings.HasPrefix(evalCtx.Action, "sts:") {
+		// Skip resource checks for trust policy evaluation
+	} else if len(statement.Resource) > 0 {
+		if !e.matchesResources(statement.Resource, evalCtx.Resource, evalCtx) {
+			return false
+		}
 	}
 
 	// Check conditions
@@ -400,6 +529,135 @@ func (e *PolicyEngine) matchesResources(resources []string, requestedResource st
 	return false
 }
 
+// matchesPrincipal checks if the principal in the statement matches the evaluation context
+// This is used for trust policy evaluation (e.g., AssumeRole, AssumeRoleWithWebIdentity)
+func (e *PolicyEngine) matchesPrincipal(principal interface{}, evalCtx *EvaluationContext) bool {
+	// Handle plain string principal (e.g., "*" or "arn:aws:iam::...")
+	if principalStr, ok := principal.(string); ok {
+		// Check wildcard FIRST before context validation
+		// This allows "*" to work without requiring context
+		if principalStr == "*" {
+			return true
+		}
+
+		// For non-wildcard string principals, we'd need specific matching logic
+		// For now, treat as a match if it equals the principal in context
+		if contextPrincipal, exists := evalCtx.RequestContext["principal"]; exists {
+			if contextPrincipalStr, ok := contextPrincipal.(string); ok {
+				return principalStr == contextPrincipalStr
+			}
+		}
+		return false
+	}
+
+	// Handle structured principal (e.g., {"Federated": "*"} or {"AWS": "arn:..."})
+	if principalMap, ok := principal.(map[string]interface{}); ok {
+		// For each principal type (Federated, AWS, Service, etc.)
+		for principalType, principalValue := range principalMap {
+			// Get the context key for this principal type
+			contextKey := getPrincipalContextKey(principalType)
+
+			if !e.evaluatePrincipalValue(principalValue, evalCtx, contextKey) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Unknown principal format
+	return false
+}
+
+// evaluatePrincipalValue evaluates a principal value against the evaluation context
+// This handles wildcards, arrays, and context matching
+func (e *PolicyEngine) evaluatePrincipalValue(principalValue interface{}, evalCtx *EvaluationContext, contextKey string) bool {
+	// Handle single string value
+	if principalStr, ok := principalValue.(string); ok {
+		// Check wildcard FIRST before context validation
+		// This allows {"Federated": "*"} to work without requiring context
+		if principalStr == "*" {
+			return true
+		}
+
+		// Then check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+		return principalStr == contextStr
+	}
+
+	// Handle array of strings - convert to []interface{} for unified handling
+	var principalArray []interface{}
+	switch arr := principalValue.(type) {
+	case []interface{}:
+		principalArray = arr
+	case []string:
+		principalArray = make([]interface{}, len(arr))
+		for i, v := range arr {
+			principalArray[i] = v
+		}
+	default:
+		return false
+	}
+
+	if len(principalArray) > 0 {
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				// Wildcard in array allows any value
+				if itemStr == "*" {
+					return true
+				}
+			}
+		}
+
+		// If no wildcard found, check against context
+		contextValue, exists := evalCtx.RequestContext[contextKey]
+		if !exists {
+			return false
+		}
+		contextStr, ok := contextValue.(string)
+		if !ok {
+			return false
+		}
+
+		// Check if any array item matches the context
+		for _, item := range principalArray {
+			if itemStr, ok := item.(string); ok {
+				if itemStr == contextStr {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// getPrincipalContextKey returns the context key for a given principal type
+// Uses AWS-compatible context keys for maximum compatibility
+func getPrincipalContextKey(principalType string) string {
+	switch principalType {
+	case "Federated":
+		// For federated identity (OIDC/SAML), use the standard AWS context key
+		// This is typically populated with the identity provider ARN or URL
+		return "aws:FederatedProvider"
+	case "AWS":
+		// For AWS principals (IAM users/roles), use the principal ARN
+		return "aws:PrincipalArn"
+	case "Service":
+		// For AWS service principals
+		return "aws:PrincipalServiceName"
+	default:
+		// For any other principal type, use aws: prefix for compatibility
+		return "aws:Principal" + principalType
+	}
+}
+
 // matchesConditions checks if all conditions are satisfied
 func (e *PolicyEngine) matchesConditions(conditions map[string]map[string]interface{}, evalCtx *EvaluationContext) bool {
 	if len(conditions) == 0 {
@@ -417,58 +675,73 @@ func (e *PolicyEngine) matchesConditions(conditions map[string]map[string]interf
 
 // evaluateConditionBlock evaluates a single condition block
 func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[string]interface{}, evalCtx *EvaluationContext) bool {
+	// Parse set operators (prefixes)
+	forAllValues := false
+	if strings.HasPrefix(conditionType, "ForAllValues:") {
+		forAllValues = true
+		conditionType = strings.TrimPrefix(conditionType, "ForAllValues:")
+	} else if strings.HasPrefix(conditionType, "ForAnyValue:") {
+		conditionType = strings.TrimPrefix(conditionType, "ForAnyValue:")
+		// ForAnyValue is the default behavior (Any context value matches Any condition value),
+		// so we just strip the prefix
+	}
+
 	switch conditionType {
 	// IP Address conditions
 	case "IpAddress":
-		return e.evaluateIPCondition(block, evalCtx, true)
+		return e.evaluateIPCondition(block, evalCtx, true, forAllValues)
 	case "NotIpAddress":
-		return e.evaluateIPCondition(block, evalCtx, false)
+		return e.evaluateIPCondition(block, evalCtx, false, forAllValues)
 
 	// String conditions
 	case "StringEquals":
-		return e.EvaluateStringCondition(block, evalCtx, true, false)
+		return e.EvaluateStringCondition(block, evalCtx, true, false, forAllValues)
 	case "StringNotEquals":
-		return e.EvaluateStringCondition(block, evalCtx, false, false)
+		return e.EvaluateStringCondition(block, evalCtx, false, false, forAllValues)
 	case "StringLike":
-		return e.EvaluateStringCondition(block, evalCtx, true, true)
+		return e.EvaluateStringCondition(block, evalCtx, true, true, forAllValues)
+	case "StringNotLike":
+		return e.EvaluateStringCondition(block, evalCtx, false, true, forAllValues)
 	case "StringEqualsIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false)
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, false, forAllValues)
 	case "StringNotEqualsIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false)
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, false, forAllValues)
+	case "StringNotLikeIgnoreCase":
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, false, true, forAllValues)
 	case "StringLikeIgnoreCase":
-		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true)
+		return e.evaluateStringConditionIgnoreCase(block, evalCtx, true, true, forAllValues)
 
 	// Numeric conditions
 	case "NumericEquals":
-		return e.evaluateNumericCondition(block, evalCtx, "==")
+		return e.evaluateNumericCondition(block, evalCtx, "==", forAllValues)
 	case "NumericNotEquals":
-		return e.evaluateNumericCondition(block, evalCtx, "!=")
+		return e.evaluateNumericCondition(block, evalCtx, "!=", forAllValues)
 	case "NumericLessThan":
-		return e.evaluateNumericCondition(block, evalCtx, "<")
+		return e.evaluateNumericCondition(block, evalCtx, "<", forAllValues)
 	case "NumericLessThanEquals":
-		return e.evaluateNumericCondition(block, evalCtx, "<=")
+		return e.evaluateNumericCondition(block, evalCtx, "<=", forAllValues)
 	case "NumericGreaterThan":
-		return e.evaluateNumericCondition(block, evalCtx, ">")
+		return e.evaluateNumericCondition(block, evalCtx, ">", forAllValues)
 	case "NumericGreaterThanEquals":
-		return e.evaluateNumericCondition(block, evalCtx, ">=")
+		return e.evaluateNumericCondition(block, evalCtx, ">=", forAllValues)
 
 	// Date conditions
 	case "DateEquals":
-		return e.evaluateDateCondition(block, evalCtx, "==")
+		return e.evaluateDateCondition(block, evalCtx, "==", forAllValues)
 	case "DateNotEquals":
-		return e.evaluateDateCondition(block, evalCtx, "!=")
+		return e.evaluateDateCondition(block, evalCtx, "!=", forAllValues)
 	case "DateLessThan":
-		return e.evaluateDateCondition(block, evalCtx, "<")
+		return e.evaluateDateCondition(block, evalCtx, "<", forAllValues)
 	case "DateLessThanEquals":
-		return e.evaluateDateCondition(block, evalCtx, "<=")
+		return e.evaluateDateCondition(block, evalCtx, "<=", forAllValues)
 	case "DateGreaterThan":
-		return e.evaluateDateCondition(block, evalCtx, ">")
+		return e.evaluateDateCondition(block, evalCtx, ">", forAllValues)
 	case "DateGreaterThanEquals":
-		return e.evaluateDateCondition(block, evalCtx, ">=")
+		return e.evaluateDateCondition(block, evalCtx, ">=", forAllValues)
 
 	// Boolean conditions
 	case "Bool":
-		return e.evaluateBoolCondition(block, evalCtx)
+		return e.evaluateBoolCondition(block, evalCtx, forAllValues)
 
 	// Null conditions
 	case "Null":
@@ -481,54 +754,142 @@ func (e *PolicyEngine) evaluateConditionBlock(conditionType string, block map[st
 }
 
 // evaluateIPCondition evaluates IP address conditions
-func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool) bool {
-	sourceIP, exists := evalCtx.RequestContext["sourceIP"]
-	if !exists {
-		return !shouldMatch // If no IP in context, condition fails for positive match
-	}
+func (e *PolicyEngine) evaluateIPCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, forAllValues bool) bool {
+	for conditionKey, conditionValue := range block {
+		contextValue, exists := evalCtx.RequestContext[conditionKey]
+		if !exists {
+			// If missing key: fails positive match, skips negative match
+			if shouldMatch {
+				return false
+			}
+			continue
+		}
 
-	sourceIPStr, ok := sourceIP.(string)
-	if !ok {
-		return !shouldMatch
-	}
+		// Normalize context values
+		var contextIPs []string
+		switch v := contextValue.(type) {
+		case string:
+			contextIPs = []string{v}
+		case []string:
+			contextIPs = v
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					contextIPs = append(contextIPs, s)
+				}
+			}
+		default:
+			contextIPs = []string{fmt.Sprintf("%v", contextValue)}
+		}
 
-	sourceIPAddr := net.ParseIP(sourceIPStr)
-	if sourceIPAddr == nil {
-		return !shouldMatch
-	}
+		// Normalize policy ranges
+		expectedRanges := normalizeRanges(conditionValue)
 
-	for key, value := range block {
-		if key == "seaweed:SourceIP" {
-			ranges, ok := value.([]string)
-			if !ok {
-				continue
+		if forAllValues {
+			// All context values must match at least one expected range
+			if len(contextIPs) == 0 {
+				continue // Vacuously true
 			}
 
-			for _, ipRange := range ranges {
-				if strings.Contains(ipRange, "/") {
-					// CIDR range
-					_, cidr, err := net.ParseCIDR(ipRange)
-					if err != nil {
-						continue
-					}
-					if cidr.Contains(sourceIPAddr) {
-						return shouldMatch
-					}
-				} else {
-					// Single IP
-					if sourceIPStr == ipRange {
-						return shouldMatch
+			for _, ctxIPStr := range contextIPs {
+				ctxIP := net.ParseIP(ctxIPStr)
+				if ctxIP == nil {
+					return false
+				}
+
+				itemMatchedInRange := false
+				for _, ipRange := range expectedRanges {
+					if strings.Contains(ipRange, "/") {
+						_, cidr, err := net.ParseCIDR(ipRange)
+						if err == nil && cidr.Contains(ctxIP) {
+							itemMatchedInRange = true
+							break
+						}
+					} else if ctxIPStr == ipRange {
+						itemMatchedInRange = true
+						break
 					}
 				}
+
+				// Apply operator (IPAddress vs NotIPAddress)
+				satisfied := itemMatchedInRange
+				if !shouldMatch {
+					satisfied = !itemMatchedInRange
+				}
+
+				if !satisfied {
+					return false
+				}
+			}
+		} else {
+			// ForAnyValue or standard: Any context value matches any expected range
+			if len(contextIPs) == 0 {
+				return false // AWS behavior for ForAnyValue with empty sets
+			}
+
+			anySatisfied := false
+			for _, ctxIPStr := range contextIPs {
+				ctxIP := net.ParseIP(ctxIPStr)
+				if ctxIP == nil {
+					continue
+				}
+
+				itemMatchedInRange := false
+				for _, ipRange := range expectedRanges {
+					if strings.Contains(ipRange, "/") {
+						_, cidr, err := net.ParseCIDR(ipRange)
+						if err == nil && cidr.Contains(ctxIP) {
+							itemMatchedInRange = true
+							break
+						}
+					} else if ctxIPStr == ipRange {
+						itemMatchedInRange = true
+						break
+					}
+				}
+
+				// Apply operator (IPAddress vs NotIPAddress)
+				satisfied := itemMatchedInRange
+				if !shouldMatch {
+					satisfied = !itemMatchedInRange
+				}
+
+				if satisfied {
+					anySatisfied = true
+					break
+				}
+			}
+
+			if !anySatisfied {
+				return false
 			}
 		}
 	}
+	return true
+}
 
-	return !shouldMatch
+// normalizeRanges converts policy values into a []string
+func normalizeRanges(value interface{}) []string {
+	switch v := value.(type) {
+	case string:
+		return []string{v}
+	case []string:
+		return v
+	case []interface{}:
+		var ranges []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				ranges = append(ranges, s)
+			}
+		}
+		return ranges
+	default:
+		return nil
+	}
 }
 
 // EvaluateStringCondition evaluates string-based conditions
-func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
+func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool, forAllValues bool) bool {
 	// Iterate through all condition keys in the block
 	for conditionKey, conditionValue := range block {
 		// Get the context values for this condition key
@@ -579,37 +940,91 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 		}
 
 		// Evaluate the condition using AWS IAM-compliant matching
-		conditionMet := false
-		for _, expected := range expectedStrings {
+		if forAllValues {
+			// ForAllValues: Every value in the request context must match at least one value in the condition policy
+			// If context has no values, ForAllValues returns true (vacuously true)
+			if len(contextStrings) == 0 {
+				continue
+			}
+
+			// Iterate over each context value - it MUST satisfy the operator
+			allSatisfied := true
 			for _, contextValue := range contextStrings {
-				if useWildcard {
-					// Use AWS IAM-compliant wildcard matching for StringLike conditions
-					// This handles case-insensitivity and policy variables
-					if awsIAMMatch(expected, contextValue, evalCtx) {
-						conditionMet = true
-						break
-					}
-				} else {
-					// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
+				contextValueMatchedSet := false
+				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
-					if expandedExpected == contextValue {
-						conditionMet = true
-						break
+					if useWildcard {
+						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
+						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+							contextValueMatchedSet = true
+							break
+						}
+					} else {
+						if expandedExpected == contextValue {
+							contextValueMatchedSet = true
+							break
+						}
 					}
 				}
-			}
-			if conditionMet {
-				break
-			}
-		}
 
-		// For shouldMatch=true (StringEquals, StringLike): condition must be met
-		// For shouldMatch=false (StringNotEquals): condition must NOT be met
-		if shouldMatch && !conditionMet {
-			return false
-		}
-		if !shouldMatch && conditionMet {
-			return false
+				// Apply operator (equals vs not-equals)
+				satisfied := contextValueMatchedSet
+				if !shouldMatch {
+					satisfied = !contextValueMatchedSet
+				}
+
+				if !satisfied {
+					allSatisfied = false
+					break
+				}
+			}
+
+			if !allSatisfied {
+				return false
+			}
+
+		} else {
+			// ForAnyValue (default): At least one value in the request context must match at least one value in the condition policy
+			// AWS IAM treats empty request sets as "no match" for ForAnyValue
+			if len(contextStrings) == 0 {
+				return false
+			}
+
+			anySatisfied := false
+			for _, contextValue := range contextStrings {
+				contextValueMatchedSet := false
+				for _, expected := range expectedStrings {
+					expandedExpected := expandPolicyVariables(expected, evalCtx)
+					if useWildcard {
+						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
+						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+							contextValueMatchedSet = true
+							break
+						}
+					} else {
+						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
+						if expandedExpected == contextValue {
+							contextValueMatchedSet = true
+							break
+						}
+					}
+				}
+
+				// Apply operator (equals vs not-equals)
+				satisfied := contextValueMatchedSet
+				if !shouldMatch {
+					satisfied = !contextValueMatchedSet
+				}
+
+				if satisfied {
+					anySatisfied = true
+					break
+				}
+			}
+
+			if !anySatisfied {
+				return false
+			}
 		}
 	}
 
@@ -744,24 +1159,28 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 		return pattern
 	}
 
-	expanded := pattern
+	// Use pre-compiled regexp for efficient single-pass substitution
+	result := policyVariablePattern.ReplaceAllStringFunc(pattern, func(match string) string {
+		// Extract variable name from ${variable}
+		variable := match[2 : len(match)-1]
 
-	// Common AWS policy variables that might be used in SeaweedFS
-	variableMap := map[string]string{
-		"${aws:username}":      getContextValue(evalCtx, "aws:username", ""),
-		"${saml:username}":     getContextValue(evalCtx, "saml:username", ""),
-		"${oidc:sub}":          getContextValue(evalCtx, "oidc:sub", ""),
-		"${aws:userid}":        getContextValue(evalCtx, "aws:userid", ""),
-		"${aws:principaltype}": getContextValue(evalCtx, "aws:principaltype", ""),
-	}
-
-	for variable, value := range variableMap {
-		if value != "" {
-			expanded = strings.ReplaceAll(expanded, variable, value)
+		// Only substitute if variable is in the safe allowlist
+		if !safePolicyVariables[variable] {
+			return match // Leave unsafe variables as-is
 		}
-	}
 
-	return expanded
+		// Get value from request context
+		if value, exists := evalCtx.RequestContext[variable]; exists {
+			if str, ok := value.(string); ok {
+				return str
+			}
+		}
+
+		// Variable not found or not a string, leave as-is
+		return match
+	})
+
+	return result
 }
 
 // getContextValue safely gets a value from the evaluation context
@@ -836,7 +1255,7 @@ func matchAction(pattern, action string) bool {
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
-func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool) bool {
+func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interface{}, evalCtx *EvaluationContext, shouldMatch bool, useWildcard bool, forAllValues bool) bool {
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
@@ -846,178 +1265,575 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 			return false
 		}
 
-		contextStr, ok := contextValue.(string)
-		if !ok {
-			return false
+		// Convert context value to string slice
+		var contextStrings []string
+		switch v := contextValue.(type) {
+		case string:
+			contextStrings = []string{v}
+		case []string:
+			contextStrings = v
+		case []interface{}:
+			for _, item := range v {
+				if str, ok := item.(string); ok {
+					contextStrings = append(contextStrings, str)
+				}
+			}
+		default:
+			// Fallback for non-string types
+			contextStrings = []string{fmt.Sprintf("%v", contextValue)}
 		}
 
-		contextStr = strings.ToLower(contextStr)
-		matched := false
-
-		// Handle different value types
-		switch v := expectedValues.(type) {
-		case string:
-			expectedStr := strings.ToLower(v)
-			if useWildcard {
-				matched, _ = filepath.Match(expectedStr, contextStr)
-			} else {
-				matched = expectedStr == contextStr
+		if forAllValues {
+			// ForAllValues: Every value in context must match at least one expected value
+			if len(contextStrings) == 0 {
+				continue
 			}
-		case []interface{}:
-			for _, val := range v {
-				if valStr, ok := val.(string); ok {
-					expectedStr := strings.ToLower(valStr)
+
+			allSatisfied := true
+			for _, ctxStr := range contextStrings {
+				itemMatchedSet := false
+
+				// Check against all expected values
+				switch v := expectedValues.(type) {
+				case string:
+					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if m, _ := filepath.Match(expectedStr, contextStr); m {
-							matched = true
-							break
+						if AwsWildcardMatch(expandedPattern, ctxStr) {
+							itemMatchedSet = true
 						}
 					} else {
-						if expectedStr == contextStr {
-							matched = true
-							break
+						if strings.EqualFold(expandedPattern, ctxStr) {
+							itemMatchedSet = true
+						}
+					}
+				case []interface{}, []string:
+					var slice []string
+					if s, ok := v.([]string); ok {
+						slice = s
+					} else {
+						for _, item := range v.([]interface{}) {
+							if str, ok := item.(string); ok {
+								slice = append(slice, str)
+							}
+						}
+					}
+					for _, valStr := range slice {
+						expandedPattern := expandPolicyVariables(valStr, evalCtx)
+						if useWildcard {
+							if AwsWildcardMatch(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
+						} else {
+							if strings.EqualFold(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
 						}
 					}
 				}
-			}
-		}
 
-		if shouldMatch && !matched {
-			return false
-		}
-		if !shouldMatch && matched {
-			return false
+				// Apply operator (equals vs not-equals)
+				satisfied := itemMatchedSet
+				if !shouldMatch {
+					satisfied = !itemMatchedSet
+				}
+
+				if !satisfied {
+					allSatisfied = false
+					break
+				}
+			}
+
+			if !allSatisfied {
+				return false
+			}
+
+		} else {
+			// ForAnyValue (default): Any value in context must match any expected value
+			anySatisfied := false
+			for _, ctxStr := range contextStrings {
+				itemMatchedSet := false
+
+				// Handle different value types
+				switch v := expectedValues.(type) {
+				case string:
+					expandedPattern := expandPolicyVariables(v, evalCtx)
+					if useWildcard {
+						if AwsWildcardMatch(expandedPattern, ctxStr) {
+							itemMatchedSet = true
+						}
+					} else {
+						if strings.EqualFold(expandedPattern, ctxStr) {
+							itemMatchedSet = true
+						}
+					}
+				case []interface{}, []string:
+					var slice []string
+					if s, ok := v.([]string); ok {
+						slice = s
+					} else {
+						for _, item := range v.([]interface{}) {
+							if str, ok := item.(string); ok {
+								slice = append(slice, str)
+							}
+						}
+					}
+					for _, valStr := range slice {
+						expandedPattern := expandPolicyVariables(valStr, evalCtx)
+						if useWildcard {
+							if AwsWildcardMatch(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
+						} else {
+							if strings.EqualFold(expandedPattern, ctxStr) {
+								itemMatchedSet = true
+								break
+							}
+						}
+					}
+				}
+
+				// Apply operator (equals vs not-equals)
+				satisfied := itemMatchedSet
+				if !shouldMatch {
+					satisfied = !itemMatchedSet
+				}
+
+				if satisfied {
+					anySatisfied = true
+					break
+				}
+			}
+
+			if !anySatisfied {
+				return false
+			}
 		}
 	}
 	return true
 }
 
 // evaluateNumericCondition evaluates numeric conditions
-func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
+func (e *PolicyEngine) evaluateNumericCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string, forAllValues bool) bool {
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
 			return false
 		}
 
-		contextNum, err := parseNumeric(contextValue)
-		if err != nil {
+		// Parse context values (handle single or list)
+		var contextNums []float64
+		switch v := contextValue.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if num, err := parseNumeric(item); err == nil {
+					contextNums = append(contextNums, num)
+				}
+			}
+		case []string:
+			for _, item := range v {
+				if num, err := parseNumeric(item); err == nil {
+					contextNums = append(contextNums, num)
+				}
+			}
+		default:
+			if num, err := parseNumeric(v); err == nil {
+				contextNums = append(contextNums, num)
+			}
+		}
+
+		if len(contextNums) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
-		matched := false
+		if forAllValues {
+			// ForAllValues: All context nums must match at least one expected value
+			allMatch := true
+			for _, contextNum := range contextNums {
+				itemMatched := false
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedNum, err := parseNumeric(v); err == nil {
+						itemMatched = compareNumbers(contextNum, expectedNum, operator)
+					}
+				case float64:
+					itemMatched = compareNumbers(contextNum, v, operator)
+				case int:
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
+				case int64:
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
 
-		// Handle different value types
-		switch v := expectedValues.(type) {
-		case string:
-			expectedNum, err := parseNumeric(v)
-			if err != nil {
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, operator) {
+									itemMatched = true
+									break
+								}
+							}
+						}
+					}
+				}
+				if !itemMatched {
+					allMatch = false
+					break
+				}
+			}
+			if !allMatch {
 				return false
 			}
-			matched = compareNumbers(contextNum, expectedNum, operator)
-		case []interface{}:
-			for _, val := range v {
-				expectedNum, err := parseNumeric(val)
-				if err != nil {
-					continue
+		} else {
+			// ForAnyValue: Any context num must match any expected value
+			matched := false
+			for _, contextNum := range contextNums {
+				itemMatched := false
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedNum, err := parseNumeric(v); err == nil {
+						itemMatched = compareNumbers(contextNum, expectedNum, operator)
+					}
+				case float64:
+					itemMatched = compareNumbers(contextNum, v, operator)
+				case int:
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
+				case int64:
+					itemMatched = compareNumbers(contextNum, float64(v), operator)
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedNum, err := parseNumeric(val); err == nil {
+								if compareNumbers(contextNum, expectedNum, operator) {
+									itemMatched = true
+									break
+								}
+							}
+						}
+					}
 				}
-				if compareNumbers(contextNum, expectedNum, operator) {
+				if itemMatched {
 					matched = true
 					break
 				}
 			}
-		}
 
-		if !matched {
-			return false
+			if !matched {
+				return false
+			}
 		}
 	}
 	return true
 }
 
 // evaluateDateCondition evaluates date conditions
-func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string) bool {
+func (e *PolicyEngine) evaluateDateCondition(block map[string]interface{}, evalCtx *EvaluationContext, operator string, forAllValues bool) bool {
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
 			return false
 		}
 
-		contextTime, err := parseDateTime(contextValue)
-		if err != nil {
+		// Parse context values (handle single or list)
+		var contextTimes []time.Time
+		switch v := contextValue.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if t, err := parseDateTime(item); err == nil {
+					contextTimes = append(contextTimes, t)
+				}
+			}
+		case []string:
+			for _, item := range v {
+				if t, err := parseDateTime(item); err == nil {
+					contextTimes = append(contextTimes, t)
+				}
+			}
+		default:
+			if t, err := parseDateTime(v); err == nil {
+				contextTimes = append(contextTimes, t)
+			}
+		}
+
+		if len(contextTimes) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
-		matched := false
+		if forAllValues {
+			allMatch := true
+			for _, contextTime := range contextTimes {
+				itemMatched := false
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedTime, err := parseDateTime(v); err == nil {
+						itemMatched = compareDates(contextTime, expectedTime, operator)
+					}
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
 
-		// Handle different value types
-		switch v := expectedValues.(type) {
-		case string:
-			expectedTime, err := parseDateTime(v)
-			if err != nil {
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, operator) {
+									itemMatched = true
+									break
+								}
+							}
+						}
+					}
+				}
+				if !itemMatched {
+					allMatch = false
+					break
+				}
+			}
+			if !allMatch {
 				return false
 			}
-			matched = compareDates(contextTime, expectedTime, operator)
-		case []interface{}:
-			for _, val := range v {
-				expectedTime, err := parseDateTime(val)
-				if err != nil {
-					continue
+		} else {
+			matched := false
+			for _, contextTime := range contextTimes {
+				itemMatched := false
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedTime, err := parseDateTime(v); err == nil {
+						itemMatched = compareDates(contextTime, expectedTime, operator)
+					}
+				case []interface{}, []string:
+					// Convert to unified slice of interface{} if it's []string
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+
+					if operator == "!=" {
+						// For NotEquals, itemMatched means it matches NONE of the expected values
+						anyMatch := false
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, "==") {
+									anyMatch = true
+									break
+								}
+							}
+						}
+						itemMatched = !anyMatch
+					} else {
+						for _, val := range slice {
+							if expectedTime, err := parseDateTime(val); err == nil {
+								if compareDates(contextTime, expectedTime, operator) {
+									itemMatched = true
+									break
+								}
+							}
+						}
+					}
 				}
-				if compareDates(contextTime, expectedTime, operator) {
+				if itemMatched {
 					matched = true
 					break
 				}
 			}
-		}
-
-		if !matched {
-			return false
+			if !matched {
+				return false
+			}
 		}
 	}
 	return true
 }
 
 // evaluateBoolCondition evaluates boolean conditions
-func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalCtx *EvaluationContext) bool {
+func (e *PolicyEngine) evaluateBoolCondition(block map[string]interface{}, evalCtx *EvaluationContext, forAllValues bool) bool {
 	for key, expectedValues := range block {
 		contextValue, exists := evalCtx.RequestContext[key]
 		if !exists {
 			return false
 		}
 
-		contextBool, err := parseBool(contextValue)
-		if err != nil {
+		// Parse context values (handle single or list)
+		var contextBools []bool
+		switch v := contextValue.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if b, err := parseBool(item); err == nil {
+					contextBools = append(contextBools, b)
+				}
+			}
+		case []string:
+			for _, item := range v {
+				if b, err := parseBool(item); err == nil {
+					contextBools = append(contextBools, b)
+				}
+			}
+		default:
+			if b, err := parseBool(v); err == nil {
+				contextBools = append(contextBools, b)
+			}
+		}
+
+		if len(contextBools) == 0 {
+			if forAllValues {
+				continue
+			}
 			return false
 		}
 
-		matched := false
-
-		// Handle different value types
-		switch v := expectedValues.(type) {
-		case string:
-			expectedBool, err := parseBool(v)
-			if err != nil {
-				return false
-			}
-			matched = contextBool == expectedBool
-		case bool:
-			matched = contextBool == v
-		case []interface{}:
-			for _, val := range v {
-				expectedBool, err := parseBool(val)
-				if err != nil {
-					continue
+		if forAllValues {
+			allMatch := true
+			for _, contextBool := range contextBools {
+				itemMatched := false
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedBool, err := parseBool(v); err == nil {
+						itemMatched = contextBool == expectedBool
+					}
+				case bool:
+					itemMatched = contextBool == v
+				case []interface{}, []string:
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+					for _, val := range slice {
+						expectedBool, err := parseBool(val)
+						if err != nil {
+							continue
+						}
+						if contextBool == expectedBool {
+							itemMatched = true
+							break
+						}
+					}
 				}
-				if contextBool == expectedBool {
-					matched = true
+				if !itemMatched {
+					allMatch = false
 					break
 				}
 			}
-		}
-
-		if !matched {
-			return false
+			if !allMatch {
+				return false
+			}
+		} else {
+			matched := false
+			for _, contextBool := range contextBools {
+				switch v := expectedValues.(type) {
+				case string:
+					if expectedBool, err := parseBool(v); err == nil {
+						matched = contextBool == expectedBool
+					}
+				case bool:
+					matched = contextBool == v
+				case []interface{}, []string:
+					var slice []interface{}
+					if s, ok := v.([]string); ok {
+						slice = make([]interface{}, len(s))
+						for i, item := range s {
+							slice[i] = item
+						}
+					} else {
+						slice = v.([]interface{})
+					}
+					for _, val := range slice {
+						expectedBool, err := parseBool(val)
+						if err != nil {
+							continue
+						}
+						if contextBool == expectedBool {
+							matched = true
+							break
+						}
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
 		}
 	}
 	return true

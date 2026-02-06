@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -303,4 +305,46 @@ func TestReservationSystemPerformance(t *testing.T) {
 	} else {
 		t.Logf("Performance test passed: %v per reservation", avgDuration)
 	}
+}
+
+func TestDisk_GetEcShards_Race(t *testing.T) {
+	d := NewDisk("hdd")
+
+	// Pre-populate with one shard
+	initialShard := &erasure_coding.EcVolumeInfo{
+		VolumeId:   needle.VolumeId(1),
+		ShardsInfo: erasure_coding.NewShardsInfo(),
+	}
+	initialShard.ShardsInfo.Set(erasure_coding.ShardInfo{Id: 0, Size: 100})
+	d.AddOrUpdateEcShard(initialShard)
+
+	var wg sync.WaitGroup
+	wg.Add(10)
+
+	// Goroutine 1-5: Continuously read shards
+	for j := 0; j < 5; j++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 10000; i++ {
+				d.GetEcShards()
+			}
+		}()
+	}
+
+	// Goroutine 6-10: Continuously update shards
+	for j := 0; j < 5; j++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 10000; i++ {
+				shard := &erasure_coding.EcVolumeInfo{
+					VolumeId:   needle.VolumeId(i % 100),
+					ShardsInfo: erasure_coding.NewShardsInfo(),
+				}
+				shard.ShardsInfo.Set(erasure_coding.ShardInfo{Id: erasure_coding.ShardId(i % 14), Size: 100})
+				d.AddOrUpdateEcShard(shard)
+			}
+		}()
+	}
+
+	wg.Wait()
 }

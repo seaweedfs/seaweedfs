@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -42,6 +44,7 @@ type IdentityAccessManagement struct {
 	identities        []*Identity
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
+	policies          map[string]*iam_pb.Policy
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -55,10 +58,21 @@ type IdentityAccessManagement struct {
 	grpcDialOption    grpc.DialOption
 
 	// IAM Integration for advanced features
-	iamIntegration *S3IAMIntegration
+	iamIntegration IAMIntegration
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
+
+	// background polling
+	stopChan     chan struct{}
+	shutdownOnce sync.Once
+
+	// useStaticConfig indicates if the configuration was loaded from a static file
+	useStaticConfig bool
+
+	// staticIdentityNames tracks identity names loaded from the static config file
+	// These identities are immutable and cannot be updated by dynamic configuration
+	staticIdentityNames map[string]bool
 }
 
 type Identity struct {
@@ -66,8 +80,11 @@ type Identity struct {
 	Account      *Account
 	Credentials  []*Credential
 	Actions      []Action
-	PrincipalArn string // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
-	Disabled     bool   // User status: false = enabled (default), true = disabled
+	PolicyNames  []string               // Attached IAM policy names
+	PrincipalArn string                 // ARN for IAM authorization (e.g., "arn:aws:iam::account-id:user/username")
+	Disabled     bool                   // User status: false = enabled (default), true = disabled
+	Claims       map[string]interface{} // JWT claims for policy substitution
+	IsStatic     bool                   // Whether identity was loaded from static config (immutable)
 }
 
 // Account represents a system user, a system user can
@@ -151,79 +168,206 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 	}
 
 	iam.credentialManager = credentialManager
-
-	// Track whether any configuration was successfully loaded
-	configLoaded := false
+	iam.stopChan = make(chan struct{})
 
 	// First, try to load configurations from file or filer
-	if option.Config != "" {
-		glog.V(3).Infof("loading static config file %s", option.Config)
-		if err := iam.loadS3ApiConfigurationFromFile(option.Config); err != nil {
-			glog.Fatalf("fail to load config file %s: %v", option.Config, err)
+	startConfigFile := option.Config
+	if startConfigFile == "" {
+		startConfigFile = option.IamConfig
+	}
+
+	if startConfigFile != "" {
+		glog.V(3).Infof("loading static config file %s", startConfigFile)
+		if err := iam.loadS3ApiConfigurationFromFile(startConfigFile); err != nil {
+			glog.Fatalf("fail to load config file %s: %v", startConfigFile, err)
 		}
-		// Check if any identities were actually loaded from the config file
-		iam.m.RLock()
-		configLoaded = len(iam.identities) > 0
-		iam.m.RUnlock()
-	} else {
-		glog.V(3).Infof("no static config file specified... loading config from credential manager")
-		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
-			glog.Warningf("fail to load config: %v", err)
-		} else {
-			// Check if any identities were actually loaded from filer
-			iam.m.RLock()
-			configLoaded = len(iam.identities) > 0
-			iam.m.RUnlock()
+
+		// Track identity names from static config to protect them from dynamic updates
+		// Must be done under lock to avoid race conditions
+		iam.m.Lock()
+		iam.useStaticConfig = true
+		iam.staticIdentityNames = make(map[string]bool)
+		for _, identity := range iam.identities {
+			iam.staticIdentityNames[identity.Name] = true
+			identity.IsStatic = true
+		}
+		iam.m.Unlock()
+	}
+
+	// Always try to load/merge config from credential manager (filer/db)
+	// This ensures we get both static users (from file) and dynamic users (from backend)
+	glog.V(3).Infof("loading dynamic config from credential manager")
+	if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+		glog.Warningf("fail to load config: %v", err)
+	}
+
+	// Determine whether to start background polling for updates
+	// We poll if using a store that doesn't support real-time events (like Postgres)
+	if store := iam.credentialManager.GetStore(); store != nil {
+		storeName := store.GetName()
+		if storeName == credential.StoreTypePostgres {
+			glog.V(1).Infof("Starting background IAM polling for store: %s", storeName)
+			go iam.pollIamConfigChanges(1 * time.Minute)
 		}
 	}
 
-	// Only use environment variables as fallback if no configuration was loaded
-	if !configLoaded {
-		accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
-		secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	// Check for AWS environment variables and merge them if present
+	// This serves as an in-memory "static" configuration
+	iam.loadEnvironmentVariableCredentials()
 
-		if accessKeyId != "" && secretAccessKey != "" {
-			glog.V(1).Infof("No S3 configuration found, using AWS environment variables as fallback")
+	// Determine whether to enable S3 authentication based on configuration
+	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
+	// If any credentials are configured (via file, filer, or env vars), enable authentication
+	iam.m.Lock()
+	iam.isAuthEnabled = len(iam.identities) > 0
+	iam.m.Unlock()
 
-			// Create environment variable identity name
-			identityNameSuffix := accessKeyId
-			if len(accessKeyId) > 8 {
-				identityNameSuffix = accessKeyId[:8]
-			}
-
-			// Create admin identity with environment variable credentials
-			envIdentity := &Identity{
-				Name:    "admin-" + identityNameSuffix,
-				Account: &AccountAdmin,
-				Credentials: []*Credential{
-					{
-						AccessKey: accessKeyId,
-						SecretKey: secretAccessKey,
-					},
-				},
-				Actions: []Action{
-					s3_constants.ACTION_ADMIN,
-				},
-			}
-
-			// Set as the only configuration
-			iam.m.Lock()
-			if len(iam.identities) == 0 {
-				iam.identities = []*Identity{envIdentity}
-				iam.accessKeyIdent = map[string]*Identity{accessKeyId: envIdentity}
-				iam.nameToIdentity = map[string]*Identity{envIdentity.Name: envIdentity}
-				iam.isAuthEnabled = true
-			}
-			iam.m.Unlock()
-
-			glog.V(1).Infof("Added admin identity from AWS environment variables: %s", envIdentity.Name)
+	if iam.isAuthEnabled {
+		// Credentials were configured - enable authentication
+		glog.V(1).Infof("S3 authentication enabled (%d identities configured)", len(iam.identities))
+	} else {
+		// No credentials configured
+		if startConfigFile != "" {
+			// Config file was specified but contained no identities - this is unusual, log a warning
+			glog.Warningf("S3 config file %s specified but no identities loaded - authentication disabled", startConfigFile)
+		} else {
+			// No config file and no identities - this is the normal allow-all case
+			glog.V(1).Infof("S3 authentication disabled - no credentials configured (allowing all access)")
 		}
 	}
 
 	return iam
 }
 
-func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
+func (iam *IdentityAccessManagement) pollIamConfigChanges(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+				glog.Warningf("failed to reload IAM configuration via polling: %v", err)
+			}
+		case <-iam.stopChan:
+			return
+		}
+	}
+}
+
+func (iam *IdentityAccessManagement) Shutdown() {
+	iam.shutdownOnce.Do(func() {
+		if iam.stopChan != nil {
+			close(iam.stopChan)
+		}
+		if iam.credentialManager != nil {
+			iam.credentialManager.Shutdown()
+		}
+	})
+}
+
+// loadEnvironmentVariableCredentials loads AWS credentials from environment variables
+// and adds them as a static admin identity. This function is idempotent and can be
+// called multiple times (e.g., after configuration reloads).
+func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
+	accessKeyId := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretAccessKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	if accessKeyId == "" || secretAccessKey == "" {
+		return
+	}
+
+	// Create environment variable identity name
+	identityNameSuffix := accessKeyId
+	if len(accessKeyId) > 8 {
+		identityNameSuffix = accessKeyId[:8]
+	}
+	identityName := "admin-" + identityNameSuffix
+
+	// Create admin identity with environment variable credentials
+	envIdentity := &Identity{
+		Name:    identityName,
+		Account: &AccountAdmin,
+		Credentials: []*Credential{
+			{
+				AccessKey: accessKeyId,
+				SecretKey: secretAccessKey,
+			},
+		},
+		Actions: []Action{
+			s3_constants.ACTION_ADMIN,
+		},
+		IsStatic: true,
+	}
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	// Initialize maps if they are nil
+	if iam.staticIdentityNames == nil {
+		iam.staticIdentityNames = make(map[string]bool)
+	}
+	if iam.accessKeyIdent == nil {
+		iam.accessKeyIdent = make(map[string]*Identity)
+	}
+	if iam.nameToIdentity == nil {
+		iam.nameToIdentity = make(map[string]*Identity)
+	}
+
+	// Check if identity already exists (avoid duplicates)
+	exists := false
+	for _, ident := range iam.identities {
+		if ident.Name == identityName {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		glog.Infof("Added admin identity from AWS environment variables: name=%s, accessKey=%s", envIdentity.Name, accessKeyId)
+
+		// Add to identities list
+		iam.identities = append(iam.identities, envIdentity)
+
+		// Update credential mappings
+		iam.accessKeyIdent[accessKeyId] = envIdentity
+		iam.nameToIdentity[envIdentity.Name] = envIdentity
+
+		// Treat env var identity as static (immutable)
+		iam.staticIdentityNames[envIdentity.Name] = true
+
+		// Ensure defaults exist
+		if iam.accounts == nil {
+			iam.accounts = make(map[string]*Account)
+		}
+		iam.accounts[AccountAdmin.Id] = &AccountAdmin
+		iam.accounts[AccountAnonymous.Id] = &AccountAnonymous
+
+		if iam.emailAccount == nil {
+			iam.emailAccount = make(map[string]*Account)
+		}
+		iam.emailAccount[AccountAdmin.EmailAddress] = &AccountAdmin
+		iam.emailAccount[AccountAnonymous.EmailAddress] = &AccountAnonymous
+	}
+}
+
+func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
+	// Try to load configuration with retries to handle transient connectivity issues during startup
+	for i := 0; i < 10; i++ {
+		err = iam.doLoadS3ApiConfigurationFromFiler(option)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return err
+		}
+		glog.Warningf("fail to load config from filer (attempt %d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+	return err
+}
+
+func (iam *IdentityAccessManagement) doLoadS3ApiConfigurationFromFiler(option *S3ApiServerOption) error {
 	return iam.LoadS3ApiConfigurationFromCredentialManager()
 }
 
@@ -260,10 +404,27 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromBytes(content []b
 }
 
 func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	// Check if we need to merge with existing static configuration
+	iam.m.RLock()
+	hasStaticConfig := iam.useStaticConfig && len(iam.staticIdentityNames) > 0
+	iam.m.RUnlock()
+
+	if hasStaticConfig {
+		// Merge mode: preserve static identities, add/update dynamic ones
+		return iam.MergeS3ApiConfiguration(config)
+	}
+
+	// Normal mode: completely replace configuration
+	return iam.ReplaceS3ApiConfiguration(config)
+}
+
+// ReplaceS3ApiConfiguration completely replaces the current configuration (used when no static config)
+func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
 	var identities []*Identity
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
 	nameToIdentity := make(map[string]*Identity)
+	policies := make(map[string]*iam_pb.Policy)
 	accounts := make(map[string]*Account)
 	emailAccount := make(map[string]*Account)
 	foundAccountAdmin := false
@@ -302,6 +463,9 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 		}
 		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
 	}
+	for _, policy := range config.Policies {
+		policies[policy.Name] = policy
+	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
@@ -310,6 +474,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			Actions:      nil,
 			PrincipalArn: generatePrincipalArn(ident.Name),
 			Disabled:     ident.Disabled, // false (default) = enabled, true = disabled
+			PolicyNames:  ident.PolicyNames,
 		}
 		switch {
 		case ident.Name == AccountAnonymous.Id:
@@ -380,27 +545,356 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	iam.emailAccount = emailAccount
 	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
-	if !iam.isAuthEnabled { // one-directional, no toggling
-		iam.isAuthEnabled = len(identities) > 0
-	}
+	iam.policies = policies
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
 
+	if authJustEnabled {
+		glog.V(1).Infof("S3 authentication enabled - credentials were added dynamically")
+	}
+
+	// Re-add environment variable credentials if they exist
+	// This ensures env var credentials persist across configuration reloads
+	iam.loadEnvironmentVariableCredentials()
+
+	// Log configuration summary - always log to help debugging
+	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
+
+	if glog.V(2) {
+		glog.V(2).Infof("Access key to identity mapping:")
+		iam.m.RLock()
+		for accessKey, identity := range iam.accessKeyIdent {
+			glog.V(2).Infof("  %s -> %s (actions: %d)", accessKey, identity.Name, len(identity.Actions))
+		}
+		iam.m.RUnlock()
+	}
+
+	return nil
+}
+
+// MergeS3ApiConfiguration merges dynamic configuration with existing static configuration
+// Static identities (from file) are preserved and cannot be updated
+// Dynamic identities (from filer/admin) can be added or updated
+func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	// Start with current configuration (which includes static identities)
+	iam.m.RLock()
+	identities := make([]*Identity, len(iam.identities))
+	copy(identities, iam.identities)
+	identityAnonymous := iam.identityAnonymous
+	accessKeyIdent := make(map[string]*Identity)
+	for k, v := range iam.accessKeyIdent {
+		accessKeyIdent[k] = v
+	}
+	nameToIdentity := make(map[string]*Identity)
+	for k, v := range iam.nameToIdentity {
+		nameToIdentity[k] = v
+	}
+	policies := make(map[string]*iam_pb.Policy)
+	for k, v := range iam.policies {
+		policies[k] = v
+	}
+	accounts := make(map[string]*Account)
+	for k, v := range iam.accounts {
+		accounts[k] = v
+	}
+	emailAccount := make(map[string]*Account)
+	for k, v := range iam.emailAccount {
+		emailAccount[k] = v
+	}
+	staticNames := make(map[string]bool)
+	for k, v := range iam.staticIdentityNames {
+		staticNames[k] = v
+	}
+	iam.m.RUnlock()
+
+	// Process accounts from dynamic config (can add new accounts)
+	for _, account := range config.Accounts {
+		if _, exists := accounts[account.Id]; !exists {
+			glog.V(3).Infof("adding dynamic account: name=%s, id=%s", account.DisplayName, account.Id)
+			accounts[account.Id] = &Account{
+				Id:           account.Id,
+				DisplayName:  account.DisplayName,
+				EmailAddress: account.EmailAddress,
+			}
+			if account.EmailAddress != "" {
+				emailAccount[account.EmailAddress] = accounts[account.Id]
+			}
+		}
+	}
+
+	// Ensure default accounts exist
+	if _, exists := accounts[AccountAdmin.Id]; !exists {
+		accounts[AccountAdmin.Id] = &Account{
+			DisplayName:  AccountAdmin.DisplayName,
+			EmailAddress: AccountAdmin.EmailAddress,
+			Id:           AccountAdmin.Id,
+		}
+		emailAccount[AccountAdmin.EmailAddress] = accounts[AccountAdmin.Id]
+	}
+	if _, exists := accounts[AccountAnonymous.Id]; !exists {
+		accounts[AccountAnonymous.Id] = &Account{
+			DisplayName:  AccountAnonymous.DisplayName,
+			EmailAddress: AccountAnonymous.EmailAddress,
+			Id:           AccountAnonymous.Id,
+		}
+		emailAccount[AccountAnonymous.EmailAddress] = accounts[AccountAnonymous.Id]
+	}
+
+	// Process identities from dynamic config
+	for _, ident := range config.Identities {
+		// Skip static identities - they cannot be updated
+		if staticNames[ident.Name] {
+			glog.V(3).Infof("skipping static identity %s (immutable)", ident.Name)
+			continue
+		}
+
+		glog.V(3).Infof("loading/updating dynamic identity %s (disabled=%v)", ident.Name, ident.Disabled)
+		t := &Identity{
+			Name:         ident.Name,
+			Credentials:  nil,
+			Actions:      nil,
+			PrincipalArn: generatePrincipalArn(ident.Name),
+			Disabled:     ident.Disabled,
+			PolicyNames:  ident.PolicyNames,
+		}
+
+		switch {
+		case ident.Name == AccountAnonymous.Id:
+			t.Account = &AccountAnonymous
+			identityAnonymous = t
+		case ident.Account == nil:
+			t.Account = &AccountAdmin
+		default:
+			if account, ok := accounts[ident.Account.Id]; ok {
+				t.Account = account
+			} else {
+				t.Account = &AccountAdmin
+				glog.Warningf("identity %s is associated with a non exist account ID, the association is invalid", ident.Name)
+			}
+		}
+
+		for _, action := range ident.Actions {
+			t.Actions = append(t.Actions, Action(action))
+		}
+		for _, cred := range ident.Credentials {
+			t.Credentials = append(t.Credentials, &Credential{
+				AccessKey: cred.AccessKey,
+				SecretKey: cred.SecretKey,
+				Status:    cred.Status,
+			})
+			accessKeyIdent[cred.AccessKey] = t
+		}
+
+		// Update or add the identity
+		existingIdx := -1
+		for i, existing := range identities {
+			if existing.Name == ident.Name {
+				existingIdx = i
+				break
+			}
+		}
+
+		if existingIdx >= 0 {
+			// Before replacing, remove stale accessKeyIdent entries for the old identity
+			oldIdentity := identities[existingIdx]
+			for _, oldCred := range oldIdentity.Credentials {
+				// Only remove if it still points to this identity
+				if accessKeyIdent[oldCred.AccessKey] == oldIdentity {
+					delete(accessKeyIdent, oldCred.AccessKey)
+				}
+			}
+			// Replace existing dynamic identity
+			identities[existingIdx] = t
+		} else {
+			// Add new dynamic identity
+			identities = append(identities, t)
+		}
+		nameToIdentity[t.Name] = t
+	}
+
+	// Process service accounts from dynamic config
+	for _, sa := range config.ServiceAccounts {
+		if sa.Credential == nil {
+			continue
+		}
+
+		// Skip disabled service accounts
+		if sa.Disabled {
+			glog.V(3).Infof("Skipping disabled service account %s", sa.Id)
+			continue
+		}
+
+		// Find the parent identity
+		parentIdent, ok := nameToIdentity[sa.ParentUser]
+		if !ok {
+			glog.Warningf("Service account %s has non-existent parent user %s, skipping", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Skip if parent is a static identity (we don't modify static identities)
+		if staticNames[sa.ParentUser] {
+			glog.V(3).Infof("Skipping service account %s for static parent %s", sa.Id, sa.ParentUser)
+			continue
+		}
+
+		// Check if this access key already exists in parent's credentials to avoid duplicates
+		alreadyExists := false
+		for _, existingCred := range parentIdent.Credentials {
+			if existingCred.AccessKey == sa.Credential.AccessKey {
+				alreadyExists = true
+				break
+			}
+		}
+
+		if alreadyExists {
+			glog.V(3).Infof("Service account %s credential already exists for parent %s, skipping", sa.Id, sa.ParentUser)
+			// Ensure accessKeyIdent mapping is correct
+			accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+			continue
+		}
+
+		// Add service account credential to parent identity
+		cred := &Credential{
+			AccessKey:  sa.Credential.AccessKey,
+			SecretKey:  sa.Credential.SecretKey,
+			Status:     sa.Credential.Status,
+			Expiration: sa.Expiration,
+		}
+		parentIdent.Credentials = append(parentIdent.Credentials, cred)
+		accessKeyIdent[sa.Credential.AccessKey] = parentIdent
+		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
+	}
+
+	for _, policy := range config.Policies {
+		policies[policy.Name] = policy
+	}
+
+	iam.m.Lock()
+	// atomically switch
+	iam.identities = identities
+	iam.identityAnonymous = identityAnonymous
+	iam.accounts = accounts
+	iam.emailAccount = emailAccount
+	iam.accessKeyIdent = accessKeyIdent
+	iam.nameToIdentity = nameToIdentity
+	iam.policies = policies
+	// Update authentication state based on whether identities exist
+	// Once enabled, keep it enabled (one-way toggle)
+	authJustEnabled := iam.updateAuthenticationState(len(identities))
+	iam.m.Unlock()
+
+	if authJustEnabled {
+		glog.V(1).Infof("S3 authentication enabled because credentials were added dynamically")
+	}
+
 	// Log configuration summary
-	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
-		len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
+	staticCount := len(staticNames)
+	dynamicCount := len(identities) - staticCount
+	glog.V(1).Infof("Merged config: %d static + %d dynamic identities = %d total, %d accounts, %d access keys. Auth enabled: %v",
+		staticCount, dynamicCount, len(identities), len(accounts), len(accessKeyIdent), iam.isAuthEnabled)
 
 	if glog.V(2) {
 		glog.V(2).Infof("Access key to identity mapping:")
 		for accessKey, identity := range accessKeyIdent {
-			glog.V(2).Infof("  %s -> %s (actions: %d)", accessKey, identity.Name, len(identity.Actions))
+			identityType := "dynamic"
+			if staticNames[identity.Name] {
+				identityType = "static"
+			}
+			glog.V(2).Infof("  %s -> %s (%s, actions: %d)", accessKey, identity.Name, identityType, len(identity.Actions))
 		}
 	}
 
 	return nil
 }
 
+func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
+	glog.V(1).Infof("IAM: remove identity %s", name)
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	identity, ok := iam.nameToIdentity[name]
+	if !ok {
+		return
+	}
+
+	if identity.IsStatic {
+		glog.V(1).Infof("IAM: skipping removal of static identity %s (immutable)", name)
+		return
+	}
+
+	// Remove from identities slice
+	for i, ident := range iam.identities {
+		if ident.Name == name {
+			iam.identities = append(iam.identities[:i], iam.identities[i+1:]...)
+			break
+		}
+	}
+
+	// Remove from maps
+	delete(iam.nameToIdentity, name)
+	for _, cred := range identity.Credentials {
+		if iam.accessKeyIdent[cred.AccessKey] == identity {
+			delete(iam.accessKeyIdent, cred.AccessKey)
+		}
+	}
+
+	if identity == iam.identityAnonymous {
+		iam.identityAnonymous = nil
+	}
+}
+
+func (iam *IdentityAccessManagement) UpsertIdentity(ident *iam_pb.Identity) error {
+	if ident == nil {
+		return fmt.Errorf("upsert identity failed: nil identity")
+
+	}
+	if ident.Name == "" {
+		return fmt.Errorf("upsert identity failed: empty identity name")
+	}
+	glog.V(1).Infof("IAM: upsert identity %s", ident.Name)
+	return iam.MergeS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{ident},
+	})
+}
+
+// isEnabled reports whether S3 auth should be enforced for this server.
+//
+// Auth is considered enabled if either:
+//   - we have any locally managed identities/credentials (iam.isAuthEnabled), or
+//   - an external IAM integration has been configured (iam.iamIntegration != nil).
+//
+// The iamIntegration check is intentionally included so that when an external
+// IAM provider is configured (and the server relies solely on it), auth is
+// still treated as enabled even if there are no local identities yet or
+// before any sync logic flips isAuthEnabled to true. Removing this check or
+// relying only on isAuthEnabled would change when auth is enforced and could
+// unintentionally allow unauthenticated access in integration-only setups.
 func (iam *IdentityAccessManagement) isEnabled() bool {
-	return iam.isAuthEnabled
+	return iam.isAuthEnabled || iam.iamIntegration != nil
+}
+
+func (iam *IdentityAccessManagement) updateAuthenticationState(identitiesCount int) bool {
+	if !iam.isAuthEnabled && identitiesCount > 0 {
+		iam.isAuthEnabled = true
+		return true
+	}
+	return false
+}
+
+func (iam *IdentityAccessManagement) IsStaticConfig() bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	return iam.useStaticConfig
+}
+
+// IsStaticIdentity checks if an identity was loaded from the static config file
+func (iam *IdentityAccessManagement) IsStaticIdentity(identityName string) bool {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	return iam.staticIdentityNames[identityName]
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
@@ -419,7 +913,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 
 	truncatedKey := truncate(accessKey)
 
-	glog.V(3).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
+	glog.V(4).Infof("Looking up access key: %s (len=%d, total keys registered: %d)",
 		truncatedKey, len(accessKey), len(iam.accessKeyIdent))
 
 	if ident, ok := iam.accessKeyIdent[accessKey]; ok {
@@ -436,7 +930,7 @@ func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identi
 					glog.V(2).Infof("Access key %s for identity %s is inactive", truncatedKey, ident.Name)
 					return nil, nil, false
 				}
-				glog.V(2).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
+				glog.V(4).Infof("Found access key %s for identity %s", truncatedKey, ident.Name)
 				return ident, credential, true
 			}
 		}
@@ -521,7 +1015,9 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		}
 
 		identity, errCode := iam.authRequest(r, action)
-		glog.V(3).Infof("auth error: %v", errCode)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("auth error: %v", errCode)
+		}
 
 		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
@@ -557,7 +1053,9 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 			}
 		}
 
-		glog.V(3).Infof("auth error: %v", errCode)
+		if errCode != s3err.ErrNone {
+			glog.V(3).Infof("auth error: %v", errCode)
+		}
 
 		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
@@ -586,33 +1084,53 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 }
 
 // check whether the request has valid access keys
-func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+// AuthenticateRequest verifies the credentials in the request and returns the identity.
+// It bypasses permission checks (authorization).
+func (iam *IdentityAccessManagement) AuthenticateRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
+	if !iam.isAuthEnabled {
+		return &Identity{
+			Name:    "admin",
+			Account: &AccountAdmin,
+			Actions: []Action{s3_constants.ACTION_ADMIN},
+		}, s3err.ErrNone
+	}
+	ident, err, _ := iam.authenticateRequestInternal(r)
+	return ident, err
+}
+
+func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request) (*Identity, s3err.ErrorCode, authType) {
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
 	var amzAuthType string
 
+	// SECURITY: Prevent clients from spoofing internal IAM headers
+	// These headers are only set by the server after successful JWT authentication
+	// Clearing them here prevents privilege escalation via header injection
+	r.Header.Del("X-SeaweedFS-Principal")
+	r.Header.Del("X-SeaweedFS-Session-Token")
+
 	reqAuthType := getRequestAuthType(r)
 
 	switch reqAuthType {
 	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
+		glog.V(4).Infof("unknown auth type")
 		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied, reqAuthType
 	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
+		glog.V(4).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
 		amzAuthType = "SigV2"
 	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
+		glog.V(4).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
+		glog.V(4).Infof("unsigned streaming upload")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
 		amzAuthType = "SigV4"
 	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
+		glog.V(4).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
 		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
 		if iam.iamIntegration != nil {
 			identity, s3Err = iam.authenticateJWTWithIAM(r)
@@ -634,11 +1152,17 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	if len(amzAuthType) > 0 {
 		r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 	}
+
+	return identity, s3Err, reqAuthType
+}
+
+// authRequestWithAuthType authenticates and then authorizes a request for a given action.
+func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, action Action) (*Identity, s3err.ErrorCode, authType) {
+	identity, s3Err, reqAuthType := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err, reqAuthType
 	}
 
-	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	prefix := s3_constants.GetPrefix(r)
 
@@ -666,11 +1190,15 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		// - Explicit ALLOW in bucket policy → grant access (bypass IAM checks)
 		// - No policy or indeterminate → fall through to IAM checks
 		if iam.policyEngine != nil && bucket != "" {
-			principal := buildPrincipalARN(identity)
+			principal := buildPrincipalARN(identity, r)
 			// Phase 1: Evaluate bucket policy without object entry.
 			// Tag-based conditions (s3:ExistingObjectTag) are re-checked by handlers
 			// after fetching the entry, which is the Phase 2 check.
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
+			var claims map[string]interface{}
+			if identity != nil {
+				claims = identity.Claims
+			}
+			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, claims, nil)
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
@@ -696,18 +1224,9 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 		// Only check IAM if bucket policy didn't explicitly allow
 		if !policyAllows {
-			// Traditional identities (with Actions from -s3.config) use legacy auth,
-			// JWT/STS identities (no Actions) use IAM authorization
-			if len(identity.Actions) > 0 {
-				if !identity.canDo(action, bucket, object) {
-					return identity, s3err.ErrAccessDenied, reqAuthType
-				}
-			} else if iam.iamIntegration != nil {
-				if errCode := iam.authorizeWithIAM(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-					return identity, errCode, reqAuthType
-				}
-			} else {
-				return identity, s3err.ErrAccessDenied, reqAuthType
+			// Use centralized permission check
+			if errCode := iam.VerifyActionPermission(r, identity, action, bucket, object); errCode != s3err.ErrNone {
+				return identity, errCode, reqAuthType
 			}
 		}
 	}
@@ -776,7 +1295,7 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
+func (identity *Identity) CanDo(action Action, bucket string, objectKey string) bool {
 	if identity == nil {
 		return false
 	}
@@ -792,26 +1311,36 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 			return true
 		}
 	}
+	// Intelligent path concatenation to avoid double slashes
+	fullPath := bucket
+	if objectKey != "" && !strings.HasPrefix(objectKey, "/") {
+		fullPath += "/"
+	}
+	fullPath += objectKey
+
 	if bucket == "" {
-		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, bucket+objectKey)
+		glog.V(3).Infof("identity %s is not allowed to perform action %s on %s -- bucket is empty", identity.Name, action, "/"+strings.TrimPrefix(objectKey, "/"))
 		return false
 	}
-	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, bucket+objectKey)
-	target := string(action) + ":" + bucket + objectKey
-	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
+	glog.V(3).Infof("checking if %s can perform %s on bucket '%s'", identity.Name, action, fullPath)
+
+	target := string(action) + ":" + fullPath
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + fullPath
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 
 	for _, a := range identity.Actions {
 		act := string(a)
-		if strings.HasSuffix(act, "*") {
-			if strings.HasPrefix(target, act[:len(act)-1]) {
+		if strings.ContainsAny(act, "*?") {
+			// Pattern has wildcards - use smart matching
+			if policy_engine.MatchesWildcard(act, target) {
 				return true
 			}
-			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
+			if policy_engine.MatchesWildcard(act, adminTarget) {
 				return true
 			}
 		} else {
+			// No wildcards - exact match only
 			if act == limitedByBucket {
 				return true
 			}
@@ -821,7 +1350,7 @@ func (identity *Identity) canDo(action Action, bucket string, objectKey string) 
 		}
 	}
 	//log error
-	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+objectKey)
+	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+"/"+objectKey)
 	return false
 }
 
@@ -833,7 +1362,16 @@ func (identity *Identity) isAdmin() bool {
 }
 
 // buildPrincipalARN builds an ARN for an identity to use in bucket policy evaluation
-func buildPrincipalARN(identity *Identity) string {
+// It first checks if a principal ARN was set by JWT authentication in request headers
+func buildPrincipalARN(identity *Identity, r *http.Request) string {
+	// Check if principal ARN was already set by JWT authentication
+	if r != nil {
+		if principalARN := r.Header.Get("X-SeaweedFS-Principal"); principalARN != "" {
+			glog.V(4).Infof("buildPrincipalARN: Using principal ARN from header: %s", principalARN)
+			return principalARN
+		}
+	}
+
 	if identity == nil {
 		return "*" // Anonymous
 	}
@@ -867,6 +1405,7 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
+	glog.V(1).Infof("IAM: reloading configuration from credential manager")
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
 
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
@@ -939,9 +1478,11 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 
 	// Convert IAMIdentity to existing Identity structure
 	identity := &Identity{
-		Name:    iamIdentity.Name,
-		Account: iamIdentity.Account,
-		Actions: []Action{}, // Empty - authorization handled by policy engine
+		Name:        iamIdentity.Name,
+		Account:     iamIdentity.Account,
+		Actions:     []Action{}, // Empty - authorization handled by policy engine
+		PolicyNames: iamIdentity.PolicyNames,
+		Claims:      iamIdentity.Claims,
 	}
 
 	// Store session info in request headers for later authorization
@@ -975,6 +1516,29 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
+// VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
+// It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
+func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
+	// Fail closed if identity is nil
+	if identity == nil {
+		glog.V(3).Infof("VerifyActionPermission called with nil identity for action %s on %s/%s", action, bucket, object)
+		return s3err.ErrAccessDenied
+	}
+
+	// Traditional identities (with Actions from -s3.config) use legacy auth,
+	// JWT/STS identities (no Actions) use IAM authorization
+	if len(identity.Actions) > 0 {
+		if !identity.CanDo(action, bucket, object) {
+			return s3err.ErrAccessDenied
+		}
+		return s3err.ErrNone
+	} else if iam.iamIntegration != nil {
+		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+	}
+
+	return s3err.ErrAccessDenied
+}
+
 // authorizeWithIAM authorizes requests using the IAM integration policy engine
 func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity *Identity, action Action, bucket string, object string) s3err.ErrorCode {
 	ctx := r.Context()
@@ -997,8 +1561,10 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 
 	// Create IAMIdentity for authorization
 	iamIdentity := &IAMIdentity{
-		Name:    identity.Name,
-		Account: identity.Account,
+		Name:        identity.Name,
+		Account:     identity.Account,
+		PolicyNames: identity.PolicyNames,
+		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
 	// Determine authorization path and configure identity
@@ -1026,4 +1592,44 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 
 	// Use IAM integration for authorization
 	return iam.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
+}
+
+// PutPolicy adds or updates a policy
+func (iam *IdentityAccessManagement) PutPolicy(name string, content string) error {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	if iam.policies == nil {
+		iam.policies = make(map[string]*iam_pb.Policy)
+	}
+	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	return nil
+}
+
+// GetPolicy retrieves a policy by name
+func (iam *IdentityAccessManagement) GetPolicy(name string) (*iam_pb.Policy, error) {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	if policy, ok := iam.policies[name]; ok {
+		return policy, nil
+	}
+	return nil, fmt.Errorf("policy not found: %s", name)
+}
+
+// DeletePolicy removes a policy
+func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
+	iam.m.Lock()
+	defer iam.m.Unlock()
+	delete(iam.policies, name)
+	return nil
+}
+
+// ListPolicies lists all policies
+func (iam *IdentityAccessManagement) ListPolicies() []*iam_pb.Policy {
+	iam.m.RLock()
+	defer iam.m.RUnlock()
+	var policies []*iam_pb.Policy
+	for _, p := range iam.policies {
+		policies = append(policies, p)
+	}
+	return policies
 }

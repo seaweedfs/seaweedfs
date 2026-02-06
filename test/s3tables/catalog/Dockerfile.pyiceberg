@@ -1,0 +1,13 @@
+# PyIceberg test container for Iceberg REST Catalog compatibility testing
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install PyIceberg with S3 support and dependencies
+RUN pip install --no-cache-dir "pyiceberg[s3fs]" pyarrow pandas
+
+# Copy the test script
+COPY test_rest_catalog.py /app/
+
+# Default command
+CMD ["python3", "/app/test_rest_catalog.py", "--help"]

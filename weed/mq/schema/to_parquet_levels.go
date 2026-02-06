@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 )
 

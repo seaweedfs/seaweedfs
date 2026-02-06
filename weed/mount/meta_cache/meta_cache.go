@@ -19,27 +19,29 @@ import (
 // e.g. fill fileId field for chunks
 
 type MetaCache struct {
-	root        util.FullPath
-	localStore  filer.VirtualFilerStore
+	root         util.FullPath
+	localStore   filer.VirtualFilerStore
 	leveldbStore *leveldb.LevelDBStore // direct reference for batch operations
 	sync.RWMutex
-	uidGidMapper   *UidGidMapper
-	markCachedFn   func(fullpath util.FullPath)
-	isCachedFn     func(fullpath util.FullPath) bool
-	invalidateFunc func(fullpath util.FullPath, entry *filer_pb.Entry)
-	visitGroup     singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	uidGidMapper      *UidGidMapper
+	markCachedFn      func(fullpath util.FullPath)
+	isCachedFn        func(fullpath util.FullPath) bool
+	invalidateFunc    func(fullpath util.FullPath, entry *filer_pb.Entry)
+	onDirectoryUpdate func(dir util.FullPath)
+	visitGroup        singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
-	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry)) *MetaCache {
+	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	return &MetaCache{
-		root:         root,
-		localStore:   virtualStore,
-		leveldbStore: leveldbStore,
-		markCachedFn: markCachedFn,
-		isCachedFn:   isCachedFn,
-		uidGidMapper: uidGidMapper,
+		root:              root,
+		localStore:        virtualStore,
+		leveldbStore:      leveldbStore,
+		markCachedFn:      markCachedFn,
+		isCachedFn:        isCachedFn,
+		uidGidMapper:      uidGidMapper,
+		onDirectoryUpdate: onDirectoryUpdate,
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
@@ -192,4 +194,10 @@ func (mc *MetaCache) Debug() {
 // (i.e., all entries have been loaded via EnsureVisited or ReadDir).
 func (mc *MetaCache) IsDirectoryCached(dirPath util.FullPath) bool {
 	return mc.isCachedFn(dirPath)
+}
+
+func (mc *MetaCache) noteDirectoryUpdate(dirPath util.FullPath) {
+	if mc.onDirectoryUpdate != nil {
+		mc.onDirectoryUpdate(dirPath)
+	}
 }

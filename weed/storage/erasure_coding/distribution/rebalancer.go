@@ -26,8 +26,8 @@ type RebalancePlan struct {
 	Analysis     *TopologyAnalysis
 
 	// Statistics
-	TotalMoves     int
-	MovesAcrossDC  int
+	TotalMoves      int
+	MovesAcrossDC   int
 	MovesAcrossRack int
 	MovesWithinRack int
 }
@@ -54,8 +54,8 @@ func (p *RebalancePlan) DetailedString() string {
 
 // Rebalancer plans shard moves to achieve proportional distribution
 type Rebalancer struct {
-	ecConfig   ECConfig
-	repConfig  ReplicationConfig
+	ecConfig  ECConfig
+	repConfig ReplicationConfig
 }
 
 // NewRebalancer creates a new rebalancer with the given configuration
@@ -375,4 +375,3 @@ func (r *Rebalancer) applyMovesToAnalysis(analysis *TopologyAnalysis, moves []Sh
 	// Counts are already updated by the individual planners.
 	// This function is kept for API compatibility and potential future use.
 }
-

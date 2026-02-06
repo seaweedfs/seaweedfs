@@ -199,6 +199,14 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	return versionId, nil
 }
 
+// versionListItem represents an item in the unified version/prefix list
+type versionListItem struct {
+	key         string
+	versionId   string
+	isPrefix    bool
+	versionData interface{} // *VersionEntry or *DeleteMarkerEntry
+}
+
 // listObjectVersions lists all versions of an object
 func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int) (*S3ListObjectVersionsResult, error) {
 	// S3 API limits max-keys to 1000
@@ -217,6 +225,9 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// Track version IDs globally to prevent duplicates throughout the listing
 	seenVersionIds := make(map[string]bool)
 
+	// Map to track common prefixes (deduplicated)
+	commonPrefixes := make(map[string]bool)
+
 	// Recursively find all .versions directories in the bucket
 	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
 	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
@@ -230,103 +241,124 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 	// - The alternative (collecting all) causes memory issues for buckets with many versions
 	// - Pagination continues correctly; users can page through to see all versions
 	maxCollect := maxKeys + 1 // +1 to detect truncation
-	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, maxCollect)
+	err := s3a.findVersionsRecursively(bucketPath, "", &allVersions, processedObjects, seenVersionIds, bucket, prefix, keyMarker, versionIdMarker, delimiter, commonPrefixes, maxCollect)
 	if err != nil {
 		glog.Errorf("listObjectVersions: findVersionsRecursively failed: %v", err)
 		return nil, err
 	}
 
-	// Clear maps to help GC reclaim memory sooner
 	clear(processedObjects)
 	clear(seenVersionIds)
 
-	glog.V(1).Infof("listObjectVersions: found %d total versions", len(allVersions))
+	// Combine versions and prefixes into a single sorted list
+	combinedList := s3a.buildSortedCombinedList(allVersions, commonPrefixes)
+	glog.V(1).Infof("listObjectVersions: collected %d combined items (versions+prefixes)", len(combinedList))
 
-	// Sort by key, then by version (newest first)
-	// Uses compareVersionIds to handle both old and new format version IDs
-	sort.Slice(allVersions, func(i, j int) bool {
-		var keyI, keyJ string
-		var versionIdI, versionIdJ string
+	// Apply MaxKeys truncation and determine pagination markers
+	truncatedList, nextKeyMarker, nextVersionIdMarker, isTruncated := s3a.truncateAndSetMarkers(combinedList, maxKeys)
+	glog.V(1).Infof("listObjectVersions: after truncation - %d items (truncated: %v)", len(truncatedList), isTruncated)
 
-		switch v := allVersions[i].(type) {
-		case *VersionEntry:
-			keyI = v.Key
-			versionIdI = v.VersionId
-		case *DeleteMarkerEntry:
-			keyI = v.Key
-			versionIdI = v.VersionId
-		}
-
-		switch v := allVersions[j].(type) {
-		case *VersionEntry:
-			keyJ = v.Key
-			versionIdJ = v.VersionId
-		case *DeleteMarkerEntry:
-			keyJ = v.Key
-			versionIdJ = v.VersionId
-		}
-
-		// First sort by object key
-		if keyI != keyJ {
-			return keyI < keyJ
-		}
-
-		// Then by version ID (newest first)
-		// compareVersionIds handles both old (raw timestamp) and new (inverted timestamp) formats
-		return compareVersionIds(versionIdI, versionIdJ) < 0
-	})
-
-	// Build result using S3ListObjectVersionsResult to avoid conflicts with XSD structs
-	result := &S3ListObjectVersionsResult{
-		Name:        bucket,
-		Prefix:      prefix,
-		KeyMarker:   keyMarker,
-		MaxKeys:     maxKeys,
-		Delimiter:   delimiter,
-		IsTruncated: len(allVersions) > maxKeys,
-	}
-
-	glog.V(1).Infof("listObjectVersions: building response with %d versions (truncated: %v)", len(allVersions), result.IsTruncated)
-
-	// Limit results and properly release excess memory
-	if len(allVersions) > maxKeys {
-		result.IsTruncated = true
-
-		// Set next markers from the last item we'll return
-		switch v := allVersions[maxKeys-1].(type) {
-		case *VersionEntry:
-			result.NextKeyMarker = v.Key
-			result.NextVersionIdMarker = v.VersionId
-		case *DeleteMarkerEntry:
-			result.NextKeyMarker = v.Key
-			result.NextVersionIdMarker = v.VersionId
-		}
-
-		// Create a new slice with exact capacity to allow GC to reclaim excess memory
-		truncated := make([]interface{}, maxKeys)
-		copy(truncated, allVersions[:maxKeys])
-		allVersions = truncated
-	}
-
-	// Always initialize empty slices so boto3 gets the expected fields even when empty
-	result.Versions = make([]VersionEntry, 0)
-	result.DeleteMarkers = make([]DeleteMarkerEntry, 0)
-
-	// Add versions to result
-	for i, version := range allVersions {
-		switch v := version.(type) {
-		case *VersionEntry:
-			glog.V(2).Infof("listObjectVersions: adding version %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
-			result.Versions = append(result.Versions, *v)
-		case *DeleteMarkerEntry:
-			glog.V(2).Infof("listObjectVersions: adding delete marker %d: key=%s, versionId=%s", i, v.Key, v.VersionId)
-			result.DeleteMarkers = append(result.DeleteMarkers, *v)
-		}
-	}
-
-	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers", len(result.Versions), len(result.DeleteMarkers))
+	// Build the final response by splitting items back into their respective fields
+	result := s3a.splitIntoResult(truncatedList, bucket, prefix, keyMarker, versionIdMarker, delimiter, maxKeys, isTruncated, nextKeyMarker, nextVersionIdMarker)
+	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers, %d common prefixes", len(result.Versions), len(result.DeleteMarkers), len(result.CommonPrefixes))
 
 	return result, nil
+}
+
+// buildSortedCombinedList merges versions and common prefixes into a single list
+// sorted lexicographically by key, with versions preceding prefixes for the same key.
+func (s3a *S3ApiServer) buildSortedCombinedList(allVersions []interface{}, commonPrefixes map[string]bool) []versionListItem {
+	combinedList := make([]versionListItem, 0, len(allVersions)+len(commonPrefixes))
+
+	// Add versions
+	for _, version := range allVersions {
+		var key, versionId string
+		switch v := version.(type) {
+		case *VersionEntry:
+			key = v.Key
+			versionId = v.VersionId
+		case *DeleteMarkerEntry:
+			key = v.Key
+			versionId = v.VersionId
+		}
+		combinedList = append(combinedList, versionListItem{
+			key:         key,
+			versionId:   versionId,
+			isPrefix:    false,
+			versionData: version,
+		})
+	}
+
+	// Add common prefixes
+	for prefix := range commonPrefixes {
+		combinedList = append(combinedList, versionListItem{
+			key:      prefix,
+			isPrefix: true,
+		})
+	}
+
+	// Single sort for the entire combined list
+	sort.Slice(combinedList, func(i, j int) bool {
+		if combinedList[i].key != combinedList[j].key {
+			return combinedList[i].key < combinedList[j].key
+		}
+		// For same key, versions come before prefixes
+		if combinedList[i].isPrefix != combinedList[j].isPrefix {
+			return !combinedList[i].isPrefix
+		}
+		// For same key with both being versions, sort by version ID (newest first)
+		return compareVersionIds(combinedList[i].versionId, combinedList[j].versionId) < 0
+	})
+
+	return combinedList
+}
+
+// truncateAndSetMarkers applies MaxKeys limit and determines pagination markers
+func (s3a *S3ApiServer) truncateAndSetMarkers(combinedList []versionListItem, maxKeys int) (truncated []versionListItem, nextKeyMarker, nextVersionIdMarker string, isTruncated bool) {
+	isTruncated = len(combinedList) > maxKeys
+	if isTruncated && maxKeys > 0 {
+		// Set markers from the last item we'll return
+		lastItem := combinedList[maxKeys-1]
+		nextKeyMarker = lastItem.key
+		if !lastItem.isPrefix {
+			nextVersionIdMarker = lastItem.versionId
+		}
+		// Truncate the list
+		combinedList = combinedList[:maxKeys]
+	}
+	return combinedList, nextKeyMarker, nextVersionIdMarker, isTruncated
+}
+
+// splitIntoResult builds the final S3ListObjectVersionsResult from the combined list
+func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int, isTruncated bool, nextKeyMarker, nextVersionIdMarker string) *S3ListObjectVersionsResult {
+	result := &S3ListObjectVersionsResult{
+		Name:                bucket,
+		Prefix:              prefix,
+		KeyMarker:           keyMarker,
+		VersionIdMarker:     versionIdMarker,
+		MaxKeys:             maxKeys,
+		Delimiter:           delimiter,
+		IsTruncated:         isTruncated,
+		NextKeyMarker:       nextKeyMarker,
+		NextVersionIdMarker: nextVersionIdMarker,
+		Versions:            make([]VersionEntry, 0),
+		DeleteMarkers:       make([]DeleteMarkerEntry, 0),
+		CommonPrefixes:      make([]PrefixEntry, 0),
+	}
+
+	for _, item := range combinedList {
+		if item.isPrefix {
+			result.CommonPrefixes = append(result.CommonPrefixes, PrefixEntry{Prefix: item.key})
+		} else {
+			switch v := item.versionData.(type) {
+			case *VersionEntry:
+				result.Versions = append(result.Versions, *v)
+			case *DeleteMarkerEntry:
+				result.DeleteMarkers = append(result.DeleteMarkers, *v)
+			}
+		}
+	}
+	return result
 }
 
 // versionCollector holds state for collecting object versions during recursive traversal
@@ -340,11 +372,20 @@ type versionCollector struct {
 	allVersions      *[]interface{}
 	processedObjects map[string]bool
 	seenVersionIds   map[string]bool
+	delimiter        string
+	commonPrefixes   map[string]bool
 }
 
 // isFull returns true if we've collected enough versions
 func (vc *versionCollector) isFull() bool {
-	return vc.maxCollect > 0 && len(*vc.allVersions) >= vc.maxCollect
+	if vc.maxCollect <= 0 {
+		return false
+	}
+	currentCount := len(*vc.allVersions)
+	if vc.commonPrefixes != nil {
+		currentCount += len(vc.commonPrefixes)
+	}
+	return currentCount >= vc.maxCollect
 }
 
 // matchesPrefixFilter checks if an entry path matches the prefix filter
@@ -384,7 +425,9 @@ func (vc *versionCollector) shouldSkipVersionForMarker(objectKey, versionId stri
 	}
 	// Object matches keyMarker - apply version filtering
 	if vc.versionIdMarker == "" {
-		// No versionIdMarker means skip ALL versions of this key (they were all returned in previous pages)
+		// When a keyMarker is provided without a versionIdMarker, S3 pagination
+		// starts after the keyMarker object. Returning true here ensures that
+		// all versions of the keyMarker object are skipped.
 		return true
 	}
 	// Skip versions that are newer than or equal to versionIdMarker
@@ -554,7 +597,8 @@ func (vc *versionCollector) processRegularFile(currentPath, entryPath string, en
 // findVersionsRecursively searches for .versions directories and regular files recursively
 // with efficient pagination support. It skips objects before keyMarker and applies versionIdMarker filtering.
 // maxCollect limits the number of versions to collect for memory efficiency (must be > 0)
-func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker string, maxCollect int) error {
+// delimiter and commonPrefixes are used to group keys that share a common prefix
+func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string, allVersions *[]interface{}, processedObjects map[string]bool, seenVersionIds map[string]bool, bucket, prefix, keyMarker, versionIdMarker, delimiter string, commonPrefixes map[string]bool, maxCollect int) error {
 	vc := &versionCollector{
 		s3a:              s3a,
 		bucket:           bucket,
@@ -565,6 +609,8 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 		allVersions:      allVersions,
 		processedObjects: processedObjects,
 		seenVersionIds:   seenVersionIds,
+		delimiter:        delimiter,
+		commonPrefixes:   commonPrefixes,
 	}
 
 	return vc.collectVersions(currentPath, relativePath)
@@ -594,6 +640,54 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 				continue
 			}
 
+			// Handle special directories that should bypass delimiter logic
+			// This ensures .versions directories are processed as version containers
+			// rather than being rolled up into CommonPrefixes when a delimiter is used
+			if entry.IsDirectory {
+				// Skip .uploads directory
+				if strings.HasPrefix(entry.Name, s3_constants.MultipartUploadsFolder) {
+					continue
+				}
+
+				// Handle .versions directory
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					if err := vc.processVersionsDirectory(entryPath); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+
+			// Group into common prefixes if delimiter is found after the prefix
+			if vc.delimiter != "" {
+				fullKey := entryPath
+				if entry.IsDirectory {
+					fullKey += "/"
+				}
+				if strings.HasPrefix(fullKey, vc.prefix) {
+					remainder := fullKey[len(vc.prefix):]
+					if idx := strings.Index(remainder, vc.delimiter); idx >= 0 {
+						commonPrefix := vc.prefix + remainder[:idx+len(vc.delimiter)]
+
+						// Add to CommonPrefixes set if it hasn't been returned yet
+						if !vc.commonPrefixes[commonPrefix] {
+							// Filter by keyMarker to ensure proper pagination behavior
+							if vc.keyMarker != "" && commonPrefix <= vc.keyMarker {
+								continue
+							}
+							if vc.isFull() {
+								return nil
+							}
+							vc.commonPrefixes[commonPrefix] = true
+						}
+
+						// Skip further processing (recursion or addition) for this entry
+						// because it has been rolled up into the CommonPrefix
+						continue
+					}
+				}
+			}
+
 			if entry.IsDirectory {
 				if err := vc.processDirectory(currentPath, entryPath, entry); err != nil {
 					return err
@@ -612,16 +706,6 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
-	// Skip .uploads directory
-	if strings.HasPrefix(entry.Name, ".uploads") {
-		return nil
-	}
-
-	// Handle .versions directory
-	if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-		return vc.processVersionsDirectory(entryPath)
-	}
-
 	// Handle explicit S3 directory object
 	if entry.Attributes.Mime == s3_constants.FolderMimeType {
 		vc.processExplicitDirectory(entryPath, entry)
@@ -954,20 +1038,25 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s", bucket, object, latestVersionId)
+		// Update the .versions directory entry with new latest version metadata
+		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+			updatedEntry.Extended = versionsEntry.Extended
+			updatedEntry.Attributes = versionsEntry.Attributes
+			updatedEntry.Chunks = versionsEntry.Chunks
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		}
 	} else {
-		// No versions left, remove all cached metadata
-		clearCachedListMetadata(versionsEntry.Extended)
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s", bucket, object)
-	}
+		// No versions left - delete the .versions metadata file entirely
+		// This prevents clients from seeing an empty .versions file
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions metadata file", bucket, object)
 
-	// Update the .versions directory entry
-	err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
-		updatedEntry.Extended = versionsEntry.Extended
-		updatedEntry.Attributes = versionsEntry.Attributes
-		updatedEntry.Chunks = versionsEntry.Chunks
-	})
-	if err != nil {
-		return fmt.Errorf("failed to update .versions directory metadata: %v", err)
+		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
+		if err != nil {
+			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions metadata file for %s/%s: %v", bucket, object, err)
+			// Don't return error - the versions are already deleted, this is just cleanup
+		}
 	}
 
 	return nil
@@ -1013,23 +1102,27 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	// Set the original prefix in the response (not the normalized internal prefix)
 	result.Prefix = originalPrefix
 
+	glog.V(3).Infof("ListObjectVersionsHandler response: %+v", result)
 	writeSuccessResponseXML(w, r, result)
 }
 
 // getLatestObjectVersion finds the latest version of an object by reading .versions directory metadata
 func (s3a *S3ApiServer) getLatestObjectVersion(bucket, object string) (*filer_pb.Entry, error) {
+	return s3a.doGetLatestObjectVersion(bucket, object, 8)
+}
+
+func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetries int) (*filer_pb.Entry, error) {
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
 	bucketDir := s3a.option.BucketsPath + "/" + bucket
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 
-	glog.V(1).Infof("getLatestObjectVersion: looking for latest version of %s/%s (normalized: %s)", bucket, object, normalizedObject)
+	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
 
 	// Get the .versions directory entry to read latest version metadata with retry logic for filer consistency
 	var versionsEntry *filer_pb.Entry
 	var err error
-	maxRetries := 8
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		versionsEntry, err = s3a.getEntry(bucketDir, versionsObjectPath)
 		if err == nil {

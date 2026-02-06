@@ -2,8 +2,9 @@ package command
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"runtime"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var cmdVersion = &Command{

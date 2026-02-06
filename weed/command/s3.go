@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -40,6 +42,7 @@ type S3Options struct {
 	port                      *int
 	portHttps                 *int
 	portGrpc                  *int
+	portIceberg               *int
 	config                    *string
 	iamConfig                 *string
 	domainName                *string
@@ -60,6 +63,7 @@ type S3Options struct {
 	concurrentUploadLimitMB   *int
 	concurrentFileUploadLimit *int
 	enableIam                 *bool
+	iamReadOnly               *bool
 	debug                     *bool
 	debugPort                 *int
 	cipher                    *bool
@@ -72,6 +76,7 @@ func init() {
 	s3StandaloneOptions.port = cmdS3.Flag.Int("port", 8333, "s3 server http listen port")
 	s3StandaloneOptions.portHttps = cmdS3.Flag.Int("port.https", 0, "s3 server https listen port")
 	s3StandaloneOptions.portGrpc = cmdS3.Flag.Int("port.grpc", 0, "s3 server grpc listen port")
+	s3StandaloneOptions.portIceberg = cmdS3.Flag.Int("port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	s3StandaloneOptions.domainName = cmdS3.Flag.String("domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	s3StandaloneOptions.allowedOrigins = cmdS3.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	s3StandaloneOptions.dataCenter = cmdS3.Flag.String("dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -92,6 +97,7 @@ func init() {
 	s3StandaloneOptions.concurrentUploadLimitMB = cmdS3.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
 	s3StandaloneOptions.concurrentFileUploadLimit = cmdS3.Flag.Int("concurrentFileUploadLimit", 0, "limit number of concurrent file uploads, 0 means unlimited")
 	s3StandaloneOptions.enableIam = cmdS3.Flag.Bool("iam", true, "enable embedded IAM API on the same port")
+	s3StandaloneOptions.iamReadOnly = cmdS3.Flag.Bool("iam.readOnly", true, "disable IAM write operations on this server")
 	s3StandaloneOptions.debug = cmdS3.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
@@ -275,6 +281,13 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.V(0).Infof("Starting S3 API Server with standard IAM")
 	}
 
+	if *s3opt.portGrpc == 0 {
+		*s3opt.portGrpc = 10000 + *s3opt.port
+	}
+	if *s3opt.bindIp == "" {
+		*s3opt.bindIp = "0.0.0.0"
+	}
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
@@ -292,17 +305,19 @@ func (s3opt *S3Options) startS3Server() bool {
 		ConcurrentUploadLimit:     int64(*s3opt.concurrentUploadLimitMB) * 1024 * 1024,
 		ConcurrentFileUploadLimit: int64(*s3opt.concurrentFileUploadLimit),
 		EnableIam:                 *s3opt.enableIam, // Embedded IAM API (enabled by default)
-		Cipher:                    *s3opt.cipher,    // encrypt data on volume servers
+		IamReadOnly:               *s3opt.iamReadOnly,
+		Cipher:                    *s3opt.cipher, // encrypt data on volume servers
+		BindIp:                    *s3opt.bindIp,
+		GrpcPort:                  *s3opt.portGrpc,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
 	}
+	defer s3ApiServer.Shutdown()
 
-	if *s3opt.portGrpc == 0 {
-		*s3opt.portGrpc = 10000 + *s3opt.port
-	}
-	if *s3opt.bindIp == "" {
-		*s3opt.bindIp = "0.0.0.0"
+	// Start Iceberg REST Catalog server if enabled
+	if *s3opt.portIceberg > 0 {
+		go s3opt.startIcebergServer(s3ApiServer)
 	}
 
 	if runtime.GOOS != "windows" {
@@ -344,7 +359,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		glog.Fatalf("s3 failed to listen on grpc port %d: %v", grpcPort, err)
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.s3"))
-	s3_pb.RegisterSeaweedS3Server(grpcS, s3ApiServer)
+	s3_pb.RegisterSeaweedS3IamCacheServer(grpcS, s3ApiServer)
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
@@ -399,7 +414,16 @@ func (s3opt *S3Options) startS3Server() bool {
 					}
 				}()
 			}
-			if err = newHttpServer(router, tlsConfig).ServeTLS(s3ApiListener, "", ""); err != nil {
+			httpS := newHttpServer(router, tlsConfig)
+			if MiniClusterCtx != nil {
+				ctx := MiniClusterCtx
+				go func() {
+					<-ctx.Done()
+					httpS.Shutdown(context.Background())
+					grpcS.Stop()
+				}()
+			}
+			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
 		} else {
@@ -432,11 +456,56 @@ func (s3opt *S3Options) startS3Server() bool {
 				}
 			}()
 		}
-		if err = newHttpServer(router, nil).Serve(s3ApiListener); err != nil {
+		httpS := newHttpServer(router, nil)
+		if MiniClusterCtx != nil {
+			go func() {
+				<-MiniClusterCtx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
 	}
 
 	return true
 
+}
+
+// startIcebergServer starts the Iceberg REST Catalog server on a separate port.
+func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
+	icebergRouter := mux.NewRouter().SkipClean(true)
+
+	// Create Iceberg server using the S3ApiServer as filer client
+	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
+	icebergServer.RegisterRoutes(icebergRouter)
+
+	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
+	icebergListener, icebergLocalListener, err := util.NewIpAndLocalListeners(
+		*s3opt.bindIp, *s3opt.portIceberg, time.Duration(*s3opt.idleTimeout)*time.Second)
+	if err != nil {
+		glog.Fatalf("Iceberg REST Catalog listener on %s error: %v", listenAddress, err)
+	}
+
+	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
+
+	httpS := newHttpServer(icebergRouter, nil)
+	if MiniClusterCtx != nil {
+		go func() {
+			<-MiniClusterCtx.Done()
+			httpS.Shutdown(context.Background())
+		}()
+	}
+	// Serve on localhost as well if we're bound to a different interface
+	if icebergLocalListener != nil {
+		go func() {
+			if err := httpS.Serve(icebergLocalListener); err != nil && err != http.ErrServerClosed {
+				glog.V(0).Infof("Iceberg localhost listener error: %v", err)
+			}
+		}()
+	}
+	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
+		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
+	}
 }

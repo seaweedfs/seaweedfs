@@ -18,10 +18,15 @@ import (
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
@@ -138,6 +143,8 @@ func init() {
 	filerS3Options.concurrentFileUploadLimit = cmdFiler.Flag.Int("s3.concurrentFileUploadLimit", 0, "limit number of concurrent file uploads for S3, 0 means unlimited")
 	filerS3Options.enableIam = cmdFiler.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 	filerS3Options.cipher = cmdFiler.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
+	filerS3Options.iamReadOnly = cmdFiler.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
+	filerS3Options.portIceberg = cmdFiler.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -324,6 +331,16 @@ func (fo *FilerOptions) startFiler() {
 
 	filerAddress := pb.NewServerAddress(*fo.ip, *fo.port, *fo.portGrpc)
 
+	// Initialize credential manager for IAM gRPC service
+	var credentialManager *credential.CredentialManager
+	var err error
+	credentialManager, err = credential.NewCredentialManagerWithDefaults("")
+	if err != nil {
+		glog.Warningf("Failed to initialize credential manager: %v", err)
+	} else {
+		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
+	}
+
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
 		FilerGroup:                *fo.filerGroup,
@@ -346,6 +363,7 @@ func (fo *FilerOptions) startFiler() {
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
+		CredentialManager:         credentialManager,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
@@ -389,6 +407,14 @@ func (fo *FilerOptions) startFiler() {
 	}
 	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
+
+	// Register IAM gRPC service if credential manager is available
+	if credentialManager != nil {
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager)
+		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
+		glog.V(0).Info("Registered IAM gRPC service on filer")
+	}
+
 	reflection.Register(grpcS)
 	if grpcLocalL != nil {
 		go grpcS.Serve(grpcLocalL)
@@ -453,23 +479,41 @@ func (fo *FilerOptions) startFiler() {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerListener, "", ""); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+		httpS := newHttpServer(defaultMux, tlsConfig)
+		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
+			go func() {
+				<-ctx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 	} else {
 		if filerLocalListener != nil {
 			go func() {
 				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
-					glog.Errorf("Filer Fail to serve: %v", e)
+					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
-		if err := newHttpServer(defaultMux, nil).Serve(filerListener); err != nil {
-			glog.Fatalf("Filer Fail to serve: %v", e)
+		httpS := newHttpServer(defaultMux, nil)
+		if MiniClusterCtx != nil {
+			ctx := MiniClusterCtx
+			go func() {
+				<-ctx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
+		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
+			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 	}
 }

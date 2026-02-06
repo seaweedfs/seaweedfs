@@ -42,6 +42,7 @@ type AdminOptions struct {
 	readOnlyUser     *string
 	readOnlyPassword *string
 	dataDir          *string
+	icebergPort      *int
 }
 
 func init() {
@@ -56,6 +57,7 @@ func init() {
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
+	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 }
 
 var cmdAdmin = &Command{
@@ -210,8 +212,8 @@ func runAdmin(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
-	// Start the admin server with all masters
-	err := startAdminServer(ctx, a)
+	// Start the admin server with all masters (UI enabled by default)
+	err := startAdminServer(ctx, a, true, *a.icebergPort)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -222,13 +224,26 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
 	// Set Gin mode
 	gin.SetMode(gin.ReleaseMode)
 
 	// Create router
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		if param.StatusCode == 200 {
+			return ""
+		}
+		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
+			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+			param.StatusCode,
+			param.Latency,
+			param.ClientIP,
+			param.Method,
+			param.Path,
+			param.ErrorMessage,
+		)
+	}), gin.Recovery())
 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
@@ -281,7 +296,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	}
 
 	// Create admin server
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
@@ -307,7 +322,7 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	// Create handlers and setup routes
 	authRequired := *options.adminPassword != ""
 	adminHandlers := handlers.NewAdminHandlers(adminServer)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
@@ -367,6 +382,8 @@ func startAdminServer(ctx context.Context, options AdminOptions) error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("admin server forced to shutdown: %w", err)
 	}
+
+	adminServer.Shutdown()
 
 	return nil
 }

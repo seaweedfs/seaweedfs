@@ -540,11 +540,11 @@ func TestPathEdgeCases(t *testing.T) {
 				// Therefore, we cannot trigger the server-side path traversal block with this client.
 				// Instead, we verify that the file is created successfully within the jail (contained).
 				// The server-side protection logic is verified in unit tests (sftpd/sftp_server_test.go).
-				
+
 				file, err := sftpClient.Create(traversalPath)
 				require.NoError(t, err, "creation should succeed because client sanitizes path")
 				file.Close()
-				
+
 				// Clean up
 				err = sftpClient.Remove(traversalPath)
 				require.NoError(t, err)
@@ -649,4 +649,3 @@ func TestFileContent(t *testing.T) {
 		sftpClient.Remove(filename)
 	})
 }
-

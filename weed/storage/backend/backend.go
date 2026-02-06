@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
 	"os"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type BackendStorageFile interface {

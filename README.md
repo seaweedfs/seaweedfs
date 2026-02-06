@@ -89,8 +89,7 @@ Example:
 ```bash
 # remove quarantine on macOS
 # xattr -d com.apple.quarantine  ./weed
-export AWS_ACCESS_KEY_ID=admin
-export AWS_SECRET_ACCESS_KEY=key
+
 ./weed mini -dir=/data
 ```
 
@@ -122,7 +121,7 @@ SeaweedFS is a simple and highly scalable distributed file system. There are two
 1. to store billions of files!
 2. to serve the files fast!
 
-SeaweedFS started as an Object Store to handle small files efficiently. 
+SeaweedFS started as a blob store to handle small files efficiently. 
 Instead of managing all file metadata in a central master, 
 the central master only manages volumes on volume servers, 
 and these volume servers manage files and their metadata. 
@@ -134,15 +133,11 @@ It is so simple with O(1) disk reads that you are welcome to challenge the perfo
 
 SeaweedFS started by implementing [Facebook's Haystack design paper](http://www.usenix.org/event/osdi10/tech/full_papers/Beaver.pdf). 
 Also, SeaweedFS implements erasure coding with ideas from 
-[f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf), and has a lot of similarities with [Facebook’s Tectonic Filesystem](https://www.usenix.org/system/files/fast21-pan.pdf)
+[f4: Facebook’s Warm BLOB Storage System](https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-muralidhar.pdf), and has a lot of similarities with [Facebook’s Tectonic Filesystem](https://www.usenix.org/system/files/fast21-pan.pdf) and [Google's Colossus File System](https://cloud.google.com/blog/products/storage-data-transfer/a-peek-behind-colossus-googles-file-system)
 
-On top of the object store, optional [Filer] can support directories and POSIX attributes. 
+On top of the blob store, optional [Filer] can support directories and POSIX attributes. 
 Filer is a separate linearly-scalable stateless server with customizable metadata stores, 
 e.g., MySql, Postgres, Redis, Cassandra, HBase, Mongodb, Elastic Search, LevelDB, RocksDB, Sqlite, MemSql, TiDB, Etcd, CockroachDB, YDB, etc.
-
-For any distributed key value stores, the large values can be offloaded to SeaweedFS. 
-With the fast access speed and linearly scalable capacity, 
-SeaweedFS can work as a distributed [Key-Large-Value store][KeyLargeValueStore].
 
 SeaweedFS can transparently integrate with the cloud. 
 With hot data on local cluster, and warm data on the cloud with O(1) access time, 
@@ -153,13 +148,13 @@ Faster and cheaper than direct cloud storage!
 [Back to TOC](#table-of-contents)
 
 # Features #
-## Additional Features ##
-* Can choose no replication or different replication levels, rack and data center aware.
+## Additional Blob Store Features ##
+* Support different replication levels, with rack and data center aware.
 * Automatic master servers failover - no single point of failure (SPOF).
-* Automatic Gzip compression depending on file MIME type.
+* Automatic compression depending on file MIME type.
 * Automatic compaction to reclaim disk space after deletion or update.
 * [Automatic entry TTL expiration][VolumeServerTTL].
-* Any server with some disk space can add to the total storage space.
+* Flexible Capacity Expansion: Any server with some disk space can add to the total storage space.
 * Adding/Removing servers does **not** cause any data re-balancing unless triggered by admin commands.
 * Optional picture resizing.
 * Support ETag, Accept-Range, Last-Modified, etc.
@@ -167,7 +162,7 @@ Faster and cheaper than direct cloud storage!
 * Support rebalancing the writable and readonly volumes.
 * [Customizable Multiple Storage Tiers][TieredStorage]: Customizable storage disk types to balance performance and cost.
 * [Transparent cloud integration][CloudTier]: unlimited capacity via tiered cloud storage for warm data.
-* [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability.
+* [Erasure Coding for warm storage][ErasureCoding]  Rack-Aware 10.4 erasure coding reduces storage cost and increases availability. Enterprise version can customize EC ratio.
 
 [Back to TOC](#table-of-contents)
 
@@ -213,7 +208,7 @@ Faster and cheaper than direct cloud storage!
 
 [Back to TOC](#table-of-contents)
 
-## Example: Using Seaweed Object Store ##
+## Example: Using Seaweed Blob Store ##
 
 By default, the master node runs on port 9333, and the volume nodes run on port 8080.
 Let's start one master node, and two volume nodes on port 8080 and 8081. Ideally, they should be started from different machines. We'll use localhost as an example.
@@ -233,23 +228,25 @@ SeaweedFS uses HTTP REST operations to read, write, and delete. The responses ar
 > weed volume -dir="/tmp/data2" -max=10 -master="localhost:9333" -port=8081 &
 ```
 
-### Write File ###
+### Write A Blob ###
 
-To upload a file: first, send a HTTP POST, PUT, or GET request to `/dir/assign` to get an `fid` and a volume server URL:
+A blob, also referred as a needle, a chunk, or mistakenly as a file, is just a byte array. It can have attributes, such as name, mime type, create or update time, etc. But basically it is just a byte array of a relatively small size, such as 2 MB ~ 64 MB. The size is not fixed.
+
+To upload a blob: first, send a HTTP POST, PUT, or GET request to `/dir/assign` to get an `fid` and a volume server URL:
 
 ```
 > curl http://localhost:9333/dir/assign
 {"count":1,"fid":"3,01637037d6","url":"127.0.0.1:8080","publicUrl":"localhost:8080"}
 ```
 
-Second, to store the file content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
+Second, to store the blob content, send a HTTP multi-part POST request to `url + '/' + fid` from the response:
 
 ```
 > curl -F file=@/home/chris/myphoto.jpg http://127.0.0.1:8080/3,01637037d6
 {"name":"myphoto.jpg","size":43234,"eTag":"1cc0118e"}
 ```
 
-To update, send another POST request with updated file content.
+To update, send another POST request with updated blob content.
 
 For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 
@@ -257,7 +254,7 @@ For deletion, send an HTTP DELETE request to the same `url + '/' + fid` URL:
 > curl -X DELETE http://127.0.0.1:8080/3,01637037d6
 ```
 
-### Save File Id ###
+### Save Blob Id ###
 
 Now, you can save the `fid`, 3,01637037d6 in this case, to a database field.
 
@@ -269,9 +266,9 @@ The file key and file cookie are both coded in hex. You can store the <volume id
 
 If stored as a string, in theory, you would need 8+1+16+8=33 bytes. A char(33) would be enough, if not more than enough, since most uses will not need 2^32 volumes.
 
-If space is really a concern, you can store the file id in your own format. You would need one 4-byte integer for volume id, 8-byte long number for file key, and a 4-byte integer for the file cookie. So 16 bytes are more than enough.
+If space is really a concern, you can store the file id in the binary format. You would need one 4-byte integer for volume id, 8-byte long number for file key, and a 4-byte integer for the file cookie. So 16 bytes are more than enough.
 
-### Read File ###
+### Read a Blob ###
 
 Here is an example of how to render the URL.
 
@@ -312,7 +309,7 @@ http://localhost:8080/3/01637037d6.jpg?height=200&width=200&mode=fill
 
 ### Rack-Aware and Data Center-Aware Replication ###
 
-SeaweedFS applies the replication strategy at a volume level. So, when you are getting a file id, you can specify the replication strategy. For example:
+SeaweedFS applies the replication strategy at a volume level. So, when you are getting a blob id, you can specify the replication strategy. For example:
 
 ```
 curl http://localhost:9333/dir/assign?replication=001
@@ -335,7 +332,7 @@ More details about replication can be found [on the wiki][Replication].
 
 You can also set the default replication strategy when starting the master server.
 
-### Allocate File Key on Specific Data Center ###
+### Allocate Blob Key on Specific Data Center ###
 
 Volume servers can be started with a specific data center name:
 
@@ -344,7 +341,7 @@ Volume servers can be started with a specific data center name:
  weed volume -dir=/tmp/2 -port=8081 -dataCenter=dc2
 ```
 
-When requesting a file key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specifies that the assigned volume should be limited to 'dc1':
+When requesting a blob key, an optional "dataCenter" parameter can limit the assigned volume to the specific data center. For example, this specifies that the assigned volume should be limited to 'dc1':
 
 ```
  http://localhost:9333/dir/assign?dataCenter=dc1
@@ -363,15 +360,15 @@ When requesting a file key, an optional "dataCenter" parameter can limit the ass
 
 [Back to TOC](#table-of-contents)
 
-## Object Store Architecture ##
+## Blob Store Architecture ##
 
-Usually distributed file systems split each file into chunks, a central master keeps a mapping of filenames, chunk indices to chunk handles, and also which chunks each chunk server has.
+Usually distributed file systems split each file into chunks. A central server keeps a mapping of filenames to chunks, and also which chunks each chunk server has.
 
-The main drawback is that the central master can't handle many small files efficiently, and since all read requests need to go through the chunk master, so it might not scale well for many concurrent users.
+The main drawback is that the central server can't handle many small files efficiently, and since all read requests need to go through the central master, so it might not scale well for many concurrent users.
 
-Instead of managing chunks, SeaweedFS manages data volumes in the master server. Each data volume is 32GB in size, and can hold a lot of files. And each storage node can have many data volumes. So the master node only needs to store the metadata about the volumes, which is a fairly small amount of data and is generally stable.
+Instead of managing chunks, SeaweedFS manages data volumes in the master server. Each data volume is 32GB in size, and can hold a lot of blobs. And each storage node can have many data volumes. So the master node only needs to store the metadata about the volumes, which is a fairly small amount of data and is generally stable.
 
-The actual file metadata is stored in each volume on volume servers. Since each volume server only manages metadata of files on its own disk, with only 16 bytes for each file, all file access can read file metadata just from memory and only needs one disk operation to actually read file data.
+The actual blob metadata, which are the blob volume, offset, and size, is stored in each volume on volume servers. Since each volume server only manages metadata of blobs on its own disk, with only 16 bytes for each blob, all access can read the metadata just from memory and only needs one disk operation to actually read file data.
 
 For comparison, consider that an xfs inode structure in Linux is 536 bytes.
 
@@ -385,23 +382,13 @@ On each write request, the master server also generates a file key, which is a g
 
 ### Write and Read files ###
 
-When a client sends a write request, the master server returns (volume id, file key, file cookie, volume node URL) for the file. The client then contacts the volume node and POSTs the file content.
+When a client sends a write request, the master server returns (volume id, file key, file cookie, volume node URL) for the blob. The client then contacts the volume node and POSTs the blob content.
 
-When a client needs to read a file based on (volume id, file key, file cookie), it asks the master server by the volume id for the (volume node URL, volume node public URL), or retrieves this from a cache. Then the client can GET the content, or just render the URL on web pages and let browsers fetch the content.
-
-Please see the example for details on the write-read process.
-
-### Storage Size ###
-
-In the current implementation, each volume can hold 32 gibibytes (32GiB or 8x2^32 bytes). This is because we align content to 8 bytes. We can easily increase this to 64GiB, or 128GiB, or more, by changing 2 lines of code, at the cost of some wasted padding space due to alignment.
-
-There can be 4 gibibytes (4GiB or 2^32 bytes) of volumes. So the total system size is 8 x 4GiB x 4GiB which is 128 exbibytes (128EiB or 2^67 bytes).
-
-Each individual file size is limited to the volume size.
+When a client needs to read a blob based on (volume id, file key, file cookie), it asks the master server by the volume id for the (volume node URL, volume node public URL), or retrieves this from a cache. Then the client can GET the content, or just render the URL on web pages and let browsers fetch the content.
 
 ### Saving memory ###
 
-All file meta information stored on a volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
+All blob metadata stored on a volume server is readable from memory without disk access. Each file takes just a 16-byte map entry of <64bit key, 32bit offset, 32bit size>. Of course, each map entry has its own space cost for the map. But usually the disk space runs out before the memory does.
 
 ### Tiered Storage to the cloud ###
 
@@ -414,6 +401,12 @@ With the O(1) access time, the network latency cost is kept at minimum.
 If the hot/warm data is split as 20/80, with 20 servers, you can achieve storage capacity of 100 servers. That's a cost saving of 80%! Or you can repurpose the 80 servers to store new data also, and get 5X storage throughput.
 
 [Back to TOC](#table-of-contents)
+
+## SeaweedFS Filer ##
+
+Built on top of the blob store, SeaweedFS Filer adds directory structure to create a file system. The directory sturcture is an interface that is implemented in many key-value stores or databases.
+
+The content of a file is mapped to one or many blobs, distributed to multiple volumes on multiple volume servers.
 
 ## Compared to Other File Systems ##
 
@@ -661,5 +654,4 @@ The text of this page is available for modification and reuse under the terms of
 [Back to TOC](#table-of-contents)
 
 ## Stargazers over time
-
-[![Stargazers over time](https://starchart.cc/chrislusf/seaweedfs.svg)](https://starchart.cc/chrislusf/seaweedfs)
+[![Stargazers over time](https://starchart.cc/seaweedfs/seaweedfs.svg?variant=adaptive)](https://starchart.cc/seaweedfs/seaweedfs)

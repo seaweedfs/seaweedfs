@@ -66,11 +66,17 @@ func (at *ActiveTopology) CompleteTask(taskID string) error {
 
 	task, exists := at.assignedTasks[taskID]
 	if !exists {
-		return fmt.Errorf("assigned task %s not found", taskID)
+		// If not in assigned tasks, check pending tasks
+		if task, exists = at.pendingTasks[taskID]; exists {
+			delete(at.pendingTasks, taskID)
+		} else {
+			return fmt.Errorf("task %s not found in assigned or pending tasks", taskID)
+		}
+	} else {
+		delete(at.assignedTasks, taskID)
 	}
 
 	// Release reserved capacity by moving task to completed state
-	delete(at.assignedTasks, taskID)
 	task.Status = TaskStatusCompleted
 	task.CompletedAt = time.Now()
 	at.recentTasks[taskID] = task
@@ -195,10 +201,65 @@ func (at *ActiveTopology) AddPendingTask(spec TaskSpec) error {
 	at.pendingTasks[spec.TaskID] = task
 	at.assignTaskToDisk(task)
 
-	glog.V(2).Infof("Added pending %s task %s: volume %d, %d sources, %d destinations",
-		spec.TaskType, spec.TaskID, spec.VolumeID, len(sources), len(destinations))
+	return nil
+}
+
+// RestoreMaintenanceTask restores a task from persistent storage into the active topology
+func (at *ActiveTopology) RestoreMaintenanceTask(taskID string, volumeID uint32, taskType TaskType, status TaskStatus, sources []TaskSource, destinations []TaskDestination, estimatedSize int64) error {
+	at.mutex.Lock()
+	defer at.mutex.Unlock()
+
+	task := &taskState{
+		VolumeID:      volumeID,
+		TaskType:      taskType,
+		Status:        status,
+		StartedAt:     time.Now(), // Fallback if not provided, will be updated by heartbeats
+		EstimatedSize: estimatedSize,
+		Sources:       sources,
+		Destinations:  destinations,
+	}
+
+	if status == TaskStatusInProgress {
+		at.assignedTasks[taskID] = task
+	} else if status == TaskStatusPending {
+		at.pendingTasks[taskID] = task
+	} else {
+		return nil // Ignore other statuses for topology tracking
+	}
+
+	// Re-register task with disks for capacity tracking
+	at.assignTaskToDisk(task)
+
+	glog.V(1).Infof("Restored %s task %s in topology: volume %d, %d sources, %d destinations",
+		taskType, taskID, volumeID, len(sources), len(destinations))
 
 	return nil
+}
+
+// HasTask checks if there is any pending or assigned task for the given volume and task type.
+// If taskType is TaskTypeNone, it checks for ANY task type.
+func (at *ActiveTopology) HasTask(volumeID uint32, taskType TaskType) bool {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	for _, task := range at.pendingTasks {
+		if task.VolumeID == volumeID && (taskType == TaskTypeNone || task.TaskType == taskType) {
+			return true
+		}
+	}
+
+	for _, task := range at.assignedTasks {
+		if task.VolumeID == volumeID && (taskType == TaskTypeNone || task.TaskType == taskType) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// HasAnyTask checks if there is any pending or assigned task for the given volume across all types.
+func (at *ActiveTopology) HasAnyTask(volumeID uint32) bool {
+	return at.HasTask(volumeID, TaskTypeNone)
 }
 
 // calculateSourceStorageImpact calculates storage impact for sources based on task type and cleanup type

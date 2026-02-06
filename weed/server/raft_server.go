@@ -54,6 +54,7 @@ var _ hashicorpRaft.FSM = &StateMachine{}
 func (s StateMachine) Save() ([]byte, error) {
 	state := topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
+		TopologyId:  s.topo.GetTopologyId(),
 	}
 	glog.V(1).Infof("Save raft state %+v", state)
 	return json.Marshal(state)
@@ -67,6 +68,10 @@ func (s StateMachine) Recovery(data []byte) error {
 	}
 	glog.V(1).Infof("Recovery raft state %+v", state)
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+	if state.TopologyId != "" {
+		s.topo.SetTopologyId(state.TopologyId)
+		glog.V(0).Infof("Recovered TopologyId: %s", state.TopologyId)
+	}
 	return nil
 }
 
@@ -78,6 +83,14 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 		return err
 	}
 	s.topo.UpAdjustMaxVolumeId(state.MaxVolumeId)
+	if state.TopologyId != "" {
+		prevTopologyId := s.topo.GetTopologyId()
+		s.topo.SetTopologyId(state.TopologyId)
+		// Log when recovering TopologyId from Raft log replay, or setting it for the first time.
+		if prevTopologyId == "" {
+			glog.V(0).Infof("Set TopologyId from raft log: %s", state.TopologyId)
+		}
+	}
 
 	glog.V(1).Infoln("max volume id", before, "==>", s.topo.GetMaxVolumeId())
 	return nil
@@ -86,6 +99,7 @@ func (s *StateMachine) Apply(l *hashicorpRaft.Log) interface{} {
 func (s *StateMachine) Snapshot() (hashicorpRaft.FSMSnapshot, error) {
 	return &topology.MaxVolumeIdCommand{
 		MaxVolumeId: s.topo.GetMaxVolumeId(),
+		TopologyId:  s.topo.GetTopologyId(),
 	}, nil
 }
 
@@ -118,9 +132,9 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
-	// always clear previous log to avoid server is promotable
-	os.RemoveAll(path.Join(s.dataDir, "log"))
 	if !option.RaftResumeState {
+		// clear previous log to ensure fresh start
+		os.RemoveAll(path.Join(s.dataDir, "log"))
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))

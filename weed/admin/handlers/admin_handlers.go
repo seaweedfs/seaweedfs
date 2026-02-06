@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -49,7 +51,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string) {
+func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
 	// Health check (no auth required)
 	r.GET("/health", h.HealthCheck)
 
@@ -60,6 +62,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 	r.GET("/favicon.ico", func(c *gin.Context) {
 		c.Redirect(http.StatusMovedPermanently, "/static/favicon.ico")
 	})
+
+	// Skip UI routes if UI is not enabled
+	if !enableUI {
+		return
+	}
 
 	if authRequired {
 		// Authentication routes (no auth required)
@@ -81,6 +88,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 		protected.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
+		protected.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
+		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
+		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		protected.GET("/object-store/iceberg", h.ShowIcebergCatalog)
+		protected.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
+		protected.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -143,6 +156,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username", dash.RequireWriteAccess(), h.userHandlers.DeleteUser)
 				usersApi.POST("/:username/access-keys", dash.RequireWriteAccess(), h.userHandlers.CreateAccessKey)
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", dash.RequireWriteAccess(), h.userHandlers.DeleteAccessKey)
+				usersApi.PUT("/:username/access-keys/:accessKeyId/status", dash.RequireWriteAccess(), h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", dash.RequireWriteAccess(), h.userHandlers.UpdateUserPolicies)
 			}
@@ -166,6 +180,29 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				objectStorePoliciesApi.PUT("/:name", dash.RequireWriteAccess(), h.policyHandlers.UpdatePolicy)
 				objectStorePoliciesApi.DELETE("/:name", dash.RequireWriteAccess(), h.policyHandlers.DeletePolicy)
 				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
+			}
+
+			// S3 Tables API routes
+			s3TablesApi := api.Group("/s3tables")
+			{
+				s3TablesApi.GET("/buckets", h.adminServer.ListS3TablesBucketsAPI)
+				s3TablesApi.POST("/buckets", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesBucket)
+				s3TablesApi.DELETE("/buckets", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucket)
+				s3TablesApi.GET("/namespaces", h.adminServer.ListS3TablesNamespacesAPI)
+				s3TablesApi.POST("/namespaces", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesNamespace)
+				s3TablesApi.DELETE("/namespaces", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesNamespace)
+				s3TablesApi.GET("/tables", h.adminServer.ListS3TablesTablesAPI)
+				s3TablesApi.POST("/tables", dash.RequireWriteAccess(), h.adminServer.CreateS3TablesTable)
+				s3TablesApi.DELETE("/tables", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTable)
+				s3TablesApi.PUT("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesBucketPolicy)
+				s3TablesApi.GET("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy)
+				s3TablesApi.DELETE("/bucket-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesBucketPolicy)
+				s3TablesApi.PUT("/table-policy", dash.RequireWriteAccess(), h.adminServer.PutS3TablesTablePolicy)
+				s3TablesApi.GET("/table-policy", h.adminServer.GetS3TablesTablePolicy)
+				s3TablesApi.DELETE("/table-policy", dash.RequireWriteAccess(), h.adminServer.DeleteS3TablesTablePolicy)
+				s3TablesApi.PUT("/tags", dash.RequireWriteAccess(), h.adminServer.TagS3TablesResource)
+				s3TablesApi.GET("/tags", h.adminServer.ListS3TablesTags)
+				s3TablesApi.DELETE("/tags", dash.RequireWriteAccess(), h.adminServer.UntagS3TablesResource)
 			}
 
 			// File management API routes
@@ -222,6 +259,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
 		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
 		r.GET("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts)
+		r.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
+		r.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
+		r.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		r.GET("/object-store/iceberg", h.ShowIcebergCatalog)
+		r.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
+		r.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -283,6 +326,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
 				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
 				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
+				usersApi.PUT("/:username/access-keys/:accessKeyId/status", h.userHandlers.UpdateAccessKeyStatus)
 				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
 				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
 			}
@@ -306,6 +350,29 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
 				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
 				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
+			}
+
+			// S3 Tables API routes
+			s3TablesApi := api.Group("/s3tables")
+			{
+				s3TablesApi.GET("/buckets", h.adminServer.ListS3TablesBucketsAPI)
+				s3TablesApi.POST("/buckets", h.adminServer.CreateS3TablesBucket)
+				s3TablesApi.DELETE("/buckets", h.adminServer.DeleteS3TablesBucket)
+				s3TablesApi.GET("/namespaces", h.adminServer.ListS3TablesNamespacesAPI)
+				s3TablesApi.POST("/namespaces", h.adminServer.CreateS3TablesNamespace)
+				s3TablesApi.DELETE("/namespaces", h.adminServer.DeleteS3TablesNamespace)
+				s3TablesApi.GET("/tables", h.adminServer.ListS3TablesTablesAPI)
+				s3TablesApi.POST("/tables", h.adminServer.CreateS3TablesTable)
+				s3TablesApi.DELETE("/tables", h.adminServer.DeleteS3TablesTable)
+				s3TablesApi.PUT("/bucket-policy", h.adminServer.PutS3TablesBucketPolicy)
+				s3TablesApi.GET("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy)
+				s3TablesApi.DELETE("/bucket-policy", h.adminServer.DeleteS3TablesBucketPolicy)
+				s3TablesApi.PUT("/table-policy", h.adminServer.PutS3TablesTablePolicy)
+				s3TablesApi.GET("/table-policy", h.adminServer.GetS3TablesTablePolicy)
+				s3TablesApi.DELETE("/table-policy", h.adminServer.DeleteS3TablesTablePolicy)
+				s3TablesApi.PUT("/tags", h.adminServer.TagS3TablesResource)
+				s3TablesApi.GET("/tags", h.adminServer.ListS3TablesTags)
+				s3TablesApi.DELETE("/tags", h.adminServer.UntagS3TablesResource)
 			}
 
 			// File management API routes
@@ -388,6 +455,157 @@ func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
+	}
+}
+
+// ShowS3TablesBuckets renders the S3 Tables buckets page
+func (h *AdminHandlers) ShowS3TablesBuckets(c *gin.Context) {
+	username := h.getUsername(c)
+
+	data, err := h.adminServer.GetS3TablesBucketsData(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables buckets: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesBuckets(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowS3TablesNamespaces renders namespaces for a table bucket
+func (h *AdminHandlers) ShowS3TablesNamespaces(c *gin.Context) {
+	username := h.getUsername(c)
+
+	bucketName := c.Param("bucket")
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesNamespacesData(c.Request.Context(), arn)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables namespaces: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesNamespaces(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowS3TablesTables renders tables for a namespace
+func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
+	username := h.getUsername(c)
+
+	bucketName := c.Param("bucket")
+	namespace := c.Param("namespace")
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesTablesData(c.Request.Context(), arn, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get S3 Tables tables: " + err.Error()})
+		return
+	}
+	data.Username = username
+
+	c.Header("Content-Type", "text/html")
+	component := app.S3TablesTables(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+func buildS3TablesBucketArn(bucketName string) (string, error) {
+	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
+}
+
+// getUsername returns the username from context, defaulting to "admin" if not set
+func (h *AdminHandlers) getUsername(c *gin.Context) string {
+	username := c.GetString("username")
+	if username == "" {
+		username = "admin"
+	}
+	return username
+}
+
+// ShowIcebergCatalog renders the Iceberg Catalog overview page
+func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
+	data, err := h.adminServer.GetIcebergCatalogData(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg catalog data: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergCatalog(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowIcebergNamespaces renders namespaces for an Iceberg catalog
+func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
+	catalogName := c.Param("catalog")
+	arn, err := buildS3TablesBucketArn(catalogName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergNamespacesData(c.Request.Context(), catalogName, arn)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg namespaces: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergNamespaces(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowIcebergTables renders tables for an Iceberg namespace
+func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
+	catalogName := c.Param("catalog")
+	namespace := c.Param("namespace")
+	arn, err := buildS3TablesBucketArn(catalogName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergTablesData(c.Request.Context(), catalogName, arn, namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg tables: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergTables(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 	}
 }
 

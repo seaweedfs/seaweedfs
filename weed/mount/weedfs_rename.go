@@ -7,8 +7,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fs"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -220,6 +220,8 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		glog.V(0).Infof("Link: %v", err)
 		return
 	}
+	wfs.inodeToPath.TouchDirectory(oldDir)
+	wfs.inodeToPath.TouchDirectory(newDir)
 
 	return fuse.OK
 

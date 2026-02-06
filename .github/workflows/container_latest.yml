@@ -15,15 +15,8 @@ jobs:
     strategy:
       matrix:
         platform: [amd64, arm64, arm, 386]
-        include:
-          - platform: amd64
-            qemu: false
-          - platform: arm64
-            qemu: true
-          - platform: arm
-            qemu: true
-          - platform: 386
-            qemu: true
+        variant: [standard, large_disk]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -43,6 +36,18 @@ jobs:
           [ -d /go/pkg ] && rm -rf /go/pkg || true
           echo "Available disk space after cleanup:"
           df -h
+      
+      - name: Configure variant
+        id: config
+        run: |
+          if [ "${{ matrix.variant }}" == "large_disk" ]; then
+            echo "tag_suffix=_large_disk" >> $GITHUB_OUTPUT
+            echo "build_args=TAGS=5BytesOffset" >> $GITHUB_OUTPUT
+          else
+            echo "tag_suffix=" >> $GITHUB_OUTPUT
+            echo "build_args=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@v5
@@ -50,13 +55,13 @@ jobs:
           images: |
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
-          tags: type=raw,value=latest
+          tags: type=raw,value=latest,suffix=${{ steps.config.outputs.tag_suffix }}
           labels: |
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
             org.opencontainers.image.vendor=Chris Lu
       - name: Set up QEMU
-        if: matrix.qemu
+        if: matrix.platform != 'amd64'
         uses: docker/setup-qemu-action@v3
       - name: Create BuildKit config
         run: |
@@ -82,7 +87,7 @@ jobs:
           registry: ghcr.io
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
-      - name: Build ${{ matrix.platform }}
+      - name: Build ${{ matrix.platform }} ${{ matrix.variant }}
         uses: docker/build-push-action@v6
         env:
           DOCKER_BUILDKIT: 1
@@ -92,13 +97,14 @@ jobs:
           file: ./docker/Dockerfile.go_build
           platforms: linux/${{ matrix.platform }}
           # Push to GHCR only during build to avoid Docker Hub rate limits
-          tags: ghcr.io/chrislusf/seaweedfs:latest-${{ matrix.platform }}
+          tags: ghcr.io/chrislusf/seaweedfs:latest${{ steps.config.outputs.tag_suffix }}-${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.platform }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
+            ${{ steps.config.outputs.build_args }}
       - name: Clean up build artifacts
         if: always()
         run: |
@@ -111,9 +117,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        variant: [standard, large_disk]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      
+      - name: Configure variant
+        id: config
+        run: |
+          if [ "${{ matrix.variant }}" == "large_disk" ]; then
+            echo "tag_suffix=_large_disk" >> $GITHUB_OUTPUT
+          else
+            echo "tag_suffix=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Docker meta
         id: docker_meta
         uses: docker/metadata-action@v5
@@ -121,7 +140,7 @@ jobs:
           images: |
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
-          tags: type=raw,value=latest
+          tags: type=raw,value=latest,suffix=${{ steps.config.outputs.tag_suffix }}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -142,13 +161,15 @@ jobs:
           crane version
       - name: Create and push manifest
         run: |
+          SUFFIX="${{ steps.config.outputs.tag_suffix }}"
+          
           # Create manifest on GHCR first (no rate limits)
           echo "Creating GHCR manifest (no rate limits)..."
-          docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:latest \
-            ghcr.io/chrislusf/seaweedfs:latest-amd64 \
-            ghcr.io/chrislusf/seaweedfs:latest-arm64 \
-            ghcr.io/chrislusf/seaweedfs:latest-arm \
-            ghcr.io/chrislusf/seaweedfs:latest-386
+          docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} \
+            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-amd64 \
+            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm64 \
+            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm \
+            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-386
           
           # Copy the complete multi-arch image from GHCR to Docker Hub
           # This only requires one pull from GHCR (no rate limit) and one push to Docker Hub
@@ -184,16 +205,16 @@ jobs:
           # Use crane or skopeo to copy, fallback to docker if not available
           if command -v crane &> /dev/null; then
             echo "Using crane to copy..."
-            retry_with_backoff crane copy ghcr.io/chrislusf/seaweedfs:latest chrislusf/seaweedfs:latest
+            retry_with_backoff crane copy ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} chrislusf/seaweedfs:latest${SUFFIX}
           elif command -v skopeo &> /dev/null; then
             echo "Using skopeo to copy..."
-            retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs:latest docker://chrislusf/seaweedfs:latest
+            retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} docker://chrislusf/seaweedfs:latest${SUFFIX}
           else
             echo "Using docker buildx imagetools (pulling 4 images from Docker Hub)..."
             # Fallback: create manifest directly on Docker Hub (pulls from Docker Hub - rate limited)
-            retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:latest \
-              ghcr.io/chrislusf/seaweedfs:latest-amd64 \
-              ghcr.io/chrislusf/seaweedfs:latest-arm64 \
-              ghcr.io/chrislusf/seaweedfs:latest-arm \
-              ghcr.io/chrislusf/seaweedfs:latest-386
+            retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:latest${SUFFIX} \
+              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-amd64 \
+              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm64 \
+              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm \
+              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-386
           fi

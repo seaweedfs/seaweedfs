@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
 )
 

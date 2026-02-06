@@ -12,6 +12,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+// Access key status constants
+const (
+	AccessKeyStatusActive   = "Active"
+	AccessKeyStatusInactive = "Inactive"
+)
+
 type AdminData struct {
 	Username          string              `json:"username"`
 	TotalVolumes      int                 `json:"total_volumes"`
@@ -37,6 +43,7 @@ type ObjectStoreUser struct {
 	AccessKey   string   `json:"access_key"`
 	SecretKey   string   `json:"secret_key"`
 	Permissions []string `json:"permissions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type ObjectStoreUsersData struct {
@@ -52,11 +59,13 @@ type CreateUserRequest struct {
 	Email       string   `json:"email"`
 	Actions     []string `json:"actions"`
 	GenerateKey bool     `json:"generate_key"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserRequest struct {
-	Email   string   `json:"email"`
-	Actions []string `json:"actions"`
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserPoliciesRequest struct {
@@ -66,14 +75,20 @@ type UpdateUserPoliciesRequest struct {
 type AccessKeyInfo struct {
 	AccessKey string    `json:"access_key"`
 	SecretKey string    `json:"secret_key"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type UpdateAccessKeyStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+}
+
 type UserDetails struct {
-	Username   string          `json:"username"`
-	Email      string          `json:"email"`
-	Actions    []string        `json:"actions"`
-	AccessKeys []AccessKeyInfo `json:"access_keys"`
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	Actions     []string        `json:"actions"`
+	PolicyNames []string        `json:"policy_names"`
+	AccessKeys  []AccessKeyInfo `json:"access_keys"`
 }
 
 type FilerNode struct {

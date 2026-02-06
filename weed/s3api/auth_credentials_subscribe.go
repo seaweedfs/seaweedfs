@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -56,27 +57,48 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 // onIamConfigChange handles IAM config file changes (create, update, delete)
 func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) error {
-	if dir != filer.IamConfigDirectory {
+	if s3a.iam != nil && s3a.iam.IsStaticConfig() {
+		glog.V(1).Infof("Skipping IAM config update for static configuration")
 		return nil
 	}
 
-	// Handle deletion: reset to empty config
-	if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
-		glog.V(0).Infof("IAM config file deleted, clearing identities")
-		if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
-			glog.Warningf("failed to clear IAM config on deletion: %v", err)
-			return err
+	// 1. Handle traditional single identity.json file
+	if dir == filer.IamConfigDirectory {
+		// Handle deletion: reset to empty config
+		if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
+			glog.V(1).Infof("IAM config file deleted, clearing identities")
+			if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
+				glog.Warningf("failed to clear IAM config on deletion: %v", err)
+				return err
+			}
+			return nil
+		}
+
+		// Handle create/update
+		if newEntry != nil && newEntry.Name == filer.IamIdentityFile {
+			if err := s3a.iam.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
+				return err
+			}
+			glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 		}
 		return nil
 	}
 
-	// Handle create/update
-	if newEntry != nil && newEntry.Name == filer.IamIdentityFile {
-		if err := s3a.iam.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
+	// 2. Handle multiple-file identities and policies
+	// Watch /etc/seaweedfs/identities and /etc/seaweedfs/policies
+	isIdentityDir := strings.HasPrefix(dir, "/etc/seaweedfs/identities")
+	isPolicyDir := strings.HasPrefix(dir, "/etc/seaweedfs/policies")
+
+	if isIdentityDir || isPolicyDir {
+		// For multiple-file mode, any change in these directories should trigger a full reload
+		// from the credential manager (which handles the details of loading from multiple files).
+		glog.V(1).Infof("IAM change detected in %s, reloading configuration", dir)
+		if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Errorf("failed to reload IAM configuration after change in %s: %v", dir, err)
 			return err
 		}
-		glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 	}
+
 	return nil
 }
 
@@ -88,7 +110,7 @@ func (s3a *S3ApiServer) onCircuitBreakerConfigChange(dir string, oldEntry *filer
 
 	// Handle deletion: reset to empty config
 	if newEntry == nil && oldEntry != nil && oldEntry.Name == s3_constants.CircuitBreakerConfigFile {
-		glog.V(0).Infof("Circuit breaker config file deleted, resetting to defaults")
+		glog.V(1).Infof("Circuit breaker config file deleted, resetting to defaults")
 		if err := s3a.cb.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
 			glog.Warningf("failed to reset circuit breaker config on deletion: %v", err)
 			return err

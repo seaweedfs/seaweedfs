@@ -502,4 +502,3 @@ func TestGitHub7562LargeFile(t *testing.T) {
 
 	t.Log("Large file test passed!")
 }
-

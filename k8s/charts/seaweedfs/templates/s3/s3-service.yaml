@@ -2,24 +2,34 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ template "seaweedfs.name" . }}-s3
+  name: {{ printf "%s-s3" (include "seaweedfs.fullname" .) | trunc 63 | trimSuffix "-" }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
     app.kubernetes.io/component: s3
     helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Values.s3.annotations }}
   annotations:
     {{- toYaml .Values.s3.annotations | nindent 4 }}
 {{- end }}
 spec:
   internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
+  {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) (or .Values.s3.trafficDistribution .Values.filer.s3.trafficDistribution) }}
+  trafficDistribution: {{ include "seaweedfs.trafficDistribution" . }}
+  {{- end }}
   ports:
   - name: "swfs-s3"
     port: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
     targetPort: {{ if .Values.s3.enabled }}{{ .Values.s3.port }}{{ else }}{{ .Values.filer.s3.port }}{{ end }}
     protocol: TCP
+{{- if and .Values.s3.enabled .Values.s3.icebergPort }}
+  - name: "swfs-iceberg"
+    port: {{ .Values.s3.icebergPort }}
+    targetPort: {{ .Values.s3.icebergPort }}
+    protocol: TCP
+{{- end }}
 {{- if and .Values.s3.enabled .Values.s3.httpsPort }}
   - name: "swfs-s3-tls"
     port: {{ .Values.s3.httpsPort }}
@@ -34,5 +44,6 @@ spec:
 {{- end }}
   selector:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: {{ if .Values.s3.enabled }}s3{{ else }}filer{{ end }}
 {{- end }}

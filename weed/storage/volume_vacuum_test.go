@@ -119,6 +119,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
+	defer v.Close()
 
 	for i := 1; i <= beforeCommitFileCount+afterCommitFileCount; i++ {
 

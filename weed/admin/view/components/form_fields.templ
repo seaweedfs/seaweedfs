@@ -237,6 +237,14 @@ templ DurationInputField(data DurationInputFieldData) {
 				style="max-width: 120px;"
 			>
 				<option 
+					value="seconds"
+					if convertSecondsToUnit(data.Seconds) == "seconds" {
+						selected
+					}
+				>
+					Seconds
+				</option>
+				<option 
 					value="minutes"
 					if convertSecondsToUnit(data.Seconds) == "minutes" {
 						selected
@@ -304,6 +312,11 @@ func getIntDisplayUnit(seconds int) string {
 		return "minutes"
 	}
 	
+	// Preserve seconds when not divisible by minutes
+	if seconds < 60 || seconds%60 != 0 {
+		return "seconds"
+	}
+	
 	// Check if it's evenly divisible by days
 	if seconds%(24*3600) == 0 {
 		return "days"
@@ -321,6 +334,11 @@ func getIntDisplayUnit(seconds int) string {
 func convertSecondsToUnit(seconds int) string {
 	if seconds == 0 {
 		return "minutes"
+	}
+	
+	// Preserve seconds when not divisible by minutes
+	if seconds < 60 || seconds%60 != 0 {
+		return "seconds"
 	}
 	
 	// Try days first
@@ -349,6 +367,8 @@ func convertSecondsToValue(seconds int, unit string) float64 {
 		return float64(seconds / 3600)
 	case "minutes":
 		return float64(seconds / 60)
+	case "seconds":
+		return float64(seconds)
 	default:
 		return float64(seconds / 60) // Default to minutes
 	}
@@ -391,6 +411,14 @@ templ IntervalField(data IntervalFieldData) {
 					required
 				}
 			>
+				<option 
+					value="seconds"
+					if convertSecondsToUnit(data.Seconds) == "seconds" {
+						selected
+					}
+				>
+					Seconds
+				</option>
 				<option 
 					value="minutes"
 					if convertSecondsToUnit(data.Seconds) == "minutes" {

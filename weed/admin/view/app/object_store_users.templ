@@ -220,8 +220,63 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
                                     <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
                                 </optgroup>
+                                <optgroup label="S3 Tables Permissions">
+                                    <option value="S3TablesAdmin">S3 Tables Admin (Full Access)</option>
+                                    <option value="CreateTableBucket">Create Table Bucket</option>
+                                    <option value="GetTableBucket">Get Table Bucket</option>
+                                    <option value="ListTableBuckets">List Table Buckets</option>
+                                    <option value="DeleteTableBucket">Delete Table Bucket</option>
+                                    <option value="PutTableBucketPolicy">Put Table Bucket Policy</option>
+                                    <option value="GetTableBucketPolicy">Get Table Bucket Policy</option>
+                                    <option value="DeleteTableBucketPolicy">Delete Table Bucket Policy</option>
+                                    <option value="CreateNamespace">Create Namespace</option>
+                                    <option value="GetNamespace">Get Namespace</option>
+                                    <option value="ListNamespaces">List Namespaces</option>
+                                    <option value="DeleteNamespace">Delete Namespace</option>
+                                    <option value="CreateTable">Create Table</option>
+                                    <option value="GetTable">Get Table</option>
+                                    <option value="ListTables">List Tables</option>
+                                    <option value="DeleteTable">Delete Table</option>
+                                    <option value="PutTablePolicy">Put Table Policy</option>
+                                    <option value="GetTablePolicy">Get Table Policy</option>
+                                    <option value="DeleteTablePolicy">Delete Table Policy</option>
+                                    <option value="TagResource">Tag Resource</option>
+                                    <option value="ListTagsForResource">List Tags</option>
+                                    <option value="UntagResource">Untag Resource</option>
+                                </optgroup>
                             </select>
                             <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple permissions</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Bucket Scope</label>
+                            <small class="form-text text-muted d-block mb-2">Apply selected permissions to specific buckets or all buckets</small>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="bucketScope" id="allBuckets" value="all" checked onchange="toggleBucketList()">
+                                <label class="form-check-label" for="allBuckets">
+                                    All Buckets
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="bucketScope" id="specificBuckets" value="specific" onchange="toggleBucketList()">
+                                <label class="form-check-label" for="specificBuckets">
+                                    Specific Buckets
+                                </label>
+                            </div>
+                            
+                            <div id="bucketSelectionList" class="mt-2" style="display: none;">
+                                <select multiple class="form-select" id="selectedBuckets" size="5">
+                                    <!-- Options loaded dynamically -->
+                                </select>
+                                <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="policies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="policies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
+                            </select>
+                            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple policies</small>
                         </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="generateKey" name="generateKey" checked>
@@ -273,6 +328,60 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                     <option value="GetBucketObjectLockConfiguration">Get Bucket Object Lock Configuration</option>
                                     <option value="PutBucketObjectLockConfiguration">Put Bucket Object Lock Configuration</option>
                                 </optgroup>
+                                <optgroup label="S3 Tables Permissions">
+                                    <option value="S3TablesAdmin">S3 Tables Admin (Full Access)</option>
+                                    <option value="CreateTableBucket">Create Table Bucket</option>
+                                    <option value="GetTableBucket">Get Table Bucket</option>
+                                    <option value="ListTableBuckets">List Table Buckets</option>
+                                    <option value="DeleteTableBucket">Delete Table Bucket</option>
+                                    <option value="PutTableBucketPolicy">Put Table Bucket Policy</option>
+                                    <option value="GetTableBucketPolicy">Get Table Bucket Policy</option>
+                                    <option value="DeleteTableBucketPolicy">Delete Table Bucket Policy</option>
+                                    <option value="CreateNamespace">Create Namespace</option>
+                                    <option value="GetNamespace">Get Namespace</option>
+                                    <option value="ListNamespaces">List Namespaces</option>
+                                    <option value="DeleteNamespace">Delete Namespace</option>
+                                    <option value="CreateTable">Create Table</option>
+                                    <option value="GetTable">Get Table</option>
+                                    <option value="ListTables">List Tables</option>
+                                    <option value="DeleteTable">Delete Table</option>
+                                    <option value="PutTablePolicy">Put Table Policy</option>
+                                    <option value="GetTablePolicy">Get Table Policy</option>
+                                    <option value="DeleteTablePolicy">Delete Table Policy</option>
+                                    <option value="TagResource">Tag Resource</option>
+                                    <option value="ListTagsForResource">List Tags</option>
+                                    <option value="UntagResource">Untag Resource</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Bucket Scope</label>
+                            <small class="form-text text-muted d-block mb-2">Apply selected permissions to specific buckets or all buckets</small>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="editBucketScope" id="editAllBuckets" value="all" checked onchange="toggleBucketList('edit')">
+                                <label class="form-check-label" for="editAllBuckets">
+                                    All Buckets
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="radio" name="editBucketScope" id="editSpecificBuckets" value="specific" onchange="toggleBucketList('edit')">
+                                <label class="form-check-label" for="editSpecificBuckets">
+                                    Specific Buckets
+                                </label>
+                            </div>
+                            
+                            <div id="editBucketSelectionList" class="mt-2" style="display: none;">
+                                <select multiple class="form-select" id="editSelectedBuckets" size="5">
+                                    <!-- Options loaded dynamically -->
+                                </select>
+                                <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple buckets</small>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editPolicies" class="form-label">Attached Policies</label>
+                            <select multiple class="form-control" id="editPolicies" name="policies" size="5">
+                                <!-- Options loaded dynamically -->
                             </select>
                         </div>
                     </form>
@@ -335,7 +444,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
     <!-- JavaScript for user management -->
     <script>
+        // Access key status constants
+        const STATUS_ACTIVE = 'Active';
+        const STATUS_INACTIVE = 'Inactive';
+
         document.addEventListener('DOMContentLoaded', function() {
+            
             // Event delegation for user action buttons
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('[data-action]');
@@ -359,30 +473,386 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         break;
                 }
             });
+
+            // Event delegation for delete access key buttons
+            document.addEventListener('click', function(e) {
+                const deleteBtn = e.target.closest('.delete-access-key-btn');
+                if (deleteBtn) {
+                    const username = deleteBtn.getAttribute('data-username');
+                    const accessKey = deleteBtn.getAttribute('data-access-key');
+                    deleteAccessKey(username, accessKey);
+                }
+            });
+
+            // Event delegation for access key status changes
+            document.addEventListener('change', function(e) {
+                const statusSelect = e.target.closest('.access-key-status-select');
+                if (statusSelect) {
+                    const username = statusSelect.getAttribute('data-username');
+                    const accessKey = statusSelect.getAttribute('data-access-key');
+                    const newStatus = statusSelect.value;
+                    updateAccessKeyStatus(username, accessKey, newStatus);
+                }
+            });
+
+            // Load policies for dropdowns
+            loadPolicies();
+            
+            // Load buckets for bucket permissions
+            loadBuckets();
         });
+
+        // Global variable to store available buckets
+        var availableBuckets = [];
+        var bucketPermissionCounter = 0;
+        const s3TablesPermissions = new Set([
+            'CreateTableBucket',
+            'GetTableBucket',
+            'ListTableBuckets',
+            'DeleteTableBucket',
+            'PutTableBucketPolicy',
+            'GetTableBucketPolicy',
+            'DeleteTableBucketPolicy',
+            'CreateNamespace',
+            'GetNamespace',
+            'ListNamespaces',
+            'DeleteNamespace',
+            'CreateTable',
+            'GetTable',
+            'ListTables',
+            'DeleteTable',
+            'PutTablePolicy',
+            'GetTablePolicy',
+            'DeleteTablePolicy',
+            'TagResource',
+            'ListTagsForResource',
+            'UntagResource'
+        ]);
+        function isS3TablesPermission(permission) {
+            return permission === 'S3TablesAdmin' || s3TablesPermissions.has(permission);
+        }
+
+        // Load buckets
+        async function loadBuckets() {
+            try {
+                const response = await fetch('/api/s3/buckets');
+                if (response.ok) {
+                    const data = await response.json();
+                    availableBuckets = (data.buckets || []).map(bucket => ({ name: bucket.name, type: 's3' }));
+                    console.log('Loaded', availableBuckets.length, 'buckets');
+                } else {
+                    console.warn('Failed to load buckets');
+                    availableBuckets = [];
+                }
+            } catch (error) {
+                console.error('Error loading buckets:', error);
+                availableBuckets = [];
+            }
+            try {
+                const response = await fetch('/api/s3tables/buckets');
+                if (response.ok) {
+                    const data = await response.json();
+                    const tableBuckets = (data.buckets || data.tableBuckets || []).map(bucket => ({ name: bucket.name, type: 's3tables' }));
+                    availableBuckets = availableBuckets.concat(tableBuckets);
+                } else {
+                    console.warn('Failed to load table buckets');
+                }
+            } catch (error) {
+                console.warn('Error loading table buckets:', error);
+            }
+            // Populate bucket selection dropdowns
+            populateBucketSelections();
+        }
+
+        // Load policies
+        async function loadPolicies() {
+            try {
+                const response = await fetch('/api/object-store/policies');
+                if (response.ok) {
+                    const data = await response.json();
+                    const policies = data.policies || [];
+                    
+                    const createSelect = document.getElementById('policies');
+                    const editSelect = document.getElementById('editPolicies');
+                    
+                    // Check if elements exist
+                    if (!createSelect || !editSelect) {
+                        console.warn('Policy select elements not found');
+                        return;
+                    }
+                    
+                    // Clear existing options
+                    createSelect.innerHTML = '';
+                    editSelect.innerHTML = '';
+                    
+                    if (policies && policies.length > 0) {
+                        policies.forEach(policy => {
+                            const option = document.createElement('option');
+                            option.value = policy.name;
+                            option.textContent = policy.name;
+                            createSelect.appendChild(option);
+                            editSelect.appendChild(option.cloneNode(true));
+                        });
+                    } else {
+                        const emptyOption = document.createElement('option');
+                        emptyOption.disabled = true;
+                        emptyOption.textContent = 'No policies available';
+                        createSelect.appendChild(emptyOption);
+                        editSelect.appendChild(emptyOption.cloneNode(true));
+                    }
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to load policies: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                console.error('Error loading policies:', error);
+                showAlert('Failed to load policies: ' + error.message, 'error');
+            }
+        }
+
+        // Toggle bucket permission fields when Admin checkbox changes
+        function toggleBucketPermissionFields(mode) {
+            mode = mode || 'create';
+            const adminCheckbox = document.getElementById(mode === 'edit' ? 'editBucketAdmin' : 'bucketAdmin');
+            const permissionFields = document.getElementById(mode === 'edit' ? 'editBucketPermissionFields' : 'bucketPermissionFields');
+            
+            if (adminCheckbox && permissionFields) {
+                permissionFields.style.display = adminCheckbox.checked ? 'none' : 'block';
+            }
+        }
+
+        // Toggle bucket list visibility when bucket scope changes
+        function toggleBucketList(mode) {
+            mode = mode || 'create';
+            const specificRadio = document.getElementById(mode === 'edit' ? 'editSpecificBuckets' : 'specificBuckets');
+            const bucketList = document.getElementById(mode === 'edit' ? 'editBucketSelectionList' : 'bucketSelectionList');
+            
+            if (specificRadio && bucketList) {
+                bucketList.style.display = specificRadio.checked ? 'block' : 'none';
+            }
+        }
+
+        // Populate bucket selection dropdowns
+        function populateBucketSelections() {
+            const createSelect = document.getElementById('selectedBuckets');
+            const editSelect = document.getElementById('editSelectedBuckets');
+            
+            [createSelect, editSelect].forEach(select => {
+                if (select) {
+                    select.innerHTML = '';
+                    availableBuckets.forEach(bucket => {
+                        const option = document.createElement('option');
+                        option.value = bucket.type + ':' + bucket.name;
+                        option.textContent = bucket.type === 's3tables' ? `Table: ${bucket.name}` : bucket.name;
+                        select.appendChild(option);
+                    });
+                }
+            });
+        }
+
+        // Parse bucket permissions from actions array for new UI
+        function parseBucketPermissions(actions) {
+            const result = {
+                isAdmin: false,
+                permissions: [],
+                applyToAll: false,
+                specificBuckets: []
+            };
+            
+            // Check if user has Admin permission
+            if (actions.includes('Admin')) {
+                result.isAdmin = true;
+                return result;
+            }
+            
+            // Separate bucket-scoped from global actions
+            const bucketActions = [];
+            const globalBucketPerms = [];
+            
+            actions.forEach(action => {
+                if (action.startsWith('s3tables:')) {
+                    const actionValue = action.slice('s3tables:'.length);
+                    if (actionValue === '*') {
+                        globalBucketPerms.push('S3TablesAdmin');
+                        return;
+                    }
+                    const parts = actionValue.split(':');
+                    const perm = parts[0];
+                    const bucket = parts.length > 1 ? parts.slice(1).join(':').replace(/\/\*$/, '') : '';
+                    if (bucket) {
+                        bucketActions.push({ permission: perm, bucketId: 's3tables:' + bucket });
+                    } else {
+                        globalBucketPerms.push(perm);
+                    }
+                } else if (action.includes(':')) {
+                    const parts = action.split(':');
+                    const perm = parts[0];
+                    const bucket = parts.slice(1).join(':').replace(/\/\*$/, '');
+                    bucketActions.push({ permission: perm, bucketId: 's3:' + bucket });
+                } else {
+                    globalBucketPerms.push(action);
+                }
+            });
+            
+            // If we have global bucket permissions (no colon), they apply to all buckets
+            if (globalBucketPerms.length > 0) {
+                result.permissions = globalBucketPerms;
+                result.applyToAll = true;
+            } else if (bucketActions.length > 0) {
+                // Get unique permissions and buckets
+                const perms = [...new Set(bucketActions.map(ba => ba.permission))];
+                const buckets = [...new Set(bucketActions.map(ba => ba.bucketId))];
+                
+                result.permissions = perms;
+                result.applyToAll = false;
+                result.specificBuckets = buckets;
+            }
+            
+            return result;
+        }
+
+        function parseBucketOptionValue(value) {
+            if (value.startsWith('s3tables:')) {
+                return { type: 's3tables', name: value.slice('s3tables:'.length) };
+            }
+            if (value.startsWith('s3:')) {
+                return { type: 's3', name: value.slice('s3:'.length) };
+            }
+            return { type: 's3', name: value };
+        }
+
+        // Build bucket permission action strings using original permissions dropdown
+        /**
+         * Builds bucket permission strings based on selected permissions and bucket scope.
+         * @param {string} mode - The operation mode, either 'create' or 'edit'.
+         * @returns {string[]|null} Array of permission strings (e.g., ['Read:bucket1']) or null if validation fails (specific scope selected but no buckets).
+         */
+        function buildBucketPermissions(mode) {
+            mode = mode || 'create';
+            const selectId = mode === 'edit' ? 'editActions' : 'actions';
+            const permSelect = document.getElementById(selectId);
+            
+            if (!permSelect) return [];
+            
+            // Get selected permissions from the original multi-select
+            const selectedPerms = Array.from(permSelect.selectedOptions).map(opt => opt.value);
+            
+            const hasAdmin = selectedPerms.includes('Admin');
+            const hasS3TablesAdmin = selectedPerms.includes('S3TablesAdmin');
+            
+            if (selectedPerms.length === 0) {
+                return [];
+            }
+            
+            // Check if applying to all buckets or specific ones
+            // Use querySelector to find the checked radio button by name group
+            const scopeName = mode === 'edit' ? 'editBucketScope' : 'bucketScope';
+            
+            // Try multiple methods to find the checked radio
+            let checkedRadio = document.querySelector(`input[name="${scopeName}"]:checked`);
+            
+            // Fallback: check both radio buttons explicitly
+            if (!checkedRadio) {
+                const allBucketsId = mode === 'edit' ? 'editAllBuckets' : 'allBuckets';
+                const specificBucketsId = mode === 'edit' ? 'editSpecificBuckets' : 'specificBuckets';
+                
+                const allBucketsRadio = document.getElementById(allBucketsId);
+                const specificBucketsRadio = document.getElementById(specificBucketsId);
+                
+                if (specificBucketsRadio && specificBucketsRadio.checked) {
+                    checkedRadio = specificBucketsRadio;
+                } else if (allBucketsRadio && allBucketsRadio.checked) {
+                    checkedRadio = allBucketsRadio;
+                }
+            }
+
+            // Default to 'all' if nothing is checked (shouldn't happen) or if 'all' is checked
+            const applyToAll = !checkedRadio || checkedRadio.value === 'all';
+
+            if (applyToAll) {
+                // Return global permissions (no bucket specification)
+                const actions = [];
+                if (hasAdmin) {
+                    actions.push('Admin');
+                }
+                if (hasS3TablesAdmin) {
+                    actions.push('s3tables:*');
+                }
+                selectedPerms.forEach(perm => {
+                    if (perm === 'Admin' || perm === 'S3TablesAdmin') {
+                        return;
+                    }
+                    if (isS3TablesPermission(perm)) {
+                        actions.push('s3tables:' + perm);
+                    } else {
+                        actions.push(perm);
+                    }
+                });
+                return actions;
+            } else {
+                // Get selected specific buckets
+                const bucketSelect = document.getElementById(mode === 'edit' ? 'editSelectedBuckets' : 'selectedBuckets');
+                if (!bucketSelect) return null;
+                
+                const selectedBuckets = [...new Set(Array.from(bucketSelect.selectedOptions).map(opt => opt.value))];
+                
+                // Return null to signal validation failure if no buckets selected
+                if (selectedBuckets.length === 0) {
+                    return null;
+                }
+                
+                // Build bucket-scoped permissions
+                const actions = [];
+                if (hasAdmin) {
+                    actions.push('Admin');
+                }
+                if (hasS3TablesAdmin) {
+                    actions.push('s3tables:*');
+                }
+                selectedPerms.forEach(perm => {
+                    if (perm === 'Admin' || perm === 'S3TablesAdmin') {
+                        return;
+                    }
+                    selectedBuckets.forEach(bucket => {
+                        const bucketInfo = parseBucketOptionValue(bucket);
+                        if (isS3TablesPermission(perm)) {
+                            if (bucketInfo.type === 's3tables') {
+                                actions.push('s3tables:' + perm + ':' + bucketInfo.name);
+                            }
+                        } else if (bucketInfo.type === 's3') {
+                            actions.push(perm + ':' + bucketInfo.name);
+                        }
+                    });
+                });
+                
+                return [...new Set(actions)];
+            }
+        }
 
         // Show user details modal
         async function showUserDetails(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
                     const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user details:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 
         // Edit user function
         async function editUser(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     
@@ -395,23 +865,70 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     Array.from(actionsSelect.options).forEach(option => {
                         option.selected = user.actions && user.actions.includes(option.value);
                     });
+
+                    // Set selected policies
+                    const policiesSelect = document.getElementById('editPolicies');
+                    if (policiesSelect) {
+                        Array.from(policiesSelect.options).forEach(option => {
+                            option.selected = user.policy_names && user.policy_names.includes(option.value);
+                        });
+                    }
+                    
+                    // Populate bucket permissions using original permissions dropdown
+                    if (user.actions && user.actions.length > 0) {
+                        const bucketPerms = parseBucketPermissions(user.actions);
+                        
+                        // Set permissions in the original multi-select
+                        const actionsSelect = document.getElementById('editActions');
+                        if (actionsSelect) {
+                            Array.from(actionsSelect.options).forEach(option => {
+                                if (bucketPerms.isAdmin && option.value === 'Admin') {
+                                    option.selected = true;
+                                } else if (!bucketPerms.isAdmin && bucketPerms.permissions.includes(option.value)) {
+                                    option.selected = true;
+                                }
+                            });
+                        }
+                        
+                        // Set bucket scope (all or specific)
+                        const allBucketsRadio = document.getElementById('editAllBuckets');
+                        const specificBucketsRadio = document.getElementById('editSpecificBuckets');
+                        
+                        if (!bucketPerms.isAdmin) {
+                            if (bucketPerms.applyToAll) {
+                                if (allBucketsRadio) allBucketsRadio.checked = true;
+                            } else if (bucketPerms.specificBuckets.length > 0) {
+                                if (specificBucketsRadio) specificBucketsRadio.checked = true;
+                                toggleBucketList('edit');
+                                
+                                // Select specific buckets
+                                const bucketSelect = document.getElementById('editSelectedBuckets');
+                                if (bucketSelect) {
+                                    Array.from(bucketSelect.options).forEach(option => {
+                                        option.selected = bucketPerms.specificBuckets.includes(option.value);
+                                    });
+                                }
+                            }
+                        }
+                    }
                     
                     // Show modal
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load user details');
+                    showAlert('Failed to load user details', 'error');
                 }
             } catch (error) {
                 console.error('Error loading user:', error);
-                showErrorMessage('Failed to load user details');
+                showAlert('Failed to load user details', 'error');
             }
         }
 
         // Manage access keys function
         async function manageAccessKeys(username) {
             try {
-                const response = await fetch(`/api/users/${username}`);
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysUsername').textContent = username;
@@ -419,19 +936,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
                     modal.show();
                 } else {
-                    showErrorMessage('Failed to load access keys');
+                    showAlert('Failed to load access keys', 'error');
                 }
             } catch (error) {
                 console.error('Error loading access keys:', error);
-                showErrorMessage('Failed to load access keys');
+                showAlert('Failed to load access keys', 'error');
             }
         }
 
         // Delete user function
         async function deleteUser(username) {
-            if (confirm(`Are you sure you want to delete user "${username}"? This action cannot be undone.`)) {
+            showDeleteConfirm(username, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const response = await fetch(`/api/users/${encodedUsername}`, {
                         method: 'DELETE'
                     });
                     
@@ -446,7 +964,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     console.error('Error deleting user:', error);
                     showErrorMessage('Failed to delete user: ' + error.message);
                 }
-            }
+            }, 'Are you sure you want to delete this user? This action cannot be undone.');
         }
 
         // Handle create user form submission
@@ -454,10 +972,24 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const form = document.getElementById('createUserForm');
             const formData = new FormData(form);
             
+            // Get permissions with bucket scope applied
+            const allActions = buildBucketPermissions('create');
+            
+            if (allActions === null) {
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
+                return;
+            }
+
+            if (!allActions || allActions.length === 0) {
+                showAlert('At least one permission must be selected', 'error');
+                return;
+            }
+            
             const userData = {
                 username: formData.get('username'),
                 email: formData.get('email'),
-                actions: Array.from(document.getElementById('actions').selectedOptions).map(option => option.value),
+                actions: allActions,
+                policy_names: Array.from(document.getElementById('policies').selectedOptions).map(option => option.value),
                 generate_key: document.getElementById('generateKey').checked
             };
             
@@ -486,26 +1018,47 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
+                    showAlert('Failed to create user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating user:', error);
-                showErrorMessage('Failed to create user: ' + error.message);
+                showAlert('Failed to create user: ' + error.message, 'error');
             }
         }
+
 
         // Handle update user form submission
         async function handleUpdateUser() {
             const username = document.getElementById('editUsername').value;
-            const formData = new FormData(document.getElementById('editUserForm'));
+            if (!username) {
+                showAlert('Username is required', 'error');
+                return;
+            }
+            
+            // Get permissions with bucket scope applied
+            const allActions = buildBucketPermissions('edit');
+            
+            // Check for null (validation failure from buildBucketPermissions)
+            if (allActions === null) {
+                showAlert('Please select at least one bucket when using specific bucket permissions', 'error');
+                return;
+            }
+            
+            // Validate that permissions are not empty
+            if (!allActions || allActions.length === 0) {
+                showAlert('At least one permission must be selected', 'error');
+                return;
+            }
             
             const userData = {
-                email: formData.get('email'),
-                actions: Array.from(document.getElementById('editActions').selectedOptions).map(option => option.value)
+                email: document.getElementById('editEmail').value,
+                actions: allActions,
+                policy_names: Array.from(document.getElementById('editPolicies').selectedOptions).map(option => option.value)
             };
             
             try {
-                const response = await fetch(`/api/users/${username}`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -522,13 +1075,14 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to update user: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error updating user:', error);
-                showErrorMessage('Failed to update user: ' + error.message);
+                showAlert('Failed to update user: ' + error.message, 'error');
             }
         }
+
 
         // Create user details content
         function createUserDetailsContent(user) {
@@ -545,17 +1099,27 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
              detailsHtml += '<div class="mb-3">';
              if (user.actions && user.actions.length > 0) {
                  detailsHtml += user.actions.map(function(action) {
-                     return '<span class="badge bg-info me-1">' + action + '</span>';
+                     return '<span class="badge bg-info me-1">' + escapeHtml(action) + '</span>';
                  }).join('');
              } else {
                  detailsHtml += '<span class="text-muted">No permissions assigned</span>';
              }
-             detailsHtml += '</div>';
-             detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Attached Policy Names</h6>';
+              detailsHtml += '<div class="mb-3">';
+              if (user.policy_names && user.policy_names.length > 0) {
+                  detailsHtml += user.policy_names.map(function(policy) {
+                      return '<span class="badge bg-secondary me-1">' + escapeHtml(policy) + '</span>';
+                  }).join('');
+              } else {
+                  detailsHtml += '<span class="text-muted">No policies attached</span>';
+              }
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
              if (user.access_keys && user.access_keys.length > 0) {
                  detailsHtml += '<div class="mb-2">';
                  user.access_keys.forEach(function(key) {
-                     detailsHtml += '<div><code class="text-muted">' + key.access_key + '</code></div>';
+                     detailsHtml += '<div><code class="text-muted">' + escapeHtml(key.access_key) + '</code></div>';
                  });
                  detailsHtml += '</div>';
              } else {
@@ -579,10 +1143,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             
             user.access_keys.forEach(function(key) {
                 keysHtml += '<tr>';
-                keysHtml += '<td><code>' + key.access_key + '</code></td>';
-                keysHtml += '<td><span class="badge bg-success">Active</span></td>';
+                keysHtml += '<td><code>' + escapeHtml(key.access_key) + '</code></td>';
                 keysHtml += '<td>';
-                keysHtml += '<button class="btn btn-outline-danger btn-sm" onclick="deleteAccessKey(\'' + user.username + '\', \'' + key.access_key + '\')">';
+                keysHtml += '<select class="form-select form-select-sm access-key-status-select" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '" style="width: 110px;">';
+                keysHtml += '<option value="' + STATUS_ACTIVE + '" ' + (key.status === STATUS_ACTIVE || !key.status ? 'selected' : '') + '>' + STATUS_ACTIVE + '</option>';
+                keysHtml += '<option value="' + STATUS_INACTIVE + '" ' + (key.status === STATUS_INACTIVE ? 'selected' : '') + '>' + STATUS_INACTIVE + '</option>';
+                keysHtml += '</select>';
+                keysHtml += '</td>';
+                keysHtml += '<td>';
+                // Add "View Secret" button with data attributes
+                keysHtml += '<button class="btn btn-outline-secondary btn-sm me-2 view-secret-btn" data-access-key="' + escapeHtml(key.access_key) + '" data-secret-key="' + escapeHtml(key.secret_key) + '">';
+                keysHtml += '<i class="fas fa-eye"></i> View Secret';
+                keysHtml += '</button>';
+                // Delete button
+                keysHtml += '<button class="btn btn-outline-danger btn-sm delete-access-key-btn" data-username="' + escapeHtml(user.username) + '" data-access-key="' + escapeHtml(key.access_key) + '">';
                 keysHtml += '<i class="fas fa-trash"></i> Delete';
                 keysHtml += '</button>';
                 keysHtml += '</td>';
@@ -592,7 +1166,60 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             keysHtml += '</tbody>';
             keysHtml += '</table>';
             keysHtml += '</div>';
+            
+            // Add delegated event listener for view secret buttons
+            setTimeout(() => {
+                document.querySelectorAll('.view-secret-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const accessKey = this.getAttribute('data-access-key');
+                        const secretKey = this.getAttribute('data-secret-key');
+                        showSecretKey(accessKey, secretKey);
+                    });
+                });
+            }, 100);
+            
             return keysHtml;
+        }
+
+        // Refresh access keys list content
+        async function refreshAccessKeysList(username) {
+            try {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}`);
+                if (response.ok) {
+                    const user = await response.json();
+                    document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
+                }
+            } catch (error) {
+                console.error('Error refreshing access keys:', error);
+            }
+        }
+
+        // Update access key status
+        async function updateAccessKeyStatus(username, accessKey, status) {
+            try {
+                const response = await fetch(`/api/users/${encodeURIComponent(username)}/access-keys/${encodeURIComponent(accessKey)}/status`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ status: status })
+                });
+
+                if (response.ok) {
+                    showSuccessMessage('Access key status updated successfully');
+                    // Refresh access keys display without toggling modal
+                    refreshAccessKeysList(username);
+                } else {
+                    const error = await response.json();
+                        showAlert('Failed to update access key status: ' + (error.error || 'Unknown error'), 'error');
+                    refreshAccessKeysList(username);
+                }
+            } catch (error) {
+                console.error('Error updating access key status:', error);
+                showAlert('Failed to update access key status: ' + error.message, 'error');
+                refreshAccessKeysList(username);
+            }
         }
 
         // Create new access key
@@ -600,7 +1227,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const username = document.getElementById('accessKeysUsername').textContent;
             
             try {
-                const response = await fetch(`/api/users/${username}/access-keys`, {
+                const encodedUsername = encodeURIComponent(username);
+                const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -610,29 +1238,33 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 
                 if (response.ok) {
                     const result = await response.json();
+                    
+                    // Show the new access key details (IMPORTANT: secret key is only shown once!)
+                    if (result.access_key) {
+                        showNewAccessKeyModal(result.access_key);
+                    }
+                    
                     showSuccessMessage('Access key created successfully');
                     
                     // Refresh access keys display
-                    const userResponse = await fetch(`/api/users/${username}`);
-                    if (userResponse.ok) {
-                        const user = await userResponse.json();
-                        document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                    }
+                    refreshAccessKeysList(username);
                 } else {
                     const error = await response.json();
-                    showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
+                        showAlert('Failed to create access key: ' + (error.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
                 console.error('Error creating access key:', error);
-                showErrorMessage('Failed to create access key: ' + error.message);
+                showAlert('Failed to create access key: ' + error.message, 'error');
             }
         }
 
         // Delete access key
         async function deleteAccessKey(username, accessKey) {
-            if (confirm('Are you sure you want to delete this access key?')) {
+            showDeleteConfirm(accessKey, async function() {
                 try {
-                    const response = await fetch(`/api/users/${username}/access-keys/${accessKey}`, {
+                    const encodedUsername = encodeURIComponent(username);
+                    const encodedAccessKey = encodeURIComponent(accessKey);
+                    const response = await fetch(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`, {
                         method: 'DELETE'
                     });
                     
@@ -640,11 +1272,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         showSuccessMessage('Access key deleted successfully');
                         
                         // Refresh access keys display
-                        const userResponse = await fetch(`/api/users/${username}`);
-                        if (userResponse.ok) {
-                            const user = await userResponse.json();
-                            document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
-                        }
+                        refreshAccessKeysList(username);
                     } else {
                         const error = await response.json();
                         showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
@@ -653,19 +1281,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     console.error('Error deleting access key:', error);
                     showErrorMessage('Failed to delete access key: ' + error.message);
                 }
-            }
+            }, 'Are you sure you want to delete this access key?');
         }
 
-        // Show new access key modal (when user is created with generated key)
-        function showNewAccessKeyModal(user) {
-            // Create a simple alert for now - could be enhanced with a dedicated modal
-            var message = 'New user created!\n\n';
-            message += 'Username: ' + user.username + '\n';
-            message += 'Access Key: ' + user.access_key + '\n';
-            message += 'Secret Key: ' + user.secret_key + '\n\n';
-            message += 'Please save these credentials securely.';
-            alert(message);
-        }
 
         // Utility functions
         function showSuccessMessage(message) {
@@ -674,8 +1292,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         }
 
         function showErrorMessage(message) {
-            // Simple implementation - could be enhanced with toast notifications
-            alert('Error: ' + message);
+            showAlert(message, 'error');
         }
 
         function escapeHtml(text) {

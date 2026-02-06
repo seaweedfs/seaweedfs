@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -202,7 +203,13 @@ func (c *commandVolumeList) isNotMatchDiskInfo(readOnly bool, collection string,
 		return true
 	}
 	if *c.collectionPattern != "" {
-		if matched, _ := filepath.Match(*c.collectionPattern, collection); !matched {
+		var matched bool
+		if *c.collectionPattern == CollectionDefault {
+			matched = (collection == "")
+		} else {
+			matched, _ = filepath.Match(*c.collectionPattern, collection)
+		}
+		if !matched {
 			return true
 		}
 	}
@@ -251,7 +258,14 @@ func (c *commandVolumeList) writeDiskInfo(writer io.Writer, t *master_pb.DiskInf
 }
 
 func writeVolumeInformationMessage(writer io.Writer, t *master_pb.VolumeInformationMessage, verbosityLevel int) statistics {
-	output(verbosityLevel >= 5, writer, "          volume %+v \n", t)
+	if verbosityLevel >= 5 {
+		vi, err := storage.NewVolumeInfo(t)
+		if err == nil {
+			output(true, writer, "          volume %s \n", vi.String())
+		} else {
+			output(true, writer, "          volume %+v \n", t)
+		}
+	}
 	return statistics{
 		Size:             t.Size,
 		FileCount:        t.FileCount,

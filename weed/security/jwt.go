@@ -24,6 +24,8 @@ type SeaweedFileIdClaims struct {
 // Right now, it only contains the standard claims; but this might be extended later
 // for more fine-grained permissions.
 type SeaweedFilerClaims struct {
+	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
+	AllowedMethods  []string `json:"allowed_methods,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -56,7 +58,7 @@ func GenJwtForFilerServer(signingKey SigningKey, expiresAfterSec int) EncodedJwt
 	}
 
 	claims := SeaweedFilerClaims{
-		jwt.RegisteredClaims{},
+		RegisteredClaims: jwt.RegisteredClaims{},
 	}
 	if expiresAfterSec > 0 {
 		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Second * time.Duration(expiresAfterSec)))

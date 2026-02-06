@@ -79,6 +79,16 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+	if req.DiskType == "" {
+		if writable, _ := vl.GetWritableVolumeCount(); writable == 0 {
+			if hddVl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, types.ToDiskType(types.HddType)); hddVl != nil {
+				if writable, _ := hddVl.GetWritableVolumeCount(); writable > 0 {
+					option.DiskType = types.ToDiskType(types.HddType)
+					vl = hddVl
+				}
+			}
+		}
+	}
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (

@@ -19,11 +19,11 @@
       "type": "oidc",
       "enabled": true,
       "config": {
-        "issuer": "http://localhost:8090/realms/seaweedfs-test",
+        "issuer": "http://localhost:8080/realms/seaweedfs-test",
         "clientId": "seaweedfs-s3",
         "clientSecret": "seaweedfs-s3-secret",
-        "jwksUri": "http://localhost:8090/realms/seaweedfs-test/protocol/openid-connect/certs",
-        "userInfoUri": "http://localhost:8090/realms/seaweedfs-test/protocol/openid-connect/userinfo",
+        "jwksUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
+        "userInfoUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/userinfo",
         "scopes": [
           "openid",
           "profile",
@@ -230,10 +230,12 @@
           {
             "Effect": "Allow",
             "Action": [
-              "s3:*"
+              "s3:*",
+              "iam:*"
             ],
             "Resource": [
-              "*"
+              "*",
+              "arn:aws:iam:::*"
             ]
           },
           {

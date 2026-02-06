@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/sync/singleflight"
 
@@ -81,6 +82,7 @@ type FilerOption struct {
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
 	TusBasePath               string
+	CredentialManager         *credential.CredentialManager
 }
 
 type FilerServer struct {
@@ -112,6 +114,9 @@ type FilerServer struct {
 
 	// deduplicates concurrent remote object caching operations
 	remoteCacheGroup singleflight.Group
+
+	// credential manager for IAM operations
+	CredentialManager *credential.CredentialManager
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -148,6 +153,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		CredentialManager:     option.CredentialManager,
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
@@ -249,6 +255,13 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	})
 
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
+
+	if fs.CredentialManager != nil {
+		fs.CredentialManager.SetFilerAddressFunc(func() pb.ServerAddress {
+			return fs.option.Host
+		}, fs.grpcDialOption)
+		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.grpcDialOption)
+	}
 
 	return fs, nil
 }

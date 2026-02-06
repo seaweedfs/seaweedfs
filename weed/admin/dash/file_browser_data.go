@@ -39,9 +39,11 @@ type FileBrowserData struct {
 	Breadcrumbs []BreadcrumbItem `json:"breadcrumbs"`
 	Entries     []FileEntry      `json:"entries"`
 
-	LastUpdated  time.Time `json:"last_updated"`
-	IsBucketPath bool      `json:"is_bucket_path"`
-	BucketName   string    `json:"bucket_name"`
+	LastUpdated       time.Time `json:"last_updated"`
+	IsBucketPath      bool      `json:"is_bucket_path"`
+	BucketName        string    `json:"bucket_name"`
+	IsTableBucketPath bool      `json:"is_table_bucket_path"`
+	TableBucketName   string    `json:"table_bucket_name"`
 	// Pagination fields
 	PageSize            int    `json:"page_size"`
 	HasNextPage         bool   `json:"has_next_page"`
@@ -227,15 +229,28 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		}
 	}
 
+	// Check if this is a table bucket path
+	isTableBucketPath := false
+	tableBucketName := ""
+	if strings.HasPrefix(dir, "/table-buckets/") {
+		isTableBucketPath = true
+		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
+		if len(pathParts) >= 2 {
+			tableBucketName = pathParts[1]
+		}
+	}
+
 	return &FileBrowserData{
 		CurrentPath: dir,
 		ParentPath:  parentPath,
 		Breadcrumbs: breadcrumbs,
 		Entries:     entries,
 
-		LastUpdated:  time.Now(),
-		IsBucketPath: isBucketPath,
-		BucketName:   bucketName,
+		LastUpdated:       time.Now(),
+		IsBucketPath:      isBucketPath,
+		BucketName:        bucketName,
+		IsTableBucketPath: isTableBucketPath,
+		TableBucketName:   tableBucketName,
 		// Pagination metadata
 		PageSize:            pageSize,
 		HasNextPage:         hasNextPage,
@@ -272,8 +287,12 @@ func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 		displayName := part
 		if len(breadcrumbs) == 1 && part == "buckets" {
 			displayName = "Object Store Buckets"
+		} else if len(breadcrumbs) == 1 && part == "table-buckets" {
+			displayName = "Table Buckets"
 		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
 			displayName = "📦 " + part // Add bucket icon to bucket name
+		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/table-buckets/") {
+			displayName = "🧊 " + part
 		}
 
 		breadcrumbs = append(breadcrumbs, BreadcrumbItem{

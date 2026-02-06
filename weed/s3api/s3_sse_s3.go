@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -278,26 +279,27 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	km.filerClient = filerClient
 
-	// Try to load existing KEK from filer
-	if err := km.loadSuperKeyFromFiler(); err != nil {
-		// Only generate a new key if it does not exist.
-		// For other errors (e.g. connectivity), we should fail fast to prevent creating a new key
-		// and making existing data undecryptable.
+	// Try to load existing KEK from filer with retries to handle transient connectivity issues during startup
+	var err error
+	for i := 0; i < 10; i++ {
+		err = km.loadSuperKeyFromFiler()
+		if err == nil {
+			glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+			return nil
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK (load from filer %s: %v)", km.kekPath, err)
 			if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
 				return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
 			}
-		} else {
-			// A different error occurred (e.g., network issue, permission denied).
-			// Return the error to prevent starting with a broken state.
-			return fmt.Errorf("failed to load SSE-S3 super key from %s: %w", km.kekPath, err)
+			return nil
 		}
-	} else {
-		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+		glog.Warningf("SSE-S3 KeyManager: failed to load KEK (attempt %d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
 
-	return nil
+	// If we're here, all retries failed
+	return fmt.Errorf("failed to load SSE-S3 super key from %s after 10 attempts: %w", km.kekPath, err)
 }
 
 // loadSuperKeyFromFiler loads the KEK from the filer

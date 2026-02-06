@@ -16,6 +16,8 @@ templ FileBrowser(data dash.FileBrowserData) {
 		<h1 class="h2">
 			if data.IsBucketPath && data.BucketName != "" {
 				<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
+			} else if data.IsTableBucketPath && data.TableBucketName != "" {
+				<i class="fas fa-table me-2"></i>Table Bucket: {data.TableBucketName}
 			} else {
 				<i class="fas fa-folder-open me-2"></i>File Browser
 			}
@@ -25,6 +27,10 @@ templ FileBrowser(data dash.FileBrowserData) {
 				if data.IsBucketPath && data.BucketName != "" {
 					<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
 						<i class="fas fa-arrow-left me-1"></i>Back to Buckets
+					</a>
+				} else if data.IsTableBucketPath && data.TableBucketName != "" {
+					<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-secondary">
+						<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
 					</a>
 				}
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
@@ -72,12 +78,17 @@ templ FileBrowser(data dash.FileBrowserData) {
 		<div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap">
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="fas fa-folder-open me-2"></i>
-							if data.CurrentPath == "/" {
+			if data.CurrentPath == "/" {
 				<a href="/files?path=/" class="text-decoration-none text-primary">Root Directory</a>
 			} else if data.CurrentPath == "/buckets" {
 										<a href="/files?path=/buckets" class="text-decoration-none text-primary">Object Store Buckets Directory</a>
 				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
 					<i class="fas fa-cube me-1"></i>Manage Buckets
+				</a>
+			} else if data.CurrentPath == "/table-buckets" {
+										<a href="/files?path=/table-buckets" class="text-decoration-none text-primary">Table Buckets Directory</a>
+				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-primary ms-2">
+					<i class="fas fa-table me-1"></i>Manage Table Buckets
 				</a>
 			} else {
 				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
@@ -365,9 +376,10 @@ templ FileBrowser(data dash.FileBrowserData) {
 					showFileProperties(path);
 					break;
 				case 'delete':
-					if (confirm('Are you sure you want to delete "' + path + '"?')) {
+					const fileName = path.split('/').pop();
+					showDeleteConfirm(fileName, function() {
 						deleteFile(path);
-					}
+					}, `Are you sure you want to delete "${fileName}"? This action cannot be undone.`);
 					break;
 			}
 		});
@@ -395,14 +407,14 @@ templ FileBrowser(data dash.FileBrowserData) {
 			.then(response => response.json())
 			.then(data => {
 				if (data.error) {
-					alert('Error loading file properties: ' + data.error);
+					showAlert('Error loading file properties: ' + data.error, 'error');
 				} else {
 					displayFileProperties(data);
 				}
 			})
 			.catch(error => {
 				console.error('Error fetching file properties:', error);
-				alert('Error loading file properties: ' + error.message);
+				showAlert('Error loading file properties: ' + error.message, 'error');
 			});
 	}
 	

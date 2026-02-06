@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -22,6 +22,19 @@ type InodeEntry struct {
 	isDirectory       bool
 	isChildrenCached  bool
 	cachedExpiresTime time.Time
+	lastAccess        time.Time
+	lastRefresh       time.Time
+	updateWindowStart time.Time
+	updateCount       int
+	needsRefresh      bool
+}
+
+func (ie *InodeEntry) resetCacheState() {
+	ie.isChildrenCached = false
+	ie.cachedExpiresTime = time.Time{}
+	ie.needsRefresh = false
+	ie.updateCount = 0
+	ie.updateWindowStart = time.Time{}
 }
 
 func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
@@ -51,7 +64,12 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 		path2inode:      make(map[util.FullPath]uint64),
 		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
 	}
-	t.inode2path[1] = &InodeEntry{[]util.FullPath{root}, 1, true, false, time.Time{}}
+	t.inode2path[1] = &InodeEntry{
+		paths:       []util.FullPath{root},
+		nlookup:     1,
+		isDirectory: true,
+		lastAccess:  time.Now(),
+	}
 	t.path2inode[root] = 1
 
 	return t
@@ -94,9 +112,16 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	} else {
 		if !isLookup {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 0, isDirectory, false, time.Time{}}
+			i.inode2path[inode] = &InodeEntry{
+				paths:       []util.FullPath{path},
+				isDirectory: isDirectory,
+			}
 		} else {
-			i.inode2path[inode] = &InodeEntry{[]util.FullPath{path}, 1, isDirectory, false, time.Time{}}
+			i.inode2path[inode] = &InodeEntry{
+				paths:       []util.FullPath{path},
+				nlookup:     1,
+				isDirectory: isDirectory,
+			}
 		}
 	}
 
@@ -163,8 +188,14 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 		return
 	}
 	path.isChildrenCached = true
+	now := time.Now()
+	path.lastAccess = now
+	path.lastRefresh = now
+	path.updateCount = 0
+	path.needsRefresh = false
+	path.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
-		path.cachedExpiresTime = time.Now().Add(i.cacheMetaTtlSec)
+		path.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
 	}
 }
 
@@ -195,6 +226,125 @@ func (i *InodeToPath) HasInode(inode uint64) bool {
 	return found
 }
 
+func (i *InodeToPath) InvalidateAllChildrenCache() {
+	i.Lock()
+	defer i.Unlock()
+	for _, entry := range i.inode2path {
+		if entry.isDirectory && entry.isChildrenCached {
+			entry.resetCacheState()
+		}
+	}
+}
+
+func (i *InodeToPath) InvalidateChildrenCache(fullpath util.FullPath) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return
+	}
+	entry, found := i.inode2path[inode]
+	if !found {
+		return
+	}
+	entry.resetCacheState()
+}
+
+func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return
+	}
+	entry.lastAccess = time.Now()
+}
+
+func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Time, window time.Duration, threshold int) bool {
+	if threshold <= 0 || window <= 0 {
+		return false
+	}
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return false
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory || !entry.isChildrenCached {
+		return false
+	}
+	if entry.updateWindowStart.IsZero() || now.Sub(entry.updateWindowStart) > window {
+		entry.updateWindowStart = now
+		entry.updateCount = 0
+	}
+	entry.updateCount++
+	if entry.updateCount >= threshold {
+		entry.needsRefresh = true
+		return true
+	}
+	return false
+}
+
+func (i *InodeToPath) NeedsRefresh(fullpath util.FullPath) bool {
+	i.RLock()
+	defer i.RUnlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return false
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return false
+	}
+	return entry.isChildrenCached && entry.needsRefresh
+}
+
+func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Time) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return
+	}
+	entry.lastRefresh = now
+	entry.lastAccess = now
+	entry.updateCount = 0
+	entry.needsRefresh = false
+	entry.updateWindowStart = time.Time{}
+	if i.cacheMetaTtlSec > 0 {
+		entry.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
+	}
+}
+
+func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []util.FullPath {
+	if idle <= 0 {
+		return nil
+	}
+	i.Lock()
+	defer i.Unlock()
+	var dirs []util.FullPath
+	for _, entry := range i.inode2path {
+		if !entry.isDirectory || !entry.isChildrenCached {
+			continue
+		}
+		if entry.lastAccess.IsZero() || now.Sub(entry.lastAccess) < idle {
+			continue
+		}
+		entry.resetCacheState()
+		dirs = append(dirs, entry.paths...)
+	}
+	return dirs
+}
+
 func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
@@ -206,10 +356,9 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 		ie.nlookup++
 	} else {
 		i.inode2path[inode] = &InodeEntry{
-			paths:            []util.FullPath{path},
-			nlookup:          1,
-			isDirectory:      false,
-			isChildrenCached: false,
+			paths:       []util.FullPath{path},
+			nlookup:     1,
+			isDirectory: false,
 		}
 	}
 }
@@ -257,7 +406,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 				entry.paths[i] = targetPath
 			}
 		}
-		entry.isChildrenCached = false
+		entry.resetCacheState()
 	} else {
 		glog.Errorf("MovePath %s to %s: sourceInode %d not found", sourcePath, targetPath, sourceInode)
 	}

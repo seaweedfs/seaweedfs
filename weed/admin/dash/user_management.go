@@ -21,8 +21,9 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 
 	// Create new identity
 	newIdentity := &iam_pb.Identity{
-		Name:    req.Username,
-		Actions: req.Actions,
+		Name:        req.Username,
+		Actions:     req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	// Add account if email is provided
@@ -63,6 +64,7 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
 		Permissions: req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	return user, nil
@@ -91,11 +93,16 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update actions if provided
-	if len(req.Actions) > 0 {
+	if req.Actions != nil {
 		updatedIdentity.Actions = req.Actions
+	}
+	// Always update policy names when present in request (even if empty to allow clearing)
+	if req.PolicyNames != nil {
+		updatedIdentity.PolicyNames = req.PolicyNames
 	}
 
 	// Update email if provided
@@ -120,6 +127,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Username:    username,
 		Email:       req.Email,
 		Permissions: updatedIdentity.Actions,
+		PolicyNames: updatedIdentity.PolicyNames,
 	}
 
 	// Get first access key for display
@@ -169,8 +177,9 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 	}
 
 	details := &UserDetails{
-		Username: username,
-		Actions:  identity.Actions,
+		Username:    username,
+		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Set email from account if available
@@ -183,6 +192,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		details.AccessKeys = append(details.AccessKeys, AccessKeyInfo{
 			AccessKey: cred.AccessKey,
 			SecretKey: cred.SecretKey,
+			Status:    cred.Status,
 			CreatedAt: time.Now().AddDate(0, -1, 0), // Mock creation date
 		})
 	}
@@ -214,6 +224,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    AccessKeyStatusActive,
 	}
 
 	// Create access key using credential manager
@@ -225,6 +236,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	return &AccessKeyInfo{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    AccessKeyStatusActive,
 		CreatedAt: time.Now(),
 	}, nil
 }
@@ -247,6 +259,51 @@ func (s *AdminServer) DeleteAccessKey(username, accessKeyId string) error {
 			return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
 		}
 		return fmt.Errorf("failed to delete access key: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateAccessKeyStatus updates the status of an access key for a user
+func (s *AdminServer) UpdateAccessKeyStatus(username, accessKeyId, status string) error {
+	if s.credentialManager == nil {
+		return fmt.Errorf("credential manager not available")
+	}
+
+	// Validate status against allowed values
+	if status != AccessKeyStatusActive && status != AccessKeyStatusInactive {
+		return fmt.Errorf("invalid status '%s': must be '%s' or '%s'", status, AccessKeyStatusActive, AccessKeyStatusInactive)
+	}
+
+	ctx := context.Background()
+
+	// Get user using credential manager
+	identity, err := s.credentialManager.GetUser(ctx, username)
+	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return fmt.Errorf("user %s not found", username)
+		}
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Find and update the access key status
+	found := false
+	for _, cred := range identity.Credentials {
+		if cred.AccessKey == accessKeyId {
+			cred.Status = status
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
+	}
+
+	// Update user using credential manager
+	err = s.credentialManager.UpdateUser(ctx, username, identity)
+	if err != nil {
+		return fmt.Errorf("failed to update user access key status: %w", err)
 	}
 
 	return nil
@@ -295,6 +352,7 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update user using credential manager

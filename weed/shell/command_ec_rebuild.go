@@ -149,7 +149,7 @@ func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volume
 	for _, diskInfo := range node.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
-				return erasure_coding.ShardsCountFromVolumeEcShardInformationMessage(ecShardInfo)
+				return erasure_coding.GetShardCount(ecShardInfo)
 			}
 		}
 	}

@@ -20,7 +20,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -398,6 +397,29 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 	return dirEntry, true, nil
 }
 
+// resolveObjectEntry resolves the object entry for conditional checks,
+// handling versioned buckets by resolving the latest version.
+func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
+	// Check if versioning is configured
+	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		glog.Errorf("resolveObjectEntry: error checking versioning config for %s: %v", bucket, err)
+		return nil, err
+	}
+
+	if versioningConfigured {
+		// For versioned buckets, we must use getLatestObjectVersion to correctly
+		// find the latest versioned object (in .versions/) or null version.
+		// Standard getEntry would fail to find objects moved to .versions/.
+		// Use 1 retry (fast path) for conditional checks to avoid backoff latency.
+		return s3a.doGetLatestObjectVersion(bucket, object, 1)
+	}
+
+	// For non-versioned buckets, verify directly
+	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	return s3a.getEntry(bucketDir, object)
+}
+
 // serveDirectoryContent serves the content of a directory object directly
 func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Request, entry *filer_pb.Entry) {
 	// Defensive nil checks - entry and attributes should never be nil, but guard against it
@@ -583,7 +605,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	)
 	defer func() {
 		totalTime := time.Since(tStart)
-		glog.V(2).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
+		glog.V(4).Infof("GET TTFB PROFILE %s/%s: total=%v | conditional=%v, versioning=%v, entryFetch=%v, stream=%v",
 			bucket, object, totalTime, conditionalHeadersTime, versioningCheckTime, entryFetchTime, streamTime)
 	}()
 
@@ -670,7 +692,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.V(3).Infof("GetObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -1015,10 +1037,10 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 
 	// Prepare streaming function with simple master client wrapper
 	tStreamPrep := time.Now()
-	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	// Use filerClient directly (not wrapped) so it can support cache invalidation
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
-		masterClient,
+		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		offset,
@@ -1490,17 +1512,18 @@ func writeZeroBytes(w io.Writer, n int64) error {
 //
 // IV Handling for SSE-C:
 // ----------------------
-// SSE-C multipart encryption (see lines 2772-2781) differs fundamentally from SSE-KMS/SSE-S3:
+// SSE-C multipart encryption differs from SSE-KMS/SSE-S3:
 //
-// 1. Encryption: CreateSSECEncryptedReader generates a RANDOM IV per part/chunk
-//   - Each part starts with a fresh random IV
+// 1. Encryption: CreateSSECEncryptedReader generates a RANDOM IV per part
+//   - Each part starts with a fresh random IV (NOT derived from a base IV)
 //   - CTR counter starts from 0 for each part: counter₀, counter₁, counter₂, ...
-//   - PartOffset is stored in metadata but NOT applied during encryption
+//   - PartOffset is stored in metadata to describe where this chunk sits in that encrypted stream
 //
-// 2. Decryption: Use the stored IV directly WITHOUT offset adjustment
-//   - The stored IV already represents the start of this part's encryption
-//   - Applying calculateIVWithOffset would shift to counterₙ, misaligning the keystream
-//   - Result: XOR with wrong keystream = corrupted plaintext
+// 2. Decryption: Use the stored per-part IV and advance the CTR by PartOffset
+//   - CreateSSECDecryptedReaderWithOffset internally uses calculateIVWithOffset to advance
+//     the CTR counter to reach PartOffset within the per-part encrypted stream
+//   - calculateIVWithOffset is applied to the per-part IV, NOT to derive a global base IV
+//   - Do NOT compute a single base IV for all parts (unlike SSE-KMS/SSE-S3)
 //
 // This contrasts with SSE-KMS/SSE-S3 which use: base IV + calculateIVWithOffset(ChunkOffset)
 func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *filer_pb.FileChunk, chunkView *filer.ChunkView, customerKey *SSECustomerKey) (io.Reader, error) {
@@ -1522,11 +1545,14 @@ func (s3a *S3ApiServer) decryptSSECChunkView(ctx context.Context, fileChunk *fil
 			return nil, fmt.Errorf("failed to fetch full chunk: %w", err)
 		}
 
-		// CRITICAL: Use stored IV directly WITHOUT offset adjustment
-		// The stored IV is the random IV used at encryption time for this specific part
-		// SSE-C does NOT apply calculateIVWithOffset during encryption, so we must not apply it during decryption
-		// (See documentation above and at lines 2772-2781 for detailed explanation)
-		decryptedReader, decryptErr := CreateSSECDecryptedReader(fullChunkReader, customerKey, chunkIV)
+		partOffset := ssecMetadata.PartOffset
+		if partOffset < 0 {
+			fullChunkReader.Close()
+			return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunkView.FileId)
+		}
+
+		// Use stored IV and advance CTR stream by PartOffset within the encrypted stream
+		decryptedReader, decryptErr := CreateSSECDecryptedReaderWithOffset(fullChunkReader, customerKey, chunkIV, uint64(partOffset))
 		if decryptErr != nil {
 			fullChunkReader.Close()
 			return nil, fmt.Errorf("failed to create decrypted reader: %w", decryptErr)
@@ -1869,11 +1895,10 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		return nil, err
 	}
 
-	// Create streaming reader
-	masterClient := &simpleMasterClient{lookupFn: lookupFileIdFn}
+	// Create streaming reader - use filerClient directly for cache invalidation support
 	streamFn, err := filer.PrepareStreamContentWithThrottler(
 		ctx,
-		masterClient,
+		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
 		resolvedChunks,
 		0,
@@ -2024,15 +2049,6 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// simpleMasterClient implements the minimal interface for streaming
-type simpleMasterClient struct {
-	lookupFn func(ctx context.Context, fileId string) ([]string, error)
-}
-
-func (s *simpleMasterClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
-	return s.lookupFn
-}
-
 // HeadObjectHandler handles S3 HEAD object requests
 //
 // Special behavior for implicit directories:
@@ -2152,7 +2168,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 					targetVersionId = "null"
 				} else {
 					// No object at regular path either - object doesn't exist
-					glog.Errorf("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
+					glog.V(3).Infof("HeadObject: object not found at regular path or .versions for %s/%s", bucket, object)
 					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 					return
 				}
@@ -2832,15 +2848,20 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReaderDirect(ctx context.Con
 
 			// Note: SSE-C multipart behavior (differs from SSE-KMS/SSE-S3):
 			// - Upload: CreateSSECEncryptedReader generates RANDOM IV per part (no base IV + offset)
-			// - Metadata: PartOffset is stored but not used during encryption
-			// - Decryption: Use stored random IV directly (no offset adjustment needed)
+			// - Metadata: PartOffset tracks position within the encrypted stream
+			// - Decryption: Use stored IV and advance CTR stream by PartOffset
 			//
 			// This differs from:
 			// - SSE-KMS/SSE-S3: Use base IV + calculateIVWithOffset(partOffset) during encryption
 			// - CopyObject: Applies calculateIVWithOffset to SSE-C (which may be incorrect)
 			//
 			// TODO: Investigate CopyObject SSE-C PartOffset handling for consistency
-			decryptedChunkReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
+			partOffset := ssecMetadata.PartOffset
+			if partOffset < 0 {
+				chunkReader.Close()
+				return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunk.GetFileIdString())
+			}
+			decryptedChunkReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, chunkIV, uint64(partOffset))
 			if decErr != nil {
 				chunkReader.Close()
 				return nil, fmt.Errorf("failed to decrypt chunk: %v", decErr)
@@ -3223,26 +3244,32 @@ func (s3a *S3ApiServer) createMultipartSSECDecryptedReader(r *http.Request, prox
 				// Deserialize the SSE-C metadata stored in the unified metadata field
 				ssecMetadata, decErr := DeserializeSSECMetadata(chunk.GetSseMetadata())
 				if decErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to deserialize SSE-C metadata for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}
 
 				// Decode the IV from the metadata
 				iv, ivErr := base64.StdEncoding.DecodeString(ssecMetadata.IV)
 				if ivErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to decode IV for SSE-C chunk %s: %v", chunk.GetFileIdString(), ivErr)
 				}
 
-				// Note: For multipart SSE-C, each part was encrypted with offset=0
-				// So we use the stored IV directly without offset adjustment
-				// PartOffset is stored for informational purposes, but encryption uses offset=0
-				chunkIV := iv
+				partOffset := ssecMetadata.PartOffset
+				if partOffset < 0 {
+					chunkReader.Close()
+					return nil, fmt.Errorf("invalid SSE-C part offset %d for chunk %s", partOffset, chunk.GetFileIdString())
+				}
 
-				decryptedReader, decErr := CreateSSECDecryptedReader(chunkReader, customerKey, chunkIV)
+				// Use stored IV and advance CTR stream by PartOffset within the encrypted stream
+				decryptedReader, decErr := CreateSSECDecryptedReaderWithOffset(chunkReader, customerKey, iv, uint64(partOffset))
 				if decErr != nil {
+					chunkReader.Close()
 					return nil, fmt.Errorf("failed to create SSE-C decrypted reader for chunk %s: %v", chunk.GetFileIdString(), decErr)
 				}
 				readers = append(readers, decryptedReader)
 			} else {
+				chunkReader.Close()
 				return nil, fmt.Errorf("SSE-C chunk %s missing required metadata", chunk.GetFileIdString())
 			}
 		} else {

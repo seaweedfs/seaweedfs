@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
@@ -353,11 +354,7 @@ func (t *BearerTokenTransport) extractPrincipalFromJWT(tokenString string) strin
 }
 
 // generateSTSSessionToken creates a session token using the actual STS service for proper validation
-func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration) (string, error) {
-	// For now, simulate what the STS service would return by calling AssumeRoleWithWebIdentity
-	// In a real test, we'd make an actual HTTP call to the STS endpoint
-	// But for unit testing, we'll create a realistic JWT manually that will pass validation
-
+func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, validDuration time.Duration, account string, customClaims map[string]interface{}) (string, error) {
 	now := time.Now()
 	signingKeyB64 := "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
 	signingKey, err := base64.StdEncoding.DecodeString(signingKeyB64)
@@ -368,10 +365,14 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 	// Generate a session ID that would be created by the STS service
 	sessionId := fmt.Sprintf("test-session-%s-%s-%d", username, roleName, now.Unix())
 
+	if account == "" {
+		account = "123456789012" // Default test account
+	}
+
 	// Create session token claims exactly matching STSSessionClaims struct
-	roleArn := fmt.Sprintf("arn:aws:iam::role/%s", roleName)
-	sessionName := fmt.Sprintf("test-session-%s", username)
-	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/%s/%s", roleName, sessionName)
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", account, roleName)
+	sessionName := username
+	principalArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", account, roleName, sessionName)
 
 	// Use jwt.MapClaims but with exact field names that STSSessionClaims expects
 	sessionClaims := jwt.MapClaims{
@@ -395,32 +396,39 @@ func (f *S3IAMTestFramework) generateSTSSessionToken(username, roleName string, 
 		"max_dur":    int64(validDuration.Seconds()), // MaxDuration
 	}
 
+	// Add custom claims (e.g., for ldap:* or jwt:* testing)
+	for k, v := range customClaims {
+		sessionClaims[k] = v
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, sessionClaims)
 	tokenString, err := token.SignedString(signingKey)
 	if err != nil {
 		return "", err
 	}
 
-	// The generated JWT is self-contained and includes all necessary session information.
-	// The stateless design of the STS service means no external session storage is required.
-
 	return tokenString, nil
 }
 
 // CreateS3ClientWithJWT creates an S3 client authenticated with a JWT token for the specified role
 func (f *S3IAMTestFramework) CreateS3ClientWithJWT(username, roleName string) (*s3.S3, error) {
+	return f.CreateS3ClientWithCustomClaims(username, roleName, "", nil)
+}
+
+// CreateS3ClientWithCustomClaims creates an S3 client with specific account ID and custom claims
+func (f *S3IAMTestFramework) CreateS3ClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*s3.S3, error) {
 	var token string
 	var err error
 
-	if f.useKeycloak {
-		// Use real Keycloak authentication
+	if f.useKeycloak && claims == nil && account == "" {
+		// Use real Keycloak authentication if no custom requirements
 		token, err = f.getKeycloakToken(username)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
 		}
 	} else {
-		// Generate STS session token (mock mode)
-		token, err = f.generateSTSSessionToken(username, roleName, time.Hour)
+		// Generate STS session token (mock mode or custom requirements)
+		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
 		}
@@ -479,7 +487,7 @@ func (f *S3IAMTestFramework) CreateS3ClientWithInvalidJWT() (*s3.S3, error) {
 // CreateS3ClientWithExpiredJWT creates an S3 client with an expired JWT token
 func (f *S3IAMTestFramework) CreateS3ClientWithExpiredJWT(username, roleName string) (*s3.S3, error) {
 	// Generate expired STS session token (expired 1 hour ago)
-	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour)
+	token, err := f.generateSTSSessionToken(username, roleName, -time.Hour, "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate expired STS session token: %v", err)
 	}
@@ -664,10 +672,26 @@ func (f *S3IAMTestFramework) GenerateUniqueBucketName(prefix string) string {
 	testName = strings.ReplaceAll(testName, "/", "-")
 	testName = strings.ReplaceAll(testName, "_", "-")
 
+	// Truncate test name to keep total length under 63 characters
+	// S3 bucket names must be 3-63 characters, lowercase, no underscores
+	// Format: prefix-testname-random (need room for random suffix)
+	maxTestNameLen := 63 - len(prefix) - 5 - 4 // account for dashes and random suffix
+	if len(testName) > maxTestNameLen {
+		testName = testName[:maxTestNameLen]
+	}
+
 	// Add random suffix to handle parallel tests
 	randomSuffix := mathrand.Intn(10000)
 
-	return fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
+	bucketName := fmt.Sprintf("%s-%s-%d", prefix, testName, randomSuffix)
+
+	// Ensure final name is valid
+	if len(bucketName) > 63 {
+		// Truncate further if necessary
+		bucketName = bucketName[:63]
+	}
+
+	return bucketName
 }
 
 // CreateBucket creates a bucket and tracks it for cleanup
@@ -786,7 +810,7 @@ func (f *S3IAMTestFramework) Cleanup() {
 	}
 }
 
-// WaitForS3Service waits for the S3 service to be available
+// WaitForS3Service waits for the S3 service to be available and checks for IAM write permissions
 func (f *S3IAMTestFramework) WaitForS3Service() error {
 	// Create a basic S3 client
 	sess, err := session.NewSession(&aws.Config{
@@ -806,17 +830,46 @@ func (f *S3IAMTestFramework) WaitForS3Service() error {
 
 	s3Client := s3.New(sess)
 
-	// Try to list buckets to check if service is available
+	// Create IAM client for write permission check
+	iamClient := iam.New(sess)
+
+	// Try to list buckets to check if S3 service is available
 	maxRetries := 30
 	for i := 0; i < maxRetries; i++ {
 		_, err := s3Client.ListBuckets(&s3.ListBucketsInput{})
 		if err == nil {
+			// S3 is up, now check if IAM is writable
+			// We try to create a dummy user. If it fails with "AccessDenied: IAM write operations are disabled",
+			// we know we are still in read-only mode (or the flag didn't take effect).
+			// If it fails with other errors (e.g. invalid auth), that's fine for this connectivity check.
+			// Only the explicit read-only error is a blocker for our specific test scenario.
+
+			// Note: We use a random name to avoid conflicts if it actually succeeds
+			dummyUser := fmt.Sprintf("check-writable-%d", time.Now().UnixNano())
+			_, iamErr := iamClient.CreateUser(&iam.CreateUserInput{
+				UserName: aws.String(dummyUser),
+			})
+
+			if iamErr != nil {
+				if reqErr, ok := iamErr.(awserr.RequestFailure); ok {
+					if reqErr.Code() == "AccessDenied" && strings.Contains(reqErr.Message(), "IAM write operations are disabled") {
+						f.t.Logf("Waiting for IAM to become writable... (attempt %d/%d)", i+1, maxRetries)
+						time.Sleep(1 * time.Second)
+						continue
+					}
+				}
+				// Ignore other errors (like auth errors), we just want to ensure we aren't explicitly blocked by read-only mode
+			} else {
+				// Cleanup if it actually succeeded
+				iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(dummyUser)})
+			}
+
 			return nil
 		}
 		time.Sleep(1 * time.Second)
 	}
 
-	return fmt.Errorf("S3 service not available after %d retries", maxRetries)
+	return fmt.Errorf("S3 service not available or not writable after %d retries", maxRetries)
 }
 
 // PutTestObject puts a test object in the specified bucket
@@ -880,4 +933,50 @@ func (f *S3IAMTestFramework) WaitForS3ServiceSimple() error {
 	// This is a simplified version that just checks if the endpoint responds
 	// The full implementation would be in the Makefile's wait-for-services target
 	return nil
+}
+
+// CreateIAMClientWithJWT creates an IAM client authenticated with a JWT token for the specified role
+func (f *S3IAMTestFramework) CreateIAMClientWithJWT(username, roleName string) (*iam.IAM, error) {
+	return f.CreateIAMClientWithCustomClaims(username, roleName, "", nil)
+}
+
+// CreateIAMClientWithCustomClaims creates an IAM client with specific account ID and custom claims
+func (f *S3IAMTestFramework) CreateIAMClientWithCustomClaims(username, roleName, account string, claims map[string]interface{}) (*iam.IAM, error) {
+	var token string
+	var err error
+
+	if f.useKeycloak && claims == nil && account == "" {
+		// Use real Keycloak authentication if no custom requirements
+		token, err = f.getKeycloakToken(username)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Keycloak token: %v", err)
+		}
+	} else {
+		// Generate STS session token (mock mode or custom requirements)
+		token, err = f.generateSTSSessionToken(username, roleName, time.Hour, account, claims)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate STS session token: %v", err)
+		}
+	}
+
+	// Create custom HTTP client with Bearer token transport
+	httpClient := &http.Client{
+		Transport: &BearerTokenTransport{
+			Token: token,
+		},
+	}
+
+	sess, err := session.NewSession(&aws.Config{
+		Region:     aws.String(TestRegion),
+		Endpoint:   aws.String(TestS3Endpoint),
+		HTTPClient: httpClient,
+		// Use anonymous credentials to avoid AWS signature generation
+		Credentials: credentials.AnonymousCredentials,
+		DisableSSL:  aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AWS session: %v", err)
+	}
+
+	return iam.New(sess), nil
 }

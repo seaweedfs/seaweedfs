@@ -3,13 +3,14 @@ package operation
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
-	"sync"
 )
 
 type VolumeAssignRequest struct {

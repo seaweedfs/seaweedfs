@@ -152,7 +152,7 @@ func testTwoConsumersRebalance(t *testing.T, addr, topicName, groupID string) {
 
 	// Wait for rebalancing to occur - both consumers should get new assignments
 	var rebalancedAssignment1, rebalancedAssignment2 []int32
-	
+
 	// Consumer1 should get a rebalance assignment
 	select {
 	case partitions := <-handler1.assignments:
@@ -372,7 +372,7 @@ func testMultipleConsumersJoin(t *testing.T, addr, topicName, groupID string) {
 				t.Errorf("Partition %d assigned to multiple consumers", partition)
 			}
 		}
-		
+
 		// Each consumer should get exactly 1 partition (4 partitions / 4 consumers)
 		if len(assignment) != 1 {
 			t.Errorf("Consumer%d should get exactly 1 partition, got %d", i, len(assignment))
@@ -408,7 +408,7 @@ func (h *RebalanceTestHandler) Setup(session sarama.ConsumerGroupSession) error 
 	h.readyOnce.Do(func() {
 		close(h.ready)
 	})
-	
+
 	// Send partition assignment
 	partitions := make([]int32, 0)
 	for topic, partitionList := range session.Claims() {
@@ -417,13 +417,13 @@ func (h *RebalanceTestHandler) Setup(session sarama.ConsumerGroupSession) error 
 			partitions = append(partitions, partition)
 		}
 	}
-	
+
 	select {
 	case h.assignments <- partitions:
 	default:
 		// Channel might be full, that's ok
 	}
-	
+
 	return nil
 }
 

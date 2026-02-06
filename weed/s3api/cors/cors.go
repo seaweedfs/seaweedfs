@@ -361,10 +361,6 @@ func ApplyHeaders(w http.ResponseWriter, corsResp *CORSResponse) {
 
 	if corsResp.AllowOrigin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", corsResp.AllowOrigin)
-
-		if corsResp.AllowOrigin != "*" {
-			w.Header().Add("Vary", "Origin")
-		}
 	}
 
 	if corsResp.AllowMethods != "" {

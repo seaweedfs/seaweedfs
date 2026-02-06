@@ -1,9 +1,10 @@
 package weed_server
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/viant/ptrie"
-	"testing"
 )
 
 func TestPtrie(t *testing.T) {

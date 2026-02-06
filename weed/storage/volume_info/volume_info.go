@@ -2,7 +2,6 @@ package volume_info
 
 import (
 	"fmt"
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,6 +9,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/rclone_backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil

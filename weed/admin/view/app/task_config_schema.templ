@@ -127,7 +127,7 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
 
     <script>
         function resetToDefaults() {
-            if (confirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.')) {
+            showConfirm('Are you sure you want to reset to default configuration? This will overwrite your current settings.', function() {
                 // Reset form fields to their default values
                 const form = document.getElementById('taskConfigForm');
                 const schemaFields = window.taskConfigSchema ? window.taskConfigSchema.fields : {};
@@ -154,7 +154,7 @@ templ TaskConfigSchema(data *maintenance.TaskConfigData, schema *tasks.TaskConfi
                         }
                     }
                 });
-            }
+            });
         }
 
         function convertSecondsToTaskIntervalValueUnit(totalSeconds) {
@@ -430,7 +430,7 @@ func getTaskConfigStringField(config interface{}, fieldName string) string {
 
 func getTaskNumberStep(field *config.Field) string {
     if field.Type == config.FieldTypeFloat {
-        return "0.01"
+        return "any"
     }
     return "1"
 }

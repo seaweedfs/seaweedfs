@@ -1,6 +1,6 @@
 package mount
 
-import "github.com/hanwen/go-fuse/v2/fuse"
+import "github.com/seaweedfs/go-fuse/v2/fuse"
 
 // https://github.com/libfuse/libfuse/blob/48ae2e72b39b6a31cb2194f6f11786b7ca06aac6/include/fuse.h#L778
 

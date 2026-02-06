@@ -79,7 +79,7 @@ func (r *BucketRegistry) init() error {
 		glog.Errorf("BucketRegistry.init: failed to list buckets: %v", err)
 		return err
 	}
-	glog.V(0).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
+	glog.V(1).Infof("BucketRegistry.init: warmed config cache for %d buckets", bucketCount)
 	return nil
 }
 

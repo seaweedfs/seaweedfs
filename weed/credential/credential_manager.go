@@ -5,9 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
+
+// FilerAddressSetter is an interface for credential stores that need a dynamic filer address
+type FilerAddressSetter interface {
+	SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption)
+}
 
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
@@ -41,9 +50,28 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 	}, nil
 }
 
+func (cm *CredentialManager) SetMasterClient(masterClient *wdclient.MasterClient, grpcDialOption grpc.DialOption) {
+	cm.store = NewPropagatingCredentialStore(cm.store, masterClient, grpcDialOption)
+}
+
+// SetFilerAddressFunc sets the function to get the current filer address
+func (cm *CredentialManager) SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption) {
+	if s, ok := cm.store.(FilerAddressSetter); ok {
+		s.SetFilerAddressFunc(getFiler, grpcDialOption)
+	}
+}
+
 // GetStore returns the underlying credential store
 func (cm *CredentialManager) GetStore() CredentialStore {
 	return cm.store
+}
+
+// GetStoreName returns the name of the underlying credential store
+func (cm *CredentialManager) GetStoreName() string {
+	if cm.store != nil {
+		return string(cm.store.GetName())
+	}
+	return ""
 }
 
 // LoadConfiguration loads the S3 API configuration
@@ -96,6 +124,46 @@ func (cm *CredentialManager) DeleteAccessKey(ctx context.Context, username strin
 	return cm.store.DeleteAccessKey(ctx, username, accessKey)
 }
 
+// GetPolicies returns all policies
+func (cm *CredentialManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
+	return cm.store.GetPolicies(ctx)
+}
+
+// PutPolicy creates or updates a policy
+func (cm *CredentialManager) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
+// DeletePolicy removes a policy
+func (cm *CredentialManager) DeletePolicy(ctx context.Context, name string) error {
+	return cm.store.DeletePolicy(ctx, name)
+}
+
+// GetPolicy retrieves a policy by name
+func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
+	return cm.store.GetPolicy(ctx, name)
+}
+
+// CreatePolicy creates a new policy (if supported by the store)
+func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with CreatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.CreatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
+// UpdatePolicy updates an existing policy (if supported by the store)
+func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
+	// Check if the store implements PolicyManager interface with UpdatePolicy
+	if policyStore, ok := cm.store.(PolicyManager); ok {
+		return policyStore.UpdatePolicy(ctx, name, document)
+	}
+	// Fallback to PutPolicy for stores that only implement CredentialStore
+	return cm.store.PutPolicy(ctx, name, document)
+}
+
 // Shutdown performs cleanup
 func (cm *CredentialManager) Shutdown() {
 	if cm.store != nil {
@@ -122,4 +190,29 @@ func GetAvailableStores() []CredentialStoreTypeName {
 		return []CredentialStoreTypeName{}
 	}
 	return storeNames
+}
+
+// CreateServiceAccount creates a new service account
+func (cm *CredentialManager) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
+	return cm.store.CreateServiceAccount(ctx, sa)
+}
+
+// UpdateServiceAccount updates an existing service account
+func (cm *CredentialManager) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
+	return cm.store.UpdateServiceAccount(ctx, id, sa)
+}
+
+// DeleteServiceAccount removes a service account
+func (cm *CredentialManager) DeleteServiceAccount(ctx context.Context, id string) error {
+	return cm.store.DeleteServiceAccount(ctx, id)
+}
+
+// GetServiceAccount retrieves a service account by ID
+func (cm *CredentialManager) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
+	return cm.store.GetServiceAccount(ctx, id)
+}
+
+// ListServiceAccounts returns all service accounts
+func (cm *CredentialManager) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
+	return cm.store.ListServiceAccounts(ctx)
 }

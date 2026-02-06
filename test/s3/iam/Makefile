@@ -57,6 +57,10 @@ setup: ## Setup test environment
 	@echo "Setting up test environment..."
 	@mkdir -p test-volume-data/filerldb2
 	@mkdir -p test-volume-data/m9333
+	@if [ ! -f iam_config.json ]; then \
+		echo "Creating iam_config.json from iam_config.local.json..."; \
+		cp iam_config.local.json iam_config.json; \
+	fi
 
 start-services: ## Start SeaweedFS services for testing
 	@echo "Starting SeaweedFS services using weed mini..."
@@ -66,6 +70,7 @@ start-services: ## Start SeaweedFS services for testing
 		-s3.port=$(S3_PORT) \
 		-s3.config=test_config.json \
 		-s3.iam.config=$(CURDIR)/iam_config.json \
+		-s3.iam.readOnly=false \
 		> weed-mini.log 2>&1 & \
 		echo $$! > $(MINI_PID_FILE)
 	
@@ -125,6 +130,10 @@ clean: stop-services ## Clean up test environment
 	@rm -rf test-volume-data
 	@rm -f weed-*.log
 	@rm -f *.test
+	@rm -f iam_config.json
+	@rm -f .test_env
+	@docker rm -f keycloak-iam-test >/dev/null 2>&1 || true
+	@docker rm -f openldap-iam-test >/dev/null 2>&1 || true
 	@echo "Cleanup complete"
 
 logs: ## Show service logs
@@ -175,6 +184,20 @@ test-context: ## Test only contextual policy enforcement
 
 test-presigned: ## Test only presigned URL integration
 	go test -v -run TestS3IAMPresignedURLIntegration ./...
+
+test-sts: ## Run all STS tests
+	go test -v -run "TestSTS" ./...
+
+test-sts-assume-role: ## Run AssumeRole STS tests
+	go test -v -run "TestSTSAssumeRole" ./...
+
+test-sts-ldap: ## Run LDAP STS tests
+	go test -v -run "TestSTSLDAP" ./...
+
+test-sts-suite: start-services ## Run all STS tests with full environment setup/teardown
+	@echo "Running STS test suite..."
+	-go test -v -run "TestSTS" ./...
+	@$(MAKE) stop-services
 
 # Performance testing
 benchmark: setup start-services wait-for-services ## Run performance benchmarks
@@ -240,7 +263,7 @@ docker-build: ## Build custom SeaweedFS image for Docker tests
 
 # All PHONY targets
 .PHONY: test test-quick run-tests setup start-services stop-services wait-for-services clean logs status debug
-.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned  
+.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned test-sts test-sts-assume-role test-sts-ldap  
 .PHONY: benchmark ci watch install-deps docker-test docker-up docker-down docker-logs docker-build
 .PHONY: test-distributed test-performance test-stress test-versioning-stress test-keycloak-full test-all-previously-skipped setup-all-tests help-advanced
 
@@ -274,6 +297,9 @@ test-keycloak-full: docker-up ## Run complete Keycloak integration tests
 test-all-previously-skipped: ## Run all previously skipped tests
 	@echo "🎯 Running all previously skipped tests..."
 	@./run_all_tests.sh
+
+.PHONY: cleanup
+cleanup: clean
 
 setup-all-tests: ## Setup environment for all tests (including Keycloak)
 	@echo "🚀 Setting up complete test environment..."

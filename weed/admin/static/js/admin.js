@@ -4,12 +4,12 @@
 let bucketToDelete = '';
 
 // Initialize dashboard when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
     initializeDashboard();
     initializeEventHandlers();
     setupFormValidation();
     setupFileManagerEventHandlers();
-    
+
     // Initialize delete button visibility on file browser page
     if (window.location.pathname === '/files') {
         updateDeleteSelectedButton();
@@ -19,16 +19,16 @@ document.addEventListener('DOMContentLoaded', function() {
 function initializeDashboard() {
     // Set up HTMX event listeners
     setupHTMXListeners();
-    
+
     // Initialize tooltips
     initializeTooltips();
-    
+
     // Set up periodic refresh
     setupAutoRefresh();
-    
+
     // Set active navigation
     setActiveNavigation();
-    
+
     // Set up submenu behavior
     setupSubmenuBehavior();
 }
@@ -36,17 +36,17 @@ function initializeDashboard() {
 // HTMX event listeners
 function setupHTMXListeners() {
     // Show loading indicator on requests
-    document.body.addEventListener('htmx:beforeRequest', function(evt) {
+    document.body.addEventListener('htmx:beforeRequest', function (evt) {
         showLoadingIndicator();
     });
-    
+
     // Hide loading indicator on completion
-    document.body.addEventListener('htmx:afterRequest', function(evt) {
+    document.body.addEventListener('htmx:afterRequest', function (evt) {
         hideLoadingIndicator();
     });
-    
+
     // Handle errors
-    document.body.addEventListener('htmx:responseError', function(evt) {
+    document.body.addEventListener('htmx:responseError', function (evt) {
         handleHTMXError(evt);
     });
 }
@@ -62,7 +62,7 @@ function initializeTooltips() {
 // Set up auto-refresh for dashboard data
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
-    setInterval(function() {
+    setInterval(function () {
         if (window.location.pathname === '/dashboard') {
             htmx.trigger('#dashboard-content', 'refresh');
         }
@@ -73,11 +73,11 @@ function setupAutoRefresh() {
 function setActiveNavigation() {
     const currentPath = window.location.pathname;
     const navLinks = document.querySelectorAll('.sidebar .nav-link');
-    
-    navLinks.forEach(function(link) {
+
+    navLinks.forEach(function (link) {
         const href = link.getAttribute('href');
         let isActive = false;
-        
+
         if (href === currentPath) {
             isActive = true;
         } else if (currentPath === '/' && href === '/admin') {
@@ -86,7 +86,7 @@ function setActiveNavigation() {
             isActive = true;
         }
         // Note: Removed the problematic cluster condition that was highlighting all submenu items
-        
+
         if (isActive) {
             link.classList.add('active');
         } else {
@@ -98,13 +98,13 @@ function setActiveNavigation() {
 // Set up submenu behavior
 function setupSubmenuBehavior() {
     const currentPath = window.location.pathname;
-    
+
     // If we're on a cluster page, expand the cluster submenu
     if (currentPath.startsWith('/cluster/')) {
         const clusterSubmenu = document.getElementById('clusterSubmenu');
         if (clusterSubmenu) {
             clusterSubmenu.classList.add('show');
-            
+
             // Update the parent toggle button state
             const toggleButton = document.querySelector('[data-bs-target="#clusterSubmenu"]');
             if (toggleButton) {
@@ -113,13 +113,13 @@ function setupSubmenuBehavior() {
             }
         }
     }
-    
+
     // If we're on an object store page, expand the object store submenu
     if (currentPath.startsWith('/object-store/')) {
         const objectStoreSubmenu = document.getElementById('objectStoreSubmenu');
         if (objectStoreSubmenu) {
             objectStoreSubmenu.classList.add('show');
-            
+
             // Update the parent toggle button state
             const toggleButton = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
             if (toggleButton) {
@@ -128,13 +128,13 @@ function setupSubmenuBehavior() {
             }
         }
     }
-    
+
     // If we're on a maintenance page, expand the maintenance submenu
     if (currentPath.startsWith('/maintenance')) {
         const maintenanceSubmenu = document.getElementById('maintenanceSubmenu');
         if (maintenanceSubmenu) {
             maintenanceSubmenu.classList.add('show');
-            
+
             // Update the parent toggle button state
             const toggleButton = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
             if (toggleButton) {
@@ -143,41 +143,41 @@ function setupSubmenuBehavior() {
             }
         }
     }
-    
+
     // Prevent submenu from collapsing when clicking on submenu items
     const clusterSubmenuLinks = document.querySelectorAll('#clusterSubmenu .nav-link');
-    clusterSubmenuLinks.forEach(function(link) {
-        link.addEventListener('click', function(e) {
+    clusterSubmenuLinks.forEach(function (link) {
+        link.addEventListener('click', function (e) {
             // Don't prevent the navigation, just stop the collapse behavior
             e.stopPropagation();
         });
     });
-    
+
     const objectStoreSubmenuLinks = document.querySelectorAll('#objectStoreSubmenu .nav-link');
-    objectStoreSubmenuLinks.forEach(function(link) {
-        link.addEventListener('click', function(e) {
+    objectStoreSubmenuLinks.forEach(function (link) {
+        link.addEventListener('click', function (e) {
             // Don't prevent the navigation, just stop the collapse behavior
             e.stopPropagation();
         });
     });
-    
+
     const maintenanceSubmenuLinks = document.querySelectorAll('#maintenanceSubmenu .nav-link');
-    maintenanceSubmenuLinks.forEach(function(link) {
-        link.addEventListener('click', function(e) {
+    maintenanceSubmenuLinks.forEach(function (link) {
+        link.addEventListener('click', function (e) {
             // Don't prevent the navigation, just stop the collapse behavior
             e.stopPropagation();
         });
     });
-    
+
     // Handle the main cluster toggle
     const clusterToggle = document.querySelector('[data-bs-target="#clusterSubmenu"]');
     if (clusterToggle) {
-        clusterToggle.addEventListener('click', function(e) {
+        clusterToggle.addEventListener('click', function (e) {
             e.preventDefault();
-            
+
             const submenu = document.getElementById('clusterSubmenu');
             const isExpanded = submenu.classList.contains('show');
-            
+
             if (isExpanded) {
                 // Collapse
                 submenu.classList.remove('show');
@@ -191,16 +191,16 @@ function setupSubmenuBehavior() {
             }
         });
     }
-    
+
     // Handle the main object store toggle
     const objectStoreToggle = document.querySelector('[data-bs-target="#objectStoreSubmenu"]');
     if (objectStoreToggle) {
-        objectStoreToggle.addEventListener('click', function(e) {
+        objectStoreToggle.addEventListener('click', function (e) {
             e.preventDefault();
-            
+
             const submenu = document.getElementById('objectStoreSubmenu');
             const isExpanded = submenu.classList.contains('show');
-            
+
             if (isExpanded) {
                 // Collapse
                 submenu.classList.remove('show');
@@ -214,16 +214,16 @@ function setupSubmenuBehavior() {
             }
         });
     }
-    
+
     // Handle the main maintenance toggle
     const maintenanceToggle = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
     if (maintenanceToggle) {
-        maintenanceToggle.addEventListener('click', function(e) {
+        maintenanceToggle.addEventListener('click', function (e) {
             e.preventDefault();
-            
+
             const submenu = document.getElementById('maintenanceSubmenu');
             const isExpanded = submenu.classList.contains('show');
-            
+
             if (isExpanded) {
                 // Collapse
                 submenu.classList.remove('show');
@@ -245,7 +245,7 @@ function showLoadingIndicator() {
     if (indicator) {
         indicator.style.display = 'block';
     }
-    
+
     // Add loading class to body
     document.body.classList.add('loading');
 }
@@ -255,7 +255,7 @@ function hideLoadingIndicator() {
     if (indicator) {
         indicator.style.display = 'none';
     }
-    
+
     // Remove loading class from body
     document.body.classList.remove('loading');
 }
@@ -263,10 +263,10 @@ function hideLoadingIndicator() {
 // Handle HTMX errors
 function handleHTMXError(evt) {
     console.error('HTMX Request Error:', evt.detail);
-    
+
     // Show error toast or message
     showErrorMessage('Request failed. Please try again.');
-    
+
     hideLoadingIndicator();
 }
 
@@ -278,7 +278,7 @@ function showErrorMessage(message) {
     toast.setAttribute('role', 'alert');
     toast.setAttribute('aria-live', 'assertive');
     toast.setAttribute('aria-atomic', 'true');
-    
+
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
@@ -288,7 +288,7 @@ function showErrorMessage(message) {
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
         </div>
     `;
-    
+
     // Add to toast container or create one
     let toastContainer = document.getElementById('toast-container');
     if (!toastContainer) {
@@ -298,15 +298,15 @@ function showErrorMessage(message) {
         toastContainer.style.zIndex = '1055';
         document.body.appendChild(toastContainer);
     }
-    
+
     toastContainer.appendChild(toast);
-    
+
     // Show toast
     const bsToast = new bootstrap.Toast(toast);
     bsToast.show();
-    
+
     // Remove toast element after it's hidden
-    toast.addEventListener('hidden.bs.toast', function() {
+    toast.addEventListener('hidden.bs.toast', function () {
         toast.remove();
     });
 }
@@ -318,7 +318,7 @@ function showSuccessMessage(message) {
     toast.setAttribute('role', 'alert');
     toast.setAttribute('aria-live', 'assertive');
     toast.setAttribute('aria-atomic', 'true');
-    
+
     toast.innerHTML = `
         <div class="d-flex">
             <div class="toast-body">
@@ -328,7 +328,7 @@ function showSuccessMessage(message) {
             <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
         </div>
     `;
-    
+
     let toastContainer = document.getElementById('toast-container');
     if (!toastContainer) {
         toastContainer = document.createElement('div');
@@ -337,13 +337,13 @@ function showSuccessMessage(message) {
         toastContainer.style.zIndex = '1055';
         document.body.appendChild(toastContainer);
     }
-    
+
     toastContainer.appendChild(toast);
-    
+
     const bsToast = new bootstrap.Toast(toast);
     bsToast.show();
-    
-    toast.addEventListener('hidden.bs.toast', function() {
+
+    toast.addEventListener('hidden.bs.toast', function () {
         toast.remove();
     });
 }
@@ -351,13 +351,13 @@ function showSuccessMessage(message) {
 // Format bytes for display
 function formatBytes(bytes, decimals = 2) {
     if (bytes === 0) return '0 Bytes';
-    
+
     const k = 1024;
     const dm = decimals < 0 ? 0 : decimals;
     const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    
+
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
+
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
@@ -380,7 +380,7 @@ function confirmAction(message, callback) {
 }
 
 // Global error handler
-window.addEventListener('error', function(e) {
+window.addEventListener('error', function (e) {
     console.error('Global error:', e.error);
     showErrorMessage('An unexpected error occurred.');
 });
@@ -392,7 +392,7 @@ window.Dashboard = {
     formatBytes,
     formatNumber,
     confirmAction
-}; 
+};
 
 // Initialize event handlers
 function initializeEventHandlers() {
@@ -403,13 +403,13 @@ function initializeEventHandlers() {
     }
 
     // Delete bucket buttons
-    document.addEventListener('click', function(e) {
+    document.addEventListener('click', function (e) {
         if (e.target.closest('.delete-bucket-btn')) {
             const button = e.target.closest('.delete-bucket-btn');
             const bucketName = button.getAttribute('data-bucket-name');
             confirmDeleteBucket(bucketName);
         }
-        
+
         // Quota management buttons
         if (e.target.closest('.quota-btn')) {
             const button = e.target.closest('.quota-btn');
@@ -429,7 +429,7 @@ function initializeEventHandlers() {
     // Enable quota checkbox for create bucket form
     const enableQuotaCheckbox = document.getElementById('enableQuota');
     if (enableQuotaCheckbox) {
-        enableQuotaCheckbox.addEventListener('change', function() {
+        enableQuotaCheckbox.addEventListener('change', function () {
             const quotaSettings = document.getElementById('quotaSettings');
             if (this.checked) {
                 quotaSettings.style.display = 'block';
@@ -442,7 +442,7 @@ function initializeEventHandlers() {
     // Enable quota checkbox for quota modal
     const quotaEnabledCheckbox = document.getElementById('quotaEnabled');
     if (quotaEnabledCheckbox) {
-        quotaEnabledCheckbox.addEventListener('change', function() {
+        quotaEnabledCheckbox.addEventListener('change', function () {
             const quotaSizeSettings = document.getElementById('quotaSizeSettings');
             if (this.checked) {
                 quotaSizeSettings.style.display = 'block';
@@ -467,7 +467,7 @@ function setupFormValidation() {
 // Handle create bucket form submission
 async function handleCreateBucket(event) {
     event.preventDefault();
-    
+
     const form = event.target;
     const formData = new FormData(form);
     const bucketData = {
@@ -492,14 +492,14 @@ async function handleCreateBucket(event) {
         if (response.ok) {
             // Success
             showAlert('success', `Bucket "${bucketData.name}" created successfully!`);
-            
+
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
             modal.hide();
-            
+
             // Reset form
             form.reset();
-            
+
             // Refresh the page after a short delay
             setTimeout(() => {
                 location.reload();
@@ -519,7 +519,7 @@ function validateBucketName(event) {
     const input = event.target;
     const value = input.value;
     const isValid = /^[a-z0-9.-]+$/.test(value) && value.length >= 3 && value.length <= 63;
-    
+
     if (value.length > 0 && !isValid) {
         input.setCustomValidity('Bucket name must contain only lowercase letters, numbers, dots, and hyphens (3-63 characters)');
     } else {
@@ -531,7 +531,7 @@ function validateBucketName(event) {
 function confirmDeleteBucket(bucketName) {
     bucketToDelete = bucketName;
     document.getElementById('deleteBucketName').textContent = bucketName;
-    
+
     const modal = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
     modal.show();
 }
@@ -552,11 +552,11 @@ async function deleteBucket() {
         if (response.ok) {
             // Success
             showAlert('success', `Bucket "${bucketToDelete}" deleted successfully!`);
-            
+
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('deleteBucketModal'));
             modal.hide();
-            
+
             // Refresh the page after a short delay
             setTimeout(() => {
                 location.reload();
@@ -588,7 +588,7 @@ function exportBucketList() {
     const data = rows.map(row => {
         const cells = row.querySelectorAll('td');
         if (cells.length < 5) return null; // Skip empty state row
-        
+
         return {
             name: cells[0].textContent.trim(),
             created: cells[1].textContent.trim(),
@@ -639,7 +639,7 @@ function showAlert(type, message) {
         min-width: 300px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     `;
-    
+
     alert.innerHTML = `
         ${message}
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
@@ -660,14 +660,46 @@ function formatDate(date) {
     return new Date(date).toLocaleString();
 }
 
-// Copy text to clipboard
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        showAlert('success', 'Copied to clipboard!');
-    }).catch(err => {
-        console.error('Failed to copy text: ', err);
+// Copy text to clipboard with fallback for non-secure contexts
+function adminCopyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showAlert('success', 'Copied to clipboard!');
+        }).catch(err => {
+            console.error('Failed to copy text: ', err);
+            fallbackCopyText(text);
+        });
+    } else {
+        fallbackCopyText(text);
+    }
+}
+
+function fallbackCopyText(text) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+
+    // Ensure textArea is not visible but part of the DOM
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    document.body.appendChild(textArea);
+
+    textArea.focus();
+    textArea.select();
+
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showAlert('success', 'Copied to clipboard!');
+        } else {
+            showAlert('danger', 'Failed to copy to clipboard');
+        }
+    } catch (err) {
+        console.error('Fallback copy failed: ', err);
         showAlert('danger', 'Failed to copy to clipboard');
-    });
+    }
+
+    document.body.removeChild(textArea);
 }
 
 // Dashboard refresh functionality
@@ -684,9 +716,9 @@ function exportVolumeServers() {
         showErrorMessage('No volume servers data to export');
         return;
     }
-    
+
     let csv = 'Server ID,Address,Data Center,Rack,Volumes,Capacity,Usage\n';
-    
+
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
@@ -703,7 +735,7 @@ function exportVolumeServers() {
             csv += rowData.join(',') + '\n';
         }
     });
-    
+
     downloadCSV(csv, 'seaweedfs-volume-servers.csv');
 }
 
@@ -714,7 +746,7 @@ function exportVolumes() {
         showErrorMessage('No volumes data to export');
         return;
     }
-    
+
     // Get headers from the table (dynamically handles conditional columns)
     const headerCells = table.querySelectorAll('thead th');
     const headers = [];
@@ -724,9 +756,9 @@ function exportVolumes() {
             headers.push(cell.textContent.trim());
         }
     });
-    
+
     let csv = headers.join(',') + '\n';
-    
+
     const rows = table.querySelectorAll('tbody tr');
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
@@ -735,9 +767,9 @@ function exportVolumes() {
         for (let i = 0; i < cells.length - 1; i++) {
             rowData.push(`"${cells[i].textContent.trim().replace(/"/g, '""')}"`);
         }
-            csv += rowData.join(',') + '\n';
+        csv += rowData.join(',') + '\n';
     });
-    
+
     downloadCSV(csv, 'seaweedfs-volumes.csv');
 }
 
@@ -854,15 +886,15 @@ function exportUsers() {
         showAlert('error', 'Users table not found');
         return;
     }
-    
+
     const rows = table.querySelectorAll('tbody tr');
     if (rows.length === 0) {
         showErrorMessage('No users to export');
         return;
     }
-    
+
     let csvContent = 'Username,Email,Access Key,Status,Created,Last Login\n';
-    
+
     rows.forEach(row => {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 6) {
@@ -872,11 +904,11 @@ function exportUsers() {
             const status = cells[3].textContent.trim();
             const created = cells[4].textContent.trim();
             const lastLogin = cells[5].textContent.trim();
-            
+
             csvContent += `"${username}","${email}","${accessKey}","${status}","${created}","${lastLogin}"\n`;
         }
     });
-    
+
     downloadCSV(csvContent, 'seaweedfs-users.csv');
 }
 
@@ -884,12 +916,12 @@ function exportUsers() {
 function confirmDeleteCollection(button) {
     const collectionName = button.getAttribute('data-collection-name');
     document.getElementById('deleteCollectionName').textContent = collectionName;
-    
+
     const modal = new bootstrap.Modal(document.getElementById('deleteCollectionModal'));
     modal.show();
-    
+
     // Set up confirm button
-    document.getElementById('confirmDeleteCollection').onclick = function() {
+    document.getElementById('confirmDeleteCollection').onclick = function () {
         deleteCollection(collectionName);
     };
 }
@@ -903,7 +935,7 @@ async function deleteCollection(collectionName) {
                 'Content-Type': 'application/json',
             }
         });
-        
+
         if (response.ok) {
             showSuccessMessage(`Collection "${collectionName}" deleted successfully`);
             // Hide modal
@@ -929,7 +961,7 @@ async function deleteCollection(collectionName) {
 function downloadCSV(csvContent, filename) {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    
+
     if (link.download !== undefined) {
         const url = URL.createObjectURL(blob);
         link.setAttribute('href', url);
@@ -947,11 +979,11 @@ function downloadCSV(csvContent, filename) {
 function toggleSelectAll() {
     const selectAll = document.getElementById('selectAll');
     const checkboxes = document.querySelectorAll('.file-checkbox');
-    
+
     checkboxes.forEach(checkbox => {
         checkbox.checked = selectAll.checked;
     });
-    
+
     updateDeleteSelectedButton();
 }
 
@@ -959,7 +991,7 @@ function toggleSelectAll() {
 function updateDeleteSelectedButton() {
     const checkboxes = document.querySelectorAll('.file-checkbox:checked');
     const deleteBtn = document.getElementById('deleteSelectedBtn');
-    
+
     if (deleteBtn) {
         if (checkboxes.length > 0) {
             deleteBtn.style.display = 'inline-block';
@@ -975,7 +1007,7 @@ function updateSelectAllCheckbox() {
     const selectAll = document.getElementById('selectAll');
     const allCheckboxes = document.querySelectorAll('.file-checkbox');
     const checkedCheckboxes = document.querySelectorAll('.file-checkbox:checked');
-    
+
     if (selectAll && allCheckboxes.length > 0) {
         if (checkedCheckboxes.length === 0) {
             selectAll.checked = false;
@@ -999,17 +1031,17 @@ function getSelectedFilePaths() {
 // Confirm delete selected files
 function confirmDeleteSelected() {
     const selectedPaths = getSelectedFilePaths();
-    
+
     if (selectedPaths.length === 0) {
         showAlert('warning', 'No files selected');
         return;
     }
-    
+
     const fileNames = selectedPaths.map(path => path.split('/').pop()).join(', ');
-    const message = selectedPaths.length === 1 
+    const message = selectedPaths.length === 1
         ? `Are you sure you want to delete "${fileNames}"?`
         : `Are you sure you want to delete ${selectedPaths.length} selected items?\n\n${fileNames.substring(0, 200)}${fileNames.length > 200 ? '...' : ''}`;
-    
+
     if (confirm(message)) {
         deleteSelectedFiles(selectedPaths);
     }
@@ -1021,13 +1053,13 @@ async function deleteSelectedFiles(filePaths) {
         showAlert('warning', 'No files selected');
         return;
     }
-    
+
     // Disable the delete button during operation
     const deleteBtn = document.getElementById('deleteSelectedBtn');
     const originalText = deleteBtn.innerHTML;
     deleteBtn.disabled = true;
     deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
-    
+
     try {
         const response = await fetch('/api/files/delete-multiple', {
             method: 'DELETE',
@@ -1039,7 +1071,7 @@ async function deleteSelectedFiles(filePaths) {
 
         if (response.ok) {
             const result = await response.json();
-            
+
             if (result.deleted > 0) {
                 if (result.failed === 0) {
                     showAlert('success', `Successfully deleted ${result.deleted} item(s)`);
@@ -1049,7 +1081,7 @@ async function deleteSelectedFiles(filePaths) {
                         console.warn('Deletion errors:', result.errors);
                     }
                 }
-                
+
                 // Reload the page to update the file list
                 setTimeout(() => {
                     window.location.reload();
@@ -1091,31 +1123,31 @@ function uploadFile() {
 async function submitCreateFolder() {
     const folderName = document.getElementById('folderName').value.trim();
     const currentPath = document.getElementById('currentPath').value;
-    
+
     if (!folderName) {
         showErrorMessage('Please enter a folder name');
         return;
     }
-    
+
     // Validate folder name
     if (folderName.includes('/') || folderName.includes('\\')) {
         showErrorMessage('Folder names cannot contain / or \\ characters');
         return;
     }
-    
+
     // Additional validation for reserved names
     const reservedNames = ['.', '..', 'CON', 'PRN', 'AUX', 'NUL'];
     if (reservedNames.includes(folderName.toUpperCase())) {
         showErrorMessage('This folder name is reserved and cannot be used');
         return;
     }
-    
+
     // Disable the button to prevent double submission
     const submitButton = document.querySelector('#createFolderModal .btn-primary');
     const originalText = submitButton.innerHTML;
     submitButton.disabled = true;
     submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
-    
+
     try {
         const response = await fetch('/api/files/create-folder', {
             method: 'POST',
@@ -1157,37 +1189,37 @@ async function submitCreateFolder() {
 async function submitUploadFile() {
     const fileInput = document.getElementById('fileInput');
     const currentPath = document.getElementById('uploadPath').value;
-    
+
     if (!fileInput.files || fileInput.files.length === 0) {
         showErrorMessage('Please select at least one file to upload');
         return;
     }
-    
+
     const files = Array.from(fileInput.files);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    
+
     // Validate total file size (limit to 500MB for admin interface)
     const maxSize = 500 * 1024 * 1024; // 500MB total
     if (totalSize > maxSize) {
         showErrorMessage('Total file size exceeds 500MB limit. Please select fewer or smaller files.');
         return;
     }
-    
+
     // Individual file size validation removed - no limit per file
-    
+
     const formData = new FormData();
     files.forEach(file => {
         formData.append('files', file);
     });
     formData.append('path', currentPath);
-    
+
     // Show progress bar and disable button
     const progressContainer = document.getElementById('uploadProgress');
     const progressBar = progressContainer.querySelector('.progress-bar');
     const uploadStatus = document.getElementById('uploadStatus');
     const submitButton = document.querySelector('#uploadFileModal .btn-primary');
     const originalText = submitButton.innerHTML;
-    
+
     progressContainer.style.display = 'block';
     progressBar.style.width = '0%';
     progressBar.setAttribute('aria-valuenow', '0');
@@ -1195,12 +1227,12 @@ async function submitUploadFile() {
     uploadStatus.textContent = `Uploading ${files.length} file(s)...`;
     submitButton.disabled = true;
     submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Uploading...';
-    
+
     try {
         const xhr = new XMLHttpRequest();
-        
+
         // Handle progress
-        xhr.upload.addEventListener('progress', function(e) {
+        xhr.upload.addEventListener('progress', function (e) {
             if (e.lengthComputable) {
                 const percentComplete = Math.round((e.loaded / e.total) * 100);
                 progressBar.style.width = percentComplete + '%';
@@ -1209,13 +1241,13 @@ async function submitUploadFile() {
                 uploadStatus.textContent = `Uploading ${files.length} file(s)... ${percentComplete}%`;
             }
         });
-        
+
         // Handle completion
-        xhr.addEventListener('load', function() {
+        xhr.addEventListener('load', function () {
             if (xhr.status === 200) {
                 try {
                     const response = JSON.parse(xhr.responseText);
-                    
+
                     if (response.uploaded > 0) {
                         if (response.failed === 0) {
                             showSuccessMessage(`Successfully uploaded ${response.uploaded} file(s)`);
@@ -1226,7 +1258,7 @@ async function submitUploadFile() {
                                 console.warn('Upload errors:', response.errors);
                             }
                         }
-                        
+
                         // Hide modal and refresh page
                         const modal = bootstrap.Modal.getInstance(document.getElementById('uploadFileModal'));
                         modal.hide();
@@ -1256,23 +1288,23 @@ async function submitUploadFile() {
                 progressContainer.style.display = 'none';
             }
         });
-        
+
         // Handle errors
-        xhr.addEventListener('error', function() {
+        xhr.addEventListener('error', function () {
             showErrorMessage('Failed to upload files. Please check your connection and try again.');
             progressContainer.style.display = 'none';
         });
-        
+
         // Handle abort
-        xhr.addEventListener('abort', function() {
+        xhr.addEventListener('abort', function () {
             showErrorMessage('File upload was cancelled.');
             progressContainer.style.display = 'none';
         });
-        
+
         // Send request
         xhr.open('POST', '/api/files/upload');
         xhr.send(formData);
-        
+
     } catch (error) {
         console.error('Upload error:', error);
         showErrorMessage('Failed to upload files. Please try again.');
@@ -1331,16 +1363,16 @@ function downloadFile(filePath) {
 async function viewFile(filePath) {
     try {
         const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
-        
+
         if (!response.ok) {
             const error = await response.json();
             showAlert('error', `Failed to view file: ${error.error || 'Unknown error'}`);
             return;
         }
-        
+
         const data = await response.json();
         showFileViewer(data);
-        
+
     } catch (error) {
         console.error('View file error:', error);
         showAlert('error', 'Failed to view file');
@@ -1351,16 +1383,16 @@ async function viewFile(filePath) {
 async function showProperties(filePath) {
     try {
         const response = await fetch(`/api/files/properties?path=${encodeURIComponent(filePath)}`);
-        
+
         if (!response.ok) {
             const error = await response.json();
             showAlert('error', `Failed to get file properties: ${error.error || 'Unknown error'}`);
             return;
         }
-        
+
         const properties = await response.json();
         showPropertiesModal(properties);
-        
+
     } catch (error) {
         console.error('Properties error:', error);
         showAlert('error', 'Failed to get file properties');
@@ -1404,45 +1436,45 @@ function setupFileManagerEventHandlers() {
     // Handle Enter key in folder name input
     const folderNameInput = document.getElementById('folderName');
     if (folderNameInput) {
-        folderNameInput.addEventListener('keypress', function(e) {
+        folderNameInput.addEventListener('keypress', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 submitCreateFolder();
             }
         });
     }
-    
+
     // Handle file selection change to show preview
     const fileInput = document.getElementById('fileInput');
     if (fileInput) {
-        fileInput.addEventListener('change', function(e) {
+        fileInput.addEventListener('change', function (e) {
             updateFileListPreview();
         });
     }
-    
+
     // Setup checkbox event listeners for file selection
     const checkboxes = document.querySelectorAll('.file-checkbox');
     checkboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
+        checkbox.addEventListener('change', function () {
             updateDeleteSelectedButton();
             updateSelectAllCheckbox();
         });
     });
-    
+
     // Setup drag and drop for file uploads
     setupDragAndDrop();
-    
+
     // Clear form when modals are hidden
     const createFolderModal = document.getElementById('createFolderModal');
     if (createFolderModal) {
-        createFolderModal.addEventListener('hidden.bs.modal', function() {
+        createFolderModal.addEventListener('hidden.bs.modal', function () {
             document.getElementById('folderName').value = '';
         });
     }
-    
+
     const uploadFileModal = document.getElementById('uploadFileModal');
     if (uploadFileModal) {
-        uploadFileModal.addEventListener('hidden.bs.modal', function() {
+        uploadFileModal.addEventListener('hidden.bs.modal', function () {
             const fileInput = document.getElementById('fileInput');
             const progressContainer = document.getElementById('uploadProgress');
             const fileListPreview = document.getElementById('fileListPreview');
@@ -1457,32 +1489,32 @@ function setupFileManagerEventHandlers() {
 function setupDragAndDrop() {
     const dropZone = document.querySelector('.card-body'); // Main file listing area
     const uploadModal = document.getElementById('uploadFileModal');
-    
+
     if (!dropZone || !uploadModal) return;
-    
+
     // Prevent default drag behaviors
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
         dropZone.addEventListener(eventName, preventDefaults, false);
         document.body.addEventListener(eventName, preventDefaults, false);
     });
-    
+
     // Highlight drop zone when item is dragged over it
     ['dragenter', 'dragover'].forEach(eventName => {
         dropZone.addEventListener(eventName, highlight, false);
     });
-    
+
     ['dragleave', 'drop'].forEach(eventName => {
         dropZone.addEventListener(eventName, unhighlight, false);
     });
-    
+
     // Handle dropped files
     dropZone.addEventListener('drop', handleDrop, false);
-    
+
     function preventDefaults(e) {
         e.preventDefault();
         e.stopPropagation();
     }
-    
+
     function highlight(e) {
         dropZone.classList.add('drag-over');
         // Add some visual feedback
@@ -1514,7 +1546,7 @@ function setupDragAndDrop() {
             dropZone.appendChild(overlay);
         }
     }
-    
+
     function unhighlight(e) {
         dropZone.classList.remove('drag-over');
         const overlay = dropZone.querySelector('.drag-overlay');
@@ -1522,23 +1554,23 @@ function setupDragAndDrop() {
             overlay.remove();
         }
     }
-    
+
     function handleDrop(e) {
         const dt = e.dataTransfer;
         const files = dt.files;
-        
+
         if (files.length > 0) {
             // Open upload modal and set files
             const fileInput = document.getElementById('fileInput');
             if (fileInput) {
                 // Create a new FileList-like object
                 const fileArray = Array.from(files);
-                
+
                 // Set files to input (this is a bit tricky with file inputs)
                 const dataTransfer = new DataTransfer();
                 fileArray.forEach(file => dataTransfer.items.add(file));
                 fileInput.files = dataTransfer.files;
-                
+
                 // Update preview and show modal
                 updateFileListPreview();
                 const modal = new bootstrap.Modal(uploadModal);
@@ -1553,20 +1585,20 @@ function updateFileListPreview() {
     const fileInput = document.getElementById('fileInput');
     const fileListPreview = document.getElementById('fileListPreview');
     const selectedFilesList = document.getElementById('selectedFilesList');
-    
+
     if (!fileInput.files || fileInput.files.length === 0) {
         fileListPreview.style.display = 'none';
         return;
     }
-    
+
     const files = Array.from(fileInput.files);
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    
+
     let html = `<div class="d-flex justify-content-between align-items-center mb-2">
         <strong>${files.length} file(s) selected</strong>
         <small class="text-muted">Total: ${formatBytes(totalSize)}</small>
     </div>`;
-    
+
     files.forEach((file, index) => {
         const fileIcon = getFileIconByName(file.name);
         html += `<div class="d-flex justify-content-between align-items-center py-1 ${index > 0 ? 'border-top' : ''}">
@@ -1577,7 +1609,7 @@ function updateFileListPreview() {
             <small class="text-muted">${formatBytes(file.size)}</small>
         </div>`;
     });
-    
+
     selectedFilesList.innerHTML = html;
     fileListPreview.style.display = 'block';
 }
@@ -1585,7 +1617,7 @@ function updateFileListPreview() {
 // Get file icon based on file name/extension
 function getFileIconByName(fileName) {
     const ext = fileName.split('.').pop().toLowerCase();
-    
+
     switch (ext) {
         case 'jpg':
         case 'jpeg':
@@ -1643,14 +1675,14 @@ function getFileIconByName(fileName) {
 function showQuotaModal(bucketName, currentQuotaMB, quotaEnabled) {
     document.getElementById('quotaBucketName').value = bucketName;
     document.getElementById('quotaEnabled').checked = quotaEnabled;
-    
+
     // Convert quota to appropriate unit and set values
     const quotaBytes = currentQuotaMB * 1024 * 1024; // Convert MB to bytes
     const { size, unit } = convertBytesToBestUnit(quotaBytes);
-    
+
     document.getElementById('quotaSizeMB').value = size;
     document.getElementById('quotaUnitMB').value = unit;
-    
+
     // Show/hide quota size settings based on enabled state
     const quotaSizeSettings = document.getElementById('quotaSizeSettings');
     if (quotaEnabled) {
@@ -1658,7 +1690,7 @@ function showQuotaModal(bucketName, currentQuotaMB, quotaEnabled) {
     } else {
         quotaSizeSettings.style.display = 'none';
     }
-    
+
     const modal = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
     modal.show();
 }
@@ -1668,17 +1700,17 @@ function convertBytesToBestUnit(bytes) {
     if (bytes === 0) {
         return { size: 0, unit: 'MB' };
     }
-    
+
     // Check if it's a clean TB value
     if (bytes >= 1024 * 1024 * 1024 * 1024 && bytes % (1024 * 1024 * 1024 * 1024) === 0) {
         return { size: bytes / (1024 * 1024 * 1024 * 1024), unit: 'TB' };
     }
-    
+
     // Check if it's a clean GB value
     if (bytes >= 1024 * 1024 * 1024 && bytes % (1024 * 1024 * 1024) === 0) {
         return { size: bytes / (1024 * 1024 * 1024), unit: 'GB' };
     }
-    
+
     // Default to MB
     return { size: bytes / (1024 * 1024), unit: 'MB' };
 }
@@ -1686,11 +1718,11 @@ function convertBytesToBestUnit(bytes) {
 // Handle quota update form submission
 async function handleUpdateQuota(event) {
     event.preventDefault();
-    
+
     const form = event.target;
     const formData = new FormData(form);
     const bucketName = document.getElementById('quotaBucketName').value;
-    
+
     const quotaData = {
         quota_enabled: formData.get('quota_enabled') === 'on',
         quota_size: parseInt(formData.get('quota_size')) || 0,
@@ -1711,11 +1743,11 @@ async function handleUpdateQuota(event) {
         if (response.ok) {
             // Success
             showAlert('success', `Quota for bucket "${bucketName}" updated successfully!`);
-            
+
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('manageQuotaModal'));
             modal.hide();
-            
+
             // Refresh the page after a short delay
             setTimeout(() => {
                 location.reload();
@@ -1735,7 +1767,7 @@ function showFileViewer(data) {
     const file = data.file;
     const content = data.content || '';
     const viewable = data.viewable !== false;
-    
+
     // Create modal HTML
     const modalHtml = `
         <div class="modal fade" id="fileViewerModal" tabindex="-1" aria-labelledby="fileViewerModalLabel" aria-hidden="true">
@@ -1760,20 +1792,20 @@ function showFileViewer(data) {
             </div>
         </div>
     `;
-    
+
     // Remove existing modal if any
     const existingModal = document.getElementById('fileViewerModal');
     if (existingModal) {
         existingModal.remove();
     }
-    
+
     // Add modal to DOM
     document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
+
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById('fileViewerModal'));
     modal.show();
-    
+
     // Clean up when modal is hidden
     document.getElementById('fileViewerModal').addEventListener('hidden.bs.modal', function () {
         this.remove();
@@ -1853,7 +1885,7 @@ function getLanguageFromMime(mime, filename) {
         case 'text/sql': return 'sql';
         case 'text/markdown': return 'markdown';
     }
-    
+
     // Fallback to file extension
     const ext = filename.split('.').pop().toLowerCase();
     switch (ext) {
@@ -1908,20 +1940,20 @@ function showPropertiesModal(properties) {
             </div>
         </div>
     `;
-    
+
     // Remove existing modal if any
     const existingModal = document.getElementById('propertiesModal');
     if (existingModal) {
         existingModal.remove();
     }
-    
+
     // Add modal to DOM
     document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
+
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById('propertiesModal'));
     modal.show();
-    
+
     // Clean up when modal is hidden
     document.getElementById('propertiesModal').addEventListener('hidden.bs.modal', function () {
         this.remove();
@@ -1939,14 +1971,14 @@ function createPropertiesContent(properties) {
                     <tr><td><strong>Full Path:</strong></td><td><code>${properties.full_path}</code></td></tr>
                     <tr><td><strong>Type:</strong></td><td>${properties.is_directory ? 'Directory' : 'File'}</td></tr>
     `;
-    
+
     if (!properties.is_directory) {
         html += `
                     <tr><td><strong>Size:</strong></td><td>${properties.size_formatted || formatBytes(properties.size || 0)}</td></tr>
                     <tr><td><strong>MIME Type:</strong></td><td>${properties.mime_type || 'Unknown'}</td></tr>
         `;
     }
-    
+
     html += `
                 </table>
             </div>
@@ -1954,14 +1986,14 @@ function createPropertiesContent(properties) {
                 <h6 class="text-primary"><i class="fas fa-clock me-1"></i>Timestamps</h6>
                 <table class="table table-sm">
     `;
-    
+
     if (properties.modified_time) {
         html += `<tr><td><strong>Modified:</strong></td><td>${properties.modified_time}</td></tr>`;
     }
     if (properties.created_time) {
         html += `<tr><td><strong>Created:</strong></td><td>${properties.created_time}</td></tr>`;
     }
-    
+
     html += `
                 </table>
                 
@@ -1974,7 +2006,7 @@ function createPropertiesContent(properties) {
             </div>
         </div>
     `;
-    
+
     // Add TTL information if available
     if (properties.ttl_seconds && properties.ttl_seconds > 0) {
         html += `
@@ -1988,7 +2020,7 @@ function createPropertiesContent(properties) {
             </div>
         `;
     }
-    
+
     // Add chunk information if available
     if (properties.chunks && properties.chunks.length > 0) {
         html += `
@@ -2007,7 +2039,7 @@ function createPropertiesContent(properties) {
                             </thead>
                             <tbody>
         `;
-        
+
         properties.chunks.forEach(chunk => {
             html += `
                                 <tr>
@@ -2018,7 +2050,7 @@ function createPropertiesContent(properties) {
                                 </tr>
             `;
         });
-        
+
         html += `
                             </tbody>
                         </table>
@@ -2027,7 +2059,7 @@ function createPropertiesContent(properties) {
             </div>
         `;
     }
-    
+
     // Add extended attributes if available
     if (properties.extended && Object.keys(properties.extended).length > 0) {
         html += `
@@ -2036,18 +2068,18 @@ function createPropertiesContent(properties) {
                     <h6 class="text-primary"><i class="fas fa-tags me-1"></i>Extended Attributes</h6>
                     <table class="table table-sm">
         `;
-        
+
         Object.entries(properties.extended).forEach(([key, value]) => {
             html += `<tr><td><strong>${key}:</strong></td><td>${value}</td></tr>`;
         });
-        
+
         html += `
                     </table>
                 </div>
             </div>
         `;
     }
-    
+
     return html;
 }
 
@@ -2060,378 +2092,98 @@ function escapeHtml(text) {
         '"': '&quot;',
         "'": '&#039;'
     };
-    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    return text.replace(/[&<>"']/g, function (m) { return map[m]; });
 }
+
 
 // ============================================================================
-// USER MANAGEMENT FUNCTIONS
+// SHARED MODAL UTILITIES FOR ACCESS KEY MANAGEMENT
 // ============================================================================
 
-// Global variables for user management
-let currentEditingUser = '';
-let currentAccessKeysUser = '';
-
-// User Management Functions
-
-async function handleCreateUser() {
-    const form = document.getElementById('createUserForm');
-    const formData = new FormData(form);
-    
-    // Get selected actions
-    const actionsSelect = document.getElementById('actions');
-    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
-    
-    const userData = {
-        username: formData.get('username'),
-        email: formData.get('email'),
-        actions: selectedActions,
-        generate_key: formData.get('generateKey') === 'on'
-    };
-    
-    try {
-        const response = await fetch('/api/users', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(userData)
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            showSuccessMessage('User created successfully');
-            
-            // Show the created access key if generated
-            if (result.user && result.user.access_key) {
-                showNewAccessKeyModal(result.user);
-            }
-            
-            // Close modal and refresh page
-            const modal = bootstrap.Modal.getInstance(document.getElementById('createUserModal'));
-            modal.hide();
-            form.reset();
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to create user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error creating user:', error);
-        showErrorMessage('Failed to create user: ' + error.message);
-    }
+// HTML escaping helper to prevent XSS
+function escapeHtmlForAttribute(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-async function editUser(username) {
-    currentEditingUser = username;
-    
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-            
-            // Populate edit form
-            document.getElementById('editUsername').value = username;
-                document.getElementById('editEmail').value = user.email || '';
-            
-            // Set selected actions
-            const actionsSelect = document.getElementById('editActions');
-            Array.from(actionsSelect.options).forEach(option => {
-                option.selected = user.actions && user.actions.includes(option.value);
-            });
-            
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
-            modal.show();
-        } else {
-            showErrorMessage('Failed to load user details');
-        }
-    } catch (error) {
-        console.error('Error loading user:', error);
-        showErrorMessage('Failed to load user details');
-    }
-}
+function showModal(title, content) {
+    // Create a dynamic modal
+    const modalId = 'dynamicModal_' + Date.now();
 
-async function handleUpdateUser() {
-    const form = document.getElementById('editUserForm');
-    const formData = new FormData(form);
-    
-    // Get selected actions
-    const actionsSelect = document.getElementById('editActions');
-    const selectedActions = Array.from(actionsSelect.selectedOptions).map(option => option.value);
-    
-    const userData = {
-        email: formData.get('email'),
-        actions: selectedActions
-    };
-    
-    try {
-        const response = await fetch(`/api/users/${currentEditingUser}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(userData)
-        });
-        
-        if (response.ok) {
-            showSuccessMessage('User updated successfully');
-            
-            // Close modal and refresh page
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editUserModal'));
-            modal.hide();
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to update user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error updating user:', error);
-        showErrorMessage('Failed to update user: ' + error.message);
-    }
-}
+    // Create modal structure using DOM to prevent XSS in title
+    const modalDiv = document.createElement('div');
+    modalDiv.className = 'modal fade';
+    modalDiv.id = modalId;
+    modalDiv.setAttribute('tabindex', '-1');
+    modalDiv.setAttribute('role', 'dialog');
 
-function confirmDeleteUser(username) {
-    confirmAction(
-        `Are you sure you want to delete user "${username}"? This action cannot be undone.`,
-        () => deleteUserConfirmed(username)
-    );
-}
+    const modalDialog = document.createElement('div');
+    modalDialog.className = 'modal-dialog modal-lg';
+    modalDialog.setAttribute('role', 'document');
 
-function deleteUser(username) {
-    confirmDeleteUser(username);
-}
+    const modalContent = document.createElement('div');
+    modalContent.className = 'modal-content';
 
-async function deleteUserConfirmed(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`, {
-            method: 'DELETE'
-        });
-        
-        if (response.ok) {
-            showSuccessMessage('User deleted successfully');
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to delete user: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error deleting user:', error);
-        showErrorMessage('Failed to delete user: ' + error.message);
-    }
-}
+    // Header
+    const modalHeader = document.createElement('div');
+    modalHeader.className = 'modal-header';
 
-async function showUserDetails(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-            
-            const content = createUserDetailsContent(user);
-            document.getElementById('userDetailsContent').innerHTML = content;
-            
-            const modal = new bootstrap.Modal(document.getElementById('userDetailsModal'));
-            modal.show();
-        } else {
-            showErrorMessage('Failed to load user details');
-        }
-    } catch (error) {
-        console.error('Error loading user details:', error);
-        showErrorMessage('Failed to load user details');
-    }
-}
+    const modalTitle = document.createElement('h5');
+    modalTitle.className = 'modal-title';
+    modalTitle.textContent = title; // Safe - uses textContent
 
-function createUserDetailsContent(user) {
-    return `
-        <div class="row">
-            <div class="col-md-6">
-                <h6 class="text-muted">Basic Information</h6>
-                <table class="table table-sm">
-                    <tr>
-                        <td><strong>Username:</strong></td>
-                        <td>${escapeHtml(user.username)}</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Email:</strong></td>
-                        <td>${escapeHtml(user.email || 'Not set')}</td>
-                    </tr>
-                </table>
-            </div>
-            <div class="col-md-6">
-                <h6 class="text-muted">Permissions</h6>
-                <div class="mb-3">
-                    ${user.actions && user.actions.length > 0 ? 
-                        user.actions.map(action => `<span class="badge bg-info me-1">${action}</span>`).join('') :
-                        '<span class="text-muted">No permissions assigned</span>'
-                    }
-                </div>
-                
-                <h6 class="text-muted">Access Keys</h6>
-                ${user.access_keys && user.access_keys.length > 0 ? 
-                    createAccessKeysTable(user.access_keys) :
-                    '<p class="text-muted">No access keys</p>'
-                }
-            </div>
-        </div>
-    `;
-}
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'btn-close';
+    closeButton.setAttribute('data-bs-dismiss', 'modal');
 
-function createAccessKeysTable(accessKeys) {
-    return `
-        <div class="table-responsive">
-            <table class="table table-sm">
-                <thead>
-                    <tr>
-                        <th>Access Key</th>
-                        <th>Created</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${accessKeys.map(key => `
-                        <tr>
-                            <td><code>${key.access_key}</code></td>
-                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-}
+    modalHeader.appendChild(modalTitle);
+    modalHeader.appendChild(closeButton);
 
-async function manageAccessKeys(username) {
-    currentAccessKeysUser = username;
-    document.getElementById('accessKeysUsername').textContent = username;
-    
-    await loadAccessKeys(username);
-    
-    const modal = new bootstrap.Modal(document.getElementById('accessKeysModal'));
+    // Body (content may contain HTML, so use innerHTML)
+    const modalBody = document.createElement('div');
+    modalBody.className = 'modal-body';
+    modalBody.innerHTML = content;
+
+    // Footer
+    const modalFooter = document.createElement('div');
+    modalFooter.className = 'modal-footer';
+
+    const closeFooterButton = document.createElement('button');
+    closeFooterButton.type = 'button';
+    closeFooterButton.className = 'btn btn-secondary';
+    closeFooterButton.setAttribute('data-bs-dismiss', 'modal');
+    closeFooterButton.textContent = 'Close';
+
+    modalFooter.appendChild(closeFooterButton);
+
+    // Assemble modal
+    modalContent.appendChild(modalHeader);
+    modalContent.appendChild(modalBody);
+    modalContent.appendChild(modalFooter);
+    modalDialog.appendChild(modalContent);
+    modalDiv.appendChild(modalDialog);
+
+    // Add modal to body
+    document.body.appendChild(modalDiv);
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById(modalId));
     modal.show();
-}
 
-async function loadAccessKeys(username) {
-    try {
-        const response = await fetch(`/api/users/${username}`);
-        if (response.ok) {
-            const user = await response.json();
-            
-            const content = createAccessKeysManagementContent(user.access_keys || []);
-            document.getElementById('accessKeysContent').innerHTML = content;
-        } else {
-            document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Failed to load access keys</p>';
-        }
-    } catch (error) {
-        console.error('Error loading access keys:', error);
-        document.getElementById('accessKeysContent').innerHTML = '<p class="text-muted">Error loading access keys</p>';
-    }
-}
-
-function createAccessKeysManagementContent(accessKeys) {
-    if (accessKeys.length === 0) {
-        return '<p class="text-muted">No access keys found. Create one to get started.</p>';
-    }
-    
-    return `
-        <div class="table-responsive">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Access Key</th>
-                        <th>Secret Key</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${accessKeys.map(key => `
-                        <tr>
-                            <td>
-                                <code>${key.access_key}</code>
-                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyToClipboard('${key.access_key}')">
-                                    <i class="fas fa-copy"></i>
-                                </button>
-                            </td>
-                            <td>
-                                <code class="text-muted">••••••••••••••••</code>
-                                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="showSecretKey('${key.access_key}', '${key.secret_key}')">
-                                    <i class="fas fa-eye"></i>
-                                </button>
-                            </td>
-                            <td>${new Date(key.created_at).toLocaleDateString()}</td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteAccessKey('${key.access_key}')">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-}
-
-async function createAccessKey() {
-    if (!currentAccessKeysUser) {
-        showErrorMessage('No user selected');
-        return;
-    }
-    
-    try {
-        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
-            showSuccessMessage('Access key created successfully');
-            
-            // Show the new access key
-            showNewAccessKeyModal(result.access_key);
-            
-            // Reload access keys
-            await loadAccessKeys(currentAccessKeysUser);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to create access key: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error creating access key:', error);
-        showErrorMessage('Failed to create access key: ' + error.message);
-    }
-}
-
-function confirmDeleteAccessKey(accessKeyId) {
-    confirmAction(
-        `Are you sure you want to delete access key "${accessKeyId}"? This action cannot be undone.`,
-        () => deleteAccessKeyConfirmed(accessKeyId)
-    );
-}
-
-async function deleteAccessKeyConfirmed(accessKeyId) {
-    try {
-        const response = await fetch(`/api/users/${currentAccessKeysUser}/access-keys/${accessKeyId}`, {
-            method: 'DELETE'
-        });
-        
-        if (response.ok) {
-            showSuccessMessage('Access key deleted successfully');
-            
-            // Reload access keys
-            await loadAccessKeys(currentAccessKeysUser);
-        } else {
-            const error = await response.json();
-            showErrorMessage('Failed to delete access key: ' + (error.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error deleting access key:', error);
-        showErrorMessage('Failed to delete access key: ' + error.message);
-    }
+    // Remove modal from DOM when hidden
+    document.getElementById(modalId).addEventListener('hidden.bs.modal', function () {
+        this.remove();
+    });
 }
 
 function showSecretKey(accessKey, secretKey) {
+    const modalId = 'secretKeyModal_' + Date.now();
+    const escapedAccessKey = escapeHtmlForAttribute(accessKey);
+    const escapedSecretKey = escapeHtmlForAttribute(secretKey);
+
     const content = `
         <div class="alert alert-info">
             <i class="fas fa-info-circle me-2"></i>
@@ -2440,8 +2192,8 @@ function showSecretKey(accessKey, secretKey) {
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
-                <input type="text" class="form-control" value="${accessKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKey}')">
+                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
@@ -2449,32 +2201,46 @@ function showSecretKey(accessKey, secretKey) {
         <div class="mb-3">
             <label class="form-label"><strong>Secret Key:</strong></label>
             <div class="input-group">
-                <input type="text" class="form-control" value="${secretKey}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${secretKey}')">
+                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Export Commands (for easy copy & paste):</strong></label>
+            <div class="input-group">
+                <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
+export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
         </div>
     `;
-    
+
     showModal('Access Key Details', content);
 }
 
 function showNewAccessKeyModal(accessKeyData) {
+    const modalId = 'newKeyModal_' + Date.now();
+    const escapedAccessKey = escapeHtmlForAttribute(accessKeyData.access_key);
+    const escapedSecretKey = escapeHtmlForAttribute(accessKeyData.secret_key);
+
     const content = `
         <div class="alert alert-success">
             <i class="fas fa-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
         </div>
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
-            <strong>Important:</strong> These credentials provide access to your object storage. Keep them secure and don't share them. You can view them again through the user management interface if needed.
+        <div class="alert alert-warning">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Important:</strong> This is the only time the secret key will be displayed. Please save it securely.
         </div>
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
-                <input type="text" class="form-control" value="${accessKeyData.access_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.access_key}')">
+                <input type="text" id="${modalId}_accessKey" class="form-control" value="${escapedAccessKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_accessKey')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
@@ -2482,52 +2248,53 @@ function showNewAccessKeyModal(accessKeyData) {
         <div class="mb-3">
             <label class="form-label"><strong>Secret Key:</strong></label>
             <div class="input-group">
-                <input type="text" class="form-control" value="${accessKeyData.secret_key}" readonly>
-                <button class="btn btn-outline-secondary" onclick="copyToClipboard('${accessKeyData.secret_key}')">
+                <input type="text" id="${modalId}_secretKey" class="form-control" value="${escapedSecretKey}" readonly>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_secretKey')">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label"><strong>Export Commands (for easy copy & paste):</strong></label>
+            <div class="input-group">
+                <textarea id="${modalId}_exportCommands" class="form-control font-monospace" rows="2" readonly>export AWS_ACCESS_KEY_ID=${escapedAccessKey}
+export AWS_SECRET_ACCESS_KEY=${escapedSecretKey}</textarea>
+                <button class="btn btn-outline-secondary" onclick="copyFromInput('${modalId}_exportCommands')">
                     <i class="fas fa-copy"></i>
                 </button>
             </div>
         </div>
     `;
-    
+
     showModal('New Access Key Created', content);
 }
 
-function showModal(title, content) {
-    // Create a dynamic modal
-    const modalId = 'dynamicModal_' + Date.now();
-    const modalHtml = `
-        <div class="modal fade" id="${modalId}" tabindex="-1" role="dialog">
-            <div class="modal-dialog" role="document">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">${title}</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        ${content}
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    // Add modal to body
-    document.body.insertAdjacentHTML('beforeend', modalHtml);
-    
-    // Show modal
-    const modal = new bootstrap.Modal(document.getElementById(modalId));
-    modal.show();
-    
-    // Remove modal from DOM when hidden
-    document.getElementById(modalId).addEventListener('hidden.bs.modal', function() {
-        this.remove();
-    });
+// Helper function to copy from an input field
+function copyFromInput(inputId) {
+    const input = document.getElementById(inputId);
+    if (input) {
+        input.select();
+        input.setSelectionRange(0, 99999); // For mobile devices
+
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                showAlert('success', 'Copied to clipboard!');
+            } else {
+                // Try modern clipboard API as fallback
+                navigator.clipboard.writeText(input.value).then(() => {
+                    showAlert('success', 'Copied to clipboard!');
+                }).catch(() => {
+                    showAlert('danger', 'Failed to copy');
+                });
+            }
+        } catch (err) {
+            // Try modern clipboard API as fallback
+            navigator.clipboard.writeText(input.value).then(() => {
+                showAlert('success', 'Copied to clipboard!');
+            }).catch(() => {
+                showAlert('danger', 'Failed to copy');
+            });
+        }
+    }
 }
-
-
-
- 

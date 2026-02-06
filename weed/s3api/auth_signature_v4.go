@@ -26,6 +26,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -248,8 +249,10 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			action = s3_constants.ACTION_WRITE
 		}
-		if !identity.canDo(Action(action), bucket, object) {
-			return nil, nil, "", nil, s3err.ErrAccessDenied
+
+		// Use centralized permission check
+		if errCode = iam.VerifyActionPermission(r, identity, Action(action), bucket, object); errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
 		}
 	}
 
@@ -282,8 +285,12 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 8. Verify the signature, trying with X-Forwarded-Prefix first
+	pathForSignature := r.URL.EscapedPath()
+	if pathForSignature == "" {
+		pathForSignature = r.URL.Path
+	}
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 		calculatedSignature, errCode = verify(cleanedPath)
 		if errCode == s3err.ErrNone {
 			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
@@ -291,25 +298,33 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 9. Verify with the original path
-	calculatedSignature, errCode = verify(r.URL.Path)
-	if errCode != s3err.ErrNone {
-		return nil, nil, "", nil, errCode
+	calculatedSignature, errCode = verify(pathForSignature)
+	if errCode == s3err.ErrNone {
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
-	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+	// 10. Retry with decoded path if signature used raw path encoding
+	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+		calculatedSignature, errCode = verify(decodedPath)
+		if errCode == s3err.ErrNone {
+			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+		}
+	}
+
+	return nil, nil, "", nil, errCode
 }
 
 // validateSTSSessionToken validates an STS session token and extracts temporary credentials
 func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, sessionToken string, accessKey string) (*Identity, *Credential, s3err.ErrorCode) {
-	// Check if IAM integration with STS is available
-	if iam.iamIntegration == nil || iam.iamIntegration.stsService == nil {
-		glog.V(2).Infof("STS service not available, cannot validate session token")
+	// Check if IAM integration is available
+	if iam.iamIntegration == nil {
+		glog.V(2).Infof("IAM integration not available, cannot validate session token")
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
 	// Validate the session token with the STS service
 	ctx := r.Context()
-	sessionInfo, err := iam.iamIntegration.stsService.ValidateSessionToken(ctx, sessionToken)
+	sessionInfo, err := iam.iamIntegration.ValidateSessionToken(ctx, sessionToken)
 	if err != nil {
 		glog.V(2).Infof("Failed to validate STS session token: %v", err)
 		return nil, nil, s3err.ErrInvalidAccessKeyID
@@ -335,8 +350,16 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 
 	// Verify that the access key in the request matches the one in the session token
 	if sessionInfo.Credentials.AccessKeyId != accessKey {
+		// Mask access keys to avoid exposing credentials in logs
+		truncateKey := func(k string) string {
+			const mask = "***"
+			if len(k) > 4 {
+				return k[:4] + mask
+			}
+			return mask
+		}
 		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
-			accessKey, sessionInfo.Credentials.AccessKeyId)
+			truncateKey(accessKey), truncateKey(sessionInfo.Credentials.AccessKeyId))
 		return nil, nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -372,6 +395,14 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Expiration: sessionInfo.ExpiresAt.Unix(),
 	}
 
+	// Create claims map from request context
+	// The request context contains user information from the original OIDC token
+	// that was used in AssumeRoleWithWebIdentity (e.g., preferred_username, email, etc.)
+	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
+	for k, v := range sessionInfo.RequestContext {
+		claims[k] = v
+	}
+
 	// Create an identity for the STS session
 	// The identity represents the assumed role user
 	identity := &Identity{
@@ -379,6 +410,8 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Account:      &AccountAdmin,               // STS sessions use admin account
 		Credentials:  []*Credential{cred},
 		PrincipalArn: sessionInfo.Principal,
+		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
+		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
@@ -680,7 +713,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	bucket := formValues.Get("bucket")
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
 	}
 

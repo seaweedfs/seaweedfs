@@ -2,9 +2,10 @@ package lock_manager
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"time"
 )
 
 const RenewInterval = time.Second * 3

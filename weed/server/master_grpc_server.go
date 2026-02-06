@@ -166,6 +166,22 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
 
+		if heartbeat.State != nil {
+			stats.MasterReceivedHeartbeatCounter.WithLabelValues("stateUpdates").Inc()
+
+			updated := false
+			dn.Lock()
+			if dn.MaintenanceMode != heartbeat.State.GetMaintenance() {
+				updated = true
+				dn.MaintenanceMode = heartbeat.State.GetMaintenance()
+			}
+			dn.Unlock()
+
+			if updated {
+				glog.V(1).Infof("master sees state update from %s: %v", dn.Url(), heartbeat.State)
+			}
+		}
+
 		message := &master_pb.VolumeLocation{
 			Url:        dn.Url(),
 			PublicUrl:  dn.PublicUrl,
@@ -275,6 +291,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 
 	clientName, messageChan := ms.addClient(req.FilerGroup, req.ClientType, peerAddress)
 	for _, update := range ms.Cluster.AddClusterNode(req.FilerGroup, req.ClientType, cluster.DataCenter(req.DataCenter), cluster.Rack(req.Rack), peerAddress, req.Version) {
+		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
 

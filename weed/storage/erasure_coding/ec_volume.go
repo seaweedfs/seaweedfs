@@ -256,7 +256,7 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 
 		// Update EC shard bits and sizes.
 		si := ShardsInfoFromVolumeEcShardInformationMessage(m)
-		si.Set(s.ShardId, ShardSize(s.Size()))
+		si.Set(NewShardInfo(s.ShardId, ShardSize(s.Size())))
 		m.EcIndexBits = uint32(si.Bitmap())
 		m.ShardSizes = si.SizesInt64()
 	}
@@ -331,4 +331,15 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 
 func (ev *EcVolume) IsTimeToDestroy() bool {
 	return ev.ExpireAtSec > 0 && time.Now().Unix() > (int64(ev.ExpireAtSec)+destroyDelaySeconds)
+}
+
+func (ev *EcVolume) CheckIndex() (int64, []error) {
+	if ev.ecxFile == nil {
+		return 0, []error{fmt.Errorf("no ECX file associated with EC volume %v", ev.VolumeId)}
+	}
+	if ev.ecxFileSize == 0 {
+		return 0, []error{fmt.Errorf("zero-size ECX file for EC volume %v", ev.VolumeId)}
+	}
+
+	return idx.CheckIndexFile(ev.ecxFile, ev.ecxFileSize, ev.Version)
 }

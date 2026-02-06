@@ -39,10 +39,12 @@ func TestS3VolumeEncryptionRoundtrip(t *testing.T) {
 	defer cleanupBucket(t, svc, bucket)
 
 	testCases := []struct {
-		name     string
-		key      string
-		content  string
-		rangeReq string // Optional range request
+		name          string
+		key           string
+		content       string
+		binaryContent []byte
+		isBinary      bool
+		rangeReq      string // Optional range request
 	}{
 		{
 			name:    "small file",
@@ -55,9 +57,17 @@ func TestS3VolumeEncryptionRoundtrip(t *testing.T) {
 			content: strings.Repeat("SeaweedFS volume encryption test content. ", 1000),
 		},
 		{
-			name:    "binary content",
-			key:     "binary.bin",
-			content: string([]byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD, 0x00, 0x80}),
+			name: "binary content",
+			key:  "binary.bin",
+			binaryContent: func() []byte {
+				// Create a 1KB binary file with predictable pattern including null bytes
+				data := make([]byte, 1024)
+				for i := range data {
+					data[i] = byte(i % 256)
+				}
+				return data
+			}(),
+			isBinary: true,
 		},
 		{
 			name:     "range request",
@@ -68,12 +78,26 @@ func TestS3VolumeEncryptionRoundtrip(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		tc := tc // Capture range variable for closure
 		t.Run(tc.name, func(t *testing.T) {
-			// Upload
+			// Add small delay to avoid rapid consecutive requests during volume encryption
+			time.Sleep(50 * time.Millisecond)
+
+			// Upload - use appropriate reader for binary vs text content
+			var uploadBody io.ReadSeeker
+			var expectedData []byte
+			if tc.isBinary {
+				uploadBody = bytes.NewReader(tc.binaryContent)
+				expectedData = tc.binaryContent
+			} else {
+				uploadBody = strings.NewReader(tc.content)
+				expectedData = []byte(tc.content)
+			}
+
 			_, err := svc.PutObject(&s3.PutObjectInput{
 				Bucket: aws.String(bucket),
 				Key:    aws.String(tc.key),
-				Body:   strings.NewReader(tc.content),
+				Body:   uploadBody,
 			})
 			if err != nil {
 				t.Fatalf("PutObject failed: %v", err)
@@ -100,14 +124,14 @@ func TestS3VolumeEncryptionRoundtrip(t *testing.T) {
 			}
 
 			// Verify content
-			expected := tc.content
+			expected := expectedData
 			if tc.rangeReq != "" {
-				// For "bytes=5-10", we expect characters at positions 5-10 (inclusive)
-				expected = tc.content[5:11]
+				// For "bytes=5-10", we expect bytes at positions 5-10 (inclusive)
+				expected = expectedData[5:11]
 			}
 
-			if string(data) != expected {
-				t.Errorf("Content mismatch:\n  expected: %q\n  got: %q", expected, string(data))
+			if !bytes.Equal(data, expected) {
+				t.Errorf("Content mismatch:\n  expected: %v\n  got: %v", expected, data)
 			} else {
 				t.Logf("Successfully uploaded and downloaded %s (%d bytes)", tc.key, len(data))
 			}

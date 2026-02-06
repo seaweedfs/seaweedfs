@@ -1,5 +1,5 @@
-//go:build linux || darwin
-// +build linux darwin
+//go:build darwin || freebsd || linux
+// +build darwin freebsd linux
 
 package command
 
@@ -149,6 +149,20 @@ func runFuse(cmd *Command, args []string) bool {
 				mountOptions.chunkSizeLimitMB = &intValue
 			} else {
 				panic(fmt.Errorf("chunkSizeLimitMB: %s", err))
+			}
+		case "cacheMetaTtlSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.cacheMetaTtlSec = &intValue
+			} else {
+				panic(fmt.Errorf("cacheMetaTtlSec: %s", err))
+			}
+		case "dirIdleEvictSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.dirIdleEvictSec = &intValue
+			} else {
+				panic(fmt.Errorf("dirIdleEvictSec: %s", err))
 			}
 		case "concurrentWriters":
 			i++

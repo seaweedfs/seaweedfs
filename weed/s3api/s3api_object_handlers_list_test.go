@@ -390,8 +390,8 @@ func TestObjectLevelListPermissions(t *testing.T) {
 			},
 		}
 
-		// Test cases for canDo method
-		// Note: canDo concatenates bucket + objectKey, so "test-bucket" + "/allowed-prefix/file.txt" = "test-bucket/allowed-prefix/file.txt"
+		// Test cases for CanDo method
+		// Note: CanDo concatenates bucket + objectKey, so "test-bucket" + "/allowed-prefix/file.txt" = "test-bucket/allowed-prefix/file.txt"
 		testCases := []struct {
 			name        string
 			action      Action
@@ -444,7 +444,7 @@ func TestObjectLevelListPermissions(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				result := identity.CanDo(tc.action, tc.bucket, tc.object)
 				assert.Equal(t, tc.shouldAllow, result, tc.description)
 			})
 		}
@@ -469,12 +469,12 @@ func TestObjectLevelListPermissions(t *testing.T) {
 		}
 
 		for _, tc := range testCases {
-			result := identity.canDo("List", "test-bucket", tc.object)
+			result := identity.CanDo("List", "test-bucket", tc.object)
 			assert.True(t, result, "Bucket-level permission should allow access to %s", tc.object)
 		}
 
 		// Should deny access to different buckets
-		result := identity.canDo("List", "other-bucket", "/file.txt")
+		result := identity.CanDo("List", "other-bucket", "/file.txt")
 		assert.False(t, result, "Should deny access to objects in different buckets")
 	})
 
@@ -553,7 +553,7 @@ func TestObjectLevelListPermissions(t *testing.T) {
 
 		// After our middleware fix, it should check permission for the prefix
 		// Simulate: action=ACTION_LIST && object=="" && prefix="/txzl/" → object="/txzl/"
-		result := identity.canDo("List", "bdaai-shared-bucket", "/txzl/")
+		result := identity.CanDo("List", "bdaai-shared-bucket", "/txzl/")
 
 		// This should be allowed because:
 		// target = "List:bdaai-shared-bucket/txzl/"
@@ -562,11 +562,11 @@ func TestObjectLevelListPermissions(t *testing.T) {
 		assert.True(t, result, "User with 'List:bdaai-shared-bucket/txzl/*' should be able to list with prefix txzl/")
 
 		// Test that they can't list with a different prefix
-		result = identity.canDo("List", "bdaai-shared-bucket", "/other-prefix/")
+		result = identity.CanDo("List", "bdaai-shared-bucket", "/other-prefix/")
 		assert.False(t, result, "User should not be able to list with a different prefix")
 
 		// Test that they can't list a different bucket
-		result = identity.canDo("List", "other-bucket", "/txzl/")
+		result = identity.CanDo("List", "other-bucket", "/txzl/")
 		assert.False(t, result, "User should not be able to list a different bucket")
 	})
 

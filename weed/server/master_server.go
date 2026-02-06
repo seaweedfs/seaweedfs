@@ -77,6 +77,8 @@ type MasterServer struct {
 
 	grpcDialOption grpc.DialOption
 
+	topologyIdGenLock sync.Mutex
+
 	MasterClient *wdclient.MasterClient
 
 	adminLocks *AdminLocks
@@ -209,6 +211,9 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
 				ms.Topo.LastLeaderChangeTime = time.Now()
+				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
+					go ms.ensureTopologyId()
+				}
 			}
 		})
 		raftServerName = fmt.Sprintf("[%s]", ms.Topo.RaftServer.Name())
@@ -234,6 +239,42 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 		ms.Topo.RaftServerAccessLock.RUnlock()
 		glog.V(0).Infof("%s %s - is the leader.", raftServerName, raftServerLeader)
 	}
+}
+
+func (ms *MasterServer) ensureTopologyId() {
+	ms.topologyIdGenLock.Lock()
+	defer ms.topologyIdGenLock.Unlock()
+
+	// Send a no-op command to ensure all previous logs are applied (barrier)
+	// This handles the case where log replay is still in progress
+	glog.V(1).Infof("ensureTopologyId: sending barrier command")
+	for {
+		if !ms.Topo.IsLeader() {
+			glog.V(1).Infof("lost leadership while sending barrier command for topologyId")
+			return
+		}
+		if _, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), ms.Topo.GetTopologyId())); err != nil {
+			glog.Errorf("failed to sync raft for topologyId: %v, retrying in 1s", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		break
+	}
+	glog.V(1).Infof("ensureTopologyId: barrier command completed")
+
+	if !ms.Topo.IsLeader() {
+		return
+	}
+
+	currentId := ms.Topo.GetTopologyId()
+	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
+
+	EnsureTopologyId(ms.Topo, func() bool {
+		return ms.Topo.IsLeader()
+	}, func(topologyId string) error {
+		_, err := ms.Topo.RaftServer.Do(topology.NewMaxVolumeIdCommand(ms.Topo.GetMaxVolumeId(), topologyId))
+		return err
+	})
 }
 
 func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {

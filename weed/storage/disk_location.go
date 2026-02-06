@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+)
+
+const (
+	UUIDFileName = "vol_dir.uuid"
+	UUIDFileMod  = 0644
 )
 
 type DiskLocation struct {
@@ -42,7 +48,7 @@ type DiskLocation struct {
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
-	fileName := dir + "/vol_dir.uuid"
+	fileName := filepath.Join(dir, UUIDFileName)
 	if !util.FileExists(fileName) {
 		dirUuidString, err = writeNewUuid(fileName)
 	} else {
@@ -62,7 +68,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 func writeNewUuid(fileName string) (string, error) {
 	dirUuid, _ := uuid.NewRandom()
 	dirUuidString := dirUuid.String()
-	if err := util.WriteFile(fileName, []byte(dirUuidString), 0644); err != nil {
+	if err := util.WriteFile(fileName, []byte(dirUuidString), UUIDFileMod); err != nil {
 		return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, err)
 	}
 	return dirUuidString, nil
@@ -388,6 +394,38 @@ func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
 
 	v, ok := l.volumes[vid]
 	return v, ok
+}
+
+// Returns all regular volume IDs stored at this location.
+func (l *DiskLocation) VolumeIds() []needle.VolumeId {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.volumes))
+	i := 0
+	for vid := range l.volumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
+}
+
+// Returns all EC volume IDs stored at this location.
+func (l *DiskLocation) EcVolumeIds() []needle.VolumeId {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.ecVolumes))
+	i := 0
+	for vid := range l.ecVolumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
 }
 
 func (l *DiskLocation) VolumesLen() int {

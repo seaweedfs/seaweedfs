@@ -1,9 +1,10 @@
 package filer
 
 import (
+	"testing"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestFilerRemoteStorage_FindRemoteStorageClient(t *testing.T) {

@@ -7,7 +7,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ printf "%s" $dashboardName | lower | replace "_" "-" }}
+  name: {{ include "seaweedfs.fullname" $ }}-{{ printf "%s" $dashboardName | lower | replace "_" "-" }}
   namespace: {{ $.Release.Namespace }}
   labels:
     grafana_dashboard: "1"

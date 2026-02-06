@@ -16,7 +16,6 @@ import (
 )
 
 func (vs *VolumeServer) VolumeTailSender(req *volume_server_pb.VolumeTailSenderRequest, stream volume_server_pb.VolumeServer_VolumeTailSenderServer) error {
-
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return fmt.Errorf("not found volume id %d", req.VolumeId)

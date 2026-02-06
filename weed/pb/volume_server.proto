@@ -7,6 +7,16 @@ import "remote.proto";
 
 //////////////////////////////////////////////////
 
+// Persistent state for volume servers.
+message VolumeServerState {
+    // whether the server is in maintenance (i.e. read-only) mode.
+    bool maintenance = 1;
+    // incremental version counter
+    uint32 version = 2;
+}
+
+//////////////////////////////////////////////////
+
 service VolumeServer {
     //Experts only: takes multiple fid parameters. This function does not propagate deletes to replicas.
     rpc BatchDelete (BatchDeleteRequest) returns (BatchDeleteResponse) {
@@ -44,6 +54,11 @@ service VolumeServer {
     rpc VolumeConfigure (VolumeConfigureRequest) returns (VolumeConfigureResponse) {
     }
     rpc VolumeStatus (VolumeStatusRequest) returns (VolumeStatusResponse) {
+    }
+
+    rpc GetState (GetStateRequest) returns (GetStateResponse) {
+    }
+    rpc SetState (SetStateRequest) returns (SetStateResponse) {
     }
 
     // copy the .idx .dat files, and mount this volume
@@ -105,6 +120,12 @@ service VolumeServer {
 
     // remote storage
     rpc FetchAndWriteNeedle (FetchAndWriteNeedleRequest) returns (FetchAndWriteNeedleResponse) {
+    }
+
+    // scrubbing
+    rpc ScrubVolume (ScrubVolumeRequest) returns (ScrubVolumeResponse) {
+    }
+    rpc ScrubEcVolume (ScrubEcVolumeRequest) returns (ScrubEcVolumeResponse) {
     }
 
     // <experimental> query
@@ -259,6 +280,21 @@ message VolumeStatusResponse {
     uint64 volume_size = 2;
     uint64 file_count = 3;
     uint64 file_deleted_count = 4;
+}
+
+message GetStateRequest {
+}
+message GetStateResponse {
+    VolumeServerState state = 1;
+}
+
+message SetStateRequest {
+    // SetState updates *all* volume server flags at once. Retrieve state with GetState(),
+    // modify individual flags as required, then call this RPC to update.
+    VolumeServerState state = 1;
+}
+message SetStateResponse {
+    VolumeServerState state = 1;
 }
 
 message VolumeCopyRequest {
@@ -468,6 +504,7 @@ message EcShardInfo {
     uint32 shard_id = 1;
     int64 size = 2;
     string collection = 3;
+    uint32 volume_id = 4;
 }
 
 message ReadVolumeFileStatusRequest {
@@ -574,6 +611,7 @@ message VolumeServerStatusResponse {
     string version = 3;
     string data_center = 4;
     string rack = 5;
+    VolumeServerState state = 6;
 }
 
 message VolumeServerLeaveRequest {
@@ -601,6 +639,38 @@ message FetchAndWriteNeedleRequest {
 }
 message FetchAndWriteNeedleResponse {
     string e_tag = 1;
+}
+
+enum VolumeScrubMode {
+    UNKNOWN = 0;
+    INDEX = 1;
+    FULL = 2;
+    LOCAL = 3;
+}
+
+message ScrubVolumeRequest {
+    VolumeScrubMode mode = 1;
+    // optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
+    repeated uint32 volume_ids = 2;
+}
+message ScrubVolumeResponse {
+    uint64 total_volumes = 1;
+    uint64 total_files = 2;
+    repeated uint32 broken_volume_ids = 3;
+    repeated string details = 4;
+}
+
+message ScrubEcVolumeRequest {
+    VolumeScrubMode mode = 1;
+    // optional list of volume IDs to scrub. if empty, all EC volumes for the server are scrubbed.
+    repeated uint32 volume_ids = 2;
+}
+message ScrubEcVolumeResponse {
+    uint64 total_volumes = 1;
+    uint64 total_files = 2;
+    repeated uint32 broken_volume_ids = 3;
+    repeated EcShardInfo broken_shard_infos = 4;
+    repeated string details = 5;
 }
 
 // select on volume servers

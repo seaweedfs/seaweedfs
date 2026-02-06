@@ -90,6 +90,11 @@ func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
 				}
 			}
 		}
+
+		// Sync task with ActiveTopology for capacity tracking
+		if mq.integration != nil {
+			mq.integration.SyncTask(task)
+		}
 	}
 
 	// Sort pending tasks by priority and schedule time
@@ -134,7 +139,9 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		return
 	}
 
-	task.ID = generateTaskID()
+	if task.ID == "" {
+		task.ID = generateTaskID()
+	}
 	task.Status = TaskStatusPending
 	task.CreatedAt = time.Now()
 	task.MaxRetries = 3 // Default retry count
@@ -200,6 +207,7 @@ func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) 
 		}
 
 		task := &MaintenanceTask{
+			ID:         result.TaskID,
 			Type:       result.TaskType,
 			Priority:   result.Priority,
 			VolumeID:   result.VolumeID,
@@ -272,7 +280,7 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 	// If no task found, return nil
 	if selectedTask == nil {
-		glog.V(2).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
+		glog.V(4).Infof("No suitable tasks available for worker %s (checked %d pending tasks)", workerID, len(mq.pendingTasks))
 		return nil
 	}
 
@@ -311,6 +319,24 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	selectedTask.WorkerID = workerID
 	selectedTask.StartedAt = &now
 
+	// Notify ActiveTopology to reserve capacity (move from pending to assigned)
+	if mq.integration != nil {
+		if at := mq.integration.GetActiveTopology(); at != nil {
+			if err := at.AssignTask(selectedTask.ID); err != nil {
+				glog.Warningf("Failed to update ActiveTopology for task assignment %s: %v. Rolling back assignment.", selectedTask.ID, err)
+				// Rollback assignment in MaintenanceQueue
+				selectedTask.Status = TaskStatusPending
+				selectedTask.WorkerID = ""
+				selectedTask.StartedAt = nil
+				if len(selectedTask.AssignmentHistory) > 0 {
+					selectedTask.AssignmentHistory = selectedTask.AssignmentHistory[:len(selectedTask.AssignmentHistory)-1]
+				}
+				// Return nil so the task is not removed from pendingTasks and not returned to the worker
+				return nil
+			}
+		}
+	}
+
 	// Remove from pending tasks
 	mq.pendingTasks = append(mq.pendingTasks[:selectedIndex], mq.pendingTasks[selectedIndex+1:]...)
 
@@ -340,6 +366,17 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	if !exists {
 		glog.Warningf("Attempted to complete non-existent task: %s", taskID)
 		return
+	}
+
+	// Notify ActiveTopology to release capacity (move from assigned to recent)
+	// We do this for both success and failure cases to release the capacity
+	if mq.integration != nil {
+		if at := mq.integration.GetActiveTopology(); at != nil {
+			if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
+				// Ignore error as task might not be in ActiveTopology (e.g. after restart)
+				_ = at.CompleteTask(taskID)
+			}
+		}
 	}
 
 	completedTime := time.Now()
@@ -377,6 +414,12 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			task.ScheduledAt = time.Now().Add(15 * time.Minute) // Retry delay
 
 			mq.pendingTasks = append(mq.pendingTasks, task)
+
+			// Resync with ActiveTopology (re-add as pending)
+			if mq.integration != nil {
+				mq.integration.SyncTask(task)
+			}
+
 			// Save task state after retry setup
 			mq.saveTaskState(task)
 			glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
@@ -587,15 +630,35 @@ func (mq *MaintenanceQueue) GetTasks(status MaintenanceTaskStatus, taskType Main
 			continue
 		}
 		tasks = append(tasks, task)
-		if limit > 0 && len(tasks) >= limit {
-			break
-		}
 	}
 
-	// Sort by creation time (newest first)
-	sort.Slice(tasks, func(i, j int) bool {
-		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
-	})
+	// Sort based on status
+	if status == TaskStatusCompleted || status == TaskStatusFailed || status == TaskStatusCancelled {
+		sort.Slice(tasks, func(i, j int) bool {
+			t1 := tasks[i].CompletedAt
+			t2 := tasks[j].CompletedAt
+			if t1 == nil && t2 == nil {
+				return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+			}
+			if t1 == nil {
+				return false
+			}
+			if t2 == nil {
+				return true
+			}
+			return t1.After(*t2)
+		})
+	} else {
+		// Default to creation time (newest first)
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+		})
+	}
+
+	// Apply limit after sorting
+	if limit > 0 && len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
 
 	return tasks
 }
@@ -683,6 +746,13 @@ func (mq *MaintenanceQueue) RemoveStaleWorkers(timeout time.Duration) int {
 					task.Error = "Worker became unavailable"
 					completedTime := time.Now()
 					task.CompletedAt = &completedTime
+
+					// Notify ActiveTopology to release capacity
+					if mq.integration != nil {
+						if at := mq.integration.GetActiveTopology(); at != nil {
+							_ = at.CompleteTask(task.ID)
+						}
+					}
 				}
 			}
 

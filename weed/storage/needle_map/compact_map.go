@@ -236,8 +236,8 @@ func (cm *CompactMap) segmentForKey(key types.NeedleId) *CompactMapSegment {
 // Set inserts/updates a NeedleValue.
 // If the operation is an update, returns the overwritten value's previous offset and size.
 func (cm *CompactMap) Set(key types.NeedleId, offset types.Offset, size types.Size) (oldOffset types.Offset, oldSize types.Size) {
-	cm.RLock()
-	defer cm.RUnlock()
+	cm.Lock()
+	defer cm.Unlock()
 
 	cs := cm.segmentForKey(key)
 	return cs.set(key, offset, size)
@@ -248,7 +248,11 @@ func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
 	cm.RLock()
 	defer cm.RUnlock()
 
-	cs := cm.segmentForKey(key)
+	chunk := Chunk(key / SegmentChunkSize)
+	cs, ok := cm.segments[chunk]
+	if !ok {
+		return nil, false
+	}
 	if cnv, found := cs.get(key); found {
 		nv := cnv.NeedleValue(cs.chunk)
 		return &nv, true
@@ -258,10 +262,14 @@ func (cm *CompactMap) Get(key types.NeedleId) (*NeedleValue, bool) {
 
 // Delete deletes a map entry by key. Returns the entries' previous Size, if available.
 func (cm *CompactMap) Delete(key types.NeedleId) types.Size {
-	cm.RLock()
-	defer cm.RUnlock()
+	cm.Lock()
+	defer cm.Unlock()
 
-	cs := cm.segmentForKey(key)
+	chunk := Chunk(key / SegmentChunkSize)
+	cs, ok := cm.segments[chunk]
+	if !ok {
+		return types.Size(0)
+	}
 	return cs.delete(key)
 }
 

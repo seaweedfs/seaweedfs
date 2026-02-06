@@ -3,9 +3,7 @@ package weed_server
 import (
 	"context"
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -16,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
@@ -99,10 +98,10 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Wait if either data size limit or file count limit is exceeded
 		for (fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit) || (fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit) {
-			if (fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit) {
+			if fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
 				glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
 			}
-			if (fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit) {
+			if fs.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= fs.option.ConcurrentFileUploadLimit {
 				glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, fs.option.ConcurrentFileUploadLimit)
 			}
 			fs.inFlightDataLimitCond.Wait()
@@ -148,7 +147,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	statusRecorder := stats.NewStatusResponseWriter(w)
 	w = statusRecorder
 
-	os.Stdout.WriteString("Request: " + r.Method + " " + r.URL.String() + "\n")
+	glog.V(4).Infof("Request: %s %s", r.Method, r.URL.Path)
 
 	origin := r.Header.Get("Origin")
 	if origin != "" {
@@ -212,6 +211,10 @@ func OptionsHandler(w http.ResponseWriter, r *http.Request, isReadOnly bool) {
 // maybeCheckJwtAuthorization returns true if access should be granted, false if it should be denied
 func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool) bool {
 
+	if !isWrite && r.URL.Path == "/" {
+		return true
+	}
+
 	var signingKey security.SigningKey
 
 	if isWrite {
@@ -242,9 +245,42 @@ func (fs *FilerServer) maybeCheckJwtAuthorization(r *http.Request, isWrite bool)
 	if !token.Valid {
 		glog.V(1).Infof("jwt invalid from %s: %v", r.RemoteAddr, tokenStr)
 		return false
-	} else {
-		return true
 	}
+
+	claims, ok := token.Claims.(*security.SeaweedFilerClaims)
+	if !ok {
+		glog.V(1).Infof("jwt claims not of type *SeaweedFilerClaims from %s", r.RemoteAddr)
+		return false
+	}
+
+	if len(claims.AllowedPrefixes) > 0 {
+		hasPrefix := false
+		for _, prefix := range claims.AllowedPrefixes {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				hasPrefix = true
+				break
+			}
+		}
+		if !hasPrefix {
+			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, r.URL.Path)
+			return false
+		}
+	}
+	if len(claims.AllowedMethods) > 0 {
+		hasMethod := false
+		for _, method := range claims.AllowedMethods {
+			if method == r.Method {
+				hasMethod = true
+				break
+			}
+		}
+		if !hasMethod {
+			glog.V(1).Infof("jwt method not allowed from %s: %v", r.RemoteAddr, r.Method)
+			return false
+		}
+	}
+
+	return true
 }
 
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {

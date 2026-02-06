@@ -30,6 +30,7 @@ type TaskLogger interface {
 	LogWithFields(level string, message string, fields map[string]interface{})
 
 	// Lifecycle
+	Sync() error
 	Close() error
 	GetLogDir() string
 }
@@ -230,6 +231,17 @@ func (l *FileTaskLogger) LogWithFields(level string, message string, fields map[
 	l.writeLogEntry(entry)
 }
 
+// Sync flushes buffered data to disk
+func (l *FileTaskLogger) Sync() error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	if l.logFile != nil {
+		return l.logFile.Sync()
+	}
+	return nil
+}
+
 // Close closes the logger and finalizes metadata
 func (l *FileTaskLogger) Close() error {
 	l.Info("Task logger closed for %s", l.taskID)
@@ -423,7 +435,10 @@ func ReadTaskLogs(logDir string) ([]TaskLogEntry, error) {
 			if err == io.EOF {
 				break
 			}
-			return nil, fmt.Errorf("failed to decode log entry: %w", err)
+			// If we fail to decode an entry, it might be a partial write at the end of the file
+			// Return what we have so far instead of failing the entire request
+			glog.V(1).Infof("Failed to decode log entry in %s: %v (returning %d partial logs)", logPath, err, len(entries))
+			break
 		}
 		entries = append(entries, entry)
 	}

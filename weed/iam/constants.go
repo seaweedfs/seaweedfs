@@ -3,7 +3,7 @@ package iam
 // Character sets for credential generation
 const (
 	CharsetUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	Charset      = CharsetUpper + "abcdefghijklmnopqrstuvwxyz/"
+	Charset      = CharsetUpper + "abcdefghijklmnopqrstuvwxyz"
 )
 
 // Policy document version

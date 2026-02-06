@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -24,11 +26,13 @@ const (
 type FilerOperations interface {
 	CountDirectoryEntries(ctx context.Context, dirPath util.FullPath, limit int) (count int, err error)
 	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) error
+	GetEntryAttributes(ctx context.Context, p util.FullPath) (attributes map[string][]byte, err error)
 }
 
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
 	roughCount  int       // Cached rough count (up to maxCountCheck)
+	isImplicit  *bool     // Tri-state boolean: nil (unknown), true (implicit), false (explicit)
 	lastAddTime time.Time // Last time an item was added
 	lastDelTime time.Time // Last time an item was deleted
 	lastCheck   time.Time // Last time we checked the actual count
@@ -265,8 +269,47 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 		return
 	}
 
-	// Check if folder is actually empty (count up to maxCountCheck)
+	// Check for explicit implicit_dir attribute
+	// First check cache
 	ctx := context.Background()
+	efc.mu.RLock()
+	var cachedImplicit *bool
+	if state, exists := efc.folderCounts[folder]; exists {
+		cachedImplicit = state.isImplicit
+	}
+	efc.mu.RUnlock()
+
+	var isImplicit bool
+	if cachedImplicit != nil {
+		isImplicit = *cachedImplicit
+	} else {
+		// Not cached, check filer
+		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return
+			}
+			glog.V(2).Infof("EmptyFolderCleaner: error getting attributes for %s: %v", folder, err)
+			return
+		}
+
+		isImplicit = attrs != nil && string(attrs[s3_constants.ExtS3ImplicitDir]) == "true"
+
+		// Update cache
+		efc.mu.Lock()
+		if _, exists := efc.folderCounts[folder]; !exists {
+			efc.folderCounts[folder] = &folderState{}
+		}
+		efc.folderCounts[folder].isImplicit = &isImplicit
+		efc.mu.Unlock()
+	}
+
+	if !isImplicit {
+		glog.V(4).Infof("EmptyFolderCleaner: folder %s is not marked as implicit, skipping", folder)
+		return
+	}
+
+	// Check if folder is actually empty (count up to maxCountCheck)
 	count, err := efc.countItems(ctx, folder)
 	if err != nil {
 		glog.V(2).Infof("EmptyFolderCleaner: error counting items in %s: %v", folder, err)
@@ -433,4 +476,3 @@ func (efc *EmptyFolderCleaner) GetCachedFolderCount(folder string) (int, bool) {
 	}
 	return 0, false
 }
-

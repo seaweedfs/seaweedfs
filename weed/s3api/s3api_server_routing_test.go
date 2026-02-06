@@ -31,7 +31,7 @@ func setupRoutingTestServer(t *testing.T) *S3ApiServer {
 		option:            opt,
 		iam:               iam,
 		credentialManager: iam.credentialManager,
-		embeddedIam:       NewEmbeddedIamApi(iam.credentialManager, iam),
+		embeddedIam:       NewEmbeddedIamApi(iam.credentialManager, iam, false),
 		stsHandlers:       &STSHandlers{},
 	}
 
@@ -150,8 +150,8 @@ func TestRouting_IAMMatcherLogic(t *testing.T) {
 			name:        "AWS4 signature with STS action in body",
 			authHeader:  "AWS4-HMAC-SHA256 Credential=AKIA.../...",
 			queryParams: "",
-			expectsIAM:  true,
-			description: "Authenticated STS action should still route to IAM (auth takes precedence)",
+			expectsIAM:  false,
+			description: "Authenticated STS action should route to STS handler (STS handlers handle their own auth)",
 		},
 	}
 

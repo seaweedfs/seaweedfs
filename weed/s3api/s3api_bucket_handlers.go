@@ -94,7 +94,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 					hasPermission = (errCode == s3err.ErrNone)
 				} else {
 					// Use legacy authorization for non-JWT users
-					hasPermission = identity.canDo(s3_constants.ACTION_LIST, entry.Name, "")
+					hasPermission = identity.CanDo(s3_constants.ACTION_LIST, entry.Name, "")
 				}
 
 				if !hasPermission {
@@ -117,6 +117,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 		Buckets: listBuckets,
 	}
 
+	glog.V(3).Infof("ListBucketsHandler response: %+v", response)
 	writeSuccessResponseXML(w, r, response)
 }
 
@@ -638,7 +639,7 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 			// Check bucket policy for anonymous access using the policy engine
 			principal := "*" // Anonymous principal
 			// Evaluate bucket policy (objectEntry nil - not yet fetched)
-			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil)
+			allowed, evaluated, err := s3a.policyEngine.EvaluatePolicy(bucket, object, string(action), principal, r, nil, nil)
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM

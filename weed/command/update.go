@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	swv "github.com/seaweedfs/seaweedfs/weed/util/version"
 	"io"
 	"net/http"
 	"os"
@@ -22,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	swv "github.com/seaweedfs/seaweedfs/weed/util/version"
 	"golang.org/x/net/context/ctxhttp"
 )
 

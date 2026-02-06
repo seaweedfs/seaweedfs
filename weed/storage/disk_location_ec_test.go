@@ -11,6 +11,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// closeEcVolumes closes all EC volumes in the given DiskLocation to release file handles.
+func closeEcVolumes(dl *DiskLocation) {
+	for _, ecVol := range dl.ecVolumes {
+		ecVol.Close()
+	}
+}
+
 // TestIncompleteEcEncodingCleanup tests the cleanup logic for incomplete EC encoding scenarios
 func TestIncompleteEcEncodingCleanup(t *testing.T) {
 	tests := []struct {
@@ -182,11 +189,18 @@ func TestIncompleteEcEncodingCleanup(t *testing.T) {
 				t.Logf("loadAllEcShards returned error (expected in some cases): %v", loadErr)
 			}
 
+			// Close EC volumes before idempotency test to avoid leaking file handles
+			closeEcVolumes(diskLocation)
+			diskLocation.ecVolumes = make(map[needle.VolumeId]*erasure_coding.EcVolume)
+
 			// Test idempotency - running again should not cause issues
 			loadErr2 := diskLocation.loadAllEcShards(nil)
 			if loadErr2 != nil {
 				t.Logf("Second loadAllEcShards returned error: %v", loadErr2)
 			}
+			t.Cleanup(func() {
+				closeEcVolumes(diskLocation)
+			})
 
 			// Verify cleanup expectations
 			if tt.expectCleanup {
@@ -554,6 +568,9 @@ func TestEcCleanupWithSeparateIdxDirectory(t *testing.T) {
 	if loadErr != nil {
 		t.Logf("loadAllEcShards error: %v", loadErr)
 	}
+	t.Cleanup(func() {
+		closeEcVolumes(diskLocation)
+	})
 
 	// Verify cleanup occurred in data directory (shards)
 	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
@@ -625,6 +642,9 @@ func TestDistributedEcVolumeNoFileDeletion(t *testing.T) {
 	if loadErr != nil {
 		t.Logf("loadAllEcShards returned error (expected): %v", loadErr)
 	}
+	t.Cleanup(func() {
+		closeEcVolumes(diskLocation)
+	})
 
 	// CRITICAL CHECK: Verify shard files still exist (should NOT be deleted)
 	for i := 0; i < 5; i++ {

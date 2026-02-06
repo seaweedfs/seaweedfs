@@ -14,6 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -36,25 +38,45 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
 
 	if googleApplicationCredentials == "" {
-		found := false
-		googleApplicationCredentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			return nil, fmt.Errorf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable")
+		if creds, found := os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS"); found {
+			googleApplicationCredentials = creds
+		} else {
+			glog.Warningf("no GOOGLE_APPLICATION_CREDENTIALS env variable found, falling back to Application Default Credentials")
 		}
 	}
 
 	projectID := conf.GcsProjectId
 	if projectID == "" {
-		found := false
-		projectID, found = os.LookupEnv("GOOGLE_CLOUD_PROJECT")
-		if !found {
-			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
+		if pid, found := os.LookupEnv("GOOGLE_CLOUD_PROJECT"); found {
+			projectID = pid
+		} else {
+			glog.Warningf("need to specify GOOGLE_CLOUD_PROJECT env variable")
 		}
 	}
 
-	googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
+	var clientOpts []option.ClientOption
 
-	c, err := storage.NewClient(context.Background(), option.WithCredentialsFile(googleApplicationCredentials))
+	if googleApplicationCredentials != "" {
+		googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
+		var data []byte
+		var err error
+		if strings.HasPrefix(googleApplicationCredentials, "{") {
+			data = []byte(googleApplicationCredentials)
+		} else {
+			data, err = os.ReadFile(googleApplicationCredentials)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
+			}
+		}
+		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials: %w", err)
+		}
+		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
+		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
+	}
+
+	c, err := storage.NewClient(context.Background(), clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}

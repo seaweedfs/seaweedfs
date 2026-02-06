@@ -11,3 +11,7 @@ const (
 func GetCurrentVersion() Version {
 	return Version3
 }
+
+func IsSupportedVersion(v Version) bool {
+	return v >= Version1 && v <= Version3
+}

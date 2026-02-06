@@ -106,6 +106,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if alreadyHasSuperBlock {
 		err = v.readSuperBlock()
 		if err == nil {
+			if !needle.IsSupportedVersion(v.SuperBlock.Version) {
+				glog.Fatalf("Unsupported volume %d version %v", v.Id, v.SuperBlock.Version)
+			}
 			v.volumeInfo.Version = uint32(v.SuperBlock.Version)
 		}
 		glog.V(2).Infof("readSuperBlock volume %d version %v", v.Id, v.SuperBlock.Version)

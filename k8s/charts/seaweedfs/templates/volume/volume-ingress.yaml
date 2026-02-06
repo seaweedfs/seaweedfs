@@ -1,0 +1,52 @@
+{{- if and .Values.volume.enabled .Values.volume.ingress.enabled }}
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1
+{{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
+apiVersion: networking.k8s.io/v1beta1
+{{- else }}
+apiVersion: extensions/v1beta1
+{{- end }}
+kind: Ingress
+metadata:
+  name: ingress-{{ include "seaweedfs.fullname" . }}-volume
+  namespace: {{ .Release.Namespace }}
+  annotations:
+  {{- if and (not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion)) .Values.volume.ingress.className }}
+    kubernetes.io/ingress.class: {{ .Values.volume.ingress.className }}
+  {{- end }}
+  {{- with .Values.volume.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: volume
+spec:
+  {{- if and (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) .Values.volume.ingress.className }}
+  ingressClassName: {{ .Values.volume.ingress.className | quote }}
+  {{- end }}
+  tls:
+    {{ .Values.volume.ingress.tls | default list | toYaml | nindent 6}}
+  rules:
+  - {{- if .Values.volume.ingress.host }}
+    host: {{ .Values.volume.ingress.host | quote }}
+    {{- end }}
+    http:
+      paths:
+      - path: {{ .Values.volume.ingress.path | quote }}
+        {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }}
+        pathType: {{ .Values.volume.ingress.pathType | quote }}
+        {{- end }}
+        backend:
+{{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
+          service:
+            name: {{ include "seaweedfs.componentName" (list . "volume") }}
+            port:
+              number: {{ .Values.volume.port }}
+{{- else }}
+          serviceName: {{ include "seaweedfs.componentName" (list . "volume") }}
+          servicePort: {{ .Values.volume.port }}
+{{- end }}
+{{- end }}

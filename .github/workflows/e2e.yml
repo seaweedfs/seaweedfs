@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 30
     steps:
     - name: Set up Go 1.x
-      uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v2
+      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
       with:
         go-version: ^1.13
       id: go
@@ -46,6 +46,7 @@ jobs:
     - name: Install dependencies
       run: |
         # Use faster mirrors and install with timeout
+        sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
         

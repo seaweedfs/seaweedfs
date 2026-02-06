@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -273,7 +274,8 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 
 		// fmt.Printf("dirParts: %v %v %v\n", dirParts[0], dirParts[1], dirParts[2])
 		// dirParts[0] == "" and dirParts[1] == "buckets"
-		if len(dirParts) >= 3 && dirParts[1] == "buckets" {
+		isUnderBuckets := len(dirParts) >= 3 && dirParts[1] == "buckets"
+		if isUnderBuckets {
 			if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
 				return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
 			}
@@ -298,6 +300,13 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				UserName:   entry.UserName,
 				GroupNames: entry.GroupNames,
 			},
+		}
+		// level > 3 corresponds to a path depth greater than "/buckets/<bucket_name>",
+		// ensuring we only mark subdirectories within a bucket as implicit.
+		if isUnderBuckets && level > 3 {
+			dirEntry.Extended = map[string][]byte{
+				s3_constants.ExtS3ImplicitDir: []byte("true"),
+			}
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
@@ -520,4 +529,15 @@ func (f *Filer) Shutdown() {
 	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
+}
+
+func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[string][]byte, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.Extended, nil
 }

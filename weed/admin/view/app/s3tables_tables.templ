@@ -1,0 +1,294 @@
+package app
+
+import (
+	"fmt"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+)
+
+templ S3TablesTables(data dash.S3TablesTablesData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-table me-2"></i>S3 Tables
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createS3TablesTableModal">
+					<i class="fas fa-plus me-1"></i>Create Table
+				</button>
+			</div>
+		</div>
+	</div>
+	<div class="mb-3">
+		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
+		if parseErr == nil {
+			<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class="btn btn-sm btn-outline-secondary">
+				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+			</a>
+		} else {
+			<button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Invalid bucket ARN">
+				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
+			</button>
+		}
+		<span class="text-muted ms-2">Bucket ARN: { data.BucketARN }</span>
+		<span class="text-muted ms-2">Namespace: { data.Namespace }</span>
+		if parseErr != nil {
+			<span class="text-danger ms-2">Invalid bucket ARN</span>
+		}
+	</div>
+	<div id="s3tables-tables-content" data-bucket-arn={ data.BucketARN } data-namespace={ data.Namespace }>
+		<div class="row mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Total Tables
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalTables) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-table fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-info shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+									Last Updated
+								</div>
+								<div class="h6 mb-0 font-weight-bold text-gray-800">
+									{ data.LastUpdated.Format("15:04") }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-clock fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-table me-2"></i>Tables
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover" width="100%" cellspacing="0" id="s3tablesTablesTable">
+								<thead>
+									<tr>
+										<th>Name</th>
+										<th>Table ARN</th>
+										<th>Created</th>
+										<th>Modified</th>
+										<th>Metadata</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, table := range data.Tables {
+										<tr>
+											{{ tableName := table.Name }}
+											<td>{ tableName }</td>
+											<td class="text-muted small">{ table.TableARN }</td>
+											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>{ table.ModifiedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if table.MetadataLocation != "" {
+													<span class="text-muted small">{ table.MetadataLocation }</span>
+												} else {
+													<span class="text-muted">-</span>
+												}
+											</td>
+											<td>
+												<div class="btn-group btn-group-sm" role="group">
+													<button type="button" class="btn btn-outline-success btn-sm s3tables-tags-btn" data-resource-arn={ table.TableARN } title="Tags">
+														<i class="fas fa-tags"></i>
+													</button>
+													<button type="button" class="btn btn-outline-info btn-sm s3tables-table-policy-btn" data-table-arn={ table.TableARN } data-table-name={ tableName } title="Table Policy">
+														<i class="fas fa-shield-alt"></i>
+													</button>
+													<button type="button" class="btn btn-outline-danger btn-sm s3tables-delete-table-btn" data-table-name={ tableName } title="Delete">
+														<i class="fas fa-trash"></i>
+													</button>
+												</div>
+											</td>
+										</tr>
+									}
+									if len(data.Tables) == 0 {
+										<tr>
+											<td colspan="6" class="text-center text-muted py-4">
+												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
+												<div>
+													<h5>No tables found</h5>
+													<p>Create your first table to start storing data.</p>
+													<button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createS3TablesTableModal">
+														<i class="fas fa-plus me-1"></i>Create Table
+													</button>
+												</div>
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="createS3TablesTableModal" tabindex="-1" aria-labelledby="createS3TablesTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="createS3TablesTableModalLabel">
+						<i class="fas fa-plus me-2"></i>Create Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="createS3TablesTableForm">
+					<div class="modal-body">
+						<div class="mb-3">
+							<label for="s3tablesTableName" class="form-label">Table Name</label>
+							<input type="text" class="form-control" id="s3tablesTableName" name="name" required/>
+						</div>
+						<div class="mb-3">
+							<label for="s3tablesTableFormat" class="form-label">Format</label>
+							<select class="form-select" id="s3tablesTableFormat" name="format">
+								<option value="ICEBERG" selected>ICEBERG</option>
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="s3tablesTableMetadata" class="form-label">Metadata JSON (optional)</label>
+							<textarea class="form-control" id="s3tablesTableMetadata" name="metadata" rows="6" placeholder="{ }"></textarea>
+						</div>
+						<div class="mb-3">
+							<label for="s3tablesTableTags" class="form-label">Tags</label>
+							<input type="text" class="form-control" id="s3tablesTableTags" name="tags" placeholder="key1=value1,key2=value2"/>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-plus me-1"></i>Create
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="deleteS3TablesTableModal" tabindex="-1" aria-labelledby="deleteS3TablesTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="deleteS3TablesTableModalLabel">
+						<i class="fas fa-exclamation-triangle me-2 text-warning"></i>Delete Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p>Are you sure you want to delete the table <strong id="deleteS3TablesTableName"></strong>?</p>
+					<div class="mb-3">
+						<label for="deleteS3TablesTableVersion" class="form-label">Version Token (optional)</label>
+						<input type="text" class="form-control" id="deleteS3TablesTableVersion" placeholder="Version token"/>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-danger" onclick="deleteS3TablesTable()">
+						<i class="fas fa-trash me-1"></i>Delete
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="s3tablesTablePolicyModal" tabindex="-1" aria-labelledby="s3tablesTablePolicyModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="s3tablesTablePolicyModalLabel">
+						<i class="fas fa-shield-alt me-2"></i>Table Policy
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="s3tablesTablePolicyForm">
+					<div class="modal-body">
+						<input type="hidden" id="s3tablesTablePolicyBucketArn" name="bucket_arn"/>
+						<input type="hidden" id="s3tablesTablePolicyNamespace" name="namespace"/>
+						<input type="hidden" id="s3tablesTablePolicyName" name="name"/>
+						<div class="mb-3">
+							<label for="s3tablesTablePolicyText" class="form-label">Policy JSON</label>
+							<textarea class="form-control" id="s3tablesTablePolicyText" name="policy" rows="12" placeholder="{ }"></textarea>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+						<button type="button" class="btn btn-outline-danger" onclick="deleteS3TablesTablePolicy()">
+							<i class="fas fa-trash me-1"></i>Delete Policy
+						</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-save me-1"></i>Save Policy
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="s3tablesTagsModal" tabindex="-1" aria-labelledby="s3tablesTagsModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="s3tablesTagsModalLabel">
+						<i class="fas fa-tags me-2"></i>Resource Tags
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="s3tablesTagsForm">
+					<div class="modal-body">
+						<input type="hidden" id="s3tablesTagsResourceArn" name="resource_arn"/>
+						<div class="mb-3">
+							<label class="form-label">Existing Tags</label>
+							<pre class="bg-light p-3 border rounded" id="s3tablesTagsList">Loading...</pre>
+						</div>
+						<div class="mb-3">
+							<label for="s3tablesTagsInput" class="form-label">Add or Update Tags</label>
+							<input type="text" class="form-control" id="s3tablesTagsInput" placeholder="key1=value1,key2=value2"/>
+						</div>
+						<div class="mb-3">
+							<label for="s3tablesTagsDeleteInput" class="form-label">Remove Tag Keys</label>
+							<input type="text" class="form-control" id="s3tablesTagsDeleteInput" placeholder="key1,key2"/>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+						<button type="button" class="btn btn-outline-danger" onclick="deleteS3TablesTags()">
+							<i class="fas fa-trash me-1"></i>Remove Tags
+						</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-save me-1"></i>Update Tags
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			initS3TablesTables();
+		});
+	</script>
+}

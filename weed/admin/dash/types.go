@@ -596,3 +596,46 @@ type STSConfigData struct {
 	Providers     []string  `json:"providers,omitempty"`
 	LastUpdated   time.Time `json:"last_updated"`
 }
+
+// Iceberg Catalog types
+type IcebergCatalogInfo struct {
+	Name           string    `json:"name"`
+	ARN            string    `json:"arn"`
+	OwnerAccountID string    `json:"owner_account_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type IcebergCatalogData struct {
+	Username      string               `json:"username"`
+	Catalogs      []IcebergCatalogInfo `json:"catalogs"`
+	TotalCatalogs int                  `json:"total_catalogs"`
+	IcebergPort   int                  `json:"iceberg_port"`
+	LastUpdated   time.Time            `json:"last_updated"`
+}
+
+type IcebergNamespaceInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergNamespacesData struct {
+	Username        string                 `json:"username"`
+	CatalogName     string                 `json:"catalog_name"`
+	Namespaces      []IcebergNamespaceInfo `json:"namespaces"`
+	TotalNamespaces int                    `json:"total_namespaces"`
+	LastUpdated     time.Time              `json:"last_updated"`
+}
+
+type IcebergTableInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergTablesData struct {
+	Username      string             `json:"username"`
+	CatalogName   string             `json:"catalog_name"`
+	NamespaceName string             `json:"namespace_name"`
+	Tables        []IcebergTableInfo `json:"tables"`
+	TotalTables   int                `json:"total_tables"`
+	LastUpdated   time.Time          `json:"last_updated"`
+}

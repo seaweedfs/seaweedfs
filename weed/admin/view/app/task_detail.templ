@@ -942,10 +942,48 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             return;
         }
         
+        
         // Format and display logs with structured fields
         let logText = '';
+        
+        // Helper function to format timestamps robustly
+        function formatTimestamp(timestamp) {
+            if (!timestamp) {
+                return 'N/A';
+            }
+            
+            let date;
+            
+            // Check if timestamp is a numeric string (e.g., "1738652668")
+            if (typeof timestamp === 'string' && /^\d+$/.test(timestamp)) {
+                const numericTimestamp = parseInt(timestamp, 10);
+                // Treat values > 10^10 as milliseconds, otherwise as seconds
+                date = numericTimestamp > 10000000000 
+                    ? new Date(numericTimestamp) 
+                    : new Date(numericTimestamp * 1000);
+            } else if (typeof timestamp === 'string') {
+                // ISO date string
+                date = new Date(timestamp);
+            } else if (typeof timestamp === 'number') {
+                // Numeric timestamp (seconds or milliseconds)
+                date = timestamp > 10000000000 
+                    ? new Date(timestamp) 
+                    : new Date(timestamp * 1000);
+            } else {
+                return 'N/A';
+            }
+            
+            // Validate the date
+            if (isNaN(date.getTime())) {
+                return 'N/A';
+            }
+            
+            return date.toISOString();
+        }
+        
         logs.forEach(entry => {
-            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+            const timestamp = formatTimestamp(entry.timestamp);
+
             const level = entry.level || 'INFO';
             const message = entry.message || '';
             
@@ -992,7 +1030,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
 
     function downloadTaskLogs() {
         if (!currentTaskId || !currentWorkerId) {
-            alert('No task logs to download');
+            showAlert('No task logs to download', 'info');
             return;
         }
         
@@ -1003,7 +1041,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         .then(response => response.json())
         .then(data => {
             if (data.error) {
-                alert('Error downloading logs: ' + data.error);
+                showAlert('Error downloading logs: ' + data.error, 'error');
                 return;
             }
             
@@ -1011,7 +1049,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             let logContent = '';
             if (data.logs && data.logs.length > 0) {
                 data.logs.forEach(entry => {
-                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    let timestamp;
+                    if (typeof entry.timestamp === 'string') {
+                        timestamp = new Date(entry.timestamp).toISOString();
+                    } else {
+                        timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    }
                     const level = entry.level || 'INFO';
                     const message = entry.message || '';
                     
@@ -1051,12 +1094,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             URL.revokeObjectURL(url);
         })
         .catch(error => {
-            alert('Error downloading logs: ' + error.message);
+            showAlert('Error downloading logs: ' + error.message, 'error');
         });
     }
 
     function cancelTask(taskId) {
-        if (confirm('Are you sure you want to cancel this task?')) {
+        showConfirm('Are you sure you want to cancel this task?', function() {
             fetch(`/api/maintenance/tasks/${taskId}/cancel`, {
                 method: 'POST',
                 headers: {
@@ -1066,17 +1109,17 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Task cancelled successfully');
+                    showAlert('Task cancelled successfully', 'success');
                     location.reload();
                 } else {
-                    alert('Error cancelling task: ' + data.error);
+                    showAlert('Error cancelling task: ' + data.error, 'error');
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error cancelling task');
+                showAlert('Error cancelling task', 'error');
             });
-        }
+        });
     }
 
     function refreshTaskLogs(taskId) {
@@ -1087,7 +1130,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error refreshing logs');
+            showAlert('Error refreshing logs', 'error');
         });
     }
 
@@ -1106,7 +1149,7 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error exporting task detail');
+            showAlert('Error exporting task detail', 'error');
         });
     }
 

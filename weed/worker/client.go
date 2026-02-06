@@ -524,7 +524,7 @@ func handleIncoming(
 			// Route message to general handler.
 			select {
 			case incoming <- msg:
-				glog.V(3).Infof("[session %s] Message routed to incoming channel", sessionID)
+				glog.V(4).Infof("[session %s] Message routed to incoming channel", sessionID)
 			case <-time.After(time.Second):
 				glog.Warningf("[session %s] Incoming message buffer full, dropping message: %T", sessionID, msg.Message)
 			}
@@ -808,7 +808,7 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 		caps[i] = string(cap)
 	}
 
-	glog.V(3).Infof("📤 SENDING TASK REQUEST: Worker %s sending task request to admin server with capabilities: %v",
+	glog.V(3).Infof("SENDING TASK REQUEST: Worker %s sending task request to admin server with capabilities: %v",
 		workerID, capabilities)
 
 	msg := &worker_pb.WorkerMessage{
@@ -825,22 +825,28 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 
 	select {
 	case c.outgoing <- msg:
-		glog.V(3).Infof("TASK REQUEST SENT: Worker %s successfully sent task request to admin server", workerID)
+		glog.V(4).Infof("TASK REQUEST SENT: Worker %s successfully sent task request to admin server", workerID)
 	case <-time.After(time.Second):
 		glog.Errorf("TASK REQUEST TIMEOUT: Worker %s failed to send task request: timeout", workerID)
 		return nil, fmt.Errorf("failed to send task request: timeout")
 	}
 
 	// Wait for task assignment
-	glog.V(3).Infof("WAITING FOR RESPONSE: Worker %s waiting for task assignment response (5s timeout)", workerID)
-	timeout := time.NewTimer(5 * time.Second)
+	glog.V(4).Infof("WAITING FOR RESPONSE: Worker %s waiting for task assignment response (30s timeout)", workerID)
+	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 
 	for {
 		select {
 		case response := <-c.incoming:
-			glog.V(3).Infof("RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
+			glog.V(4).Infof("RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
 			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
+				// Validate TaskId is not empty before processing
+				if taskAssign.TaskId == "" {
+					glog.Warningf("Worker %s received task assignment with empty TaskId, ignoring", workerID)
+					continue
+				}
+
 				glog.V(1).Infof("Worker %s received task assignment in response: %s (type: %s, volume: %d)",
 					workerID, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 
@@ -859,10 +865,10 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 				}
 				return task, nil
 			} else {
-				glog.V(3).Infof("NON-TASK RESPONSE: Worker %s received non-task response: %T", workerID, response.Message)
+				glog.V(4).Infof("NON-TASK RESPONSE: Worker %s received non-task response: %T", workerID, response.Message)
 			}
 		case <-timeout.C:
-			glog.V(3).Infof("TASK REQUEST TIMEOUT: Worker %s - no task assignment received within 5 seconds", workerID)
+			glog.V(4).Infof("TASK REQUEST TIMEOUT: Worker %s - no task assignment received within 30 seconds", workerID)
 			return nil, nil // No task available
 		}
 	}

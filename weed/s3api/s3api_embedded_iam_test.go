@@ -36,6 +36,20 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
+	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		if e.mockConfig != nil {
+			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
+			proto.Merge(s3cfg, cloned)
+		}
+		return nil
+	}
+	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
+		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
+		return nil
+	}
+	e.reloadConfigurationFunc = func() error {
+		return nil
+	}
 	return e
 }
 
@@ -73,7 +87,19 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 	var iamErr *iamError
 	changed := true
 
-	switch r.Form.Get("Action") {
+	action := r.Form.Get("Action")
+
+	if e.readOnly {
+		switch action {
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
+			// Allowed read-only actions
+		default:
+			e.writeIamErrorResponse(w, r, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")})
+			return
+		}
+	}
+
+	switch action {
 	case "ListUsers":
 		response = e.ListUsers(s3cfg, values)
 		changed = false
@@ -1660,4 +1686,62 @@ func TestOldCodeOrderWouldFail(t *testing.T) {
 	assert.Nil(t, identity)
 
 	t.Log("This demonstrates the bug: ParseForm before auth causes SignatureDoesNotMatch")
+}
+
+// TestEmbeddedIamExecuteAction tests calling ExecuteAction directly
+func TestEmbeddedIamExecuteAction(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{}
+
+	// Explicitly set hook to debug panic
+	api.EmbeddedIamApi.reloadConfigurationFunc = func() error {
+		return nil
+	}
+
+	// Test case: CreateUser via ExecuteAction
+	vals := url.Values{}
+	vals.Set("Action", "CreateUser")
+	vals.Set("UserName", "ExecuteActionUser")
+
+	resp, iamErr := api.ExecuteAction(vals, false)
+	assert.Nil(t, iamErr)
+
+	// Verify response type
+	createResp, ok := resp.(iamCreateUserResponse)
+	assert.True(t, ok)
+	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
+
+	// Verify persistence
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "ExecuteActionUser", api.mockConfig.Identities[0].Name)
+}
+
+// TestEmbeddedIamReadOnly tests that write operations are blocked when readOnly is true
+func TestEmbeddedIamReadOnly(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.readOnly = true
+
+	// Try CreateUser (Write)
+	userName := aws.String("ReadOnlyUser")
+	params := &iam.CreateUserInput{UserName: userName}
+	req, _ := iam.New(session.New()).CreateUserRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+
+	code, msg := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, "AccessDenied", code)
+	assert.Contains(t, msg, "IAM write operations are disabled")
+
+	// Try ListUsers (Read) - Should succeed
+	paramsList := &iam.ListUsersInput{}
+	reqList, _ := iam.New(session.New()).ListUsersRequest(paramsList)
+	_ = reqList.Build()
+
+	outList := iamListUsersResponse{}
+	responseList, err := executeEmbeddedIamRequest(api, reqList.HTTPRequest, &outList)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, responseList.Code)
 }

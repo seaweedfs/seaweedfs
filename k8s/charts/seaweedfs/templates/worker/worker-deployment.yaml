@@ -5,7 +5,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-worker
+  name: {{ include "seaweedfs.fullname" . }}-worker
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -92,12 +92,12 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
+              value: "{{ include "seaweedfs.fullname" . }}"
             {{- if .Values.worker.extraEnvironmentVars }}
             {{- range $key, $value := .Values.worker.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
@@ -108,7 +108,7 @@ spec:
             {{- range $key, $value := .Values.global.extraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
@@ -260,25 +260,25 @@ spec:
         {{- if .Values.global.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         - name: worker-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-worker-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-worker-cert
         {{- end }}
         {{ tpl .Values.worker.extraVolumes . | indent 8 | trim }}
       {{- if .Values.worker.nodeSelector }}

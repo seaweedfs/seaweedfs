@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -163,6 +163,8 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	if code != fuse.OK {
 		return code
 	}
+	wfs.inodeToPath.TouchDirectory(dirPath)
+	wfs.maybeRefreshDirectory(dirPath)
 
 	var dirEntry fuse.DirEntry
 

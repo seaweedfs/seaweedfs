@@ -19,6 +19,7 @@ type TaskLogger interface {
 	Error(message string, args ...interface{})
 	Debug(message string, args ...interface{})
 	LogWithFields(level string, message string, fields map[string]interface{})
+	Sync() error
 	Close() error
 }
 

@@ -8,6 +8,7 @@ A modern web-based administration interface for SeaweedFS clusters built with Go
 - **Master Management**: Monitor master nodes and leadership status
 - **Volume Server Management**: View volume servers, capacity, and health
 - **Object Store Bucket Management**: Create, delete, and manage Object Store buckets with web interface
+- **S3 Tables Management**: Manage table buckets, namespaces, tables, tags, and policies via the admin UI
 - **System Health**: Overall cluster health monitoring
 - **Responsive Design**: Bootstrap-based UI that works on all devices
 - **Authentication**: Optional user authentication with sessions
@@ -96,7 +97,6 @@ make fmt
 weed/admin/
 ├── Makefile              # Admin-specific build tasks
 ├── README.md             # This file
-├── S3_BUCKETS.md         # Object Store bucket management documentation
 ├── admin.go              # Main application entry point
 ├── dash/                 # Server and handler logic
 │   ├── admin_server.go   # HTTP server setup
@@ -110,20 +110,20 @@ weed/admin/
     ├── app/              # Application templates
     │   ├── admin.templ   # Main dashboard template
     │   ├── s3_buckets.templ # Object Store bucket management template
+    │   ├── s3tables_*.templ # S3 Tables management templates
     │   └── *_templ.go    # Generated Go code
     └── layout/           # Layout templates
         ├── layout.templ  # Base layout template
         └── layout_templ.go # Generated Go code
 ```
 
-### S3 Bucket Management
+### Object Store Management
 
-The admin interface includes comprehensive Object Store bucket management capabilities. See [S3_BUCKETS.md](S3_BUCKETS.md) for detailed documentation on:
+The admin interface includes Object Store and S3 Tables management capabilities:
 
-- Creating and deleting Object Store buckets
-- Viewing bucket contents and metadata
-- Managing bucket permissions and settings
-- API endpoints for programmatic access
+- Create/delete Object Store buckets and adjust quotas or ownership.
+- Manage S3 Tables buckets, namespaces, and tables.
+- Update S3 Tables policies and tags via the UI and API endpoints.
 
 ## Usage
 

@@ -1,7 +1,7 @@
 package placement
 
 import (
-"testing"
+	"testing"
 )
 
 // Helper function to create disk candidates for testing
@@ -402,19 +402,19 @@ func TestCalculateIdealDistribution(t *testing.T) {
 		expectedMin int
 		expectedMax int
 	}{
-		{14, 7, 2, 2},    // Even distribution
-		{14, 4, 3, 4},    // Uneven: 14/4 = 3 remainder 2
-		{6, 3, 2, 2},     // Even distribution
-		{7, 3, 2, 3},     // Uneven: 7/3 = 2 remainder 1
-		{10, 0, 0, 10},   // Edge case: no servers
-		{0, 5, 0, 0},     // Edge case: no shards
+		{14, 7, 2, 2},  // Even distribution
+		{14, 4, 3, 4},  // Uneven: 14/4 = 3 remainder 2
+		{6, 3, 2, 2},   // Even distribution
+		{7, 3, 2, 3},   // Uneven: 7/3 = 2 remainder 1
+		{10, 0, 0, 10}, // Edge case: no servers
+		{0, 5, 0, 0},   // Edge case: no shards
 	}
 
 	for _, tt := range tests {
 		min, max := CalculateIdealDistribution(tt.totalShards, tt.numServers)
 		if min != tt.expectedMin || max != tt.expectedMax {
 			t.Errorf("CalculateIdealDistribution(%d, %d) = (%d, %d), want (%d, %d)",
-tt.totalShards, tt.numServers, min, max, tt.expectedMin, tt.expectedMax)
+				tt.totalShards, tt.numServers, min, max, tt.expectedMin, tt.expectedMax)
 		}
 	}
 }

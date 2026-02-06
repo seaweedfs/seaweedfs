@@ -47,6 +47,14 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				ScheduleAt: time.Now(),
 			}
 
+			// Check if ANY task already exists in ActiveTopology for this volume
+			if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+				if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
+					glog.V(2).Infof("VACUUM: Skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
+					continue
+				}
+			}
+
 			// Create typed parameters for vacuum task
 			result.TypedParams = createVacuumTaskParams(result, metric, vacuumConfig, clusterInfo)
 			if result.TypedParams != nil {
