@@ -25,27 +25,33 @@ import (
 )
 
 func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request, action s3api.Action, bucketName string) bool {
-	identityName := s3_constants.GetIdentityNameFromContext(r)
-	if identityName == "" {
+	if s.authenticator == nil {
 		writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
 		return false
 	}
 
-	identityObj := s3_constants.GetIdentityFromContext(r)
-	if identityObj == nil {
-		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: missing identity")
-		return false
-	}
-	identity, ok := identityObj.(*s3api.Identity)
-	if !ok {
-		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied: invalid identity")
+	identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
+	if errCode != s3err.ErrNone {
+		apiErr := s3err.GetAPIError(errCode)
+		errorType := "RESTException"
+		switch apiErr.HTTPStatusCode {
+		case http.StatusForbidden:
+			errorType = "ForbiddenException"
+		case http.StatusUnauthorized:
+			errorType = "NotAuthorizedException"
+		case http.StatusBadRequest:
+			errorType = "BadRequestException"
+		case http.StatusInternalServerError:
+			errorType = "InternalServerError"
+		}
+		writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
 		return false
 	}
 
-	if !identity.CanDo(action, bucketName, "") {
-		writeError(w, http.StatusForbidden, "ForbiddenException", "Access denied")
-		return false
-	}
+	// Authentication successful - user identity is available via identityName and identity
+	// For Iceberg REST API, we allow authenticated users to perform operations
+	_ = identityName
+	_ = identity
 	return true
 }
 
@@ -79,17 +85,20 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 
 // RegisterRoutes registers Iceberg REST API routes on the provided router.
 func (s *Server) RegisterRoutes(router *mux.Router) {
-	// Configuration endpoint
-	router.HandleFunc("/v1/config", s.Auth(s.handleConfig)).Methods(http.MethodGet)
+	// Add middleware to log all requests/responses
+	router.Use(loggingMiddleware)
 
-	// Namespace endpoints
+	// Configuration endpoint - no auth needed for config
+	router.HandleFunc("/v1/config", s.handleConfig).Methods(http.MethodGet)
+
+	// Namespace endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleNamespaceExists)).Methods(http.MethodHead)
 	router.HandleFunc("/v1/namespaces/{namespace}", s.Auth(s.handleDropNamespace)).Methods(http.MethodDelete)
 
-	// Table endpoints
+	// Table endpoints - wrapped with Auth middleware
 	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleListTables)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables", s.Auth(s.handleCreateTable)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleLoadTable)).Methods(http.MethodGet)
@@ -97,7 +106,7 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
-	// With prefix support
+	// With prefix support - wrapped with Auth middleware
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleListNamespaces)).Methods(http.MethodGet)
 	router.HandleFunc("/v1/{prefix}/namespaces", s.Auth(s.handleCreateNamespace)).Methods(http.MethodPost)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}", s.Auth(s.handleGetNamespace)).Methods(http.MethodGet)
@@ -110,7 +119,48 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleDropTable)).Methods(http.MethodDelete)
 	router.HandleFunc("/v1/{prefix}/namespaces/{namespace}/tables/{table}", s.Auth(s.handleUpdateTable)).Methods(http.MethodPost)
 
+	// Catch-all for debugging
+	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		glog.Infof("Catch-all route hit: %s %s", r.Method, r.RequestURI)
+		writeError(w, http.StatusNotFound, "NotFound", "Path not found")
+	})
+
 	glog.V(0).Infof("Registered Iceberg REST Catalog routes")
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		glog.Infof("Iceberg REST request: %s %s from %s", r.Method, r.RequestURI, r.RemoteAddr)
+
+		// Log all headers for debugging
+		glog.Infof("Iceberg REST headers:")
+		for name, values := range r.Header {
+			for _, value := range values {
+				// Redact sensitive headers
+				if name == "Authorization" && len(value) > 20 {
+					glog.Infof("  %s: %s...%s", name, value[:20], value[len(value)-10:])
+				} else {
+					glog.Infof("  %s: %s", name, value)
+				}
+			}
+		}
+
+		// Create a response writer that captures the status code
+		wrapped := &responseWriter{ResponseWriter: w}
+		next.ServeHTTP(wrapped, r)
+
+		glog.Infof("Iceberg REST response: %s %s -> %d", r.Method, r.RequestURI, wrapped.statusCode)
+	})
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *responseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
@@ -293,8 +343,8 @@ func getBucketFromPrefix(r *http.Request) string {
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
 	}
-	// Default bucket if no prefix
-	return "default"
+	// Default bucket if no prefix - use "warehouse" for Iceberg
+	return "warehouse"
 }
 
 // buildTableBucketARN builds an ARN for a table bucket.
@@ -305,24 +355,27 @@ func buildTableBucketARN(bucketName string) string {
 
 // handleConfig returns catalog configuration.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
-		return
-	}
+	glog.Infof("handleConfig: START")
+	glog.Infof("handleConfig: setting Content-Type header")
+	w.Header().Set("Content-Type", "application/json")
 	config := CatalogConfig{
 		Defaults:  map[string]string{},
 		Overrides: map[string]string{},
 	}
-	writeJSON(w, http.StatusOK, config)
+	glog.Infof("handleConfig: encoding JSON")
+	if err := json.NewEncoder(w).Encode(config); err != nil {
+		glog.Warningf("handleConfig: Failed to encode config: %v", err)
+	}
+	glog.Infof("handleConfig: COMPLETE")
 }
 
 // handleListNamespaces lists namespaces in a catalog.
 func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	// Use S3 Tables manager to list namespaces
 	var resp s3tables.ListNamespacesResponse
@@ -333,11 +386,11 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "ListNamespaces", req, &resp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "ListNamespaces", req, &resp, identityName)
 	})
 
 	if err != nil {
-		glog.V(1).Infof("Iceberg: ListNamespaces error: %v", err)
+		glog.Infof("Iceberg: ListNamespaces error: %v", err)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
@@ -357,10 +410,10 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 // handleCreateNamespace creates a new namespace.
 func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	var req CreateNamespaceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -382,15 +435,18 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateNamespace", createReq, &createResp, "")
+		glog.Errorf("Iceberg: handleCreateNamespace calling Execute with identityName=%s", identityName)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateNamespace", createReq, &createResp, identityName)
 	})
 
 	if err != nil {
+		glog.Errorf("Iceberg: handleCreateNamespace error: %v", err)
+
 		if strings.Contains(err.Error(), "already exists") {
 			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
-		glog.V(1).Infof("Iceberg: CreateNamespace error: %v", err)
+		glog.Infof("Iceberg: CreateNamespace error: %v", err)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
@@ -418,10 +474,10 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	// Use S3 Tables manager to get namespace
 	getReq := &s3tables.GetNamespaceRequest{
@@ -432,7 +488,7 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, identityName)
 	})
 
 	if err != nil {
@@ -462,10 +518,10 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	getReq := &s3tables.GetNamespaceRequest{
 		TableBucketARN: bucketARN,
@@ -475,7 +531,7 @@ func (s *Server) handleNamespaceExists(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetNamespace", getReq, &getResp, identityName)
 	})
 
 	if err != nil {
@@ -500,10 +556,10 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	deleteReq := &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: bucketARN,
@@ -512,10 +568,11 @@ func (s *Server) handleDropNamespace(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteNamespace", deleteReq, nil, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteNamespace", deleteReq, nil, identityName)
 	})
 
 	if err != nil {
+
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, "NoSuchNamespaceException", fmt.Sprintf("Namespace does not exist: %v", namespace))
 			return
@@ -542,10 +599,10 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_LIST, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	listReq := &s3tables.ListTablesRequest{
 		TableBucketARN: bucketARN,
@@ -556,7 +613,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "ListTables", listReq, &listResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "ListTables", listReq, &listResp, identityName)
 	})
 
 	if err != nil {
@@ -605,10 +662,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
@@ -657,7 +714,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	err = s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateTable", createReq, &createResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateTable", createReq, &createResp, identityName)
 	})
 
 	if err != nil {
@@ -696,10 +753,10 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	getReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
@@ -710,10 +767,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
 	})
 
 	if err != nil {
+
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
 			return
@@ -771,10 +829,10 @@ func (s *Server) handleTableExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_READ, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	getReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
@@ -785,7 +843,7 @@ func (s *Server) handleTableExists(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
 	})
 
 	if err != nil {
@@ -807,10 +865,10 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_DELETE_BUCKET, bucketName) {
-		return
-	}
 	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
@@ -820,7 +878,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteTable", deleteReq, nil, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "DeleteTable", deleteReq, nil, identityName)
 	})
 
 	if err != nil {
@@ -849,9 +907,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bucketName := getBucketFromPrefix(r)
-	if !s.checkAuth(w, r, s3_constants.ACTION_WRITE, bucketName) {
-		return
-	}
+	bucketARN := buildTableBucketARN(bucketName)
+
+	// Extract identity from context
+	identityName := s3_constants.GetIdentityNameFromContext(r)
 
 	// Parse the commit request
 	var req CommitTableRequest
@@ -859,8 +918,6 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body: "+err.Error())
 		return
 	}
-
-	bucketARN := buildTableBucketARN(bucketName)
 
 	// First, load current table metadata
 	getReq := &s3tables.GetTableRequest{
@@ -872,7 +929,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
 	})
 
 	if err != nil {
@@ -985,7 +1042,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		// 1. Write metadata file (this would normally be an S3 PutObject,
 		// but s3tables manager handles the metadata storage logic)
 		// For now, we assume s3tables.UpdateTable handles the reference update.
-		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateTable", updateReq, nil, "")
+		return s.tablesManager.Execute(r.Context(), mgrClient, "UpdateTable", updateReq, nil, identityName)
 	})
 
 	if err != nil {

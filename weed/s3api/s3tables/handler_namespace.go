@@ -9,13 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // handleCreateNamespace creates a new namespace in a table bucket
 func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	glog.Errorf("S3Tables: handleCreateNamespace called")
 	var req CreateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
+		glog.Errorf("S3Tables: handleCreateNamespace failed to read request body: %v", err)
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
 	}
@@ -83,12 +86,14 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
+	glog.Infof("S3Tables: CreateNamespace permission check - principal=%s, owner=%s, actions=%v", principal, bucketMetadata.OwnerAccountID, identityActions)
 	if !CheckPermissionWithContext("CreateNamespace", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
 	}) {
+		glog.Infof("S3Tables: Permission denied for CreateNamespace - principal=%s, owner=%s", principal, bucketMetadata.OwnerAccountID)
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
 		return ErrAccessDenied
 	}

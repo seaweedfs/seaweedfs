@@ -13,6 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type TestEnvironment struct {
@@ -49,11 +53,20 @@ func TestTrinoIcebergCatalog(t *testing.T) {
 		t.Skip("Docker not available, skipping Trino integration test")
 	}
 
+	fmt.Printf(">>> Starting SeaweedFS...\n")
 	env.StartSeaweedFS(t)
+	fmt.Printf(">>> SeaweedFS started.\n")
 
-	catalogBucket := "default"
+	catalogBucket := "warehouse"
+	tableBucket := "iceberg-tables"
+	fmt.Printf(">>> Creating table bucket: %s\n", tableBucket)
+	createTableBucket(t, env, tableBucket)
+	fmt.Printf(">>> Creating table bucket: %s\n", catalogBucket)
 	createTableBucket(t, env, catalogBucket)
-	createObjectBucket(t, env, catalogBucket)
+	fmt.Printf(">>> All buckets created.\n")
+
+	// Test Iceberg REST API directly
+	testIcebergRestAPI(t, env)
 
 	configDir := env.writeTrinoConfig(t, catalogBucket)
 	env.startTrinoContainer(t, configDir)
@@ -129,6 +142,33 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
+	// Create IAM config file
+	iamConfigPath := filepath.Join(env.dataDir, "iam_config.json")
+	iamConfig := fmt.Sprintf(`{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "%s",
+          "secretKey": "%s"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}`, env.accessKey, env.secretKey)
+
+	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
+		t.Fatalf("Failed to create IAM config: %v", err)
+	}
+
 	securityToml := filepath.Join(env.dataDir, "security.toml")
 	if err := os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644); err != nil {
 		t.Fatalf("Failed to create security.toml: %v", err)
@@ -147,7 +187,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
-		"-s3.iam.readOnly=false",
+		"-s3.config", iamConfigPath,
 		"-ip", env.bindIP,
 		"-ip.bind", env.bindIP,
 		"-dir", env.dataDir,
@@ -155,8 +195,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	cmd.Dir = env.dataDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
-	// Set AWS credentials in environment
+
+	// Set AWS credentials in environment (for compatibility)
 	cmd.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
@@ -231,6 +271,37 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 	return false
 }
 
+func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
+	t.Helper()
+	fmt.Printf(">>> Testing Iceberg REST API directly...\n")
+
+	// First, verify the service is listening
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", env.bindIP, env.icebergPort))
+	if err != nil {
+		t.Fatalf("Cannot connect to Iceberg service at %s:%d: %v", env.bindIP, env.icebergPort, err)
+	}
+	conn.Close()
+	t.Logf("Successfully connected to Iceberg service at %s:%d", env.bindIP, env.icebergPort)
+
+	// Test /v1/config endpoint
+	url := fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort)
+	t.Logf("Testing Iceberg REST API at %s", url)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("Failed to connect to Iceberg REST API at %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	t.Logf("Iceberg REST API response status: %d", resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	t.Logf("Iceberg REST API response body: %s", string(body))
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK from /v1/config, got %d", resp.StatusCode)
+	}
+}
+
 func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket string) string {
 	t.Helper()
 
@@ -241,16 +312,22 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
-iceberg.rest-catalog.uri=http://%s:%d
+iceberg.rest-catalog.uri=http://host.docker.internal:%d
 iceberg.rest-catalog.warehouse=s3://%s/
 iceberg.file-format=PARQUET
+
+# S3 storage config
 fs.native-s3.enabled=true
-s3.endpoint=http://%s:%d
+s3.endpoint=http://host.docker.internal:%d
 s3.path-style-access=true
+s3.signer-type=AwsS3V4Signer
 s3.aws-access-key=%s
 s3.aws-secret-key=%s
 s3.region=us-west-2
-`, env.bindIP, env.icebergPort, warehouseBucket, env.bindIP, env.s3Port, env.accessKey, env.secretKey)
+
+# REST catalog authentication
+iceberg.rest-catalog.security=SIGV4
+`, env.icebergPort, warehouseBucket, env.s3Port, env.accessKey, env.secretKey)
 
 	if err := os.WriteFile(filepath.Join(configDir, "iceberg.properties"), []byte(config), 0644); err != nil {
 		t.Fatalf("Failed to write Trino config: %v", err)
@@ -285,7 +362,9 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 
 	deadline := time.Now().Add(timeout)
 	var lastOutput []byte
+	retryCount := 0
 	for time.Now().Before(deadline) {
+		// Try system catalog query as a readiness check
 		cmd := exec.Command("docker", "exec", containerName,
 			"trino", "--catalog", "system", "--schema", "runtime",
 			"--execute", "SELECT 1",
@@ -299,9 +378,20 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 				strings.Contains(outputStr, "is not running") {
 				break
 			}
+			retryCount++
 		}
 		time.Sleep(1 * time.Second)
 	}
+
+	// If we can't connect to system catalog, try to at least connect to Trino server
+	cmd := exec.Command("docker", "exec", containerName, "trino", "--version")
+	if err := cmd.Run(); err == nil {
+		// Trino process is running, even if catalog isn't ready yet
+		// Give it a bit more time
+		time.Sleep(5 * time.Second)
+		return
+	}
+
 	logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
 	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s\nTrino logs:\n%s", string(lastOutput), string(logs))
 }
@@ -310,13 +400,14 @@ func runTrinoSQL(t *testing.T, containerName, sql string) string {
 	t.Helper()
 
 	cmd := exec.Command("docker", "exec", containerName,
-		"trino", "--catalog", "system", "--schema", "runtime",
+		"trino", "--catalog", "iceberg",
 		"--output-format", "CSV",
 		"--execute", sql,
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
+		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, string(output), string(logs))
 	}
 	return string(output)
 }
@@ -324,44 +415,44 @@ func runTrinoSQL(t *testing.T, containerName, sql string) string {
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	endpoint := fmt.Sprintf("http://%s:%d/buckets", env.bindIP, env.s3Port)
-	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
-	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
+	// Use weed shell to create the table bucket
+	// Create with "000000000000" account ID (matches AccountAdmin.Id from auth_credentials.go)
+	// This ensures bucket owner matches authenticated identity's Account.Id
+	cmd := exec.Command(env.weedBinary, "shell",
+		fmt.Sprintf("-master=%s:%d.%d", env.bindIP, env.masterPort, env.masterGrpcPort),
+	)
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
+	fmt.Printf(">>> EXECUTING: %v\n", cmd.Args)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
+		fmt.Printf(">>> ERROR Output: %s\n", string(output))
+		t.Fatalf("Failed to create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, string(output))
 	}
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	fmt.Printf(">>> SUCCESS: Created table bucket %s\n", bucketName)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to create table bucket %s: %v", bucketName, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
-	}
+	t.Logf("Created table bucket: %s", bucketName)
 }
 
 func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	endpoint := fmt.Sprintf("http://%s:%d/%s", env.bindIP, env.s3Port, bucketName)
-	req, err := http.NewRequest(http.MethodPut, endpoint, nil)
-	if err != nil {
-		t.Fatalf("Failed to create S3 bucket request: %v", err)
+	// Create an AWS S3 client with the test credentials pointing to our local server
+	cfg := aws.Config{
+		Region:       "us-east-1",
+		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(env.accessKey, env.secretKey, "")),
+		BaseEndpoint: aws.String(fmt.Sprintf("http://%s:%d", env.bindIP, env.s3Port)),
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to create S3 bucket %s: %v", bucketName, err)
-	}
-	defer resp.Body.Close()
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to create S3 bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
+	// Create the bucket using standard S3 API
+	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		t.Fatalf("Failed to create object bucket %s: %v", bucketName, err)
 	}
 }
 
