@@ -164,9 +164,32 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 // This is also used as the principal for permission checks, ensuring alignment between
 // the caller identity and ownership verification when IAM is enabled.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw != nil {
+		// Use reflection to access the Account.Id field to avoid import cycle
+		val := reflect.ValueOf(identityRaw)
+		if val.Kind() == reflect.Ptr {
+			val = val.Elem()
+		}
+		if val.Kind() == reflect.Struct {
+			accountField := val.FieldByName("Account")
+			if accountField.IsValid() && !accountField.IsNil() {
+				accountVal := accountField.Elem()
+				if accountVal.Kind() == reflect.Struct {
+					idField := accountVal.FieldByName("Id")
+					if idField.IsValid() && idField.Kind() == reflect.String {
+						id := idField.String()
+						return id
+					}
+				}
+			}
+		}
+	}
+
 	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
 		return identityName
 	}
+
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		return accountID
 	}
