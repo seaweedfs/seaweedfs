@@ -167,7 +167,19 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 	env.weedProcess = cmd
 
-	if !env.waitForService(fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort), 30*time.Second) {
+	// Try to check if Iceberg API is ready
+	// First try checking the /v1/config endpoint (requires auth, so will return 401 if server is up)
+	icebergURL := fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort)
+	if !env.waitForService(icebergURL, 30*time.Second) {
+		// Try to get more info about why it failed
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get(icebergURL)
+		if err != nil {
+			t.Logf("WARNING: Could not connect to Iceberg service at %s: %v", icebergURL, err)
+		} else {
+			t.Logf("WARNING: Iceberg service returned status %d at %s", resp.StatusCode, icebergURL)
+			resp.Body.Close()
+		}
 		t.Fatalf("Iceberg REST API did not become ready")
 	}
 }
@@ -198,12 +210,22 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return true
-			}
+		if err != nil {
+			// Service not responding yet
+			time.Sleep(500 * time.Millisecond)
+			continue
 		}
+		statusCode := resp.StatusCode
+		resp.Body.Close()
+		// Accept 2xx status codes (successful responses)
+		if statusCode >= 200 && statusCode < 300 {
+			return true
+		}
+		// Also accept 401/403 (auth errors mean service is up, just needs credentials)
+		if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+			return true
+		}
+		// For other status codes, keep trying
 		time.Sleep(500 * time.Millisecond)
 	}
 	return false
