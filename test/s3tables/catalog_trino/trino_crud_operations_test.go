@@ -1,6 +1,7 @@
 package catalog_trino
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +71,6 @@ func TestNamespaceCRUD(t *testing.T) {
 	// Iceberg REST API supports namespace properties, but Trino SQL doesn't expose them directly
 	// This test verifies the namespace still exists and is accessible
 	output = runTrinoSQL(t, env.trinoContainer, "SHOW TABLES FROM iceberg."+namespace1)
-	t.Logf(">>> Namespace %s is accessible (empty table list expected):\n%s", namespace1, output)
 
 	// DELETE: Drop namespaces
 	t.Logf(">>> DELETE: Dropping namespace %s", namespace1)
@@ -109,7 +109,7 @@ func TestNamespaceListingPagination(t *testing.T) {
 	namespaces := make([]string, numNamespaces)
 	t.Logf(">>> Creating %d namespaces for listing test", numNamespaces)
 	for i := 0; i < numNamespaces; i++ {
-		namespaces[i] = "list_test_ns_" + string(rune(i+1)) + "_" + randomString(4)
+		namespaces[i] = "list_test_ns" + fmt.Sprintf("%d", i+1) + "_" + randomString(4)
 		runTrinoSQL(t, env.trinoContainer, "CREATE SCHEMA IF NOT EXISTS iceberg."+namespaces[i])
 		t.Logf(">>> Created namespace %d: %s", i+1, namespaces[i])
 	}
@@ -117,7 +117,6 @@ func TestNamespaceListingPagination(t *testing.T) {
 	// List all namespaces
 	t.Logf(">>> Listing all namespaces")
 	output := runTrinoSQL(t, env.trinoContainer, "SHOW SCHEMAS FROM iceberg")
-	t.Logf(">>> Namespaces listed: %s", output)
 
 	// Verify all namespaces are in the listing
 	t.Logf(">>> Verifying all namespaces are in listing")
@@ -201,7 +200,6 @@ func TestSchemaIntegrationWithCatalog(t *testing.T) {
 	// Verify empty schema
 	t.Logf(">>> Verifying schema is empty (no tables)")
 	output = runTrinoSQL(t, env.trinoContainer, "SHOW TABLES FROM iceberg."+schemaName)
-	t.Logf(">>> Empty schema output: %s", output)
 
 	// Clean up
 	t.Logf(">>> Cleaning up schema")
