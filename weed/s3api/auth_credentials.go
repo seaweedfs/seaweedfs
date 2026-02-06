@@ -538,17 +538,44 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	}
 
 	iam.m.Lock()
+	// Save existing environment-based identities before replacement
+	// This ensures AWS_ACCESS_KEY_ID credentials are preserved
+	envIdentities := make([]*Identity, 0)
+	for _, ident := range iam.identities {
+		if ident.IsStatic && strings.HasPrefix(ident.Name, "admin-") {
+			// This is an environment-based admin identity, preserve it
+			envIdentities = append(envIdentities, ident)
+		}
+	}
+	
 	// atomically switch
 	iam.identities = identities
+	
+	// Re-add environment-based identities that were preserved
+	for _, envIdent := range envIdentities {
+		// Check if this identity already exists in the new config
+		exists := false
+		for _, ident := range iam.identities {
+			if ident.Name == envIdent.Name {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			iam.identities = append(iam.identities, envIdent)
+			iam.accessKeyIdent[envIdent.Credentials[0].AccessKey] = envIdent
+			iam.nameToIdentity[envIdent.Name] = envIdent
+		}
+	}
+	
 	iam.identityAnonymous = identityAnonymous
 	iam.accounts = accounts
 	iam.emailAccount = emailAccount
-	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
 	iam.policies = policies
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
-	authJustEnabled := iam.updateAuthenticationState(len(identities))
+	authJustEnabled := iam.updateAuthenticationState(len(iam.identities))
 	iam.m.Unlock()
 
 	if authJustEnabled {
