@@ -547,10 +547,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			envIdentities = append(envIdentities, ident)
 		}
 	}
-	
+
 	// atomically switch
 	iam.identities = identities
-	
+	iam.identityAnonymous = identityAnonymous
+	iam.accounts = accounts
+	iam.emailAccount = emailAccount
+	iam.nameToIdentity = nameToIdentity
+	iam.accessKeyIdent = accessKeyIdent
+	iam.policies = policies
+
 	// Re-add environment-based identities that were preserved
 	for _, envIdent := range envIdentities {
 		// Check if this identity already exists in the new config
@@ -567,12 +573,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			iam.nameToIdentity[envIdent.Name] = envIdent
 		}
 	}
-	
-	iam.identityAnonymous = identityAnonymous
-	iam.accounts = accounts
-	iam.emailAccount = emailAccount
-	iam.nameToIdentity = nameToIdentity
-	iam.policies = policies
+
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(iam.identities))
@@ -805,9 +806,10 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.identityAnonymous = identityAnonymous
 	iam.accounts = accounts
 	iam.emailAccount = emailAccount
-	iam.accessKeyIdent = accessKeyIdent
 	iam.nameToIdentity = nameToIdentity
+	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.accessKeyIdent = accessKeyIdent
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))

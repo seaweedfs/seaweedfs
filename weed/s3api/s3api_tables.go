@@ -632,7 +632,7 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 // which performs granular permission checks based on the specific operation.
 func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		glog.Errorf("S3Tables: authenticateS3Tables called, iam.isEnabled()=%t", s3a.iam.isEnabled())
+		glog.V(2).Infof("S3Tables: authenticateS3Tables called, iam.isEnabled()=%t", s3a.iam.isEnabled())
 		if !s3a.iam.isEnabled() {
 			f(w, r)
 			return
@@ -648,12 +648,12 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 
 		// Store the authenticated identity in request context
 		if identity != nil && identity.Name != "" {
-			glog.Errorf("S3Tables: authenticated identity Name=%s Account.Id=%s", identity.Name, identity.Account.Id)
+			glog.V(2).Infof("S3Tables: authenticated identity Name=%s Account.Id=%s", identity.Name, identity.Account.Id)
 			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 			ctx = s3_constants.SetIdentityInContext(ctx, identity)
 			r = r.WithContext(ctx)
 		} else {
-			glog.Errorf("S3Tables: authenticated identity is nil or empty name")
+			glog.V(2).Infof("S3Tables: authenticated identity is nil or empty name")
 		}
 
 		f(w, r)
