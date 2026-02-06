@@ -963,8 +963,8 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
 
-	// Prepare master address
-	masterAddr := fmt.Sprintf("%s:%d", *miniIp, *miniMasterOptions.port)
+	// Prepare master address with gRPC port
+	masterAddr := string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr

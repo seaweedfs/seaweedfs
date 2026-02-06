@@ -275,7 +275,7 @@ func TestIcebergNamespaces(t *testing.T) {
 	env.StartSeaweedFS(t)
 
 	// Create the default table bucket first via S3
-	createTableBucket(t, env, "default")
+	createTableBucket(t, env, "warehouse")
 
 	// Test GET /v1/namespaces (should return empty list initially)
 	resp, err := http.Get(env.IcebergURL() + "/v1/namespaces")

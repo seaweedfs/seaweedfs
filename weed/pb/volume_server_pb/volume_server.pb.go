@@ -28,6 +28,7 @@ const (
 	VolumeScrubMode_UNKNOWN VolumeScrubMode = 0
 	VolumeScrubMode_INDEX   VolumeScrubMode = 1
 	VolumeScrubMode_FULL    VolumeScrubMode = 2
+	VolumeScrubMode_LOCAL   VolumeScrubMode = 3
 )
 
 // Enum value maps for VolumeScrubMode.
@@ -36,11 +37,13 @@ var (
 		0: "UNKNOWN",
 		1: "INDEX",
 		2: "FULL",
+		3: "LOCAL",
 	}
 	VolumeScrubMode_value = map[string]int32{
 		"UNKNOWN": 0,
 		"INDEX":   1,
 		"FULL":    2,
+		"LOCAL":   3,
 	}
 )
 
@@ -74,8 +77,10 @@ func (VolumeScrubMode) EnumDescriptor() ([]byte, []int) {
 // Persistent state for volume servers.
 type VolumeServerState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Whether the server is in maintenance (i.e. read-only) mode.
-	Maintenance   bool `protobuf:"varint,1,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	// whether the server is in maintenance (i.e. read-only) mode.
+	Maintenance bool `protobuf:"varint,1,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	// incremental version counter
+	Version       uint32 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -115,6 +120,13 @@ func (x *VolumeServerState) GetMaintenance() bool {
 		return x.Maintenance
 	}
 	return false
+}
+
+func (x *VolumeServerState) GetVersion() uint32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
 }
 
 type BatchDeleteRequest struct {
@@ -1855,7 +1867,7 @@ func (x *GetStateResponse) GetState() *VolumeServerState {
 
 type SetStateRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// SetState updates *all* volume server flags at once. Retrieve state with GetState(),
+	// SetState updates *all* volume server flags at once. Retrieve state/version with GetState(),
 	// modify individual flags as required, then call this RPC to update.
 	State         *VolumeServerState `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -6687,9 +6699,10 @@ var File_volume_server_proto protoreflect.FileDescriptor
 
 const file_volume_server_proto_rawDesc = "" +
 	"\n" +
-	"\x13volume_server.proto\x12\x10volume_server_pb\x1a\fremote.proto\"5\n" +
+	"\x13volume_server.proto\x12\x10volume_server_pb\x1a\fremote.proto\"O\n" +
 	"\x11VolumeServerState\x12 \n" +
-	"\vmaintenance\x18\x01 \x01(\bR\vmaintenance\"[\n" +
+	"\vmaintenance\x18\x01 \x01(\bR\vmaintenance\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\rR\aversion\"[\n" +
 	"\x12BatchDeleteRequest\x12\x19\n" +
 	"\bfile_ids\x18\x01 \x03(\tR\afileIds\x12*\n" +
 	"\x11skip_cookie_check\x18\x02 \x01(\bR\x0fskipCookieCheck\"O\n" +
@@ -7180,11 +7193,12 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rstart_time_ns\x18\x01 \x01(\x03R\vstartTimeNs\x12$\n" +
 	"\x0eremote_time_ns\x18\x02 \x01(\x03R\fremoteTimeNs\x12 \n" +
 	"\fstop_time_ns\x18\x03 \x01(\x03R\n" +
-	"stopTimeNs*3\n" +
+	"stopTimeNs*>\n" +
 	"\x0fVolumeScrubMode\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\t\n" +
 	"\x05INDEX\x10\x01\x12\b\n" +
-	"\x04FULL\x10\x022\xfb(\n" +
+	"\x04FULL\x10\x02\x12\t\n" +
+	"\x05LOCAL\x10\x032\xfb(\n" +
 	"\fVolumeServer\x12\\\n" +
 	"\vBatchDelete\x12$.volume_server_pb.BatchDeleteRequest\x1a%.volume_server_pb.BatchDeleteResponse\"\x00\x12n\n" +
 	"\x11VacuumVolumeCheck\x12*.volume_server_pb.VacuumVolumeCheckRequest\x1a+.volume_server_pb.VacuumVolumeCheckResponse\"\x00\x12v\n" +

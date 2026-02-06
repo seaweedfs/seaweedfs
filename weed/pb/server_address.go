@@ -15,7 +15,7 @@ type ServerAddresses string
 type ServerSrvAddress string
 
 func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
-	if grpcPort == 0 || grpcPort == port+10000 {
+	if grpcPort == 0 {
 		return ServerAddress(util.JoinHostPort(host, port))
 	}
 	return ServerAddress(util.JoinHostPort(host, port) + "." + strconv.Itoa(grpcPort))
@@ -23,10 +23,6 @@ func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
 
 func NewServerAddressWithGrpcPort(address string, grpcPort int) ServerAddress {
 	if grpcPort == 0 {
-		return ServerAddress(address)
-	}
-	_, port, _ := hostAndPort(address)
-	if uint64(grpcPort) == port+10000 {
 		return ServerAddress(address)
 	}
 	return ServerAddress(address + "." + strconv.Itoa(grpcPort))

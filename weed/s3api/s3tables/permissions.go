@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -109,6 +110,8 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 	if principal == s3_constants.AccountAdminId {
 		return true
 	}
+
+	glog.V(2).Infof("S3Tables: CheckPermission operation=%s principal=%s owner=%s", operation, principal, owner)
 
 	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
 }
