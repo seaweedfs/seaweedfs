@@ -191,7 +191,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// encode all requested volumes...
-	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization); err != nil {
+	if err = doEcEncode(commandEnv, writer, volumeIdToCollection, volumeIds, *maxParallelization, topologyInfo); err != nil {
 		return fmt.Errorf("ec encode for volumes %v: %w", volumeIds, err)
 	}
 	// ...re-balance ec shards...
@@ -221,7 +221,7 @@ func volumeLocations(commandEnv *CommandEnv, volumeIds []needle.VolumeId) (map[n
 	return res, nil
 }
 
-func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int) error {
+func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection map[needle.VolumeId]string, volumeIds []needle.VolumeId, maxParallelization int, topologyInfo *master_pb.TopologyInfo) error {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
@@ -229,6 +229,17 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	if err != nil {
 		return fmt.Errorf("failed to get volume locations for EC encoding: %w", err)
 	}
+
+	// build a map of (volumeId, serverAddress) -> freeVolumeCount
+	freeVolumeCountMap := make(map[string]int) // key: volumeId-serverAddress
+	eachDataNode(topologyInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		for _, diskInfo := range dn.DiskInfos {
+			for _, v := range diskInfo.VolumeInfos {
+				key := fmt.Sprintf("%d-%s", v.Id, dn.Id)
+				freeVolumeCountMap[key] = int(diskInfo.FreeVolumeCount)
+			}
+		}
+	})
 
 	// mark volumes as readonly
 	ewg := NewErrorWaitGroup(maxParallelization)
@@ -253,8 +264,22 @@ func doEcEncode(commandEnv *CommandEnv, writer io.Writer, volumeIdToCollection m
 	for _, vid := range volumeIds {
 		locs := locations[vid]
 		collection := volumeIdToCollection[vid]
+
+		// Filter locations to only include those on healthy disks (FreeVolumeCount >= 2)
+		var filteredLocs []wdclient.Location
+		for _, l := range locs {
+			key := fmt.Sprintf("%d-%s", vid, l.Url)
+			if freeCount, found := freeVolumeCountMap[key]; found && freeCount >= 2 {
+				filteredLocs = append(filteredLocs, l)
+			}
+		}
+
+		if len(filteredLocs) == 0 {
+			return fmt.Errorf("no healthy replicas (FreeVolumeCount >= 2) found for volume %d to use as source for EC encoding", vid)
+		}
+
 		// Sync missing entries between replicas, then select the best one
-		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, locs, "", writer)
+		bestLoc, selectErr := syncAndSelectBestReplica(commandEnv.option.GrpcDialOption, vid, collection, filteredLocs, "", writer)
 		if selectErr != nil {
 			return fmt.Errorf("failed to sync and select replica for volume %d: %v", vid, selectErr)
 		}
