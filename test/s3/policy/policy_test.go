@@ -16,22 +16,25 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/stretchr/testify/require"
 )
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	isRunning  bool
-	wg         sync.WaitGroup
-	masterPort int
-	volumePort int
-	filerPort  int
-	s3Port     int
-	s3Endpoint string
+	dataDir        string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	isRunning      bool
+	wg             sync.WaitGroup
+	masterPort     int
+	masterGrpcPort int
+	volumePort     int
+	filerPort      int
+	filerGrpcPort  int
+	s3Port         int
+	s3Endpoint     string
 }
 
 func TestS3PolicyShellRevised(t *testing.T) {
@@ -53,8 +56,8 @@ func TestS3PolicyShellRevised(t *testing.T) {
 	require.NoError(t, tmpPolicyFile.Close())
 
 	weedCmd := "weed"
-	masterAddr := fmt.Sprintf("127.0.0.1:%d", cluster.masterPort)
-	filerAddr := fmt.Sprintf("127.0.0.1:%d", cluster.filerPort)
+	masterAddr := string(pb.NewServerAddress("127.0.0.1", cluster.masterPort, cluster.masterGrpcPort))
+	filerAddr := string(pb.NewServerAddress("127.0.0.1", cluster.filerPort, cluster.filerGrpcPort))
 
 	// Put
 	execShell(t, weedCmd, masterAddr, filerAddr, fmt.Sprintf("s3.policy -put -name=testpolicy -file=%s", tmpPolicyFile.Name()))
@@ -188,14 +191,16 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s3Endpoint := fmt.Sprintf("http://127.0.0.1:%d", s3Port)
 	cluster := &TestCluster{
-		dataDir:    testDir,
-		ctx:        ctx,
-		cancel:     cancel,
-		masterPort: masterPort,
-		volumePort: volumePort,
-		filerPort:  filerPort,
-		s3Port:     s3Port,
-		s3Endpoint: s3Endpoint,
+		dataDir:        testDir,
+		ctx:            ctx,
+		cancel:         cancel,
+		masterPort:     masterPort,
+		masterGrpcPort: masterGrpcPort,
+		volumePort:     volumePort,
+		filerPort:      filerPort,
+		filerGrpcPort:  filerGrpcPort,
+		s3Port:         s3Port,
+		s3Endpoint:     s3Endpoint,
 	}
 
 	// Disable authentication for tests
