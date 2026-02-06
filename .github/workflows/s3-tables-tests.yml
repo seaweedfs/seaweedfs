@@ -140,6 +140,9 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
+      - name: Pre-pull Trino image
+        run: docker pull trinodb/trino:479
+
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed
