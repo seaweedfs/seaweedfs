@@ -189,7 +189,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-s3.config", iamConfigPath,
 		"-ip", env.bindIP,
-		"-ip.bind", env.bindIP,
+		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
 	cmd.Dir = env.dataDir
