@@ -24,36 +24,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
-func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request, action s3api.Action, bucketName string) bool {
-	if s.authenticator == nil {
-		writeError(w, http.StatusUnauthorized, "NotAuthorizedException", "Authentication required")
-		return false
-	}
-
-	identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
-	if errCode != s3err.ErrNone {
-		apiErr := s3err.GetAPIError(errCode)
-		errorType := "RESTException"
-		switch apiErr.HTTPStatusCode {
-		case http.StatusForbidden:
-			errorType = "ForbiddenException"
-		case http.StatusUnauthorized:
-			errorType = "NotAuthorizedException"
-		case http.StatusBadRequest:
-			errorType = "BadRequestException"
-		case http.StatusInternalServerError:
-			errorType = "InternalServerError"
-		}
-		writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
-		return false
-	}
-
-	// Authentication successful - user identity is available via identityName and identity
-	// For Iceberg REST API, we allow authenticated users to perform operations
-	_ = identityName
-	_ = identity
-	return true
-}
 
 // FilerClient provides access to the filer for storage operations.
 type FilerClient interface {
@@ -121,26 +91,26 @@ func (s *Server) RegisterRoutes(router *mux.Router) {
 
 	// Catch-all for debugging
 	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.Infof("Catch-all route hit: %s %s", r.Method, r.RequestURI)
+		glog.V(2).Infof("Catch-all route hit: %s %s", r.Method, r.RequestURI)
 		writeError(w, http.StatusNotFound, "NotFound", "Path not found")
 	})
 
-	glog.V(0).Infof("Registered Iceberg REST Catalog routes")
+	glog.V(2).Infof("Registered Iceberg REST Catalog routes")
 }
 
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		glog.Infof("Iceberg REST request: %s %s from %s", r.Method, r.RequestURI, r.RemoteAddr)
+		glog.V(2).Infof("Iceberg REST request: %s %s from %s", r.Method, r.RequestURI, r.RemoteAddr)
 
 		// Log all headers for debugging
-		glog.Infof("Iceberg REST headers:")
+		glog.V(2).Infof("Iceberg REST headers:")
 		for name, values := range r.Header {
 			for _, value := range values {
 				// Redact sensitive headers
 				if name == "Authorization" && len(value) > 20 {
-					glog.Infof("  %s: %s...%s", name, value[:20], value[len(value)-10:])
+					glog.V(2).Infof("  %s: %s...%s", name, value[:20], value[len(value)-10:])
 				} else {
-					glog.Infof("  %s: %s", name, value)
+					glog.V(2).Infof("  %s: %s", name, value)
 				}
 			}
 		}
@@ -149,7 +119,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		wrapped := &responseWriter{ResponseWriter: w}
 		next.ServeHTTP(wrapped, r)
 
-		glog.Infof("Iceberg REST response: %s %s -> %d", r.Method, r.RequestURI, wrapped.statusCode)
+		glog.V(2).Infof("Iceberg REST response: %s %s -> %d", r.Method, r.RequestURI, wrapped.statusCode)
 	})
 }
 
