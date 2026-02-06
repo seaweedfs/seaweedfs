@@ -350,7 +350,7 @@ func (env *TestEnvironment) startTrinoContainer(t *testing.T, configDir string) 
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
 		"-e", "AWS_REGION=us-west-2",
-		"trinodb/trino",
+		"trinodb/trino:479",
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to start Trino container: %v\n%s", err, string(output))
@@ -494,7 +494,7 @@ func findAvailablePortPair() (int, int, error) {
 }
 
 func getFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return 0, err
 	}

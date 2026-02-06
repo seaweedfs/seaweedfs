@@ -159,17 +159,16 @@ func findAvailablePort() (int, error) {
 
 // findAvailablePortPair finds an available http port P such that P and P+10000 (grpc) are both available
 func findAvailablePortPair() (int, int, error) {
+	httpPort, err := findAvailablePort()
+	if err != nil {
+		return 0, 0, err
+	}
 	for i := 0; i < 100; i++ {
-		httpPort, err := findAvailablePort()
+		grpcPort, err := findAvailablePort()
 		if err != nil {
 			return 0, 0, err
 		}
-		grpcPort := httpPort + 10000
-
-		// check if grpc port is available
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
-		if err == nil {
-			listener.Close()
+		if grpcPort != httpPort {
 			return httpPort, grpcPort, nil
 		}
 	}
