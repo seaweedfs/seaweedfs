@@ -22,7 +22,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -102,6 +104,24 @@ func getContentSha256Cksum(r *http.Request) string {
 
 	// X-Amz-Content-Sha256 header value is required for all non-presigned requests.
 	return emptySHA256
+}
+
+// normalizePayloadHash converts base64-encoded payload hash to hex format.
+// AWS SigV4 canonical requests always use hex-encoded SHA256.
+func normalizePayloadHash(payloadHashValue string) string {
+	// Special values and hex-encoded hashes don't need conversion
+	if payloadHashValue == emptySHA256 || payloadHashValue == unsignedPayload || 
+		payloadHashValue == streamingContentSHA256 || payloadHashValue == streamingContentSHA256Trailer ||
+		payloadHashValue == streamingUnsignedPayload || len(payloadHashValue) == 64 {
+		return payloadHashValue
+	}
+
+	// Try to decode as base64 and convert to hex
+	if decodedBytes, err := base64.StdEncoding.DecodeString(payloadHashValue); err == nil && len(decodedBytes) == 32 {
+		return hex.EncodeToString(decodedBytes)
+	}
+
+	return payloadHashValue
 }
 
 // signValues data type represents structured form of AWS Signature V4 header.
@@ -485,6 +505,10 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		}
 	}
 
+	// Normalize payload hash to hex format for canonical request
+	// AWS SigV4 canonical requests always use hex-encoded SHA256
+	normalizedPayload := normalizePayloadHash(hashedPayload)
+
 	return &v4AuthInfo{
 		Signature:     signV4Values.Signature,
 		AccessKey:     signV4Values.Credential.accessKey,
@@ -493,7 +517,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		Region:        signV4Values.Credential.scope.region,
 		Service:       signV4Values.Credential.scope.service,
 		Scope:         signV4Values.Credential.getScope(),
-		HashedPayload: hashedPayload,
+		HashedPayload: normalizedPayload,
 		IsPresigned:   false,
 	}, s3err.ErrNone
 }
