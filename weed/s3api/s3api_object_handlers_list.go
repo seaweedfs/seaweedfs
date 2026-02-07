@@ -214,7 +214,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						if normalizedPrefix != "" {
 							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
 							relativePath = strings.TrimPrefix(relativePath, "/")
-							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) {
+							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
 								return
 							}
 						}
