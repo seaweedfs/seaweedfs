@@ -42,6 +42,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 			pu.PairMap[k] = v[0]
 		}
 	}
+	// glog.V(4).Infof("ParseUpload: r.URL=%s, Content-MD5 header=%s", r.URL.String(), r.Header.Get("Content-MD5"))
 
 	e = parseUpload(r, sizeLimit, pu)
 
@@ -84,7 +85,11 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	}
 
 	// verify Content-MD5
-	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
+	expectedChecksum := r.Header.Get("Content-MD5")
+	if expectedChecksum == "" {
+		expectedChecksum = pu.ContentMd5
+	}
+	if expectedChecksum != "" {
 		h := md5.New()
 		h.Write(pu.UncompressedData)
 		pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
@@ -143,6 +148,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		pu.Data = pu.bytesBuffer.Bytes()
 
 		contentType = part.Header.Get("Content-Type")
+		pu.ContentMd5 = part.Header.Get("Content-MD5")
 
 		// if the filename is empty string, do a search on the other multi-part items
 		for pu.FileName == "" {
@@ -171,6 +177,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 				pu.Data = pu.bytesBuffer.Bytes()
 				pu.FileName = util.CleanWindowsPathBase(fName)
 				contentType = part.Header.Get("Content-Type")
+				pu.ContentMd5 = part.Header.Get("Content-MD5")
 				part = part2
 				break
 			}

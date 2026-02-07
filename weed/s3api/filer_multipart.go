@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"cmp"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -206,7 +207,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				return &CompleteMultipartUploadResult{
 					Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
-					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
+					ETag:     aws.String(getEtagFromEntry(entry)),
 					Key:      objectKey(input.Key),
 				}, s3err.ErrNone
 			}
@@ -418,7 +419,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Construct entry with metadata for caching in .versions directory
 		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
-		etag := "\"" + filer.ETagChunks(finalParts) + "\""
+		etag := "\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""
 		versionEntryForCache := &filer_pb.Entry{
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: uint64(offset),
@@ -446,7 +447,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
-			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:      aws.String("\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""),
 			Key:       objectKey(input.Key),
 			VersionId: aws.String(versionId),
 		}
@@ -499,7 +500,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
-			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:     aws.String("\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""),
 			Key:      objectKey(input.Key),
 			// VersionId field intentionally omitted for suspended versioning
 		}
@@ -556,7 +557,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
-			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:     aws.String("\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""),
 			Key:      objectKey(input.Key),
 		}
 	}
@@ -928,4 +929,42 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 		entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(config.S3KeyDataEncoded)
 		glog.V(3).Infof("applyMultipartEncryptionConfig: applied SSE-S3 settings")
 	}
+}
+
+func (s3a *S3ApiServer) calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) string {
+	var etags []byte
+	for _, partNumber := range completedPartNumbers {
+		entries, ok := partEntries[partNumber]
+		if !ok || len(entries) == 0 {
+			continue
+		}
+		if len(entries) > 1 {
+			slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
+				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
+			})
+		}
+		entry := entries[0]
+		etag := getEtagFromEntry(entry)
+		glog.Errorf("calculateMultipartETag: part %d, entry %s, getEtagFromEntry result: %s, extended: %+v", partNumber, entry.Name, etag, entry.Extended)
+		etag = strings.Trim(etag, "\"")
+		if strings.Index(etag, "-") != -1 {
+			etag = etag[:strings.Index(etag, "-")]
+		}
+		if decoded, err := hex.DecodeString(etag); err == nil {
+			etags = append(etags, decoded...)
+		}
+	}
+	return fmt.Sprintf("%x-%d", md5.Sum(etags), len(completedPartNumbers))
+}
+
+func getEtagFromEntry(entry *filer_pb.Entry) string {
+	if entry.Extended != nil {
+		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
+			glog.Errorf("getEtagFromEntry: found ExtETagKey for %s: %s, chunkCount: %d", entry.Name, string(etag), len(entry.Chunks))
+			return string(etag)
+		}
+	}
+	etag := filer.ETagChunks(entry.GetChunks())
+	glog.Errorf("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entry.Name, etag, len(entry.Chunks))
+	return "\"" + etag + "\""
 }

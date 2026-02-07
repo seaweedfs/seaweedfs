@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -49,6 +50,7 @@ var chunkBufferPool = sync.Pool{
 // This prevents OOM by processing the stream in fixed-size chunks
 // Returns file chunks, MD5 hash, total size, and any small content stored inline
 func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption) (*ChunkedUploadResult, error) {
+	// glog.V(4).Infof("UploadReaderInChunks entry")
 
 	md5Hash := md5.New()
 	var partReader = io.TeeReader(reader, md5Hash)
@@ -171,6 +173,10 @@ uploadLoop:
 				jwt = assignResult.Auth
 			}
 
+			// Calculate MD5 for the chunk
+			chunkMd5 := md5.Sum(buf.Bytes())
+			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
+
 			uploadOption := &UploadOption{
 				UploadUrl:         uploadUrl,
 				Cipher:            opt.Cipher,
@@ -178,6 +184,7 @@ uploadLoop:
 				MimeType:          opt.MimeType,
 				PairMap:           nil,
 				Jwt:               jwt,
+				Md5:               chunkMd5B64,
 			}
 
 			var uploadResult *UploadResult
@@ -225,7 +232,6 @@ uploadLoop:
 			}
 			fileChunksLock.Lock()
 			fileChunks = append(fileChunks, chunk)
-			glog.V(4).Infof("uploaded chunk %d to %s [%d,%d)", len(fileChunks), chunk.FileId, offset, offset+int64(chunk.Size))
 			fileChunksLock.Unlock()
 
 		}(chunkOffset, bytesBuffer)

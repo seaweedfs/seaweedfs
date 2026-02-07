@@ -68,6 +68,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ret.Size = uint32(originalSize)
 	ret.ETag = reqNeedle.Etag()
 	ret.Mime = string(reqNeedle.Mime)
+	ret.ContentMd5 = contentMd5
 	SetEtag(w, ret.ETag)
 	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)

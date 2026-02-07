@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -131,13 +132,14 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 				fileChunksSize := len(fileChunks) + len(chunks)
 				for _, chunk := range chunks {
 					fileChunks = append(fileChunks, chunk)
-					glog.V(4).InfofCtx(ctx, "uploaded %s chunk %d to %s [%d,%d)", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size))
+					// glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) %s", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size), chunk.ETag)
 				}
 				fileChunksLock.Unlock()
 			}
 		}(chunkOffset, bytesBuffer)
 
 		// reset variables for the next chunk
+		glog.V(4).Infof("uploadeReaderToChunks read chunk at offset %d, size %d", chunkOffset, dataSize)
 		chunkOffset = chunkOffset + dataSize
 
 		// if last chunk was not at full chunk size, but already exhausted the reader
@@ -162,7 +164,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 	return fileChunks, md5Hash, chunkOffset, nil, smallContent
 }
 
-func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt) (*operation.UploadResult, error, []byte) {
+func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limitedReader io.Reader, fileName string, contentType string, pairMap map[string]string, auth security.EncodedJwt, contentMd5 string) (*operation.UploadResult, error, []byte) {
 
 	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkUpload).Inc()
 	start := time.Now()
@@ -178,6 +180,7 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 		MimeType:          contentType,
 		PairMap:           pairMap,
 		Jwt:               auth,
+		Md5:               contentMd5,
 	}
 
 	uploader, err := operation.NewUploader()
@@ -217,8 +220,10 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
 			return uploadErr
 		}
+		chunkMd5 := md5.Sum(data)
+		chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 		// upload the chunk to the volume server
-		uploadResult, uploadErr, _ = fs.doUpload(ctx, urlLocation, dataReader, fileName, contentType, nil, auth)
+		uploadResult, uploadErr, _ = fs.doUpload(ctx, urlLocation, dataReader, fileName, contentType, nil, auth, chunkMd5B64)
 		if uploadErr != nil {
 			glog.V(4).InfofCtx(ctx, "retry later due to upload error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkDoUploadRetry).Inc()
@@ -248,12 +253,14 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var sseMetadata []byte
 
 	// Create chunk with SSE metadata if available
+	// Create chunk with SSE metadata if available
 	var chunk *filer_pb.FileChunk
 	if sseType != filer_pb.SSEType_NONE {
 		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseMetadata)
 	} else {
 		chunk = uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())
 	}
+	// glog.V(4).Infof("dataToChunkWithSSE created chunk: fileId=%s, ETag=%s", chunk.FileId, chunk.ETag)
 
 	return []*filer_pb.FileChunk{chunk}, nil
 }
