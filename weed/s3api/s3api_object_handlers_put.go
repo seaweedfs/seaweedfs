@@ -540,6 +540,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	etag = filer.ETag(entry)
 	glog.V(4).Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
 
+	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
+	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
 	// Set object owner
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 	if amzAccountId != "" {
