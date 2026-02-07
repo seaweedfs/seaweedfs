@@ -303,7 +303,6 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 		found := false
 		if len(partEntriesByNumber) > 1 {
-		if len(partEntriesByNumber) > 1 {
 			slices.SortFunc(partEntriesByNumber, func(a, b *filer_pb.Entry) int {
 				var aTs, bTs int64
 				if len(a.Chunks) > 0 {
