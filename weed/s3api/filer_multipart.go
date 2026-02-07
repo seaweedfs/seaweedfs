@@ -983,10 +983,13 @@ func getEtagFromEntry(entry *filer_pb.Entry) string {
 	if entry.Extended != nil {
 		if etagBytes, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
 			etag := string(etagBytes)
-			if !strings.HasPrefix(etag, "\"") {
-				return "\"" + etag + "\""
+			if len(etag) > 0 {
+				if !strings.HasPrefix(etag, "\"") {
+					return "\"" + etag + "\""
+				}
+				return etag
 			}
-			return etag
+			// Empty stored ETag — fall through to filer.ETag calculation
 		}
 	}
 	// Fallback to filer.ETag which handles Attributes.Md5 consistently
