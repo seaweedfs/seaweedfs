@@ -1594,7 +1594,11 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
-		return string(etagBytes)
+		etag := string(etagBytes)
+		if len(etag) > 0 && !strings.HasPrefix(etag, "\"") {
+			return "\"" + etag + "\""
+		}
+		return etag
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
 	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check

@@ -504,6 +504,9 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	if entry.Extended != nil {
 		if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 			etag = string(etagBytes)
+			if len(etag) > 0 && !strings.HasPrefix(etag, "\"") {
+				etag = "\"" + etag + "\""
+			}
 		}
 	}
 	if etag == "" {
