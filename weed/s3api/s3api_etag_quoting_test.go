@@ -156,8 +156,8 @@ func TestReproIfMatchMismatch(t *testing.T) {
 			},
 		}
 
-		// Mock IAM (nil is safe as we won't use it if fetchOwner=false)
-		listEntry := newListEntry(entry, "", "bucket/dir", "test-key", "bucket/", false, false, false, nil)
+		s3a := NewS3ApiServerForTest()
+		listEntry := newListEntry(s3a, entry, "", "bucket/dir", "test-key", "bucket/", false, false, false)
 
 		expected := "\"unquoted-etag\""
 		if listEntry.ETag != expected {
