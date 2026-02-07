@@ -111,8 +111,7 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 	if s3a.isTableBucket(bucket) {
 		return s3tables.GetTableObjectBucketPath(bucket)
 	}
-	// Not a table bucket, use regular bucket path
-	return path.Join(s3a.option.BucketsPath, bucket)
+	return path.Join(s3a.bucketRoot(bucket), bucket)
 }
 
 func (s3a *S3ApiServer) bucketPrefix(bucket string) string {
