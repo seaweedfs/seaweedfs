@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTrinoBlogOperations(t *testing.T) {
@@ -82,6 +83,9 @@ AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, schemaName, cu
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("UPDATE iceberg.%s.%s SET updated_at = current_timestamp", schemaName, trinoCustomersTable))
 
+	// Sleep to ensure timestamps are in the past for time travel queries
+	time.Sleep(1 * time.Second)
+
 	snapshotOutput := runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(`SELECT snapshot_id FROM iceberg.%s."%s$snapshots" ORDER BY committed_at DESC LIMIT 1`, schemaName, trinoCustomersTable))
 	snapshotID := mustParseCSVInt64(t, snapshotOutput)
 	if snapshotID == 0 {
@@ -130,10 +134,7 @@ func hasCSVDataRow(output string) bool {
 	if len(lines) == 0 {
 		return false
 	}
-	if len(lines) == 1 {
-		return strings.TrimSpace(lines[0]) != ""
-	}
-	for _, line := range lines[1:] {
+	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
 			return true
 		}
@@ -157,18 +158,12 @@ func mustFirstCSVValue(t *testing.T, output string) string {
 	if len(lines) == 0 {
 		t.Fatalf("expected CSV output with data row, got: %q", output)
 	}
-	if len(lines) == 1 {
-		return strings.Trim(strings.TrimSpace(lines[0]), "\"")
-	}
-	for _, line := range lines[1:] {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		parts := strings.Split(line, ",")
-		if len(parts) == 0 {
-			break
-		}
 		return strings.Trim(parts[0], "\"")
 	}
 	t.Fatalf("no CSV data rows found in output: %q", output)

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -343,11 +344,20 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if err := h.deleteDirectory(r.Context(), client, bucketPath); err != nil {
-			return err
+		// Delete table object entry first, then directory
+		// This ensures we clean up the leaf entry even if directory deletion fails
+		tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName))
+		dirErr := h.deleteDirectory(r.Context(), client, bucketPath)
+		
+		// Log any errors but don't fail if one succeeds
+		if tableObjErr != nil && dirErr != nil {
+			return fmt.Errorf("delete table object failed: %w, delete directory failed: %w", tableObjErr, dirErr)
 		}
-		if err := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); err != nil {
-			return err
+		if tableObjErr != nil {
+			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
+		}
+		if dirErr != nil {
+			glog.V(1).Infof("failed to delete table bucket dir for %s: %v", bucketName, dirErr)
 		}
 		return nil
 	})

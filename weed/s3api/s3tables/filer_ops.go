@@ -20,7 +20,7 @@ var (
 func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.SeaweedFilerClient, path string) error {
 	dir, name := splitPath(path)
 	now := time.Now().Unix()
-	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+	return filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 		Directory: dir,
 		Entry: &filer_pb.Entry{
 			Name:        name,
@@ -28,11 +28,10 @@ func (h *S3TablesHandler) createDirectory(ctx context.Context, client filer_pb.S
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:    now,
 				Crtime:   now,
-				FileMode: uint32(0755 | os.ModeDir), // Directory mode
+				FileMode: uint32(0755 | os.ModeDir),
 			},
 		},
 	})
-	return err
 }
 
 // ensureDirectory ensures a directory exists at the specified path
@@ -63,7 +62,7 @@ func (h *S3TablesHandler) upsertFile(ctx context.Context, client filer_pb.Seawee
 		if !errors.Is(err, filer_pb.ErrNotFound) {
 			return err
 		}
-		_, err = client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		return filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name:    name,
@@ -76,7 +75,6 @@ func (h *S3TablesHandler) upsertFile(ctx context.Context, client filer_pb.Seawee
 				},
 			},
 		})
-		return err
 	}
 
 	entry := resp.Entry
@@ -86,11 +84,10 @@ func (h *S3TablesHandler) upsertFile(ctx context.Context, client filer_pb.Seawee
 	entry.Attributes.Mtime = now
 	entry.Attributes.FileSize = uint64(len(data))
 	entry.Content = data
-	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: dir,
 		Entry:     entry,
 	})
-	return err
 }
 
 // deleteEntryIfExists removes an entry if it exists, ignoring missing errors
