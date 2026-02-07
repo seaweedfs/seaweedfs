@@ -77,11 +77,14 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 		tablePath = strings.TrimSpace(string(entry.Content))
 	}
 
-	// Cache the result (including empty string for "not found")
-	if s3a.bucketRegistry != nil {
-		s3a.bucketRegistry.tableLocationLock.Lock()
-		s3a.bucketRegistry.tableLocationCache[bucket] = tablePath
-		s3a.bucketRegistry.tableLocationLock.Unlock()
+	// Only cache definitive results: successful lookup (tablePath set) or definitive not-found (ErrNotFound)
+	// Don't cache transient errors to avoid treating temporary failures as permanent misses
+	if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
+		if s3a.bucketRegistry != nil {
+			s3a.bucketRegistry.tableLocationLock.Lock()
+			s3a.bucketRegistry.tableLocationCache[bucket] = tablePath
+			s3a.bucketRegistry.tableLocationLock.Unlock()
+		}
 	}
 
 	if tablePath == "" {
@@ -108,7 +111,8 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 	if s3a.isTableBucket(bucket) {
 		return s3tables.GetTableObjectBucketPath(bucket)
 	}
-	return path.Join(s3a.bucketRoot(bucket), bucket)
+	// Not a table bucket, use regular bucket path
+	return path.Join(s3a.option.BucketsPath, bucket)
 }
 
 func (s3a *S3ApiServer) bucketPrefix(bucket string) string {
