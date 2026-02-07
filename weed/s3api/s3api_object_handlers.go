@@ -483,7 +483,7 @@ func (s3a *S3ApiServer) handleDirectoryObjectRequest(w http.ResponseWriter, r *h
 	return false // Not a directory object, continue with normal processing
 }
 
-func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool, iam AccountManager) (listEntry ListEntry) {
+func newListEntry(s3a *S3ApiServer, entry *filer_pb.Entry, key string, dir string, name string, bucketPrefix string, fetchOwner bool, isDirectory bool, encodingTypeUrl bool) (listEntry ListEntry) {
 	storageClass := "STANDARD"
 	if v, ok := entry.Extended[s3_constants.AmzStorageClass]; ok {
 		storageClass = string(v)
@@ -500,15 +500,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 	}
 	// Determine ETag: prioritize ExtETagKey for versioned objects (supports multipart ETags),
 	// then fall back to filer.ETag() which uses Md5 attribute or calculates from chunks
-	var etag string
-	if entry.Extended != nil {
-		if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
-			etag = string(etagBytes)
-		}
-	}
-	if etag == "" {
-		etag = "\"" + filer.ETag(entry) + "\""
-	}
+	etag := s3a.getObjectETag(entry)
 	listEntry = ListEntry{
 		Key:          key,
 		LastModified: time.Unix(entry.Attributes.Mtime, 0).UTC(),
@@ -531,7 +523,7 @@ func newListEntry(entry *filer_pb.Entry, key string, dir string, name string, bu
 			displayName = "anonymous"
 		} else {
 			// Get the proper display name from IAM system
-			displayName = iam.GetAccountNameById(ownerID)
+			displayName = s3a.iam.GetAccountNameById(ownerID)
 			// Fallback to ownerID if no display name found
 			if displayName == "" {
 				displayName = ownerID
@@ -1968,9 +1960,9 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 
 	// Set ETag (but don't overwrite if already set, e.g., for part-specific GET requests)
 	if w.Header().Get("ETag") == "" {
-		etag := filer.ETag(entry)
+		etag := s3a.getObjectETag(entry)
 		if etag != "" {
-			w.Header().Set("ETag", "\""+etag+"\"")
+			w.Header().Set("ETag", etag)
 		}
 	}
 

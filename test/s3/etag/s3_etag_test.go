@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	mathrand "math/rand"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -85,6 +86,12 @@ func init() {
 
 // getS3Client creates an AWS S3 v2 client for testing
 func getS3Client(t *testing.T) *s3.Client {
+	endpoint := os.Getenv("S3_ENDPOINT")
+	if endpoint == "" {
+		endpoint = defaultConfig.Endpoint
+	}
+	t.Logf("Using S3 endpoint: %s", endpoint)
+
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithRegion(defaultConfig.Region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -95,7 +102,7 @@ func getS3Client(t *testing.T) *s3.Client {
 		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
 			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 				return aws.Endpoint{
-					URL:               defaultConfig.Endpoint,
+					URL:               endpoint,
 					SigningRegion:     defaultConfig.Region,
 					HostnameImmutable: true,
 				}, nil
@@ -401,6 +408,101 @@ func TestMultipartUploadETagFormat(t *testing.T) {
 	require.Len(t, parts, 2, "Composite ETag should have format 'hash-count'")
 	assert.Equal(t, fmt.Sprintf("%d", len(completedParts)), parts[1],
 		"Part count in ETag should match number of parts uploaded")
+}
+
+func TestMultipartUploadETagVerification(t *testing.T) {
+	ctx := context.Background()
+	client := getS3Client(t)
+
+	bucketName := getNewBucketName()
+	err := createTestBucket(ctx, client, bucketName)
+	require.NoError(t, err, "Failed to create test bucket")
+	defer cleanupTestBucket(ctx, client, bucketName)
+
+	// Create test data for multipart upload (11MB = 2 parts: 5MB + 6MB)
+	// Using parts of different sizes to ensure correct calculation
+	part1Size := 5 * 1024 * 1024
+	part2Size := 6 * 1024 * 1024
+	data1 := generateRandomData(part1Size)
+	data2 := generateRandomData(part2Size)
+
+	objectKey := "verify-etag-multipart.bin"
+
+	// Pre-calculate expected ETag
+	md1 := md5.Sum(data1)
+	md2 := md5.Sum(data2)
+	concatenatedMD5s := append(md1[:], md2[:]...)
+	finalMD5 := md5.Sum(concatenatedMD5s)
+	expectedETagValue := fmt.Sprintf("%x-2", finalMD5)
+
+	t.Logf("Expected multipart ETag: %s", expectedETagValue)
+
+	// 1. CreateMultipartUpload
+	createResp, err := client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	uploadId := createResp.UploadId
+
+	// 2. UploadPart 1
+	putPart1, err := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadId,
+		PartNumber: aws.Int32(1),
+		Body:       bytes.NewReader(data1),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "\""+calculateMD5(data1)+"\"", aws.ToString(putPart1.ETag))
+
+	// 3. UploadPart 2
+	putPart2, err := client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadId,
+		PartNumber: aws.Int32(2),
+		Body:       bytes.NewReader(data2),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "\""+calculateMD5(data2)+"\"", aws.ToString(putPart2.ETag))
+
+	// 4. CompleteMultipartUpload
+	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: uploadId,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: []types.CompletedPart{
+				{ETag: putPart1.ETag, PartNumber: aws.Int32(1)},
+				{ETag: putPart2.ETag, PartNumber: aws.Int32(2)},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	completeETag := cleanETag(aws.ToString(completeResp.ETag))
+	t.Logf("CompleteMultipartUpload ETag: %s", completeETag)
+	assert.Equal(t, expectedETagValue, completeETag, "CompleteMultipartUpload ETag mismatch")
+
+	// 5. HeadObject
+	headResp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	headETag := cleanETag(aws.ToString(headResp.ETag))
+	assert.Equal(t, expectedETagValue, headETag, "HeadObject ETag mismatch")
+
+	// 6. GetObject
+	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	getETag := cleanETag(aws.ToString(getResp.ETag))
+	assert.Equal(t, expectedETagValue, getETag, "GetObject ETag mismatch")
+	getResp.Body.Close()
 }
 
 // TestPutObjectETagConsistency verifies ETag consistency between PUT and GET

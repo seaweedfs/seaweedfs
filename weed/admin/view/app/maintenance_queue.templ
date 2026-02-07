@@ -299,11 +299,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
     </div>
 
     <script>
-        // Debug output to browser console
-        console.log("DEBUG: Maintenance Queue Template loaded");
-        
-
-
         window.triggerScan = function() {
             console.log("triggerScan called");
             fetch('/api/maintenance/scan', {

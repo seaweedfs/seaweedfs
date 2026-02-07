@@ -480,53 +480,51 @@ func testTargetOperations(t *testing.T, client *S3TablesClient) {
 
 // Helper functions
 
-// findAvailablePort finds an available port by binding to port 0
-func findAvailablePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
+// findAvailablePorts finds n available ports by binding to port 0 multiple times
+// It keeps the listeners open until all ports are found to ensure uniqueness
+func findAvailablePorts(n int) ([]int, error) {
+	listeners := make([]*net.TCPListener, n)
+	ports := make([]int, n)
 
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
+	// Open all listeners to ensure we get unique ports
+	for i := 0; i < n; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			// Close valid listeners before returning error
+			for j := 0; j < i; j++ {
+				listeners[j].Close()
+			}
+			return nil, err
+		}
+		listeners[i] = listener.(*net.TCPListener)
+		ports[i] = listeners[i].Addr().(*net.TCPAddr).Port
+	}
+
+	// Close all listeners
+	for _, l := range listeners {
+		l.Close()
+	}
+
+	return ports, nil
 }
 
 // startMiniCluster starts a weed mini instance directly without exec
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	// Find available ports
-	masterPort, err := findAvailablePort()
+	// We need 8 unique ports: Master(2), Volume(2), Filer(2), S3(2)
+	ports, err := findAvailablePorts(8)
 	if err != nil {
-		return nil, fmt.Errorf("failed to find master port: %v", err)
+		return nil, fmt.Errorf("failed to find available ports: %v", err)
 	}
-	masterGrpcPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find master grpc port: %v", err)
-	}
-	volumePort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find volume port: %v", err)
-	}
-	volumeGrpcPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find volume grpc port: %v", err)
-	}
-	filerPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find filer port: %v", err)
-	}
-	filerGrpcPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find filer grpc port: %v", err)
-	}
-	s3Port, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find s3 port: %v", err)
-	}
-	s3GrpcPort, err := findAvailablePort()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find s3 grpc port: %v", err)
-	}
+
+	masterPort := ports[0]
+	masterGrpcPort := ports[1]
+	volumePort := ports[2]
+	volumeGrpcPort := ports[3]
+	filerPort := ports[4]
+	filerGrpcPort := ports[5]
+	s3Port := ports[6]
+	s3GrpcPort := ports[7]
 	// Create temporary directory for test data
 	testDir := t.TempDir()
 

@@ -540,6 +540,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	etag = filer.ETag(entry)
 	glog.V(4).Infof("putToFiler: Calculated ETag=%s for %d chunks", etag, len(chunkResult.FileChunks))
 
+	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
+	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
 	// Set object owner
 	amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
 	if amzAccountId != "" {
@@ -1072,10 +1075,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 	versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 
-	// Store ETag with quotes for S3 compatibility
-	if !strings.HasPrefix(etag, "\"") {
-		etag = "\"" + etag + "\""
-	}
+	// Store ETag (unquoted) in Extended attribute
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
 	// Set object owner for versioned objects
@@ -1594,7 +1594,14 @@ func parseConditionalHeaders(r *http.Request) (conditionalHeaders, s3err.ErrorCo
 func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
-		return string(etagBytes)
+		etag := string(etagBytes)
+		if len(etag) > 0 {
+			if !strings.HasPrefix(etag, "\"") {
+				return "\"" + etag + "\""
+			}
+			return etag
+		}
+		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
 	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check
@@ -1635,7 +1642,6 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	// 1. Check If-Match
 	if headers.ifMatch != "" {
 		if !objectExists {
-			glog.V(3).Infof("validateConditionalHeaders: If-Match failed - object %s/%s does not exist", bucket, object)
 			return s3err.ErrPreconditionFailed
 		}
 		// If `ifMatch` is "*", the condition is met if the object exists.
@@ -1645,7 +1651,6 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
 			if !s3a.etagMatches(headers.ifMatch, objectETag) {
-				glog.V(3).Infof("validateConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
 				return s3err.ErrPreconditionFailed
 			}
 		}
@@ -1787,7 +1792,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
 			if !s3a.etagMatches(headers.ifMatch, objectETag) {
-				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
+				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: entry}
 			}
 		}
