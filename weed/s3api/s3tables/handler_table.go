@@ -1127,11 +1127,11 @@ func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client
 	if !ok {
 		return nil
 	}
-	
+
 	if err := h.ensureDirectory(ctx, client, GetTableLocationMappingDir()); err != nil {
 		return err
 	}
-	
+
 	// If the metadata location changed, delete the stale mapping for the old bucket
 	if oldMetadataLocation != "" && oldMetadataLocation != newMetadataLocation {
 		oldTableLocationBucket, ok := parseTableLocationBucket(oldMetadataLocation)
@@ -1142,7 +1142,7 @@ func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client
 			}
 		}
 	}
-	
+
 	return h.upsertFile(ctx, client, GetTableLocationMappingPath(newTableLocationBucket), []byte(tablePath))
 }
 

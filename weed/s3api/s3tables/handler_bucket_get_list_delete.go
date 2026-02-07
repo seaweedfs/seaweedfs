@@ -348,7 +348,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		// This ensures we clean up the leaf entry even if directory deletion fails
 		tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName))
 		dirErr := h.deleteDirectory(r.Context(), client, bucketPath)
-		
+
 		// Log any errors but don't fail if one succeeds
 		if tableObjErr != nil && dirErr != nil {
 			return fmt.Errorf("delete table object failed: %w, delete directory failed: %w", tableObjErr, dirErr)
