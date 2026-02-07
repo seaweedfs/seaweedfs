@@ -38,14 +38,14 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Check if bucket already exists and ensure no conflict with object store buckets
 	tableBucketExists := false
 	s3BucketExists := false
+	bucketsPath := s3_constants.DefaultBucketsPath
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(r.Context(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
-		bucketsPath := resp.DirBuckets
-		if bucketsPath == "" {
-			bucketsPath = s3_constants.DefaultBucketsPath
+		if resp.DirBuckets != "" {
+			bucketsPath = resp.DirBuckets
 		}
 		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: bucketsPath,
@@ -78,13 +78,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	if s3BucketExists {
-		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("bucket name %s is already used by an object store bucket", req.Name))
-		return fmt.Errorf("bucket name conflicts with object store bucket")
-	}
-
 	if tableBucketExists {
 		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
+		return fmt.Errorf("bucket already exists")
+	}
+	if s3BucketExists {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("bucket %s already exists", req.Name))
 		return fmt.Errorf("bucket already exists")
 	}
 
@@ -109,6 +108,14 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			if err := h.createDirectory(r.Context(), client, TablesPath); err != nil {
 				return fmt.Errorf("failed to create root tables directory: %w", err)
 			}
+		}
+
+		// Ensure object root directory exists for table bucket S3 operations
+		if err := h.ensureDirectory(r.Context(), client, GetTableObjectRootDir()); err != nil {
+			return fmt.Errorf("failed to create table object root directory: %w", err)
+		}
+		if err := h.ensureDirectory(r.Context(), client, GetTableObjectBucketPath(req.Name)); err != nil {
+			return fmt.Errorf("failed to create table object bucket directory: %w", err)
 		}
 
 		// Create bucket directory

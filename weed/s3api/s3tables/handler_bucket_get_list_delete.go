@@ -343,7 +343,13 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(r.Context(), client, bucketPath)
+		if err := h.deleteDirectory(r.Context(), client, bucketPath); err != nil {
+			return err
+		}
+		if err := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName)); err != nil {
+			return err
+		}
+		return nil
 	})
 
 	if err != nil {
