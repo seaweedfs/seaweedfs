@@ -248,17 +248,40 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						}
 
 						// If no delimiter found in the directory object name, treat it as a regular key
-						if !delimiterFound {
-							newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false)
+						versioningState, _ := s3a.getVersioningState(bucket)
+						versioningEnabled := versioningState == "Enabled"
+						if versioningEnabled {
+							// For versioned buckets, we need to handle duplicates between the main file and the .versions directory
+							if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
+								glog.V(3).Infof("listFilerEntries deduplicating versioned entry: %s", newEntry.Key)
+								contents[len(contents)-1] = newEntry
+							} else {
+								contents = append(contents, newEntry)
+								cursor.maxKeys--
+							}
+						} else {
 							contents = append(contents, newEntry)
 							cursor.maxKeys--
-							lastEntryWasCommonPrefix = false
 						}
+						lastEntryWasCommonPrefix = false
 					} else if entry.IsDirectoryKeyObject() {
 						// No delimiter specified, or delimiter doesn't apply - treat as regular key
 						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false)
-						contents = append(contents, newEntry)
-						cursor.maxKeys--
+						versioningState, _ := s3a.getVersioningState(bucket)
+						versioningEnabled := versioningState == "Enabled"
+						if versioningEnabled {
+							// For versioned buckets, we need to handle duplicates between the main file and the .versions directory
+							if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
+								glog.V(3).Infof("listFilerEntries deduplicating versioned entry: %s", newEntry.Key)
+								contents[len(contents)-1] = newEntry
+							} else {
+								contents = append(contents, newEntry)
+								cursor.maxKeys--
+							}
+						} else {
+							contents = append(contents, newEntry)
+							cursor.maxKeys--
+						}
 						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 					} else if delimiter != "" { // A response can contain CommonPrefixes only if you specify a delimiter.
@@ -313,8 +336,12 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					if !delimiterFound {
 						glog.V(4).Infof("Adding file to contents: %s", entryName)
 						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false)
-						contents = append(contents, newEntry)
-						cursor.maxKeys--
+						if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
+							contents[len(contents)-1] = newEntry
+						} else {
+							contents = append(contents, newEntry)
+							cursor.maxKeys--
+						}
 						lastEntryWasCommonPrefix = false
 					}
 				}
