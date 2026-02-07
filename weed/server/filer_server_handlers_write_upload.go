@@ -131,7 +131,6 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 				fileChunksLock.Lock()
 				for _, chunk := range chunks {
 					fileChunks = append(fileChunks, chunk)
-					// glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) %s", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size), chunk.ETag)
 				}
 				fileChunksLock.Unlock()
 			}
@@ -258,7 +257,6 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	} else {
 		chunk = uploadResult.ToPbFileChunk(fileId, chunkOffset, time.Now().UnixNano())
 	}
-	// glog.V(4).Infof("dataToChunkWithSSE created chunk: fileId=%s, ETag=%s", chunk.FileId, chunk.ETag)
 
 	return []*filer_pb.FileChunk{chunk}, nil
 }
