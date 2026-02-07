@@ -401,7 +401,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 
 			// Persist ETag to ensure subsequent HEAD/GET uses the same value
-			versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etagQuote)
+			versionEntry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
 
 			// Preserve ALL SSE metadata from the first part (if any)
 			// SSE metadata is stored in individual parts, not the upload directory
@@ -490,7 +490,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
 			}
 			// Persist ETag to ensure subsequent HEAD/GET uses the same value
-			entry.Extended[s3_constants.ExtETagKey] = []byte(etagQuote)
+			entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -545,7 +545,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				copySSEHeadersFromFirstPart(entry, firstPartEntry, "non-versioned")
 			}
 			// Persist ETag to ensure subsequent HEAD/GET uses the same value
-			entry.Extended[s3_constants.ExtETagKey] = []byte(etagQuote)
+			entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -973,6 +973,8 @@ func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPart
 		}
 		if etagBytes, err := hex.DecodeString(etag); err == nil {
 			etags = append(etags, etagBytes...)
+		} else {
+			glog.Warningf("calculateMultipartETag: failed to decode etag '%s' for part %d: %v", etag, partNumber, err)
 		}
 	}
 	return fmt.Sprintf("%x-%d", md5.Sum(etags), len(completedPartNumbers))
@@ -980,9 +982,12 @@ func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPart
 
 func getEtagFromEntry(entry *filer_pb.Entry) string {
 	if entry.Extended != nil {
-		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
-			glog.V(4).Infof("getEtagFromEntry: found ExtETagKey for %s: %s, chunkCount: %d", entry.Name, string(etag), len(entry.Chunks))
-			return string(etag)
+		if etagBytes, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
+			etag := string(etagBytes)
+			if !strings.HasPrefix(etag, "\"") {
+				return "\"" + etag + "\""
+			}
+			return etag
 		}
 	}
 	etag := filer.ETagChunks(entry.GetChunks())

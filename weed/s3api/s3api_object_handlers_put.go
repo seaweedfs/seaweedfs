@@ -1075,10 +1075,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	}
 	versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
 
-	// Store ETag with quotes for S3 compatibility
-	if !strings.HasPrefix(etag, "\"") {
-		etag = "\"" + etag + "\""
-	}
+	// Store ETag (unquoted) in Extended attribute
 	versionEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
 	// Set object owner for versioned objects
