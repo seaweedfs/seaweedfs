@@ -1027,6 +1027,15 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// Create the version file name
 	versionFileName := s3a.getVersionFileName(versionId)
 
+	// If a file already exists at the main path, remove it to prevent duplicate listing entries
+	mainDir, mainBase := path.Dir(normalizedObject), path.Base(normalizedObject)
+	if mainDir == "." {
+		mainDir = ""
+	}
+	mainParentPath := path.Join(s3a.option.BucketsPath, bucket, mainDir)
+	rmErr := s3a.rm(mainParentPath, mainBase, false, false)
+	glog.V(3).Infof("putVersionedObject versioning enabled, deleting main file %s/%s, err=%v", mainParentPath, mainBase, rmErr)
+
 	// Upload directly to the versions directory
 	// We need to construct the object path relative to the bucket
 	versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
