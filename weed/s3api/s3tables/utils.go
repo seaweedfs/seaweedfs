@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 const (
@@ -146,6 +148,15 @@ type tableMetadataInternal struct {
 	MetadataVersion  int            `json:"metadataVersion"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+}
+
+// IsTableBucketEntry returns true when the entry is marked as a table bucket.
+func IsTableBucketEntry(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	_, ok := entry.Extended[ExtendedKeyTableBucket]
+	return ok
 }
 
 // Utility functions

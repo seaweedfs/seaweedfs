@@ -16,44 +16,27 @@ func (s3a *S3ApiServer) isTableBucket(bucket string) bool {
 	}
 
 	// Check cache first
-	if found, ok := s3a.getTableBucketFromCache(bucket); ok {
-		return found
+	if s3a.bucketRegistry != nil {
+		s3a.bucketRegistry.metadataCacheLock.RLock()
+		if metadata, ok := s3a.bucketRegistry.metadataCache[bucket]; ok {
+			s3a.bucketRegistry.metadataCacheLock.RUnlock()
+			return metadata.IsTableBucket
+		}
+		s3a.bucketRegistry.metadataCacheLock.RUnlock()
 	}
 
-	entry, err := s3a.getEntry(s3tables.TablesPath, bucket)
-	isTable := err == nil && entry != nil
-
-	// Only cache definitive results: either successful entry found or definitive not-found
-	// Don't cache transient errors to avoid marking real table buckets as non-table
-	if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
-		s3a.cacheTableBucket(bucket, isTable)
+	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	if err == nil && entry != nil {
+		if s3a.bucketRegistry != nil {
+			s3a.bucketRegistry.LoadBucketMetadata(entry)
+		}
+		return s3tables.IsTableBucketEntry(entry)
 	}
 
-	if !isTable && !errors.Is(err, filer_pb.ErrNotFound) && err != nil {
+	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		glog.V(1).Infof("bucket lookup failed for %s: %v", bucket, err)
 	}
-	return isTable
-}
-
-func (s3a *S3ApiServer) getTableBucketFromCache(bucket string) (bool, bool) {
-	if s3a.bucketRegistry == nil {
-		return false, false
-	}
-	s3a.bucketRegistry.tableBucketLock.RLock()
-	defer s3a.bucketRegistry.tableBucketLock.RUnlock()
-
-	found, ok := s3a.bucketRegistry.tableBucketCache[bucket]
-	return found, ok
-}
-
-func (s3a *S3ApiServer) cacheTableBucket(bucket string, isTable bool) {
-	if s3a.bucketRegistry == nil {
-		return
-	}
-	s3a.bucketRegistry.tableBucketLock.Lock()
-	defer s3a.bucketRegistry.tableBucketLock.Unlock()
-
-	s3a.bucketRegistry.tableBucketCache[bucket] = isTable
+	return false
 }
 
 func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
@@ -98,9 +81,6 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 }
 
 func (s3a *S3ApiServer) bucketRoot(bucket string) string {
-	if s3a.isTableBucket(bucket) {
-		return s3tables.TablesPath
-	}
 	return s3a.option.BucketsPath
 }
 
@@ -132,10 +112,6 @@ func (s3a *S3ApiServer) bucketExists(bucket string) (bool, error) {
 func (s3a *S3ApiServer) getBucketEntry(bucket string) (*filer_pb.Entry, error) {
 	if tablePath, ok := s3a.tableLocationDir(bucket); ok {
 		return s3a.getEntry(path.Dir(tablePath), path.Base(tablePath))
-	}
-	entry, err := s3a.getEntry(s3tables.TablesPath, bucket)
-	if err == nil || !errors.Is(err, filer_pb.ErrNotFound) {
-		return entry, err
 	}
 	return s3a.getEntry(s3a.option.BucketsPath, bucket)
 }

@@ -104,28 +104,28 @@ func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
 		{"filer path", "/home/user/file.txt", false},
 
 		// Table bucket structure paths (creating directories)
-		{"table bucket root", "/table-buckets/mybucket", false},
-		{"namespace dir", "/table-buckets/mybucket/myns", false},
-		{"table dir", "/table-buckets/mybucket/myns/mytable", false},
-		{"table dir trailing slash", "/table-buckets/mybucket/myns/mytable/", false},
+		{"table bucket root", "/buckets/mybucket", false},
+		{"namespace dir", "/buckets/mybucket/myns", false},
+		{"table dir", "/buckets/mybucket/myns/mytable", false},
+		{"table dir trailing slash", "/buckets/mybucket/myns/mytable/", false},
 
 		// Valid table bucket file uploads
-		{"valid parquet upload", "/table-buckets/mybucket/myns/mytable/data/file.parquet", false},
-		{"valid metadata upload", "/table-buckets/mybucket/myns/mytable/metadata/v1.metadata.json", false},
-		{"valid partitioned data", "/table-buckets/mybucket/myns/mytable/data/year=2024/file.parquet", false},
+		{"valid parquet upload", "/buckets/mybucket/myns/mytable/data/file.parquet", false},
+		{"valid metadata upload", "/buckets/mybucket/myns/mytable/metadata/v1.metadata.json", false},
+		{"valid partitioned data", "/buckets/mybucket/myns/mytable/data/year=2024/file.parquet", false},
 
 		// Invalid table bucket file uploads
-		{"invalid file type", "/table-buckets/mybucket/myns/mytable/data/file.csv", true},
-		{"invalid top-level dir", "/table-buckets/mybucket/myns/mytable/invalid/file.parquet", true},
-		{"root file in table", "/table-buckets/mybucket/myns/mytable/file.parquet", true},
+		{"invalid file type", "/buckets/mybucket/myns/mytable/data/file.csv", true},
+		{"invalid top-level dir", "/buckets/mybucket/myns/mytable/invalid/file.parquet", true},
+		{"root file in table", "/buckets/mybucket/myns/mytable/file.parquet", true},
 
 		// Empty segment cases
-		{"empty bucket", "/table-buckets//myns/mytable/data/file.parquet", true},
-		{"empty namespace", "/table-buckets/mybucket//mytable/data/file.parquet", true},
-		{"empty table", "/table-buckets/mybucket/myns//data/file.parquet", true},
-		{"empty bucket dir", "/table-buckets//", true},
-		{"empty namespace dir", "/table-buckets/mybucket//", true},
-		{"table double slash bypass", "/table-buckets/mybucket/myns/mytable//data/file.parquet", true},
+		{"empty bucket", "/buckets//myns/mytable/data/file.parquet", true},
+		{"empty namespace", "/buckets/mybucket//mytable/data/file.parquet", true},
+		{"empty table", "/buckets/mybucket/myns//data/file.parquet", true},
+		{"empty bucket dir", "/buckets//", true},
+		{"empty namespace dir", "/buckets/mybucket//", true},
+		{"table double slash bypass", "/buckets/mybucket/myns/mytable//data/file.parquet", true},
 	}
 
 	for _, tt := range tests {
@@ -143,11 +143,10 @@ func TestIsTableBucketPath(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"/table-buckets/mybucket", true},
-		{"/table-buckets/mybucket/ns/table/data/file.parquet", true},
-		{"/buckets/mybucket", false},
+		{"/buckets/mybucket", true},
+		{"/buckets/mybucket/ns/table/data/file.parquet", true},
 		{"/home/user/file.txt", false},
-		{"table-buckets/mybucket", false}, // missing leading slash
+		{"buckets/mybucket", false}, // missing leading slash
 	}
 
 	for _, tt := range tests {
@@ -166,11 +165,11 @@ func TestGetTableInfoFromPath(t *testing.T) {
 		wantNamespace string
 		wantTable     string
 	}{
-		{"/table-buckets/mybucket/myns/mytable/data/file.parquet", "mybucket", "myns", "mytable"},
-		{"/table-buckets/mybucket/myns/mytable", "mybucket", "myns", "mytable"},
-		{"/table-buckets/mybucket/myns", "mybucket", "myns", ""},
-		{"/table-buckets/mybucket", "mybucket", "", ""},
-		{"/buckets/mybucket", "", "", ""},
+		{"/buckets/mybucket/myns/mytable/data/file.parquet", "mybucket", "myns", "mytable"},
+		{"/buckets/mybucket/myns/mytable", "mybucket", "myns", "mytable"},
+		{"/buckets/mybucket/myns", "mybucket", "myns", ""},
+		{"/buckets/mybucket", "mybucket", "", ""},
+		{"/home/user/file.txt", "", "", ""},
 	}
 
 	for _, tt := range tests {

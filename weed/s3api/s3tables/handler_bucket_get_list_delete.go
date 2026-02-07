@@ -167,6 +167,10 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
+				if !IsTableBucketEntry(entry.Entry) {
+					continue
+				}
+
 				// Read metadata from extended attribute
 				data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
 				if !ok {

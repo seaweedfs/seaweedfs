@@ -47,7 +47,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		if resp.DirBuckets != "" {
 			bucketsPath = resp.DirBuckets
 		}
-		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+		entryResp, err := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: bucketsPath,
 			Name:      req.Name,
 		})
@@ -55,20 +55,15 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			if !errors.Is(err, filer_pb.ErrNotFound) {
 				return err
 			}
-		} else {
+			return nil
+		}
+		if entryResp != nil && IsTableBucketEntry(entryResp.Entry) {
+			tableBucketExists = true
+			return nil
+		}
+		if entryResp != nil {
 			s3BucketExists = true
 		}
-		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: TablesPath,
-			Name:      req.Name,
-		})
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return nil
-			}
-			return err
-		}
-		tableBucketExists = true
 		return nil
 	})
 
@@ -120,6 +115,11 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 
 		// Create bucket directory
 		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
+			return err
+		}
+
+		// Mark as a table bucket
+		if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyTableBucket, []byte("true")); err != nil {
 			return err
 		}
 

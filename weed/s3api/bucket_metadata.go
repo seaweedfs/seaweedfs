@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 	"sync"
 
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 var loadBucketMetadataFromFiler = func(r *BucketRegistry, bucketName string) (*BucketMetaData, error) {
@@ -26,6 +28,8 @@ type BucketMetaData struct {
 	_ struct{} `type:"structure"`
 
 	Name string
+	// Indicates the bucket is a table bucket.
+	IsTableBucket bool
 
 	//By default, when another AWS account uploads an object to S3 bucket,
 	//that account (the object writer) owns the object, has access to it, and
@@ -45,9 +49,6 @@ type BucketRegistry struct {
 	metadataCache     map[string]*BucketMetaData
 	metadataCacheLock sync.RWMutex
 
-	tableBucketCache map[string]bool // Dedicated cache for table bucket lookups
-	tableBucketLock  sync.RWMutex
-
 	tableLocationCache map[string]string // Cache for table location mappings (bucket -> table path)
 	tableLocationLock  sync.RWMutex
 
@@ -59,7 +60,6 @@ type BucketRegistry struct {
 func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 	br := &BucketRegistry{
 		metadataCache:      make(map[string]*BucketMetaData),
-		tableBucketCache:   make(map[string]bool),
 		tableLocationCache: make(map[string]string),
 		notFound:           make(map[string]struct{}),
 		s3a:                s3a,
@@ -75,6 +75,9 @@ func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 func (r *BucketRegistry) init() error {
 	var bucketCount int
 	err := filer_pb.List(context.Background(), r.s3a, r.s3a.option.BucketsPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if entry != nil && strings.HasPrefix(entry.Name, ".") {
+			return nil
+		}
 		r.LoadBucketMetadata(entry)
 		// Also warm the bucket config cache with Object Lock and versioning settings
 		// This ensures cache consistency across multi-filer clusters after restart
@@ -103,7 +106,8 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 	entryJson, _ := json.Marshal(entry)
 	glog.V(3).Infof("build bucket metadata,entry=%s", entryJson)
 	bucketMetadata := &BucketMetaData{
-		Name: entry.Name,
+		Name:          entry.Name,
+		IsTableBucket: s3tables.IsTableBucketEntry(entry),
 
 		//Default ownership: OwnershipBucketOwnerEnforced, which means Acl is disabled
 		ObjectOwnership: s3_constants.OwnershipBucketOwnerEnforced,
@@ -160,7 +164,6 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 func (r *BucketRegistry) RemoveBucketMetadata(entry *filer_pb.Entry) {
 	r.removeMetadataCache(entry.Name)
 	r.unMarkNotFound(entry.Name)
-	r.removeTableBucketCache(entry.Name)
 	r.removeTableLocationCache(entry.Name)
 }
 
@@ -224,12 +227,6 @@ func (r *BucketRegistry) removeMetadataCache(bucket string) {
 	r.metadataCacheLock.Lock()
 	defer r.metadataCacheLock.Unlock()
 	delete(r.metadataCache, bucket)
-}
-
-func (r *BucketRegistry) removeTableBucketCache(bucket string) {
-	r.tableBucketLock.Lock()
-	defer r.tableBucketLock.Unlock()
-	delete(r.tableBucketCache, bucket)
 }
 
 func (r *BucketRegistry) removeTableLocationCache(bucket string) {

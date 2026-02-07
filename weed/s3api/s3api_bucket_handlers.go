@@ -73,6 +73,9 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var listBuckets ListAllMyBucketsList
 	for _, entry := range entries {
 		if entry.IsDirectory {
+			if strings.HasPrefix(entry.Name, ".") {
+				continue
+			}
 			// Unauthenticated users should not see any buckets
 			if identity == nil {
 				continue

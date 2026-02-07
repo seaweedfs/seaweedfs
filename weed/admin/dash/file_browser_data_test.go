@@ -52,15 +52,6 @@ func TestGenerateBreadcrumbs(t *testing.T) {
 			},
 		},
 		{
-			name: "table bucket path",
-			path: "/table-buckets/mytablebucket",
-			expected: []BreadcrumbItem{
-				{Name: "Root", Path: "/"},
-				{Name: "Table Buckets", Path: "/table-buckets"},
-				{Name: "🧊 mytablebucket", Path: "/table-buckets/mytablebucket"},
-			},
-		},
-		{
 			name: "bucket nested path",
 			path: "/buckets/mybucket/folder",
 			expected: []BreadcrumbItem{
@@ -68,16 +59,6 @@ func TestGenerateBreadcrumbs(t *testing.T) {
 				{Name: "Object Store Buckets", Path: "/buckets"},
 				{Name: "📦 mybucket", Path: "/buckets/mybucket"},
 				{Name: "folder", Path: "/buckets/mybucket/folder"},
-			},
-		},
-		{
-			name: "table bucket nested path",
-			path: "/table-buckets/mytablebucket/folder",
-			expected: []BreadcrumbItem{
-				{Name: "Root", Path: "/"},
-				{Name: "Table Buckets", Path: "/table-buckets"},
-				{Name: "🧊 mytablebucket", Path: "/table-buckets/mytablebucket"},
-				{Name: "folder", Path: "/table-buckets/mytablebucket/folder"},
 			},
 		},
 		{
@@ -194,11 +175,6 @@ func TestParentPathCalculationLogic(t *testing.T) {
 			name:       "bucket directory",
 			currentDir: "/buckets/mybucket",
 			expected:   "/buckets",
-		},
-		{
-			name:       "table bucket directory",
-			currentDir: "/table-buckets/mytablebucket",
-			expected:   "/table-buckets",
 		},
 	}
 
