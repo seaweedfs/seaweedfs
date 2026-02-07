@@ -119,7 +119,7 @@ func (s3a *S3ApiServer) GetObjectLockConfigurationHandler(w http.ResponseWriter,
 	// If no cached Object Lock configuration, reload entry from filer to get the latest extended attributes
 	// This handles cases where the cache might have a stale entry due to timing issues with metadata updates
 	glog.V(3).Infof("GetObjectLockConfigurationHandler: no cached ObjectLockConfig, reloading entry from filer for %s", bucket)
-	freshEntry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	freshEntry, err := s3a.getBucketEntry(bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			glog.V(1).Infof("GetObjectLockConfigurationHandler: bucket %s not found while reloading entry", bucket)

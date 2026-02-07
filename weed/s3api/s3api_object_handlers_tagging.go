@@ -66,7 +66,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging retrieval
-		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
 		tags, err := s3a.getTags(dir, name)
@@ -170,7 +170,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging modification
-		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
 		if err = s3a.setTags(dir, name, tags); err != nil {
@@ -195,10 +195,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		// Specific version requested
 		if versionId == "null" {
 			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket
+			updateDirectory = s3a.bucketDir(bucket)
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 		}
 	} else {
 		// Latest version in versioned bucket - could be null version or versioned object
@@ -212,10 +212,10 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 		if actualVersionId == "null" || actualVersionId == "" {
 			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket
+			updateDirectory = s3a.bucketDir(bucket)
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 		}
 	}
 
@@ -308,7 +308,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		}
 	} else {
 		// Handle regular (non-versioned) object tagging deletion
-		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
+		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
 		err := s3a.rmTags(dir, name)
@@ -334,10 +334,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 		// Specific version requested
 		if versionId == "null" {
 			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket
+			updateDirectory = s3a.bucketDir(bucket)
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 		}
 	} else {
 		// Latest version in versioned bucket - could be null version or versioned object
@@ -351,10 +351,10 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 		if actualVersionId == "null" || actualVersionId == "" {
 			// Null version (pre-versioning object) - stored as regular file
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket
+			updateDirectory = s3a.bucketDir(bucket)
 		} else {
 			// Versioned object - stored in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 		}
 	}
 

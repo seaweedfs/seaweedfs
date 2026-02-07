@@ -32,7 +32,7 @@ func (s3a *S3ApiServer) GetBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	glog.V(3).Infof("GetBucketPolicyHandler: bucket=%s", bucket)
 
 	// Validate bucket exists first for correct error mapping
-	_, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	_, err := s3a.getBucketEntry(bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -137,7 +137,7 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 	glog.V(3).Infof("DeleteBucketPolicyHandler: bucket=%s", bucket)
 
 	// Validate bucket exists first for correct error mapping
-	_, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	_, err := s3a.getBucketEntry(bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
@@ -196,7 +196,7 @@ func (s3a *S3ApiServer) getBucketPolicy(bucket string) (*policy_engine.PolicyDoc
 	var policyDoc policy_engine.PolicyDocument
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
@@ -238,7 +238,7 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// First, get the current entry to preserve other attributes
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
@@ -255,7 +255,7 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 
 		// Update the entry with new metadata
 		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Entry:     entry,
 		})
 
@@ -268,7 +268,7 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get the current entry
 		resp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Name:      bucket,
 		})
 		if err != nil {
@@ -285,7 +285,7 @@ func (s3a *S3ApiServer) deleteBucketPolicy(bucket string) error {
 
 		// Update the entry
 		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Entry:     entry,
 		})
 

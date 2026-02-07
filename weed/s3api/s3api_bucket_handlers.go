@@ -184,6 +184,10 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 
 	// Check collection existence first
 	collectionExists := false
+	if s3a.isTableBucket(bucket) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+		return
+	}
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
 			IncludeEcVolumes:     true,
@@ -331,6 +335,11 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
+	if s3a.isTableBucket(bucket) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
 		return
@@ -430,7 +439,7 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
+	if entry, err := s3a.getBucketEntry(bucket); entry == nil || errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
 	}

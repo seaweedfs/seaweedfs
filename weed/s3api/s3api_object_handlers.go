@@ -333,7 +333,7 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	cleanPrefix := strings.TrimPrefix(prefix, "/")
 
 	// The directory to list is bucketDir + cleanPrefix
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	fullPath := bucketDir + "/" + cleanPrefix
 
 	// Try to list one child object in the directory
@@ -374,7 +374,7 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 		return nil, false, nil // Not a directory object
 	}
 
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	cleanObject := strings.TrimSuffix(object, "/")
 
 	if cleanObject == "" {
@@ -416,7 +416,7 @@ func (s3a *S3ApiServer) resolveObjectEntry(bucket, object string) (*filer_pb.Ent
 	}
 
 	// For non-versioned buckets, verify directly
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.getEntry(bucketDir, object)
 }
 
@@ -550,7 +550,7 @@ func (s3a *S3ApiServer) toFilerPath(bucket, object string) string {
 	// Returns the raw file path - no URL escaping needed
 	// The path is used directly, not embedded in a URL
 	object = s3_constants.NormalizeObjectKey(object)
-	return fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	return fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 }
 
 // hasConditionalHeaders checks if the request has any conditional headers
@@ -667,7 +667,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 			// - If .versions/ exists: real versions available, use getLatestObjectVersion
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
+			bucketDir := s3a.bucketDir(bucket)
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
@@ -2143,7 +2143,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			// - If .versions/ exists: real versions available, use getLatestObjectVersion
 			// - If .versions/ doesn't exist (ErrNotFound): only null version at regular path, use it directly
 			// - If transient error: fall back to getLatestObjectVersion which has retry logic
-			bucketDir := s3a.option.BucketsPath + "/" + bucket
+			bucketDir := s3a.bucketDir(bucket)
 			normalizedObject := s3_constants.NormalizeObjectKey(object)
 			versionsDir := normalizedObject + s3_constants.VersionsFolder
 
@@ -2288,7 +2288,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	//
 	// Edge Cases Handled:
 	//   - Empty files (0-byte, no children) → 200 OK (legitimate empty file)
-	//   - Empty directories (no children) → 200 OK (legitimate empty directory)
+	//   - Empty directories (no children) → 404 Not Found (directories are not objects)
 	//   - Explicit directory requests (trailing slash) → 200 OK (handled earlier)
 	//   - Versioned objects → Skip this check (different semantics)
 	//
@@ -2301,9 +2301,11 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 		// PyArrow may create 0-byte files when writing datasets, or the filer may have actual directories
 		if objectEntryForSSE.Attributes != nil {
 			isZeroByteFile := objectEntryForSSE.Attributes.FileSize == 0 && !objectEntryForSSE.IsDirectory
-			isActualDirectory := objectEntryForSSE.IsDirectory
-
-			if isZeroByteFile || isActualDirectory {
+			if objectEntryForSSE.IsDirectory {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			if isZeroByteFile {
 				// Check if it has children (making it an implicit directory)
 				if s3a.hasChildren(bucket, object) {
 					// This is an implicit directory with children
@@ -2422,7 +2424,7 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 // fetchObjectEntry fetches the filer entry for an object
 // Returns nil if not found (not an error), or propagates other errors
 func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		if errors.Is(fetchErr, filer_pb.ErrNotFound) {
@@ -2436,7 +2438,7 @@ func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry
 // fetchObjectEntryRequired fetches the filer entry for an object
 // Returns an error if the object is not found or any other error occurs
 func (s3a *S3ApiServer) fetchObjectEntryRequired(bucket, object string) (*filer_pb.Entry, error) {
-	objectPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	objectPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)
 	if fetchErr != nil {
 		return nil, fetchErr // Return error for both not-found and other errors
@@ -3358,7 +3360,7 @@ func (s3a *S3ApiServer) getMultipartInfo(entry *filer_pb.Entry, partNumber int) 
 // buildRemoteObjectPath builds the filer directory and object name from S3 bucket/object.
 // This is shared by all remote object caching functions.
 func (s3a *S3ApiServer) buildRemoteObjectPath(bucket, object string) (dir, name string) {
-	dir = s3a.option.BucketsPath + "/" + bucket
+	dir = s3a.bucketDir(bucket)
 	name = s3_constants.NormalizeObjectKey(object)
 	if idx := strings.LastIndex(name, "/"); idx > 0 {
 		dir = dir + "/" + name[:idx]
@@ -3426,7 +3428,7 @@ func (s3a *S3ApiServer) cacheRemoteObjectForStreaming(r *http.Request, entry *fi
 	if versionId != "" && versionId != "null" {
 		// This is a specific version - entry is located at /buckets/<bucket>/<object>.versions/v_<versionId>
 		normalizedObject := s3_constants.NormalizeObjectKey(object)
-		dir = s3a.option.BucketsPath + "/" + bucket + "/" + normalizedObject + s3_constants.VersionsFolder
+		dir = s3a.bucketDir(bucket) + "/" + normalizedObject + s3_constants.VersionsFolder
 		name = s3a.getVersionFileName(versionId)
 	} else {
 		// Non-versioned object or "null" version - lives at the main path

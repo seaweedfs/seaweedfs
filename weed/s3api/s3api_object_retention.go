@@ -361,7 +361,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
@@ -453,7 +453,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 	})
