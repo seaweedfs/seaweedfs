@@ -326,12 +326,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					if !delimiterFound {
 						glog.V(4).Infof("Adding file to contents: %s", entryName)
 						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false)
-						if len(contents) > 0 && contents[len(contents)-1].Key == newEntry.Key {
-							contents[len(contents)-1] = newEntry
-						} else {
-							contents = append(contents, newEntry)
-							cursor.maxKeys--
-						}
+						appendOrDedup(newEntry)
 						lastEntryWasCommonPrefix = false
 					}
 				}
