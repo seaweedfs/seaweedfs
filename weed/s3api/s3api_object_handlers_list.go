@@ -239,18 +239,18 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 						undelimitedPath := fmt.Sprintf("%s/%s/", dir, entry.Name)[len(bucketPrefix):]
 
 						// take into account a prefix if supplied while delimiting.
-						// the prefix may contain a delimiter
-						if prefix != "" && strings.HasPrefix(undelimitedPath, prefix) {
-							undelimitedPath = undelimitedPath[len(prefix):]
-						}
+						undelimitedPath = strings.TrimPrefix(undelimitedPath, originalPrefix)
 
 						delimitedPath := strings.SplitN(undelimitedPath, delimiter, 2)
-						if len(delimitedPath) > 1 {
+						if len(delimitedPath) == 2 {
+							// S3 clients expect the delimited prefix to contain the delimiter and prefix.
+							delimitedPrefix := originalPrefix + delimitedPath[0] + delimiter
+
 							// Check if this CommonPrefix already exists
 							if !lastEntryWasCommonPrefix || lastCommonPrefixName != delimitedPath[0] {
 								// New CommonPrefix found
 								commonPrefixes = append(commonPrefixes, PrefixEntry{
-									Prefix: fmt.Sprintf("%s%s%s", prefix, delimitedPath[0], delimiter),
+									Prefix: delimitedPrefix,
 								})
 								cursor.maxKeys--
 								delimiterFound = true
