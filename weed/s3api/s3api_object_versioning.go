@@ -818,6 +818,9 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 				// Try to get ETag from Extended attributes first
 				if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 					version.ETag = string(etagBytes)
+					if !strings.HasPrefix(version.ETag, "\"") {
+						version.ETag = "\"" + version.ETag + "\""
+					}
 				} else {
 					// Fallback: calculate ETag from chunks
 					version.ETag = s3a.calculateETagFromChunks(entry.Chunks)
