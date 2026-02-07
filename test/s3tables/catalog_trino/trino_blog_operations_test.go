@@ -108,7 +108,8 @@ AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, schemaName, cu
 		t.Fatalf("expected 8 rows for version time travel, got %d", versionCount)
 	}
 
-	countOutput = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SELECT count(*) FROM iceberg.%s.%s FOR TIMESTAMP AS OF current_timestamp", schemaName, trinoCustomersTable))
+	// Use current_timestamp - interval '1 second' to ensure it's in the past (Iceberg requirement)
+	countOutput = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SELECT count(*) FROM iceberg.%s.%s FOR TIMESTAMP AS OF (current_timestamp - interval '1' second)", schemaName, trinoCustomersTable))
 	timestampCount := mustParseCSVInt64(t, countOutput)
 	if timestampCount != 8 {
 		t.Fatalf("expected 8 rows for timestamp time travel, got %d", timestampCount)
