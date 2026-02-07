@@ -992,11 +992,12 @@ func getEtagFromEntry(entry *filer_pb.Entry) string {
 			return etag
 		}
 	}
-	etag := filer.ETagChunks(entry.GetChunks())
+	// Fallback to filer.ETag which handles Attributes.Md5 consistently
+	etag := filer.ETag(entry)
 	entryName := entry.Name
 	if entryName == "" {
 		entryName = "entry"
 	}
-	glog.V(4).Infof("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entryName, etag, len(entry.Chunks))
+	glog.V(4).Infof("getEtagFromEntry: fallback to filer.ETag for %s: %s, chunkCount: %d", entryName, etag, len(entry.Chunks))
 	return "\"" + etag + "\""
 }
