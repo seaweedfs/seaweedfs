@@ -1805,7 +1805,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
 			if !s3a.etagMatches(headers.ifMatch, objectETag) {
-				glog.Errorf("DEBUG: validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
+				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: entry}
 			} else {
 				glog.V(1).Infof("DEBUG: validateConditionalHeadersForReads: If-Match passed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
