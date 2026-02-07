@@ -25,29 +25,15 @@ func (m *mockAccountManager) GetAccountIdByEmail(email string) string {
 	return ""
 }
 
-// mockS3ApiServer implements the methods needed for testing newListEntry
-type mockS3ApiServer struct {
-	*S3ApiServer
-	accountMgr *mockAccountManager
-}
-
-func (m *mockS3ApiServer) GetAccountNameById(id string) string {
-	return m.accountMgr.GetAccountNameById(id)
-}
-
 func TestNewListEntryOwnerDisplayName(t *testing.T) {
-	// Create mock account manager
-	accountMgr := &mockAccountManager{
-		accounts: map[string]string{
-			"testid":    "M. Tester",
-			"userid123": "John Doe",
+	// Create S3ApiServer with a properly initialized IAM
+	s3a := &S3ApiServer{
+		iam: &IdentityAccessManagement{
+			accounts: map[string]*Account{
+				"testid":    {Id: "testid", DisplayName: "M. Tester"},
+				"userid123": {Id: "userid123", DisplayName: "John Doe"},
+			},
 		},
-	}
-
-	// Create mock S3ApiServer
-	s3a := &mockS3ApiServer{
-		S3ApiServer: &S3ApiServer{},
-		accountMgr:  accountMgr,
 	}
 
 	// Create test entry with owner metadata
@@ -63,7 +49,7 @@ func TestNewListEntryOwnerDisplayName(t *testing.T) {
 	}
 
 	// Test that display name is correctly looked up from IAM
-	listEntry := newListEntry(s3a.S3ApiServer, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
+	listEntry := newListEntry(s3a, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
 
 	assert.NotNil(t, listEntry.Owner, "Owner should be set when fetchOwner is true")
 	assert.Equal(t, "testid", listEntry.Owner.ID, "Owner ID should match stored owner")
@@ -71,20 +57,20 @@ func TestNewListEntryOwnerDisplayName(t *testing.T) {
 
 	// Test with owner that doesn't exist in IAM (should fallback to ID)
 	entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte("unknown-user")
-	listEntry = newListEntry(s3a.S3ApiServer, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
+	listEntry = newListEntry(s3a, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
 
 	assert.Equal(t, "unknown-user", listEntry.Owner.ID, "Owner ID should match stored owner")
 	assert.Equal(t, "unknown-user", listEntry.Owner.DisplayName, "Display name should fallback to ID when not found in IAM")
 
 	// Test with no owner metadata (should use anonymous)
 	entry.Extended = make(map[string][]byte)
-	listEntry = newListEntry(s3a.S3ApiServer, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
+	listEntry = newListEntry(s3a, entry, "", "dir", "test-object", "/buckets/test/", true, false, false)
 
 	assert.Equal(t, s3_constants.AccountAnonymousId, listEntry.Owner.ID, "Should use anonymous ID when no owner metadata")
 	assert.Equal(t, "anonymous", listEntry.Owner.DisplayName, "Should use anonymous display name when no owner metadata")
 
 	// Test with fetchOwner false (should not set owner)
-	listEntry = newListEntry(s3a.S3ApiServer, entry, "", "dir", "test-object", "/buckets/test/", false, false, false)
+	listEntry = newListEntry(s3a, entry, "", "dir", "test-object", "/buckets/test/", false, false, false)
 
 	assert.Nil(t, listEntry.Owner, "Owner should not be set when fetchOwner is false")
 }
