@@ -319,8 +319,9 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
-iceberg.rest-catalog.warehouse=s3://%s/
+iceberg.rest-catalog.warehouse=s3tablescatalog/%s
 iceberg.file-format=PARQUET
+iceberg.unique-table-location=true
 
 # S3 storage config
 fs.native-s3.enabled=true
@@ -415,7 +416,7 @@ func runTrinoSQL(t *testing.T, containerName, sql string) string {
 		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
 		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, string(output), string(logs))
 	}
-	return string(output)
+	return sanitizeTrinoOutput(string(output))
 }
 
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
@@ -437,6 +438,30 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	fmt.Printf(">>> SUCCESS: Created table bucket %s\n", bucketName)
 
 	t.Logf("Created table bucket: %s", bucketName)
+}
+
+func sanitizeTrinoOutput(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.Contains(line, "org.jline.utils.Log") {
+			continue
+		}
+		if strings.Contains(line, "Unable to create a system terminal") {
+			continue
+		}
+		if strings.HasPrefix(line, "WARNING:") {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+	return strings.Join(filtered, "\n") + "\n"
 }
 
 func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {

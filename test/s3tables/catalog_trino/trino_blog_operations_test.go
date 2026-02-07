@@ -16,9 +16,9 @@ func TestTrinoBlogOperations(t *testing.T) {
 	trinoCustomersTable := "trino_customers_" + randomString(6)
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", schemaName))
- defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s", schemaName))
- defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
- defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, customersTable))
+	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s", schemaName))
+	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
+	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, customersTable))
 
 	createCustomersSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS iceberg.%s.%s (
     customer_sk INT,
@@ -127,8 +127,11 @@ AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, schemaName, cu
 
 func hasCSVDataRow(output string) bool {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 2 {
+	if len(lines) == 0 {
 		return false
+	}
+	if len(lines) == 1 {
+		return strings.TrimSpace(lines[0]) != ""
 	}
 	for _, line := range lines[1:] {
 		if strings.TrimSpace(line) != "" {
@@ -151,8 +154,11 @@ func mustParseCSVInt64(t *testing.T, output string) int64 {
 func mustFirstCSVValue(t *testing.T, output string) string {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected CSV output with header and data row, got: %q", output)
+	if len(lines) == 0 {
+		t.Fatalf("expected CSV output with data row, got: %q", output)
+	}
+	if len(lines) == 1 {
+		return strings.Trim(strings.TrimSpace(lines[0]), "\"")
 	}
 	for _, line := range lines[1:] {
 		line = strings.TrimSpace(line)
