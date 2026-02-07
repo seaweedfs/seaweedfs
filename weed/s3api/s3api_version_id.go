@@ -141,7 +141,7 @@ func compareVersionIds(a, b string) int {
 
 // getVersionedObjectDir returns the directory path for storing object versions
 func (s3a *S3ApiServer) getVersionedObjectDir(bucket, object string) string {
-	return s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+	return s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 }
 
 // getVersionFileName returns the filename for a specific version
@@ -154,7 +154,7 @@ func (s3a *S3ApiServer) getVersionFileName(versionId string) string {
 // For new .versions directories, returns true (use new format).
 // For existing directories, infers format from the latest version ID.
 func (s3a *S3ApiServer) getVersionIdFormat(bucket, object string) bool {
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsPath := object + s3_constants.VersionsFolder
 
 	// Try to get the .versions directory entry

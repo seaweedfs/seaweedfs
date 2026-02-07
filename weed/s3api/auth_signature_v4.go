@@ -109,7 +109,7 @@ func getContentSha256Cksum(r *http.Request) string {
 // AWS SigV4 canonical requests always use hex-encoded SHA256.
 func normalizePayloadHash(payloadHashValue string) string {
 	// Special values and hex-encoded hashes don't need conversion
-	if payloadHashValue == emptySHA256 || payloadHashValue == unsignedPayload || 
+	if payloadHashValue == emptySHA256 || payloadHashValue == unsignedPayload ||
 		payloadHashValue == streamingContentSHA256 || payloadHashValue == streamingContentSHA256Trailer ||
 		payloadHashValue == streamingUnsignedPayload || len(payloadHashValue) == 64 {
 		return payloadHashValue

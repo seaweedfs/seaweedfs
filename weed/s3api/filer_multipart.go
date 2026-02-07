@@ -591,7 +591,7 @@ func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInpu
 		dirName = ""
 	}
 	dirName = strings.TrimPrefix(dirName, "/")
-	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
+	dirName = fmt.Sprintf("%s/%s", s3a.bucketDir(*input.Bucket), dirName)
 
 	// remove suffix '/'
 	dirName = strings.TrimSuffix(dirName, "/")

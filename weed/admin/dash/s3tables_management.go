@@ -100,6 +100,9 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 			if strings.HasPrefix(entry.Entry.Name, ".") {
 				continue
 			}
+			if !s3tables.IsTableBucketEntry(entry.Entry) {
+				continue
+			}
 			metaBytes, ok := entry.Entry.Extended[s3tables.ExtendedKeyMetadata]
 			if !ok {
 				continue

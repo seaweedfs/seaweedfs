@@ -15,8 +15,8 @@ import (
 // Returns chunks and destination metadata that should be applied to the destination entry
 func (s3a *S3ApiServer) executeUnifiedCopyStrategy(entry *filer_pb.Entry, r *http.Request, srcBucket, dstBucket, srcObject, dstObject string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	// Detect encryption state (using entry-aware detection for multipart objects)
-	srcPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject)
-	dstPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)
+	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
+	dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
 	state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
 
 	// Debug logging for encryption state

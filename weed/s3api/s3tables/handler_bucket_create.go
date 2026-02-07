@@ -38,16 +38,16 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	// Check if bucket already exists and ensure no conflict with object store buckets
 	tableBucketExists := false
 	s3BucketExists := false
+	bucketsPath := s3_constants.DefaultBucketsPath
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(r.Context(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
-		bucketsPath := resp.DirBuckets
-		if bucketsPath == "" {
-			bucketsPath = s3_constants.DefaultBucketsPath
+		if resp.DirBuckets != "" {
+			bucketsPath = resp.DirBuckets
 		}
-		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+		entryResp, err := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: bucketsPath,
 			Name:      req.Name,
 		})
@@ -55,20 +55,15 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			if !errors.Is(err, filer_pb.ErrNotFound) {
 				return err
 			}
-		} else {
-			s3BucketExists = true
+			return nil
 		}
-		_, err = filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: TablesPath,
-			Name:      req.Name,
-		})
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				return nil
+		if entryResp != nil && entryResp.Entry != nil {
+			if IsTableBucketEntry(entryResp.Entry) {
+				tableBucketExists = true
+			} else {
+				s3BucketExists = true
 			}
-			return err
 		}
-		tableBucketExists = true
 		return nil
 	})
 
@@ -78,13 +73,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	if s3BucketExists {
-		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("bucket name %s is already used by an object store bucket", req.Name))
-		return fmt.Errorf("bucket name conflicts with object store bucket")
-	}
-
 	if tableBucketExists {
 		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("table bucket %s already exists", req.Name))
+		return fmt.Errorf("bucket already exists")
+	}
+	if s3BucketExists {
+		h.writeError(w, http.StatusConflict, ErrCodeBucketAlreadyExists, fmt.Sprintf("bucket %s already exists", req.Name))
 		return fmt.Errorf("bucket already exists")
 	}
 
@@ -111,8 +105,21 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			}
 		}
 
+		// Ensure object root directory exists for table bucket S3 operations
+		if err := h.ensureDirectory(r.Context(), client, GetTableObjectRootDir()); err != nil {
+			return fmt.Errorf("failed to create table object root directory: %w", err)
+		}
+		if err := h.ensureDirectory(r.Context(), client, GetTableObjectBucketPath(req.Name)); err != nil {
+			return fmt.Errorf("failed to create table object bucket directory: %w", err)
+		}
+
 		// Create bucket directory
 		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
+			return err
+		}
+
+		// Mark as a table bucket
+		if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyTableBucket, []byte("true")); err != nil {
 			return err
 		}
 

@@ -86,7 +86,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if len(response.Contents) == 0 {
-		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
+		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
@@ -150,7 +150,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	if len(response.Contents) == 0 {
-		if exists, existErr := s3a.exists(s3a.option.BucketsPath, bucket, true); existErr == nil && !exists {
+		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 			return
 		}
@@ -163,7 +163,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
 	// convert full path prefix into directory name and prefix for entry name
 	requestDir, prefix, marker := normalizePrefixMarker(originalPrefix, originalMarker)
-	bucketPrefix := fmt.Sprintf("%s/%s/", s3a.option.BucketsPath, bucket)
+	bucketPrefix := s3a.bucketPrefix(bucket)
 	reqDir := bucketPrefix[:len(bucketPrefix)-1]
 	if requestDir != "" {
 		reqDir = fmt.Sprintf("%s%s", bucketPrefix, requestDir)
@@ -230,6 +230,16 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				empty = false
 				dirName, entryName, _ := entryUrlEncode(dir, entry.Name, encodingTypeUrl)
 				if entry.IsDirectory {
+					if originalPrefix != "" {
+						normalizedPrefix := strings.TrimPrefix(strings.TrimSuffix(originalPrefix, "/"), "/")
+						if normalizedPrefix != "" {
+							relativePath := strings.TrimPrefix(fmt.Sprintf("%s/%s", dir, entry.Name), bucketPrefix)
+							relativePath = strings.TrimPrefix(relativePath, "/")
+							if normalizedPrefix == relativePath && !s3a.hasChildren(bucket, relativePath) && !entry.IsDirectoryKeyObject() {
+								return
+							}
+						}
+					}
 					// When delimiter is specified, apply delimiter logic to directory key objects too
 					if delimiter != "" && entry.IsDirectoryKeyObject() {
 						// Apply the same delimiter logic as for regular files
@@ -332,6 +342,11 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 				}
 			})
 			if doErr != nil {
+				if errors.Is(doErr, filer_pb.ErrNotFound) {
+					empty = true
+					nextMarker = ""
+					break
+				}
 				return doErr
 			}
 
@@ -508,7 +523,11 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	defer cancel()
 	stream, listErr := client.ListEntries(ctx, request)
 	if listErr != nil {
-		err = fmt.Errorf("list entires %+v: %v", request, listErr)
+		if errors.Is(listErr, filer_pb.ErrNotFound) {
+			err = filer_pb.ErrNotFound
+			return
+		}
+		err = fmt.Errorf("list entries %+v: %w", request, listErr)
 		return
 	}
 
@@ -518,7 +537,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if recvErr == io.EOF {
 				break
 			} else {
-				err = fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+				err = fmt.Errorf("iterating entries %+v: %v", request, recvErr)
 				return
 			}
 		}
@@ -552,7 +571,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// Extract object name from .versions directory name
 				baseObjectName := strings.TrimSuffix(entry.Name, s3_constants.VersionsFolder)
 				// Construct full object path relative to bucket
-				bucketFullPath := s3a.option.BucketsPath + "/" + bucket
+				bucketFullPath := s3a.bucketDir(bucket)
 				bucketRelativePath := strings.TrimPrefix(dir, bucketFullPath)
 				bucketRelativePath = strings.TrimPrefix(bucketRelativePath, "/")
 				var fullObjectPath string

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -172,16 +173,16 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 }
 
 // saveMetadataFile saves the Iceberg metadata JSON file to the filer.
-// It constructs the correct filler path from the S3 location components.
-func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, tableName, metadataFileName string, content []byte) error {
-	// Construct filer path: /table-buckets/<bucket>/<namespace>/<table>/metadata/<filename>
-	// Note: s3tables.TablesPath is "/table-buckets"
+// It constructs the filer path from the S3 location components.
+func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, metadataFileName string, content []byte) error {
 
 	// Create context with timeout for file operations
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		bucketsPath := s3tables.TablesPath
+
 		ensureDir := func(parent, name, errorContext string) error {
 			_, err := filer_pb.LookupEntry(opCtx, client, &filer_pb.LookupDirectoryEntryRequest{
 				Directory: parent,
@@ -216,19 +217,33 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, namespace, ta
 			return nil
 		}
 
-		// 1. Ensure table directory exists: /table-buckets/<bucket>/<namespace>/<table>
-		tableDir := fmt.Sprintf("/table-buckets/%s/%s/%s", bucketName, namespace, tableName)
-		if err := ensureDir(fmt.Sprintf("/table-buckets/%s/%s", bucketName, namespace), tableName, "table directory"); err != nil {
+		// 1. Ensure bucket directory exists: <bucketsPath>/<bucket>
+		if err := ensureDir(bucketsPath, bucketName, "bucket directory"); err != nil {
 			return err
 		}
 
-		// 2. Ensure metadata directory exists: /table-buckets/<bucket>/<namespace>/<table>/metadata
-		metadataDir := fmt.Sprintf("%s/metadata", tableDir)
+		// 2. Ensure table path exists: <bucketsPath>/<bucket>/<tablePath>
+		tableDir := path.Join(bucketsPath, bucketName)
+		if tablePath != "" {
+			segments := strings.Split(tablePath, "/")
+			for _, segment := range segments {
+				if segment == "" {
+					continue
+				}
+				if err := ensureDir(tableDir, segment, "table directory"); err != nil {
+					return err
+				}
+				tableDir = path.Join(tableDir, segment)
+			}
+		}
+
+		// 3. Ensure metadata directory exists: <bucketsPath>/<bucket>/<tablePath>/metadata
+		metadataDir := path.Join(tableDir, "metadata")
 		if err := ensureDir(tableDir, "metadata", "metadata directory"); err != nil {
 			return err
 		}
 
-		// 3. Write the file
+		// 4. Write the file
 		resp, err := client.CreateEntry(opCtx, &filer_pb.CreateEntryRequest{
 			Directory: metadataDir,
 			Entry: &filer_pb.Entry{
@@ -276,6 +291,34 @@ func parseNamespace(encoded string) []string {
 // encodeNamespace encodes namespace parts for response.
 func encodeNamespace(parts []string) string {
 	return strings.Join(parts, "\x1F")
+}
+
+func parseS3Location(location string) (bucketName, tablePath string, err error) {
+	if !strings.HasPrefix(location, "s3://") {
+		return "", "", fmt.Errorf("unsupported location: %s", location)
+	}
+	trimmed := strings.TrimPrefix(location, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", "", fmt.Errorf("invalid location: %s", location)
+	}
+	parts := strings.SplitN(trimmed, "/", 2)
+	bucketName = parts[0]
+	if bucketName == "" {
+		return "", "", fmt.Errorf("invalid location bucket: %s", location)
+	}
+	if len(parts) == 2 {
+		tablePath = parts[1]
+	}
+	return bucketName, tablePath, nil
+}
+
+func tableLocationFromMetadataLocation(metadataLocation string) string {
+	trimmed := strings.TrimSuffix(metadataLocation, "/")
+	if idx := strings.LastIndex(trimmed, "/metadata/"); idx != -1 {
+		return trimmed[:idx]
+	}
+	return trimmed
 }
 
 // writeJSON writes a JSON response.
@@ -637,7 +680,24 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), req.Name)
+	location := strings.TrimSuffix(req.Location, "/")
+	tablePath := path.Join(encodeNamespace(namespace), req.Name)
+	storageBucket := bucketName
+	tableLocationBucket := ""
+	if location != "" {
+		parsedBucket, parsedPath, err := parseS3Location(location)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid table location: "+err.Error())
+			return
+		}
+		if strings.HasSuffix(parsedBucket, "--table-s3") && parsedPath == "" {
+			tableLocationBucket = parsedBucket
+		}
+	}
+	if tableLocationBucket == "" {
+		tableLocationBucket = fmt.Sprintf("%s--table-s3", tableUUID.String())
+	}
+	location = fmt.Sprintf("s3://%s", tableLocationBucket)
 
 	// Build proper Iceberg table metadata using iceberg-go types
 	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
@@ -656,12 +716,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// 1. Save metadata file to filer
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
-	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+	if err := s.saveMetadataFile(r.Context(), storageBucket, tablePath, metadataFileName, metadataBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
 
-	metadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s", bucketName, encodeNamespace(namespace), tableName, metadataFileName)
+	metadataLocation := fmt.Sprintf("%s/metadata/%s", location, metadataFileName)
 
 	// Use S3 Tables manager to create table
 	createReq := &s3tables.CreateTableRequest{
@@ -750,7 +810,10 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build table metadata using iceberg-go types
-	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
+	if location == "" {
+		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
 		if parsed, err := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); err == nil {
@@ -911,7 +974,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the current metadata
-	location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
+	if location == "" {
+		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
 		if parsed, err := uuid.Parse(getResp.Metadata.Iceberg.TableUUID); err == nil {
@@ -973,8 +1039,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	// Determine next metadata version
 	metadataVersion := getResp.MetadataVersion + 1
 	metadataFileName := fmt.Sprintf("v%d.metadata.json", metadataVersion)
-	newMetadataLocation := fmt.Sprintf("s3://%s/%s/%s/metadata/%s",
-		bucketName, encodeNamespace(namespace), tableName, metadataFileName)
+	newMetadataLocation := fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), metadataFileName)
 
 	// Serialize metadata to JSON
 	metadataBytes, err := json.Marshal(newMetadata)
@@ -984,7 +1049,8 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Save metadata file to filer
-	if err := s.saveMetadataFile(r.Context(), bucketName, encodeNamespace(namespace), tableName, metadataFileName, metadataBytes); err != nil {
+	tablePath := path.Join(encodeNamespace(namespace), tableName)
+	if err := s.saveMetadataFile(r.Context(), bucketName, tablePath, metadataFileName, metadataBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}

@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 // FileEntry represents a file or directory entry in the file browser
@@ -218,25 +220,33 @@ func (s *AdminServer) GetFileBrowser(dir string, lastFileName string, pageSize i
 		}
 	}
 
-	// Check if this is a bucket path
+	// Check if this is a bucket path and determine if it's a table bucket
 	isBucketPath := false
 	bucketName := ""
+	isTableBucketPath := false
+	tableBucketName := ""
 	if strings.HasPrefix(dir, "/buckets/") {
 		isBucketPath = true
 		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
 		if len(pathParts) >= 2 {
 			bucketName = pathParts[1]
-		}
-	}
-
-	// Check if this is a table bucket path
-	isTableBucketPath := false
-	tableBucketName := ""
-	if strings.HasPrefix(dir, "/table-buckets/") {
-		isTableBucketPath = true
-		pathParts := strings.Split(strings.Trim(dir, "/"), "/")
-		if len(pathParts) >= 2 {
-			tableBucketName = pathParts[1]
+			// Check table bucket status early to avoid second WithFilerClient call
+			if err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+				resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+					Directory: "/buckets",
+					Name:      bucketName,
+				})
+				if err != nil {
+					return err
+				}
+				if s3tables.IsTableBucketEntry(resp.Entry) {
+					isTableBucketPath = true
+					tableBucketName = bucketName
+				}
+				return nil
+			}); err != nil {
+				glog.V(1).Infof("file browser table bucket lookup failed for %s: %v", bucketName, err)
+			}
 		}
 	}
 
@@ -287,12 +297,8 @@ func (s *AdminServer) generateBreadcrumbs(dir string) []BreadcrumbItem {
 		displayName := part
 		if len(breadcrumbs) == 1 && part == "buckets" {
 			displayName = "Object Store Buckets"
-		} else if len(breadcrumbs) == 1 && part == "table-buckets" {
-			displayName = "Table Buckets"
 		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/buckets/") {
 			displayName = "📦 " + part // Add bucket icon to bucket name
-		} else if len(breadcrumbs) == 2 && strings.HasPrefix(dir, "/table-buckets/") {
-			displayName = "🧊 " + part
 		}
 
 		breadcrumbs = append(breadcrumbs, BreadcrumbItem{

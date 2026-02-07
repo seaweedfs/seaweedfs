@@ -14,25 +14,25 @@ script changePageSize(path string, lastFileName string) {
 templ FileBrowser(data dash.FileBrowserData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			if data.IsBucketPath && data.BucketName != "" {
-				<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
-			} else if data.IsTableBucketPath && data.TableBucketName != "" {
-				<i class="fas fa-table me-2"></i>Table Bucket: {data.TableBucketName}
-			} else {
-				<i class="fas fa-folder-open me-2"></i>File Browser
-			}
+		if data.IsTableBucketPath && data.TableBucketName != "" {
+			<i class="fas fa-table me-2"></i>Table Bucket: {data.TableBucketName}
+		} else if data.IsBucketPath && data.BucketName != "" {
+			<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
+		} else {
+			<i class="fas fa-folder-open me-2"></i>File Browser
+		}
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				if data.IsBucketPath && data.BucketName != "" {
-					<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
-						<i class="fas fa-arrow-left me-1"></i>Back to Buckets
-					</a>
-				} else if data.IsTableBucketPath && data.TableBucketName != "" {
-					<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-secondary">
-						<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
-					</a>
-				}
+			if data.IsTableBucketPath && data.TableBucketName != "" {
+				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
+				</a>
+			} else if data.IsBucketPath && data.BucketName != "" {
+				<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back to Buckets
+				</a>
+			}
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
 					<i class="fas fa-folder-plus me-1"></i>New Folder
 				</button>
@@ -85,12 +85,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
 					<i class="fas fa-cube me-1"></i>Manage Buckets
 				</a>
-			} else if data.CurrentPath == "/table-buckets" {
-										<a href="/files?path=/table-buckets" class="text-decoration-none text-primary">Table Buckets Directory</a>
-				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-primary ms-2">
-					<i class="fas fa-table me-1"></i>Manage Table Buckets
-				</a>
-			} else {
+		} else {
 				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
 			}
 			</h6>

@@ -73,8 +73,8 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			isDirectory:       true,
 			hasChildren:       false,
 			versioningEnabled: false,
-			shouldReturn404:   false,
-			description:       "Should return 200 for empty directory",
+			shouldReturn404:   true,
+			description:       "Should return 404 for empty directory",
 		},
 		{
 			name:              "Regular file: non-zero size",
@@ -116,10 +116,11 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 			// Test the logic: should we return 404?
 			// Logic from HeadObjectHandler:
 			// if !versioningConfigured && !strings.HasSuffix(object, "/") {
-			//     if isZeroByteFile || isActualDirectory {
-			//         if hasChildren {
-			//             return 404
-			//         }
+			//     if isActualDirectory {
+			//         return 404
+			//     }
+			//     if isZeroByteFile && hasChildren {
+			//         return 404
 			//     }
 			// }
 
@@ -128,10 +129,10 @@ func TestImplicitDirectoryBehaviorLogic(t *testing.T) {
 
 			shouldReturn404 := false
 			if !tt.versioningEnabled && !tt.hasTrailingSlash {
-				if isZeroByteFile || isActualDirectory {
-					if tt.hasChildren {
-						shouldReturn404 = true
-					}
+				if isActualDirectory {
+					shouldReturn404 = true
+				} else if isZeroByteFile && tt.hasChildren {
+					shouldReturn404 = true
 				}
 			}
 

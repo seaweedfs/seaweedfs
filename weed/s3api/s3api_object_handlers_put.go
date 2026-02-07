@@ -130,7 +130,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		dirName = strings.TrimPrefix(dirName, "/")
 
 		// Construct full directory path
-		fullDirPath := s3a.option.BucketsPath + "/" + bucket
+		fullDirPath := s3a.bucketDir(bucket)
 		if dirName != "" {
 			fullDirPath = fullDirPath + "/" + dirName
 		}
@@ -828,7 +828,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 	glog.V(3).Infof("putSuspendedVersioningObject: START bucket=%s, object=%s, normalized=%s",
 		bucket, object, normalizedObject)
 
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 
 	// Check if there's an existing null version in .versions directory and delete it
 	// This ensures suspended versioning properly overwrites the null version as per S3 spec
@@ -946,7 +946,7 @@ func (s3a *S3ApiServer) putSuspendedVersioningObject(r *http.Request, bucket, ob
 // updateIsLatestFlagsForSuspendedVersioning sets IsLatest=false on all existing versions/delete markers
 // when a new "null" version becomes the latest during suspended versioning
 func (s3a *S3ApiServer) updateIsLatestFlagsForSuspendedVersioning(bucket, object string) error {
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
@@ -1031,7 +1031,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 	// We need to construct the object path relative to the bucket
 	versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
 	versionFilePath := s3a.toFilerPath(bucket, versionObjectPath)
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 
 	body := dataReader
 	if objectContentType == "" {
@@ -1112,7 +1112,7 @@ func (s3a *S3ApiServer) putVersionedObject(r *http.Request, bucket, object strin
 // updateLatestVersionInDirectory updates the .versions directory metadata to indicate the latest version
 // versionEntry contains the metadata (size, ETag, mtime, owner) to cache for single-scan list efficiency
 func (s3a *S3ApiServer) updateLatestVersionInDirectory(bucket, object, versionId, versionFileName string, versionEntry *filer_pb.Entry) error {
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 
 	// Get the current .versions directory entry with retry logic for filer consistency

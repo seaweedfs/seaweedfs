@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	TablesPath       = "/table-buckets"
+	TablesPath       = s3_constants.DefaultBucketsPath
 	DefaultAccountID = "000000000000"
 	DefaultRegion    = "us-east-1"
 
 	// Extended entry attributes for metadata storage
-	ExtendedKeyMetadata = "s3tables.metadata"
-	ExtendedKeyPolicy   = "s3tables.policy"
-	ExtendedKeyTags     = "s3tables.tags"
+	ExtendedKeyTableBucket = "s3tables.tableBucket"
+	ExtendedKeyMetadata    = "s3tables.metadata"
+	ExtendedKeyPolicy      = "s3tables.policy"
+	ExtendedKeyTags        = "s3tables.tags"
 
 	// Maximum request body size (10MB)
 	maxRequestBodySize = 10 * 1024 * 1024

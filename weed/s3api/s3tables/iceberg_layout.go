@@ -254,7 +254,7 @@ func NewTableBucketFileValidator() *TableBucketFileValidator {
 }
 
 // ValidateTableBucketUpload checks if a file upload to a table bucket conforms to Iceberg layout
-// fullPath is the complete filer path (e.g., /table-buckets/mybucket/mynamespace/mytable/data/file.parquet)
+// fullPath is the complete filer path (e.g., /buckets/mybucket/mynamespace/mytable/data/file.parquet)
 // Returns nil if the path is not a table bucket path or if validation passes
 // Returns an error if the file doesn't conform to Iceberg layout
 func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) error {
@@ -264,7 +264,7 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 	}
 
 	// Extract the path relative to table bucket root
-	// Format: /table-buckets/{bucket}/{namespace}/{table}/{relative-path}
+	// Format: /buckets/{bucket}/{namespace}/{table}/{relative-path}
 	relativePath := strings.TrimPrefix(fullPath, TablesPath+"/")
 	parts := strings.SplitN(relativePath, "/", 4)
 
@@ -307,7 +307,7 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
 }
 
-// IsTableBucketPath checks if a path is under the table-buckets directory
+// IsTableBucketPath checks if a path is under the table buckets directory
 func IsTableBucketPath(fullPath string) bool {
 	return strings.HasPrefix(fullPath, TablesPath+"/")
 }
@@ -341,11 +341,6 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 	client filer_pb.SeaweedFilerClient,
 	fullPath string,
 ) error {
-	// First check basic layout
-	if err := v.ValidateTableBucketUpload(fullPath); err != nil {
-		return err
-	}
-
 	// If not a table bucket path, nothing more to check
 	if !IsTableBucketPath(fullPath) {
 		return nil
@@ -357,11 +352,37 @@ func (v *TableBucketFileValidator) ValidateTableBucketUploadWithClient(
 		return nil // Not deep enough to need validation
 	}
 
+	if strings.HasPrefix(bucket, ".") {
+		return nil
+	}
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: TablesPath,
+		Name:      bucket,
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return &IcebergLayoutError{
+			Code:    ErrCodeInvalidIcebergLayout,
+			Message: "failed to verify table bucket: " + err.Error(),
+		}
+	}
+	if resp == nil || !IsTableBucketEntry(resp.Entry) {
+		return nil
+	}
+
+	// Now check basic layout once we know this is a table bucket path.
+	if err := v.ValidateTableBucketUpload(fullPath); err != nil {
+		return err
+	}
+
 	// Verify the table exists and has ICEBERG format by checking its metadata
 	tablePath := GetTablePath(bucket, namespace, table)
 	dir, name := splitPath(tablePath)
 
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+	resp, err = filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
 	})

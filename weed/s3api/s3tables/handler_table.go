@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,6 +226,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}
+		}
+
+		if err := h.updateTableLocationMapping(r.Context(), client, "", req.MetadataLocation, tablePath); err != nil {
+			glog.V(1).Infof("failed to update table location mapping for %s: %v", req.MetadataLocation, err)
 		}
 
 		return nil
@@ -909,7 +914,13 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(r.Context(), client, tablePath)
+		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
+			return err
+		}
+		if err := h.deleteTableLocationMapping(r.Context(), client, metadata.MetadataLocation); err != nil {
+			glog.V(1).Infof("failed to delete table location mapping for %s: %v", metadata.MetadataLocation, err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -1051,6 +1062,9 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return ErrVersionTokenMismatch
 	}
 
+	// Capture old metadata location before mutation for stale mapping cleanup
+	oldMetadataLocation := metadata.MetadataLocation
+
 	// Update metadata
 	if req.Metadata != nil {
 		if metadata.Metadata == nil {
@@ -1086,7 +1100,13 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes)
+		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
+			return err
+		}
+		if err := h.updateTableLocationMapping(r.Context(), client, oldMetadataLocation, metadata.MetadataLocation, tablePath); err != nil {
+			glog.V(1).Infof("failed to update table location mapping for %s -> %s: %v", oldMetadataLocation, metadata.MetadataLocation, err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -1100,4 +1120,36 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		VersionToken:     metadata.VersionToken,
 	})
 	return nil
+}
+
+func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, oldMetadataLocation, newMetadataLocation, tablePath string) error {
+	newTableLocationBucket, ok := parseTableLocationBucket(newMetadataLocation)
+	if !ok {
+		return nil
+	}
+
+	if err := h.ensureDirectory(ctx, client, GetTableLocationMappingDir()); err != nil {
+		return err
+	}
+
+	// If the metadata location changed, delete the stale mapping for the old bucket
+	if oldMetadataLocation != "" && oldMetadataLocation != newMetadataLocation {
+		oldTableLocationBucket, ok := parseTableLocationBucket(oldMetadataLocation)
+		if ok && oldTableLocationBucket != newTableLocationBucket {
+			oldMappingPath := GetTableLocationMappingPath(oldTableLocationBucket)
+			if err := h.deleteEntryIfExists(ctx, client, oldMappingPath); err != nil {
+				glog.V(1).Infof("failed to delete stale mapping for %s: %v", oldTableLocationBucket, err)
+			}
+		}
+	}
+
+	return h.upsertFile(ctx, client, GetTableLocationMappingPath(newTableLocationBucket), []byte(tablePath))
+}
+
+func (h *S3TablesHandler) deleteTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, metadataLocation string) error {
+	tableLocationBucket, ok := parseTableLocationBucket(metadataLocation)
+	if !ok {
+		return nil
+	}
+	return h.deleteEntryIfExists(ctx, client, GetTableLocationMappingPath(tableLocationBucket))
 }

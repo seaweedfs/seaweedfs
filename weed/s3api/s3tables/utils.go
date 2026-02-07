@@ -9,12 +9,19 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 const (
 	bucketNamePatternStr     = `[a-z0-9-]+`
 	tableNamespacePatternStr = `[a-z0-9_]+`
 	tableNamePatternStr      = `[a-z0-9_]+`
+)
+
+const (
+	tableLocationMappingsDirName = ".table-location-mappings"
+	tableObjectRootDirName       = ".objects"
 )
 
 var (
@@ -94,6 +101,26 @@ func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
 }
 
+// GetTableObjectRootDir returns the root path for table bucket object storage
+func GetTableObjectRootDir() string {
+	return path.Join(TablesPath, tableObjectRootDirName)
+}
+
+// GetTableObjectBucketPath returns the filer path for table bucket object storage
+func GetTableObjectBucketPath(bucketName string) string {
+	return path.Join(GetTableObjectRootDir(), bucketName)
+}
+
+// GetTableLocationMappingDir returns the root path for table location bucket mappings
+func GetTableLocationMappingDir() string {
+	return path.Join(TablesPath, tableLocationMappingsDirName)
+}
+
+// GetTableLocationMappingPath returns the filer path for a table location bucket mapping
+func GetTableLocationMappingPath(tableLocationBucket string) string {
+	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
+}
+
 // Metadata structures
 
 type tableBucketMetadata struct {
@@ -121,6 +148,15 @@ type tableMetadataInternal struct {
 	MetadataVersion  int            `json:"metadataVersion"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+}
+
+// IsTableBucketEntry returns true when the entry is marked as a table bucket.
+func IsTableBucketEntry(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	_, ok := entry.Extended[ExtendedKeyTableBucket]
+	return ok
 }
 
 // Utility functions
@@ -180,6 +216,22 @@ func validateBucketName(name string) error {
 // ValidateBucketName validates bucket name and returns an error if invalid.
 func ValidateBucketName(name string) error {
 	return validateBucketName(name)
+}
+
+func parseTableLocationBucket(metadataLocation string) (string, bool) {
+	if !strings.HasPrefix(metadataLocation, "s3://") {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(metadataLocation, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", false
+	}
+	bucket, _, _ := strings.Cut(trimmed, "/")
+	if bucket == "" || !strings.HasSuffix(bucket, "--table-s3") {
+		return "", false
+	}
+	return bucket, true
 }
 
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.

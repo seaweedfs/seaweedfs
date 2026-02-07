@@ -114,7 +114,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType

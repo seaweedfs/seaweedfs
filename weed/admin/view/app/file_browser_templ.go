@@ -50,29 +50,29 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.IsBucketPath && data.BucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<i class=\"fas fa-cube me-2\"></i>S3 Bucket: ")
+		if data.IsTableBucketPath && data.TableBucketName != "" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<i class=\"fas fa-table me-2\"></i>Table Bucket: ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var2 string
-			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketName)
+			templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(data.TableBucketName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 18, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 18, Col: 72}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-		} else if data.IsTableBucketPath && data.TableBucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<i class=\"fas fa-table me-2\"></i>Table Bucket: ")
+		} else if data.IsBucketPath && data.BucketName != "" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<i class=\"fas fa-cube me-2\"></i>S3 Bucket: ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.TableBucketName)
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 20, Col: 72}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/file_browser.templ`, Line: 20, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 			if templ_7745c5c3_Err != nil {
@@ -88,13 +88,13 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.IsBucketPath && data.BucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<a href=\"/object-store/buckets\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Buckets</a> ")
+		if data.IsTableBucketPath && data.TableBucketName != "" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<a href=\"/object-store/s3tables/buckets\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Table Buckets</a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-		} else if data.IsTableBucketPath && data.TableBucketName != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<a href=\"/object-store/s3tables/buckets\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Table Buckets</a> ")
+		} else if data.IsBucketPath && data.BucketName != "" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<a href=\"/object-store/buckets\" class=\"btn btn-sm btn-outline-secondary\"><i class=\"fas fa-arrow-left me-1\"></i>Back to Buckets</a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -185,11 +185,6 @@ func FileBrowser(data dash.FileBrowserData) templ.Component {
 			}
 		} else if data.CurrentPath == "/buckets" {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "<a href=\"/files?path=/buckets\" class=\"text-decoration-none text-primary\">Object Store Buckets Directory</a> <a href=\"/object-store/buckets\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"fas fa-cube me-1\"></i>Manage Buckets</a>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		} else if data.CurrentPath == "/table-buckets" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<a href=\"/files?path=/table-buckets\" class=\"text-decoration-none text-primary\">Table Buckets Directory</a> <a href=\"/object-store/s3tables/buckets\" class=\"btn btn-sm btn-outline-primary ms-2\"><i class=\"fas fa-table me-1\"></i>Manage Table Buckets</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
