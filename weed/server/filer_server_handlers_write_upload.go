@@ -129,7 +129,6 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 			}
 			if chunks != nil {
 				fileChunksLock.Lock()
-				fileChunksSize := len(fileChunks) + len(chunks)
 				for _, chunk := range chunks {
 					fileChunks = append(fileChunks, chunk)
 					// glog.V(4).Infof("uploaded %s chunk %d to %s [%d,%d) %s", fileName, fileChunksSize, chunk.FileId, offset, offset+int64(chunk.Size), chunk.ETag)
