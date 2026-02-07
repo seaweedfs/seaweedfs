@@ -252,7 +252,6 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var sseMetadata []byte
 
 	// Create chunk with SSE metadata if available
-	// Create chunk with SSE metadata if available
 	var chunk *filer_pb.FileChunk
 	if sseType != filer_pb.SSEType_NONE {
 		chunk = uploadResult.ToPbFileChunkWithSSE(fileId, chunkOffset, time.Now().UnixNano(), sseType, sseMetadata)
