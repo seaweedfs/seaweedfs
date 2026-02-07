@@ -98,7 +98,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 		var wg sync.WaitGroup
 
 		for {
-			if n, err := dst.Read(sizeBuf); n != 4 {
+			if _, err := io.ReadFull(dst, sizeBuf); err != nil {
 				if err == io.EOF {
 					return nil
 				}
@@ -109,7 +109,7 @@ func (c *commandFsMetaLoad) Do(args []string, commandEnv *CommandEnv, writer io.
 
 			data := make([]byte, int(size))
 
-			if n, err := dst.Read(data); n != len(data) {
+			if _, err := io.ReadFull(dst, data); err != nil {
 				return err
 			}
 
