@@ -1639,7 +1639,7 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	// 1. Check If-Match
 	if headers.ifMatch != "" {
 		if !objectExists {
-			glog.V(3).Infof("validateConditionalHeaders: If-Match failed - object %s/%s does not exist", bucket, object)
+			glog.Errorf("DEBUG: validateConditionalHeaders: If-Match failed - object %s/%s does not exist", bucket, object)
 			return s3err.ErrPreconditionFailed
 		}
 		// If `ifMatch` is "*", the condition is met if the object exists.
@@ -1649,8 +1649,10 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
 			if !s3a.etagMatches(headers.ifMatch, objectETag) {
-				glog.V(3).Infof("validateConditionalHeaders: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
+				glog.Errorf("DEBUG: validateConditionalHeaders: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return s3err.ErrPreconditionFailed
+			} else {
+				glog.V(1).Infof("DEBUG: validateConditionalHeaders: If-Match passed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 			}
 		}
 		glog.V(3).Infof("validateConditionalHeaders: If-Match passed for object %s/%s", bucket, object)
@@ -1791,8 +1793,10 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
 			if !s3a.etagMatches(headers.ifMatch, objectETag) {
-				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - expected ETag %s, got %s", bucket, object, headers.ifMatch, objectETag)
+				glog.Errorf("DEBUG: validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: entry}
+			} else {
+				glog.V(1).Infof("DEBUG: validateConditionalHeadersForReads: If-Match passed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 			}
 		}
 		glog.V(3).Infof("validateConditionalHeadersForReads: If-Match passed for object %s/%s", bucket, object)
