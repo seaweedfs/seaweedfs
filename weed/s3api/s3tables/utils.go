@@ -17,6 +17,11 @@ const (
 	tableNamePatternStr      = `[a-z0-9_]+`
 )
 
+const (
+	tableLocationMappingsDirName = ".table-location-mappings"
+	tableObjectRootDirName       = ".objects"
+)
+
 var (
 	bucketARNPattern = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)$`)
 	tableARNPattern  = regexp.MustCompile(`^arn:aws:s3tables:[^:]*:[^:]*:bucket/(` + bucketNamePatternStr + `)/table/(` + tableNamespacePatternStr + `)/(` + tableNamePatternStr + `)$`)
@@ -92,6 +97,26 @@ func GetNamespacePath(bucketName, namespace string) string {
 // GetTablePath returns the filer path for a table
 func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
+}
+
+// GetTableObjectRootDir returns the root path for table bucket object storage
+func GetTableObjectRootDir() string {
+	return path.Join(TablesPath, tableObjectRootDirName)
+}
+
+// GetTableObjectBucketPath returns the filer path for table bucket object storage
+func GetTableObjectBucketPath(bucketName string) string {
+	return path.Join(GetTableObjectRootDir(), bucketName)
+}
+
+// GetTableLocationMappingDir returns the root path for table location bucket mappings
+func GetTableLocationMappingDir() string {
+	return path.Join(TablesPath, tableLocationMappingsDirName)
+}
+
+// GetTableLocationMappingPath returns the filer path for a table location bucket mapping
+func GetTableLocationMappingPath(tableLocationBucket string) string {
+	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
 }
 
 // Metadata structures
@@ -180,6 +205,22 @@ func validateBucketName(name string) error {
 // ValidateBucketName validates bucket name and returns an error if invalid.
 func ValidateBucketName(name string) error {
 	return validateBucketName(name)
+}
+
+func parseTableLocationBucket(metadataLocation string) (string, bool) {
+	if !strings.HasPrefix(metadataLocation, "s3://") {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(metadataLocation, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", false
+	}
+	bucket, _, _ := strings.Cut(trimmed, "/")
+	if bucket == "" || !strings.HasSuffix(bucket, "--table-s3") {
+		return "", false
+	}
+	return bucket, true
 }
 
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.
