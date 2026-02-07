@@ -118,11 +118,10 @@ func (h *S3TablesHandler) setExtendedAttribute(ctx context.Context, client filer
 	entry.Extended[key] = data
 
 	// Save the updated entry
-	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: dir,
 		Entry:     entry,
 	})
-	return err
 }
 
 // getExtendedAttribute gets an extended attribute from an entry
@@ -169,11 +168,10 @@ func (h *S3TablesHandler) deleteExtendedAttribute(ctx context.Context, client fi
 	}
 
 	// Save the updated entry
-	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: dir,
 		Entry:     entry,
 	})
-	return err
 }
 
 // deleteDirectory deletes a directory and all its contents

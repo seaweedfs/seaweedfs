@@ -4,7 +4,6 @@ import (
 	"errors"
 	"path"
 	"strings"
-	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -37,33 +36,21 @@ func (s3a *S3ApiServer) getTableBucketFromCache(bucket string) (bool, bool) {
 	if s3a.bucketRegistry == nil {
 		return false, false
 	}
-	s3a.bucketRegistry.metadataCacheLock.RLock()
-	defer s3a.bucketRegistry.metadataCacheLock.RUnlock()
+	s3a.bucketRegistry.tableBucketLock.RLock()
+	defer s3a.bucketRegistry.tableBucketLock.RUnlock()
 	
-	// Use a prefix to distinguish table bucket cache entries
-	cacheKey := "table:" + bucket
-	if meta, ok := s3a.bucketRegistry.metadataCache[cacheKey]; ok {
-		// Re-using metadataCache; if present, it's a table bucket
-		return meta != nil, true
-	}
-	return false, false
+	found, ok := s3a.bucketRegistry.tableBucketCache[bucket]
+	return found, ok
 }
 
 func (s3a *S3ApiServer) cacheTableBucket(bucket string, isTable bool) {
 	if s3a.bucketRegistry == nil {
 		return
 	}
-	s3a.bucketRegistry.metadataCacheLock.Lock()
-	defer s3a.bucketRegistry.metadataCacheLock.Unlock()
+	s3a.bucketRegistry.tableBucketLock.Lock()
+	defer s3a.bucketRegistry.tableBucketLock.Unlock()
 	
-	cacheKey := "table:" + bucket
-	if isTable {
-		// Store a non-nil marker for table buckets
-		s3a.bucketRegistry.metadataCache[cacheKey] = &BucketMetaData{Name: bucket}
-	} else {
-		// Store nil to mark as non-table
-		s3a.bucketRegistry.metadataCache[cacheKey] = nil
-	}
+	s3a.bucketRegistry.tableBucketCache[bucket] = isTable
 }
 
 func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {

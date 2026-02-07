@@ -45,6 +45,9 @@ type BucketRegistry struct {
 	metadataCache     map[string]*BucketMetaData
 	metadataCacheLock sync.RWMutex
 
+	tableBucketCache map[string]bool // Dedicated cache for table bucket lookups
+	tableBucketLock  sync.RWMutex
+
 	notFound     map[string]struct{}
 	notFoundLock sync.RWMutex
 	s3a          *S3ApiServer
@@ -52,9 +55,10 @@ type BucketRegistry struct {
 
 func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 	br := &BucketRegistry{
-		metadataCache: make(map[string]*BucketMetaData),
-		notFound:      make(map[string]struct{}),
-		s3a:           s3a,
+		metadataCache:    make(map[string]*BucketMetaData),
+		tableBucketCache: make(map[string]bool),
+		notFound:         make(map[string]struct{}),
+		s3a:              s3a,
 	}
 	err := br.init()
 	if err != nil {
