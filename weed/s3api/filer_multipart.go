@@ -449,6 +449,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For versioned buckets, don't create a main object file - all content is stored in .versions directory
 		// The latest version information is tracked in the .versions directory metadata
+		rmErr := s3a.rm(dirName, entryName, false, false)
+		glog.V(3).Infof("completeMultipartUpload versioning enabled, deleting main file %s/%s, err=%v", dirName, entryName, rmErr)
 
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
@@ -850,12 +852,6 @@ func (s3a *S3ApiServer) prepareMultipartEncryptionConfig(r *http.Request, bucket
 		if err != nil {
 			// Check if this is just "no encryption configured" vs a real error
 			if !errors.Is(err, ErrNoEncryptionConfig) {
-				// If a file already exists at the main path, remove it to prevent duplicate listing entries
-				// The variables dirName and entryName are not defined in this scope.
-				// This code snippet seems to be intended for a different function, likely CompleteMultipartUpload.
-				// As per instructions, I am inserting it faithfully, but it will cause a compilation error.
-				// rmErr := s3a.rm(dirName, entryName, false, false)
-				// glog.V(3).Infof("CompleteMultipartUpload versioning enabled, deleting main file %s/%s, err=%v", dirName, entryName, rmErr)
 				// Real error - propagate to prevent silent encryption bypass
 				return nil, fmt.Errorf("failed to read bucket encryption config for multipart upload: %v", err)
 			}
