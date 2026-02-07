@@ -1604,10 +1604,13 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 		etag := string(etagBytes)
-		if len(etag) > 0 && !strings.HasPrefix(etag, "\"") {
-			return "\"" + etag + "\""
+		if len(etag) > 0 {
+			if !strings.HasPrefix(etag, "\"") {
+				return "\"" + etag + "\""
+			}
+			return etag
 		}
-		return etag
+		// Empty stored ETag — fall through to Md5/chunk-based calculation
 	}
 	// Check for Md5 in Attributes (matches filer.ETag behavior)
 	// Note: len(nil slice) == 0 in Go, so no need for explicit nil check
