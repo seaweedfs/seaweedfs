@@ -483,9 +483,7 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 
 	completeETag := cleanETag(aws.ToString(completeResp.ETag))
 	t.Logf("CompleteMultipartUpload ETag: %s", completeETag)
-	if expectedETagValue != completeETag {
-		t.Errorf("CompleteMultipartUpload ETag mismatch: expected %s, got %s", expectedETagValue, completeETag)
-	}
+	assert.Equal(t, expectedETagValue, completeETag, "CompleteMultipartUpload ETag mismatch")
 
 	// 5. HeadObject
 	headResp, err := client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -494,9 +492,7 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 	})
 	require.NoError(t, err)
 	headETag := cleanETag(aws.ToString(headResp.ETag))
-	if expectedETagValue != headETag {
-		t.Errorf("HeadObject ETag mismatch: expected %s, got %s", expectedETagValue, headETag)
-	}
+	assert.Equal(t, expectedETagValue, headETag, "HeadObject ETag mismatch")
 
 	// 6. GetObject
 	getResp, err := client.GetObject(ctx, &s3.GetObjectInput{
@@ -505,9 +501,7 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 	})
 	require.NoError(t, err)
 	getETag := cleanETag(aws.ToString(getResp.ETag))
-	if expectedETagValue != getETag {
-		t.Errorf("GetObject ETag mismatch: expected %s, got %s", expectedETagValue, getETag)
-	}
+	assert.Equal(t, expectedETagValue, getETag, "GetObject ETag mismatch")
 	getResp.Body.Close()
 }
 

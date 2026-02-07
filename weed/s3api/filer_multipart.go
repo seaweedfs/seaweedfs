@@ -303,8 +303,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 		found := false
 		if len(partEntriesByNumber) > 1 {
+		if len(partEntriesByNumber) > 1 {
 			slices.SortFunc(partEntriesByNumber, func(a, b *filer_pb.Entry) int {
-				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
+				var aTs, bTs int64
+				if len(a.Chunks) > 0 {
+					aTs = a.Chunks[0].ModifiedTsNs
+				}
+				if len(b.Chunks) > 0 {
+					bTs = b.Chunks[0].ModifiedTsNs
+				}
+				return cmp.Compare(bTs, aTs)
 			})
 		}
 		for _, entry := range partEntriesByNumber {
@@ -419,7 +427,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Construct entry with metadata for caching in .versions directory
 		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
-		etag := "\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""
+		multipartETag := s3a.calculateMultipartETag(partEntries, completedPartNumbers)
+		etag := "\"" + multipartETag + "\""
 		versionEntryForCache := &filer_pb.Entry{
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: uint64(offset),
@@ -447,7 +456,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
-			ETag:      aws.String("\"" + s3a.calculateMultipartETag(partEntries, completedPartNumbers) + "\""),
+			ETag:      aws.String("\"" + multipartETag + "\""),
 			Key:       objectKey(input.Key),
 			VersionId: aws.String(versionId),
 		}
@@ -940,12 +949,19 @@ func (s3a *S3ApiServer) calculateMultipartETag(partEntries map[int][]*filer_pb.E
 		}
 		if len(entries) > 1 {
 			slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
-				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
+				var aTs, bTs int64
+				if len(a.Chunks) > 0 {
+					aTs = a.Chunks[0].ModifiedTsNs
+				}
+				if len(b.Chunks) > 0 {
+					bTs = b.Chunks[0].ModifiedTsNs
+				}
+				return cmp.Compare(bTs, aTs)
 			})
 		}
 		entry := entries[0]
 		etag := getEtagFromEntry(entry)
-		glog.Errorf("calculateMultipartETag: part %d, entry %s, getEtagFromEntry result: %s, extended: %+v", partNumber, entry.Name, etag, entry.Extended)
+		glog.V(4).Infof("calculateMultipartETag: part %d, entry %s, getEtagFromEntry result: %s", partNumber, entry.Name, etag)
 		etag = strings.Trim(etag, "\"")
 		if strings.Index(etag, "-") != -1 {
 			etag = etag[:strings.Index(etag, "-")]
@@ -960,11 +976,11 @@ func (s3a *S3ApiServer) calculateMultipartETag(partEntries map[int][]*filer_pb.E
 func getEtagFromEntry(entry *filer_pb.Entry) string {
 	if entry.Extended != nil {
 		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
-			glog.Errorf("getEtagFromEntry: found ExtETagKey for %s: %s, chunkCount: %d", entry.Name, string(etag), len(entry.Chunks))
+			glog.V(4).Infof("getEtagFromEntry: found ExtETagKey for %s: %s, chunkCount: %d", entry.Name, string(etag), len(entry.Chunks))
 			return string(etag)
 		}
 	}
 	etag := filer.ETagChunks(entry.GetChunks())
-	glog.Errorf("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entry.Name, etag, len(entry.Chunks))
+	glog.V(4).Infof("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entry.Name, etag, len(entry.Chunks))
 	return "\"" + etag + "\""
 }

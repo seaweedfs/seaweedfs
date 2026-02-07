@@ -50,7 +50,6 @@ var chunkBufferPool = sync.Pool{
 // This prevents OOM by processing the stream in fixed-size chunks
 // Returns file chunks, MD5 hash, total size, and any small content stored inline
 func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption) (*ChunkedUploadResult, error) {
-	// glog.V(4).Infof("UploadReaderInChunks entry")
 
 	md5Hash := md5.New()
 	var partReader = io.TeeReader(reader, md5Hash)

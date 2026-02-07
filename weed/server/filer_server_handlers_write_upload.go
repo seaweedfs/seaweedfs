@@ -139,7 +139,7 @@ func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request
 		}(chunkOffset, bytesBuffer)
 
 		// reset variables for the next chunk
-		glog.V(4).Infof("uploadeReaderToChunks read chunk at offset %d, size %d", chunkOffset, dataSize)
+		glog.V(4).Infof("uploadReaderToChunks read chunk at offset %d, size %d", chunkOffset, dataSize)
 		chunkOffset = chunkOffset + dataSize
 
 		// if last chunk was not at full chunk size, but already exhausted the reader

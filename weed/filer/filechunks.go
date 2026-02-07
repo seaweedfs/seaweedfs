@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"math"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -57,7 +58,7 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 		return fmt.Sprintf("%x", util.Base64Md5ToBytes(chunks[0].ETag))
 	}
 	var md5Digests [][]byte
-	for i, c := range chunks {
+	for _, c := range chunks {
 		md5Digests = append(md5Digests, util.Base64Md5ToBytes(c.ETag))
 	}
 	finalETag := fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5Digests, nil)), len(chunks))
