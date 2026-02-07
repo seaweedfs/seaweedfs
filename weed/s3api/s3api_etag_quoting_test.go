@@ -118,6 +118,31 @@ func TestReproIfMatchMismatch(t *testing.T) {
 		}
 	})
 
+	// Test getObjectETag fallback when Extended ETag is present but empty
+	t.Run("getObjectETag_EmptyExtended_ShouldFallback", func(t *testing.T) {
+		md5Bytes := []byte("1234567890123456")
+		expectedHex := fmt.Sprintf("\"%x\"", md5Bytes)
+
+		entry := &filer_pb.Entry{
+			Name: "test-key-fallback",
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte(""), // Present but empty
+			},
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				FileSize: 1024,
+				Md5:      md5Bytes,
+			},
+		}
+
+		s3a := NewS3ApiServerForTest()
+		etag := s3a.getObjectETag(entry)
+
+		if etag != expectedHex {
+			t.Errorf("Expected fallback ETag %s, got %s", expectedHex, etag)
+		}
+	})
+
 	// Test newListEntry ETag behavior
 	t.Run("newListEntry_ShouldReturnQuoted", func(t *testing.T) {
 		entry := &filer_pb.Entry{

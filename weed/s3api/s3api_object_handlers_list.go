@@ -249,13 +249,15 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 
 						// If no delimiter found in the directory object name, treat it as a regular key
 						if !delimiterFound {
-							contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
+							newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false)
+							contents = append(contents, newEntry)
 							cursor.maxKeys--
 							lastEntryWasCommonPrefix = false
 						}
 					} else if entry.IsDirectoryKeyObject() {
 						// No delimiter specified, or delimiter doesn't apply - treat as regular key
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false, s3a.iam))
+						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, true, false)
+						contents = append(contents, newEntry)
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 						// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
@@ -310,7 +312,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 					}
 					if !delimiterFound {
 						glog.V(4).Infof("Adding file to contents: %s", entryName)
-						contents = append(contents, newListEntry(entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false, s3a.iam))
+						newEntry := newListEntry(s3a, entry, "", dirName, entryName, bucketPrefix, fetchOwner, false, false)
+						contents = append(contents, newEntry)
 						cursor.maxKeys--
 						lastEntryWasCommonPrefix = false
 					}
