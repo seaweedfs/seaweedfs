@@ -57,12 +57,12 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			}
 			return nil
 		}
-		if entryResp != nil && IsTableBucketEntry(entryResp.Entry) {
-			tableBucketExists = true
-			return nil
-		}
-		if entryResp != nil {
-			s3BucketExists = true
+		if entryResp != nil && entryResp.Entry != nil {
+			if IsTableBucketEntry(entryResp.Entry) {
+				tableBucketExists = true
+			} else {
+				s3BucketExists = true
+			}
 		}
 		return nil
 	})

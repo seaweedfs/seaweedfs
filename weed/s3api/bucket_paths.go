@@ -81,6 +81,7 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 }
 
 func (s3a *S3ApiServer) bucketRoot(bucket string) string {
+	// Returns the unified buckets root path for all bucket types
 	return s3a.option.BucketsPath
 }
 
