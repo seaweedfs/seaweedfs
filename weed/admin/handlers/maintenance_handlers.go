@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/table_maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -246,6 +247,8 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		config = &balance.Config{}
 	case types.TaskTypeErasureCoding:
 		config = &erasure_coding.Config{}
+	case types.TaskTypeTableMaintenance:
+		config = &table_maintenance.Config{}
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported task type: " + taskTypeName})
 		return
@@ -304,6 +307,11 @@ func (h *MaintenanceHandlers) UpdateTaskConfig(c *gin.Context) {
 		if balanceConfig, ok := config.(*balance.Config); ok {
 			glog.V(1).Infof("Parsed balance config - Enabled: %v, MaxConcurrent: %d, ScanIntervalSeconds: %d, ImbalanceThreshold: %f, MinServerCount: %d",
 				balanceConfig.Enabled, balanceConfig.MaxConcurrent, balanceConfig.ScanIntervalSeconds, balanceConfig.ImbalanceThreshold, balanceConfig.MinServerCount)
+		}
+	case types.TaskTypeTableMaintenance:
+		if tmConfig, ok := config.(*table_maintenance.Config); ok {
+			glog.V(1).Infof("Parsed table_maintenance config - Enabled: %v, MaxConcurrent: %d, ScanIntervalMinutes: %d, CompactionFileThreshold: %d",
+				tmConfig.Enabled, tmConfig.MaxConcurrent, tmConfig.ScanIntervalMinutes, tmConfig.CompactionFileThreshold)
 		}
 	}
 
@@ -544,6 +552,8 @@ func (h *MaintenanceHandlers) saveTaskConfigToProtobuf(taskType types.TaskType, 
 		return configPersistence.SaveErasureCodingTaskPolicy(taskPolicy)
 	case types.TaskTypeBalance:
 		return configPersistence.SaveBalanceTaskPolicy(taskPolicy)
+	case types.TaskTypeTableMaintenance:
+		return configPersistence.SaveTableMaintenanceTaskPolicy(taskPolicy)
 	default:
 		return fmt.Errorf("unsupported task type for protobuf persistence: %s", taskType)
 	}

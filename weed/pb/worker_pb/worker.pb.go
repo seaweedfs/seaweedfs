@@ -2379,6 +2379,7 @@ type TaskPolicy struct {
 	MaxConcurrent         int32                  `protobuf:"varint,2,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
 	RepeatIntervalSeconds int32                  `protobuf:"varint,3,opt,name=repeat_interval_seconds,json=repeatIntervalSeconds,proto3" json:"repeat_interval_seconds,omitempty"` // Seconds to wait before repeating
 	CheckIntervalSeconds  int32                  `protobuf:"varint,4,opt,name=check_interval_seconds,json=checkIntervalSeconds,proto3" json:"check_interval_seconds,omitempty"`    // Seconds between checks
+	Description           string                 `protobuf:"bytes,9,opt,name=description,proto3" json:"description,omitempty"`                                                     // Generic field for task-specific config (JSON format)
 	// Typed task-specific configuration (replaces generic map)
 	//
 	// Types that are valid to be assigned to TaskConfig:
@@ -2448,6 +2449,13 @@ func (x *TaskPolicy) GetCheckIntervalSeconds() int32 {
 		return x.CheckIntervalSeconds
 	}
 	return 0
+}
+
+func (x *TaskPolicy) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
 func (x *TaskPolicy) GetTaskConfig() isTaskPolicy_TaskConfig {
@@ -3544,13 +3552,14 @@ const file_worker_proto_rawDesc = "" +
 	"\x1edefault_check_interval_seconds\x18\x04 \x01(\x05R\x1bdefaultCheckIntervalSeconds\x1aV\n" +
 	"\x11TaskPoliciesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
-	"\x05value\x18\x02 \x01(\v2\x15.worker_pb.TaskPolicyR\x05value:\x028\x01\"\x82\x04\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.worker_pb.TaskPolicyR\x05value:\x028\x01\"\xa4\x04\n" +
 	"\n" +
 	"TaskPolicy\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12%\n" +
 	"\x0emax_concurrent\x18\x02 \x01(\x05R\rmaxConcurrent\x126\n" +
 	"\x17repeat_interval_seconds\x18\x03 \x01(\x05R\x15repeatIntervalSeconds\x124\n" +
-	"\x16check_interval_seconds\x18\x04 \x01(\x05R\x14checkIntervalSeconds\x12B\n" +
+	"\x16check_interval_seconds\x18\x04 \x01(\x05R\x14checkIntervalSeconds\x12 \n" +
+	"\vdescription\x18\t \x01(\tR\vdescription\x12B\n" +
 	"\rvacuum_config\x18\x05 \x01(\v2\x1b.worker_pb.VacuumTaskConfigH\x00R\fvacuumConfig\x12X\n" +
 	"\x15erasure_coding_config\x18\x06 \x01(\v2\".worker_pb.ErasureCodingTaskConfigH\x00R\x13erasureCodingConfig\x12E\n" +
 	"\x0ebalance_config\x18\a \x01(\v2\x1c.worker_pb.BalanceTaskConfigH\x00R\rbalanceConfig\x12Q\n" +

@@ -289,6 +289,7 @@ message TaskPolicy {
   int32 max_concurrent = 2;
   int32 repeat_interval_seconds = 3;  // Seconds to wait before repeating
   int32 check_interval_seconds = 4;   // Seconds between checks
+  string description = 9;              // Generic field for task-specific config (JSON format)
   
   // Typed task-specific configuration (replaces generic map)
   oneof task_config {
