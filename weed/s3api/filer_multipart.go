@@ -447,11 +447,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, s3err.ErrInternalError
 		}
 
-		// For versioned buckets, don't create a main object file - all content is stored in .versions directory
+		// For versioned buckets, all content is stored in .versions directory
 		// The latest version information is tracked in the .versions directory metadata
-		rmErr := s3a.rm(dirName, entryName, false, false)
-		glog.V(3).Infof("completeMultipartUpload versioning enabled, deleting main file %s/%s, err=%v", dirName, entryName, rmErr)
-
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
