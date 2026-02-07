@@ -432,7 +432,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				Mtime:    versionMtime,
 			},
 			Extended: map[string][]byte{
-				s3_constants.ExtETagKey: []byte(etagQuote),
+				s3_constants.ExtETagKey: []byte(multipartETag),
 			},
 		}
 		if amzAccountId != "" {
@@ -991,6 +991,10 @@ func getEtagFromEntry(entry *filer_pb.Entry) string {
 		}
 	}
 	etag := filer.ETagChunks(entry.GetChunks())
-	glog.V(4).Infof("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entry.Name, etag, len(entry.Chunks))
+	entryName := entry.Name
+	if entryName == "" {
+		entryName = "entry"
+	}
+	glog.V(4).Infof("getEtagFromEntry: fallback to ETagChunks for %s: %s, chunkCount: %d", entryName, etag, len(entry.Chunks))
 	return "\"" + etag + "\""
 }
