@@ -308,7 +308,8 @@ func removeDuplicateSlashes(object string) string {
 	return result.String()
 }
 
-// hasChildren checks if a path has any child objects (is a directory with contents)
+// hasChildren checks if a path has any child objects (is a directory with contents).
+// On unexpected errors, it logs and conservatively returns true to avoid hiding entries.
 //
 // This helper function is used to distinguish implicit directories from regular files or empty directories.
 // An implicit directory is one that exists only because it has children, not because it was explicitly created.
@@ -361,7 +362,14 @@ func (s3a *S3ApiServer) hasChildren(bucket, prefix string) bool {
 	})
 
 	// If we got an entry (not EOF), then it has children
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, filer_pb.ErrNotFound) {
+		return false
+	}
+	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
+	return true
 }
 
 // checkDirectoryObject checks if the object is a directory object (ends with "/") and if it exists

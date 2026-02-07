@@ -512,7 +512,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			err = filer_pb.ErrNotFound
 			return
 		}
-		err = fmt.Errorf("list entires %+v: %w", request, listErr)
+		err = fmt.Errorf("list entries %+v: %w", request, listErr)
 		return
 	}
 
@@ -522,7 +522,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			if recvErr == io.EOF {
 				break
 			} else {
-				err = fmt.Errorf("iterating entires %+v: %v", request, recvErr)
+				err = fmt.Errorf("iterating entries %+v: %v", request, recvErr)
 				return
 			}
 		}
