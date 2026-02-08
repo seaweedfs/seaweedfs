@@ -17,17 +17,17 @@ import (
 )
 
 type TestEnvironment struct {
-	t                  *testing.T
-	dockerAvailable    bool
-	seaweedfsDataDir   string
-	masterPort         int
-	filerPort          int
-	s3Port             int
-	icebergRestPort    int
-	sparkContainer     testcontainers.Container
-	masterProcess      *exec.Cmd
-	icebergRestProcess *exec.Cmd
-	s3Process          *exec.Cmd
+	t                   *testing.T
+	dockerAvailable     bool
+	seaweedfsDataDir    string
+	sparkConfigDir      string
+	masterPort          int
+	filerPort           int
+	s3Port              int
+	icebergRestPort     int
+	sparkContainer      testcontainers.Container
+	masterProcess       *exec.Cmd
+	icebergRestProcess  *exec.Cmd
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
@@ -122,6 +122,9 @@ func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string)
 		t.Fatalf("failed to create config directory: %v", err)
 	}
 
+	// Store for cleanup
+	env.sparkConfigDir = configDir
+
 	s3Endpoint := fmt.Sprintf("http://host.docker.internal:%d", env.s3Port)
 	catalogEndpoint := fmt.Sprintf("http://host.docker.internal:%d", env.icebergRestPort)
 
@@ -193,10 +196,6 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		env.icebergRestProcess.Process.Kill()
 		env.icebergRestProcess.Wait()
 	}
-	if env.s3Process != nil && env.s3Process.Process != nil {
-		env.s3Process.Process.Kill()
-		env.s3Process.Wait()
-	}
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		env.masterProcess.Process.Kill()
 		env.masterProcess.Wait()
@@ -209,9 +208,12 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		env.sparkContainer.Terminate(ctx)
 	}
 
-	// Remove data directory after processes are stopped
+	// Remove temporary directories after processes are stopped
 	if env.seaweedfsDataDir != "" {
 		os.RemoveAll(env.seaweedfsDataDir)
+	}
+	if env.sparkConfigDir != "" {
+		os.RemoveAll(env.sparkConfigDir)
 	}
 }
 
