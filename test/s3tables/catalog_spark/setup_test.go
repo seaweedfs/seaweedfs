@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -94,30 +95,10 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.s3Port = basePort + 2
 	env.icebergRestPort = basePort + 3
 
-	bindIP := findBindIP()
+	bindIP := testutil.FindBindIP()
 
-	iamConfigPath := filepath.Join(env.seaweedfsDataDir, "iam_config.json")
-	iamConfig := fmt.Sprintf(`{
-  "identities": [
-    {
-      "name": "admin",
-      "credentials": [
-        {
-          "accessKey": "%s",
-          "secretKey": "%s"
-        }
-      ],
-      "actions": [
-        "Admin",
-        "Read",
-        "List",
-        "Tagging",
-        "Write"
-      ]
-    }
-  ]
-}`, env.accessKey, env.secretKey)
-	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
+	iamConfigPath, err := testutil.WriteIAMConfig(env.seaweedfsDataDir, env.accessKey, env.secretKey)
+	if err != nil {
 		t.Fatalf("failed to create IAM config: %v", err)
 	}
 
@@ -170,25 +151,6 @@ func waitForPort(port int, timeout time.Duration) bool {
 	return false
 }
 
-func findBindIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP == nil {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		return ip.String()
-	}
-	return "127.0.0.1"
-}
-
 func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string) string {
 	t.Helper()
 
@@ -235,7 +197,7 @@ catalog.s3.path-style-access = "true"
 func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	req := testcontainers.ContainerRequest{

@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
 )
 
 type TestEnvironment struct {
@@ -117,7 +118,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	bindIP := findBindIP()
+	bindIP := testutil.FindBindIP()
 
 	masterPort, masterGrpcPort := mustFreePortPair(t, "Master")
 	volumePort, volumeGrpcPort := mustFreePortPair(t, "Volume")
@@ -149,29 +150,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
 	// Create IAM config file
-	iamConfigPath := filepath.Join(env.dataDir, "iam_config.json")
-	iamConfig := fmt.Sprintf(`{
-  "identities": [
-    {
-      "name": "admin",
-      "credentials": [
-        {
-          "accessKey": "%s",
-          "secretKey": "%s"
-        }
-      ],
-      "actions": [
-        "Admin",
-        "Read",
-        "List",
-        "Tagging",
-        "Write"
-      ]
-    }
-  ]
-}`, env.accessKey, env.secretKey)
-
-	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
+	iamConfigPath, err := testutil.WriteIAMConfig(env.dataDir, env.accessKey, env.secretKey)
+	if err != nil {
 		t.Fatalf("Failed to create IAM config: %v", err)
 	}
 
@@ -534,25 +514,6 @@ func getFreePort() (int, error) {
 
 	addr := listener.Addr().(*net.TCPAddr)
 	return addr.Port, nil
-}
-
-func findBindIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP == nil {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		return ip.String()
-	}
-	return "127.0.0.1"
 }
 
 func randomString(length int) string {

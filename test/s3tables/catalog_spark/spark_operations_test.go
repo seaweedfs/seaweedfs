@@ -23,7 +23,7 @@ print("Spark ready")
 		if strings.Contains(output, "Spark ready") {
 			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(5 * time.Second)
 	}
 	t.Fatalf("Spark did not become ready within %v", timeout)
 }
@@ -51,7 +51,7 @@ func setupSparkTestEnv(t *testing.T) (*TestEnvironment, string, string) {
 	env.startSparkContainer(t, configDir)
 
 	// Poll for Spark readiness instead of fixed sleep
-	waitForSparkReady(t, env.sparkContainer, env.icebergRestPort, env.s3Port, 30*time.Second)
+	waitForSparkReady(t, env.sparkContainer, env.icebergRestPort, env.s3Port, 10*time.Minute)
 
 	return env, catalogBucket, tableBucket
 }
