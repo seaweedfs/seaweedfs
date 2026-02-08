@@ -680,24 +680,20 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	location := strings.TrimSuffix(req.Location, "/")
 	tablePath := path.Join(encodeNamespace(namespace), req.Name)
-	storageBucket := bucketName
-	tableLocationBucket := ""
-	if location != "" {
+	location := strings.TrimSuffix(req.Location, "/")
+	if location == "" {
+		location = fmt.Sprintf("s3://%s/%s", bucketName, tablePath)
+	} else {
 		parsedBucket, parsedPath, err := parseS3Location(location)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid table location: "+err.Error())
 			return
 		}
-		if strings.HasSuffix(parsedBucket, "--table-s3") && parsedPath == "" {
-			tableLocationBucket = parsedBucket
+		if parsedPath == "" {
+			location = fmt.Sprintf("s3://%s/%s", parsedBucket, tablePath)
 		}
 	}
-	if tableLocationBucket == "" {
-		tableLocationBucket = fmt.Sprintf("%s--table-s3", tableUUID.String())
-	}
-	location = fmt.Sprintf("s3://%s", tableLocationBucket)
 
 	// Build proper Iceberg table metadata using iceberg-go types
 	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
@@ -716,7 +712,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	// 1. Save metadata file to filer
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
-	if err := s.saveMetadataFile(r.Context(), storageBucket, tablePath, metadataFileName, metadataBytes); err != nil {
+	metadataBucket, metadataPath, err := parseS3Location(location)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+		return
+	}
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
@@ -1049,8 +1050,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Save metadata file to filer
-	tablePath := path.Join(encodeNamespace(namespace), tableName)
-	if err := s.saveMetadataFile(r.Context(), bucketName, tablePath, metadataFileName, metadataBytes); err != nil {
+	metadataBucket, metadataPath, err := parseS3Location(location)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+		return
+	}
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}

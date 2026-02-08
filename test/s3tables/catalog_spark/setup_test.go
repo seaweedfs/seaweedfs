@@ -94,6 +94,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.s3Port = basePort + 2
 	env.icebergRestPort = basePort + 3
 
+	bindIP := findBindIP()
+
 	iamConfigPath := filepath.Join(env.seaweedfsDataDir, "iam_config.json")
 	iamConfig := fmt.Sprintf(`{
   "identities": [
@@ -122,6 +124,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
 	env.masterProcess = exec.Command(
 		"weed", "mini",
+		"-ip", bindIP,
+		"-ip.bind", "0.0.0.0",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-filer.port", fmt.Sprintf("%d", env.filerPort),
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
@@ -164,6 +168,25 @@ func waitForPort(port int, timeout time.Duration) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
+}
+
+func findBindIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP == nil {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		return ip.String()
+	}
+	return "127.0.0.1"
 }
 
 func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string) string {

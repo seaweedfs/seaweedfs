@@ -2,6 +2,7 @@ package catalog_spark
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -196,32 +197,29 @@ print("Setup complete")
 	// Insert initial data
 	t.Logf(">>> Inserting initial data")
 	insertSQL := fmt.Sprintf(`
+import datetime
 spark.sql("""
 INSERT INTO iceberg.%s.%s VALUES (1, 10)
 """)
-snapshot_id = spark.sql("SELECT snapshot_id FROM iceberg.%s.%s.snapshots ORDER BY committed_at DESC LIMIT 1").collect()[0][0]
-print(f"Snapshot ID: {snapshot_id}")
-`, namespace, tableName, namespace, tableName)
+ts = spark.sql("SELECT current_timestamp() as ts").collect()[0]["ts"]
+ts = ts + datetime.timedelta(seconds=1)
+print(f"Snapshot timestamp: {ts.strftime('%%Y-%%m-%%d %%H:%%M:%%S')}")
+`, namespace, tableName)
 	output = runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
-	if !strings.Contains(output, "Snapshot ID:") {
-		t.Fatalf("failed to get snapshot ID: %s", output)
+	if !strings.Contains(output, "Snapshot timestamp:") {
+		t.Fatalf("failed to get snapshot timestamp: %s", output)
 	}
 
-	// Extract snapshot ID from output
-	var snapshotID string
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Snapshot ID:") {
-			parts := strings.Split(line, ":")
-			if len(parts) > 1 {
-				snapshotID = strings.TrimSpace(parts[1])
-			}
-		}
+	// Extract snapshot timestamp from output
+	var snapshotTS string
+	tsRe := regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+	snapshotTS = tsRe.FindString(output)
+
+	if snapshotTS == "" {
+		t.Fatalf("could not extract snapshot timestamp from output: %s", output)
 	}
 
-	if snapshotID == "" {
-		t.Fatalf("could not extract snapshot ID from output: %s", output)
-	}
+	time.Sleep(2 * time.Second)
 
 	// Insert more data
 	t.Logf(">>> Inserting more data")
@@ -252,12 +250,12 @@ print(f"Current row count: {count}")
 	t.Logf(">>> Time traveling to first snapshot")
 	timeTravelSQL := fmt.Sprintf(`
 result = spark.sql("""
-SELECT COUNT(*) as count FROM iceberg.%s.%s VERSION AS OF %s
+SELECT COUNT(*) as count FROM iceberg.%s.%s TIMESTAMP AS OF '%s'
 """)
 result.show()
 count = result.collect()[0]['count']
 print(f"Count at snapshot: {count}")
-`, namespace, tableName, snapshotID)
+`, namespace, tableName, snapshotTS)
 	output = runSparkPySQL(t, env.sparkContainer, timeTravelSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Count at snapshot: 1") {
 		t.Errorf("expected count 1 at first snapshot, got: %s", output)
