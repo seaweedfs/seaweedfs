@@ -374,8 +374,10 @@ function formatDiskTypes(diskTypesText) {
 
 // Confirm action dialogs
 function confirmAction(message, callback) {
-    if (confirm(message)) {
-        callback();
+    if (typeof window.showConfirm === 'function') {
+        window.showConfirm(message, callback);
+    } else {
+        console.error('showConfirm() is not available');
     }
 }
 
@@ -1042,8 +1044,12 @@ function confirmDeleteSelected() {
         ? `Are you sure you want to delete "${fileNames}"?`
         : `Are you sure you want to delete ${selectedPaths.length} selected items?\n\n${fileNames.substring(0, 200)}${fileNames.length > 200 ? '...' : ''}`;
 
-    if (confirm(message)) {
-        deleteSelectedFiles(selectedPaths);
+    if (typeof window.showConfirm === 'function') {
+        window.showConfirm(message, function () {
+            deleteSelectedFiles(selectedPaths);
+        }, { title: 'Confirm Delete' });
+    } else {
+        console.error('showConfirm() is not available');
     }
 }
 
@@ -1401,8 +1407,12 @@ async function showProperties(filePath) {
 
 // Confirm delete file/folder
 function confirmDelete(filePath) {
-    if (confirm(`Are you sure you want to delete "${filePath}"?`)) {
-        deleteFile(filePath);
+    if (typeof window.showDeleteConfirm === 'function') {
+        window.showDeleteConfirm(filePath, function () {
+            deleteFile(filePath);
+        });
+    } else {
+        console.error('showDeleteConfirm() is not available');
     }
 }
 
