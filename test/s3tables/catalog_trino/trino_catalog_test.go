@@ -380,8 +380,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 		return
 	}
 
-	logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s\nTrino logs:\n%s", string(lastOutput), string(logs))
+	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
 }
 
 func runTrinoSQL(t *testing.T, containerName, sql string) string {
@@ -394,8 +393,7 @@ func runTrinoSQL(t *testing.T, containerName, sql string) string {
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, string(output), string(logs))
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
 	}
 	return sanitizeTrinoOutput(string(output))
 }

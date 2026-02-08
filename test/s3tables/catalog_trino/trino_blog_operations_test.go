@@ -21,7 +21,7 @@ func TestTrinoBlogOperations(t *testing.T) {
 	trinoCustomersLocation := fmt.Sprintf("s3://%s/%s/%s_%s", warehouseBucket, schemaName, trinoCustomersTable, randomString(6))
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", schemaName))
-	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s CASCADE", schemaName))
+	defer runTrinoSQLAllowNamespaceNotEmpty(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s CASCADE", schemaName))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, customersTable))
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
@@ -154,9 +154,33 @@ func runTrinoSQLAllowExists(t *testing.T, containerName, sql string) string {
 		if strings.Contains(outputStr, "already exists") {
 			return sanitizeTrinoOutput(outputStr)
 		}
-		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, outputStr, string(logs))
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, outputStr)
 	}
+	return sanitizeTrinoOutput(string(output))
+}
+
+func runTrinoSQLAllowNamespaceNotEmpty(t *testing.T, containerName, sql string) string {
+	t.Helper()
+
+	var output []byte
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		cmd := exec.Command("docker", "exec", containerName,
+			"trino", "--catalog", "iceberg",
+			"--output-format", "CSV",
+			"--execute", sql,
+		)
+		output, err = cmd.CombinedOutput()
+		if err == nil {
+			return sanitizeTrinoOutput(string(output))
+		}
+		outputStr := string(output)
+		if !strings.Contains(outputStr, "Namespace is not empty") {
+			t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, outputStr)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Logf("Ignoring cleanup error for SQL %s: %s", sql, sanitizeTrinoOutput(string(output)))
 	return sanitizeTrinoOutput(string(output))
 }
 
@@ -178,8 +202,7 @@ func runTrinoCTAS(t *testing.T, containerName, createSQL, deleteSQL, insertSQL s
 			runTrinoSQL(t, containerName, insertSQL)
 			return
 		}
-		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, createSQL, outputStr, string(logs))
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, createSQL, outputStr)
 	}
 }
 
