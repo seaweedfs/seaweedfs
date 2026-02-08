@@ -74,6 +74,7 @@ type VolumeServerOptions struct {
 	ldbTimeout                  *int64
 	debug                       *bool
 	debugPort                   *int
+	udsListen                   *string // UDS socket path for RDMA sidecar integration
 }
 
 func init() {
@@ -114,6 +115,7 @@ func init() {
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
+	v.udsListen = cmdVolume.Flag.String("uds.listen", "", "Unix domain socket path for RDMA sidecar locate API (e.g., /tmp/sra-volume.sock)")
 }
 
 var cmdVolume = &Command{
@@ -289,6 +291,17 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting grpc server
 	grpcS := v.startGrpcService(volumeServer)
 
+	// starting UDS server for RDMA sidecar integration
+	var udsServer *weed_server.UdsServer
+	if *v.udsListen != "" {
+		var err error
+		udsServer, err = weed_server.NewUdsServer(volumeServer, *v.udsListen)
+		if err != nil {
+			glog.Fatalf("failed to start UDS server: %v", err)
+		}
+		udsServer.Start()
+	}
+
 	// starting public http server
 	var publicHttpDown httpdown.Server
 	if v.isSeparatedPublicPort() {
@@ -315,7 +328,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
 		}
 
-		shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+		shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer, udsServer)
 		stopChan <- true
 	})
 
@@ -324,7 +337,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		select {
 		case <-stopChan:
 		case <-ctx.Done():
-			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer, udsServer)
 		}
 	} else {
 		select {
@@ -334,7 +347,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 }
 
-func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {
+func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer, udsServer *weed_server.UdsServer) {
 
 	// firstly, stop the public http service to prevent from receiving new user request
 	if nil != publicHttpDown {
@@ -351,6 +364,11 @@ func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server,
 
 	glog.V(0).Infof("graceful stop gRPC ...")
 	grpcS.GracefulStop()
+
+	if udsServer != nil {
+		glog.V(0).Infof("stop UDS server ...")
+		udsServer.Stop()
+	}
 
 	volumeServer.Shutdown()
 

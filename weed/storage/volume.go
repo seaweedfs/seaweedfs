@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
@@ -201,6 +202,17 @@ func (v *Volume) IndexFileSize() uint64 {
 		return 0
 	}
 	return v.nm.IndexFileSize()
+}
+
+// GetNeedle looks up a needle by its ID and returns the needle value containing offset and size.
+// This is used by the UDS handler for RDMA sidecar integration.
+func (v *Volume) GetNeedle(needleId types.NeedleId) (*needle_map.NeedleValue, bool) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+	if v.nm == nil {
+		return nil, false
+	}
+	return v.nm.Get(needleId)
 }
 
 func (v *Volume) DiskType() types.DiskType {
