@@ -41,6 +41,12 @@ function initS3TablesBuckets() {
             }
         });
     }
+    const bucketNameInput = document.getElementById('s3tablesBucketName');
+    if (bucketNameInput) {
+        bucketNameInput.addEventListener('input', function () {
+            applyS3TablesBucketNameValidity(this, true);
+        });
+    }
 
     document.querySelectorAll('.s3tables-delete-bucket-btn').forEach(button => {
         button.addEventListener('click', function () {
@@ -70,7 +76,13 @@ function initS3TablesBuckets() {
     if (createForm) {
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('s3tablesBucketName').value.trim();
+            const bucketNameInput = document.getElementById('s3tablesBucketName');
+            const name = bucketNameInput.value.trim();
+            const nameError = applyS3TablesBucketNameValidity(bucketNameInput, false);
+            if (nameError) {
+                bucketNameInput.reportValidity();
+                return;
+            }
             const owner = ownerSelect.value;
             const tagsInput = document.getElementById('s3tablesBucketTags').value.trim();
             const tags = parseTagsInput(tagsInput);
@@ -271,13 +283,22 @@ function initIcebergNamespaces() {
     const bucketArn = container.dataset.bucketArn || '';
     const catalogName = container.dataset.catalogName || '';
 
+    const namespaceInput = document.getElementById('icebergNamespaceName');
+    if (namespaceInput) {
+        namespaceInput.addEventListener('input', function () {
+            applyS3TablesNamespaceNameValidity(this, true);
+        });
+    }
+
     const createForm = document.getElementById('createIcebergNamespaceForm');
     if (createForm) {
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('icebergNamespaceName').value.trim();
-            if (!name) {
-                alert('Namespace name is required');
+            const namespaceInput = document.getElementById('icebergNamespaceName');
+            const name = namespaceInput.value.trim();
+            const nameError = applyS3TablesNamespaceNameValidity(namespaceInput, false);
+            if (nameError) {
+                namespaceInput.reportValidity();
                 return;
             }
             try {
@@ -596,6 +617,98 @@ async function deleteS3TablesTablePolicy() {
     } catch (error) {
         alert('Failed to delete policy: ' + error.message);
     }
+}
+
+function isLowercaseLetterOrDigit(ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+}
+
+function s3TablesBucketNameError(name) {
+    if (!name) {
+        return 'Bucket name is required';
+    }
+    if (name.length < 3 || name.length > 63) {
+        return 'Bucket name must be between 3 and 63 characters';
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Bucket name must start with a letter or digit';
+    }
+    if (!isLowercaseLetterOrDigit(name[name.length - 1])) {
+        return 'Bucket name must end with a letter or digit';
+    }
+    for (let i = 0; i < name.length; i++) {
+        const ch = name[i];
+        if (isLowercaseLetterOrDigit(ch) || ch === '-') {
+            continue;
+        }
+        return 'Bucket name can only contain lowercase letters, numbers, and hyphens';
+    }
+    const reservedPrefixes = ['xn--', 'sthree-', 'amzn-s3-demo-', 'aws'];
+    for (const prefix of reservedPrefixes) {
+        if (name.startsWith(prefix)) {
+            return `Bucket name cannot start with reserved prefix: ${prefix}`;
+        }
+    }
+    const reservedSuffixes = ['-s3alias', '--ol-s3', '--x-s3', '--table-s3'];
+    for (const suffix of reservedSuffixes) {
+        if (name.endsWith(suffix)) {
+            return `Bucket name cannot end with reserved suffix: ${suffix}`;
+        }
+    }
+    return '';
+}
+
+function s3TablesNamespaceNameError(name) {
+    if (!name) {
+        return 'Namespace name is required';
+    }
+    if (name.length < 1 || name.length > 255) {
+        return 'Namespace name must be between 1 and 255 characters';
+    }
+    if (name === '.' || name === '..') {
+        return "namespace name cannot be '.' or '..'";
+    }
+    if (name.includes('/')) {
+        return "namespace name cannot contain '/'";
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Namespace name must start with a letter or digit';
+    }
+    if (!isLowercaseLetterOrDigit(name[name.length - 1])) {
+        return 'Namespace name must end with a letter or digit';
+    }
+    for (const ch of name) {
+        if (isLowercaseLetterOrDigit(ch) || ch === '_') {
+            continue;
+        }
+        return "invalid namespace name: only 'a-z', '0-9', and '_' are allowed";
+    }
+    if (name.startsWith('aws')) {
+        return "namespace name cannot start with reserved prefix 'aws'";
+    }
+    return '';
+}
+
+function applyS3TablesBucketNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesBucketNameError(name);
+    input.setCustomValidity(message);
+    return message;
+}
+
+function applyS3TablesNamespaceNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesNamespaceNameError(name);
+    input.setCustomValidity(message);
+    return message;
 }
 
 function parseTagsInput(input) {

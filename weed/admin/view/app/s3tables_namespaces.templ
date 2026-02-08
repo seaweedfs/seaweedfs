@@ -145,10 +145,10 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 	<form id="createS3TablesNamespaceForm">
 				<div class="modal-body">
 					<input type="hidden" name="bucket_arn" value={ data.BucketARN }/>
-					<div class="mb-3">
-						<label for="s3tablesNamespaceName" class="form-label">Namespace</label>
+						<div class="mb-3">
+							<label for="s3tablesNamespaceName" class="form-label">Namespace</label>
 							<input type="text" class="form-control" id="s3tablesNamespaceName" name="name" placeholder="analytics" required/>
-							<div class="form-text">Namespaces use a single level (no dots).</div>
+							<div class="form-text">Use lowercase letters, numbers, and underscores. Nested namespaces are not supported.</div>
 						</div>
 					</div>
 					<div class="modal-footer">
@@ -196,9 +196,22 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				});
 			});
 
+			const namespaceInput = document.getElementById('s3tablesNamespaceName');
+			if (namespaceInput) {
+				namespaceInput.addEventListener('input', function() {
+					applyS3TablesNamespaceNameValidity(this, true);
+				});
+			}
+
 			document.getElementById('createS3TablesNamespaceForm').addEventListener('submit', async function(e) {
 				e.preventDefault();
-				const name = document.getElementById('s3tablesNamespaceName').value.trim();
+				const namespaceInput = document.getElementById('s3tablesNamespaceName');
+				const name = namespaceInput.value.trim();
+				const nameError = applyS3TablesNamespaceNameValidity(namespaceInput, false);
+				if (nameError) {
+					namespaceInput.reportValidity();
+					return;
+				}
 				try {
 						const response = await fetch('/api/s3tables/namespaces', {
 							method: 'POST',
