@@ -9,11 +9,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
 )
+
+var (
+	miniProcessMu   sync.Mutex
+	lastMiniProcess *exec.Cmd
+)
+
+func stopPreviousMini() {
+	miniProcessMu.Lock()
+	defer miniProcessMu.Unlock()
+
+	if lastMiniProcess != nil && lastMiniProcess.Process != nil {
+		_ = lastMiniProcess.Process.Kill()
+		_ = lastMiniProcess.Wait()
+	}
+	lastMiniProcess = nil
+}
+
+func registerMiniProcess(cmd *exec.Cmd) {
+	miniProcessMu.Lock()
+	lastMiniProcess = cmd
+	miniProcessMu.Unlock()
+}
+
+func clearMiniProcess(cmd *exec.Cmd) {
+	miniProcessMu.Lock()
+	if lastMiniProcess == cmd {
+		lastMiniProcess = nil
+	}
+	miniProcessMu.Unlock()
+}
 
 type TestEnvironment struct {
 	t                *testing.T
@@ -24,13 +56,17 @@ type TestEnvironment struct {
 	filerPort        int
 	s3Port           int
 	icebergRestPort  int
+	accessKey        string
+	secretKey        string
 	sparkContainer   testcontainers.Container
 	masterProcess    *exec.Cmd
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	env := &TestEnvironment{
-		t: t,
+		t:         t,
+		accessKey: "test",
+		secretKey: "test",
 	}
 
 	// Check if Docker is available
@@ -42,6 +78,8 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
+
+	stopPreviousMini()
 
 	var err error
 	env.seaweedfsDataDir, err = os.MkdirTemp("", "seaweed-spark-test-")
@@ -56,6 +94,31 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.s3Port = basePort + 2
 	env.icebergRestPort = basePort + 3
 
+	iamConfigPath := filepath.Join(env.seaweedfsDataDir, "iam_config.json")
+	iamConfig := fmt.Sprintf(`{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "%s",
+          "secretKey": "%s"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}`, env.accessKey, env.secretKey)
+	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
+		t.Fatalf("failed to create IAM config: %v", err)
+	}
+
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
 	env.masterProcess = exec.Command(
 		"weed", "mini",
@@ -63,11 +126,17 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-filer.port", fmt.Sprintf("%d", env.filerPort),
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
+		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
+	)
+	env.masterProcess.Env = append(os.Environ(),
+		"AWS_ACCESS_KEY_ID="+env.accessKey,
+		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
 	)
 	if err := env.masterProcess.Start(); err != nil {
 		t.Fatalf("failed to start weed mini: %v", err)
 	}
+	registerMiniProcess(env.masterProcess)
 
 	// Wait for all services to be ready
 	if !waitForPort(env.masterPort, 15*time.Second) {
@@ -178,6 +247,7 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		env.masterProcess.Process.Kill()
 		env.masterProcess.Wait()
 	}
+	clearMiniProcess(env.masterProcess)
 
 	// Stop Spark container
 	if env.sparkContainer != nil {
@@ -211,54 +281,80 @@ func runSparkPySQL(t *testing.T, container testcontainers.Container, sql string,
 	defer cancel()
 
 	pythonScript := fmt.Sprintf(`
+import glob
+import os
+import sys
+
+spark_home = os.environ.get("SPARK_HOME", "/opt/spark")
+python_path = os.path.join(spark_home, "python")
+py4j_glob = glob.glob(os.path.join(python_path, "lib", "py4j-*.zip"))
+ivy_dir = "/tmp/ivy"
+os.makedirs(ivy_dir, exist_ok=True)
+os.environ["AWS_REGION"] = "us-west-2"
+os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
+os.environ["AWS_ACCESS_KEY_ID"] = "test"
+os.environ["AWS_SECRET_ACCESS_KEY"] = "test"
+if python_path not in sys.path:
+    sys.path.insert(0, python_path)
+if py4j_glob and py4j_glob[0] not in sys.path:
+    sys.path.insert(0, py4j_glob[0])
+
 from pyspark.sql import SparkSession
 
-spark = SparkSession.builder \\
-    .appName("SeaweedFS Iceberg Test") \\
-    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \\
-    .config("spark.sql.catalog.iceberg.type", "rest") \\
-    .config("spark.sql.catalog.iceberg.uri", "http://host.docker.internal:%d") \\
-    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://host.docker.internal:%d") \\
-    .getOrCreate()
+spark = (SparkSession.builder
+    .appName("SeaweedFS Iceberg Test")
+    .config("spark.jars.ivy", ivy_dir)
+    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2")
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog")
+    .config("spark.sql.catalog.iceberg.type", "rest")
+    .config("spark.sql.catalog.iceberg.uri", "http://host.docker.internal:%d")
+    .config("spark.sql.catalog.iceberg.rest.auth.type", "sigv4")
+    .config("spark.sql.catalog.iceberg.rest.auth.sigv4.delegate-auth-type", "none")
+    .config("spark.sql.catalog.iceberg.rest.sigv4-enabled", "true")
+    .config("spark.sql.catalog.iceberg.rest.signing-region", "us-west-2")
+    .config("spark.sql.catalog.iceberg.rest.signing-name", "s3")
+    .config("spark.sql.catalog.iceberg.rest.access-key-id", "test")
+    .config("spark.sql.catalog.iceberg.rest.secret-access-key", "test")
+    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://host.docker.internal:%d")
+    .config("spark.sql.catalog.iceberg.s3.region", "us-west-2")
+    .config("spark.sql.catalog.iceberg.s3.access-key", "test")
+    .config("spark.sql.catalog.iceberg.s3.secret-key", "test")
+    .config("spark.sql.catalog.iceberg.s3.path-style-access", "true")
+    .config("spark.sql.catalog.iceberg.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+    .getOrCreate())
 
-result = spark.sql("""
 %s
-""")
-
-result.show()
 `, icebergPort, s3Port, sql)
 
 	code, out, err := container.Exec(ctx, []string{"python3", "-c", pythonScript})
+	var output string
+	if out != nil {
+		outputBytes, readErr := io.ReadAll(out)
+		if readErr != nil {
+			t.Logf("failed to read output: %v", readErr)
+		} else {
+			output = string(outputBytes)
+		}
+	}
 	if code != 0 {
-		t.Logf("Spark Python execution failed with code %d: %v", code, err)
-		return ""
+		t.Logf("Spark Python execution failed with code %d: %v, output: %s", code, err, output)
+		return output
 	}
 
-	// Convert io.Reader to string
-	outputBytes, err := io.ReadAll(out)
-	if err != nil {
-		t.Logf("failed to read output: %v", err)
-		return ""
-	}
-
-	return string(outputBytes)
+	return output
 }
 
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Helper()
 
-	cmd := exec.Command("aws", "s3api", "create-bucket",
-		"--bucket", bucketName,
-		"--endpoint-url", fmt.Sprintf("http://localhost:%d", env.s3Port),
+	masterGrpcPort := env.masterPort + 10000
+	cmd := exec.Command("weed", "shell",
+		fmt.Sprintf("-master=localhost:%d.%d", env.masterPort, masterGrpcPort),
 	)
-
-	// Set AWS credentials via environment
-	cmd.Env = append(os.Environ(),
-		"AWS_ACCESS_KEY_ID=test",
-		"AWS_SECRET_ACCESS_KEY=test",
-	)
-
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to create bucket %s: %v", bucketName, err)
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, string(output))
 	}
 }

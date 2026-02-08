@@ -39,6 +39,7 @@ func setupSparkTestEnv(t *testing.T) (*TestEnvironment, string, string) {
 
 	t.Logf(">>> Starting SeaweedFS...")
 	env.StartSeaweedFS(t)
+	t.Cleanup(func() { env.Cleanup(t) })
 
 	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
@@ -61,7 +62,6 @@ func TestSparkCatalogBasicOperations(t *testing.T) {
 	}
 
 	env, _, _ := setupSparkTestEnv(t)
-	defer env.Cleanup(t)
 
 	// Test 1: Create a namespace (database)
 	t.Logf(">>> Test 1: Creating namespace")
@@ -172,7 +172,6 @@ func TestSparkTimeTravel(t *testing.T) {
 	}
 
 	env, _, _ := setupSparkTestEnv(t)
-	defer env.Cleanup(t)
 
 	namespace := "time_travel_test_" + randomString(6)
 	tableName := "tt_table_" + randomString(6)
