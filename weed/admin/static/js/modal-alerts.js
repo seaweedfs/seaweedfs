@@ -327,5 +327,4 @@
     };
 
     console.log('Modal Alerts library loaded - native alert() overridden');
-    console.log('For confirm(), use showConfirm() or showDeleteConfirm() instead of native confirm()');
 })();
