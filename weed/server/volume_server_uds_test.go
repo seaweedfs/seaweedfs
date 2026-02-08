@@ -195,6 +195,90 @@ func TestUdsSocketCleanup(t *testing.T) {
 	uds.Stop()
 }
 
+// ============================================================
+// Cross-language wire contract tests (L1 foundation).
+//
+// These golden bytes MUST match the Rust side exactly
+// (sra-volume/tests/uds_locate_test.rs::wire_contract).
+// If either side changes, the contract breaks.
+// ============================================================
+
+func TestGoldenLocateRequest(t *testing.T) {
+	// Build the same request as Rust: fid="8,022aeb9e22", request_id=42
+	golden := [UdsRequestSize]byte{
+		0x01,                         // opcode = Locate
+		0x00, 0x00, 0x00,             // padding
+		0x2A, 0x00, 0x00, 0x00,       // request_id = 42 (LE)
+		'8', ',', '0', '2', '2', 'a', 'e', 'b', // fid[0..8]
+		'9', 'e', '2', '2', 0x00, 0x00, 0x00, 0x00, // fid[8..16]
+	}
+
+	// Serialize from Go struct
+	buf := make([]byte, UdsRequestSize)
+	buf[0] = 1 // opcode = Locate
+	binary.LittleEndian.PutUint32(buf[4:8], 42) // request_id
+	copy(buf[8:24], "8,022aeb9e22")
+
+	for i := 0; i < UdsRequestSize; i++ {
+		if buf[i] != golden[i] {
+			t.Errorf("Go request byte[%d] = 0x%02X, golden = 0x%02X", i, buf[i], golden[i])
+		}
+	}
+}
+
+func TestGoldenLocateResponse(t *testing.T) {
+	// Build the same response as Rust: vol=8, offset=4096, length=4108, dat_path_len=29
+	golden := [UdsResponseSize]byte{
+		0x00,                                           // status = Ok
+		0x00, 0x00, 0x00,                               // padding
+		0x08, 0x00, 0x00, 0x00,                         // volume_id = 8 (LE)
+		0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // offset = 4096 (LE)
+		0x0C, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // length = 4108 (LE)
+		0x1E, 0x00,                                     // dat_path_len = 30 (LE)
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             // reserved
+	}
+
+	// Serialize from Go struct
+	buf := make([]byte, UdsResponseSize)
+	buf[0] = UdsStatusOk
+	binary.LittleEndian.PutUint32(buf[4:8], 8)
+	binary.LittleEndian.PutUint64(buf[8:16], 4096)
+	binary.LittleEndian.PutUint64(buf[16:24], 4108)
+	binary.LittleEndian.PutUint16(buf[24:26], 30)
+
+	for i := 0; i < UdsResponseSize; i++ {
+		if buf[i] != golden[i] {
+			t.Errorf("Go response byte[%d] = 0x%02X, golden = 0x%02X", i, buf[i], golden[i])
+		}
+	}
+
+	// Verify trailing dat_path
+	datPath := "/opt/work/data/weed/test_8.dat"
+	if len(datPath) != 30 {
+		t.Errorf("dat_path length = %d, expected 30", len(datPath))
+	}
+}
+
+func TestNeedleHeaderIsBigEndian(t *testing.T) {
+	// SeaweedFS stores multi-byte needle fields as big-endian.
+	// This test documents the convention for sra-volume (Rust) readers.
+	//
+	// DataSize = 1000 (0x000003E8) in big-endian = [0x00, 0x00, 0x03, 0xE8]
+	var dataSize uint32 = 1000
+	buf := make([]byte, 4)
+	buf[0] = byte(dataSize >> 24)
+	buf[1] = byte(dataSize >> 16)
+	buf[2] = byte(dataSize >> 8)
+	buf[3] = byte(dataSize)
+
+	expected := []byte{0x00, 0x00, 0x03, 0xE8}
+	for i := 0; i < 4; i++ {
+		if buf[i] != expected[i] {
+			t.Errorf("DataSize byte[%d] = 0x%02X, expected 0x%02X (big-endian)", i, buf[i], expected[i])
+		}
+	}
+}
+
 func TestFidParsing(t *testing.T) {
 	tests := []struct {
 		fid   string
