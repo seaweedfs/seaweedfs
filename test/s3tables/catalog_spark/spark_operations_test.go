@@ -197,14 +197,23 @@ print("Setup complete")
 	// Insert initial data
 	t.Logf(">>> Inserting initial data")
 	insertSQL := fmt.Sprintf(`
-import datetime
+import time
 spark.sql("""
 INSERT INTO iceberg.%s.%s VALUES (1, 10)
 """)
-ts = spark.sql("SELECT current_timestamp() as ts").collect()[0]["ts"]
-ts = ts + datetime.timedelta(seconds=1)
+ts = None
+for _ in range(10):
+    try:
+        ts = spark.sql("SELECT committed_at FROM iceberg.%s.%s.snapshots ORDER BY committed_at DESC LIMIT 1").collect()[0]["committed_at"]
+        if ts is not None:
+            break
+    except Exception as e:
+        print(f"Snapshot query failed: {e}")
+    time.sleep(1)
+if ts is None:
+    raise RuntimeError("Failed to read snapshot committed_at")
 print(f"Snapshot timestamp: {ts.strftime('%%Y-%%m-%%d %%H:%%M:%%S')}")
-`, namespace, tableName)
+`, namespace, tableName, namespace, tableName)
 	output = runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Snapshot timestamp:") {
 		t.Fatalf("failed to get snapshot timestamp: %s", output)

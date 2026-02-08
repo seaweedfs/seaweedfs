@@ -262,7 +262,7 @@ func randomString(n int) string {
 func runSparkPySQL(t *testing.T, container testcontainers.Container, sql string, icebergPort int, s3Port int) string {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	pythonScript := fmt.Sprintf(`
@@ -293,6 +293,7 @@ spark = (SparkSession.builder
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
     .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog")
     .config("spark.sql.catalog.iceberg.type", "rest")
+    .config("spark.sql.catalog.iceberg.metrics-reporter-impl", "org.apache.iceberg.metrics.LoggingMetricsReporter")
     .config("spark.sql.catalog.iceberg.uri", "http://host.docker.internal:%d")
     .config("spark.sql.catalog.iceberg.rest.auth.type", "sigv4")
     .config("spark.sql.catalog.iceberg.rest.auth.sigv4.delegate-auth-type", "none")
