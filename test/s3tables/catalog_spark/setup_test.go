@@ -21,14 +21,11 @@ type TestEnvironment struct {
 	dockerAvailable    bool
 	seaweedfsDataDir   string
 	masterPort         int
-	volumePort         int
 	filerPort          int
 	s3Port             int
 	icebergRestPort    int
 	sparkContainer     testcontainers.Container
 	masterProcess      *exec.Cmd
-	filerProcess       *exec.Cmd
-	volumeProcess      *exec.Cmd
 	icebergRestProcess *exec.Cmd
 	s3Process          *exec.Cmd
 }
@@ -57,71 +54,34 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	// Allocate port range to avoid collisions
 	basePort := 19000 + rand.Intn(1000)
 	env.masterPort = basePort
-	env.volumePort = basePort + 1
-	env.filerPort = basePort + 2
-	env.s3Port = basePort + 3
-	env.icebergRestPort = basePort + 4
+	env.filerPort = basePort + 1
+	env.s3Port = basePort + 2
+	env.icebergRestPort = basePort + 3
 
-	// Start Master
+	// Start SeaweedFS using weed mini (all-in-one)
 	env.masterProcess = exec.Command(
-		"weed", "master",
-		"-port", fmt.Sprintf("%d", env.masterPort),
-		"-mdir", env.seaweedfsDataDir,
-	)
-	if err := env.masterProcess.Start(); err != nil {
-		t.Fatalf("failed to start master: %v", err)
-	}
-
-	if !waitForPort(env.masterPort, 10*time.Second) {
-		t.Fatalf("master failed to start on port %d", env.masterPort)
-	}
-
-	// Start Volume
-	env.volumeProcess = exec.Command(
-		"weed", "volume",
-		"-port", fmt.Sprintf("%d", env.volumePort),
-		"-master", fmt.Sprintf("localhost:%d", env.masterPort),
+		"weed", "mini",
+		"-master.port", fmt.Sprintf("%d", env.masterPort),
+		"-filer.port", fmt.Sprintf("%d", env.filerPort),
+		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-dir", env.seaweedfsDataDir,
 	)
-	if err := env.volumeProcess.Start(); err != nil {
-		t.Fatalf("failed to start volume: %v", err)
+	if err := env.masterProcess.Start(); err != nil {
+		t.Fatalf("failed to start weed mini: %v", err)
 	}
 
-	if !waitForPort(env.volumePort, 10*time.Second) {
-		t.Fatalf("volume failed to start on port %d", env.volumePort)
+	// Wait for all services to be ready
+	if !waitForPort(env.masterPort, 15*time.Second) {
+		t.Fatalf("weed mini failed to start - master port %d not listening", env.masterPort)
+	}
+	if !waitForPort(env.filerPort, 15*time.Second) {
+		t.Fatalf("weed mini failed to start - filer port %d not listening", env.filerPort)
+	}
+	if !waitForPort(env.s3Port, 15*time.Second) {
+		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
 	}
 
-	// Start Filer
-	env.filerProcess = exec.Command(
-		"weed", "filer",
-		"-port", fmt.Sprintf("%d", env.filerPort),
-		"-master", fmt.Sprintf("localhost:%d", env.masterPort),
-	)
-	if err := env.filerProcess.Start(); err != nil {
-		t.Fatalf("failed to start filer: %v", err)
-	}
-
-	if !waitForPort(env.filerPort, 10*time.Second) {
-		t.Fatalf("filer failed to start on port %d", env.filerPort)
-	}
-
-	// Start S3
-	env.s3Process = exec.Command(
-		"weed", "s3",
-		"-port", fmt.Sprintf("%d", env.s3Port),
-		"-filer", fmt.Sprintf("localhost:%d", env.filerPort),
-		"-cert", "",
-		"-key", "",
-	)
-	if err := env.s3Process.Start(); err != nil {
-		t.Fatalf("failed to start s3: %v", err)
-	}
-
-	if !waitForPort(env.s3Port, 10*time.Second) {
-		t.Fatalf("s3 failed to start on port %d", env.s3Port)
-	}
-
-	// Start Iceberg REST Catalog
+	// Start Iceberg REST Catalog (separate service)
 	env.icebergRestProcess = exec.Command(
 		"weed", "server",
 		"-ip=localhost",
@@ -136,7 +96,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to start iceberg rest: %v", err)
 	}
 
-	if !waitForPort(env.icebergRestPort, 10*time.Second) {
+	if !waitForPort(env.icebergRestPort, 15*time.Second) {
 		t.Fatalf("iceberg rest failed to start on port %d", env.icebergRestPort)
 	}
 }
@@ -236,14 +196,6 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 	if env.s3Process != nil && env.s3Process.Process != nil {
 		env.s3Process.Process.Kill()
 		env.s3Process.Wait()
-	}
-	if env.filerProcess != nil && env.filerProcess.Process != nil {
-		env.filerProcess.Process.Kill()
-		env.filerProcess.Wait()
-	}
-	if env.volumeProcess != nil && env.volumeProcess.Process != nil {
-		env.volumeProcess.Process.Kill()
-		env.volumeProcess.Wait()
 	}
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		env.masterProcess.Process.Kill()
