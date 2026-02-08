@@ -5,13 +5,31 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
-// TestSparkCatalogBasicOperations tests basic Spark Iceberg catalog operations
-func TestSparkCatalogBasicOperations(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
+// waitForSparkReady polls Spark to verify it's ready by executing a simple query
+func waitForSparkReady(t *testing.T, container testcontainers.Container, icebergPort int, s3Port int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		output := runSparkPySQL(t, container, `
+spark.sql("SELECT 1 as test")
+print("Spark ready")
+`, icebergPort, s3Port)
+		if strings.Contains(output, "Spark ready") {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
+	t.Fatalf("Spark did not become ready within %v", timeout)
+}
+
+// setupSparkTestEnv initializes a test environment with SeaweedFS and Spark containers
+func setupSparkTestEnv(t *testing.T) (*TestEnvironment, string, string) {
+	t.Helper()
 
 	env := NewTestEnvironment(t)
 
@@ -21,7 +39,6 @@ func TestSparkCatalogBasicOperations(t *testing.T) {
 
 	t.Logf(">>> Starting SeaweedFS...")
 	env.StartSeaweedFS(t)
-	defer env.Cleanup(t)
 
 	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
@@ -31,7 +48,20 @@ func TestSparkCatalogBasicOperations(t *testing.T) {
 	configDir := env.writeSparkConfig(t, catalogBucket)
 	env.startSparkContainer(t, configDir)
 
-	time.Sleep(10 * time.Second) // Wait for Spark to be ready
+	// Poll for Spark readiness instead of fixed sleep
+	waitForSparkReady(t, env.sparkContainer, env.icebergRestPort, env.s3Port, 30*time.Second)
+
+	return env, catalogBucket, tableBucket
+}
+
+// TestSparkCatalogBasicOperations tests basic Spark Iceberg catalog operations
+func TestSparkCatalogBasicOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env, _, _ := setupSparkTestEnv(t)
+	defer env.Cleanup(t)
 
 	// Test 1: Create a namespace (database)
 	t.Logf(">>> Test 1: Creating namespace")
@@ -42,7 +72,7 @@ print("Namespace created")
 `, namespace)
 	output := runSparkPySQL(t, env.sparkContainer, sparkSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Namespace created") {
-		t.Errorf("namespace creation failed, output: %s", output)
+		t.Fatalf("namespace creation failed, output: %s", output)
 	}
 
 	// Test 2: Create a table
@@ -61,7 +91,7 @@ print("Table created")
 `, namespace, tableName)
 	output = runSparkPySQL(t, env.sparkContainer, createTableSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Table created") {
-		t.Errorf("table creation failed, output: %s", output)
+		t.Fatalf("table creation failed, output: %s", output)
 	}
 
 	// Test 3: Insert data
@@ -77,7 +107,7 @@ print("Data inserted")
 `, namespace, tableName)
 	output = runSparkPySQL(t, env.sparkContainer, insertDataSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Data inserted") {
-		t.Errorf("data insertion failed, output: %s", output)
+		t.Fatalf("data insertion failed, output: %s", output)
 	}
 
 	// Test 4: Query data
@@ -141,25 +171,8 @@ func TestSparkTimeTravel(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-
-	if !env.dockerAvailable {
-		t.Skip("Docker not available, skipping Spark integration test")
-	}
-
-	t.Logf(">>> Starting SeaweedFS...")
-	env.StartSeaweedFS(t)
+	env, _, _ := setupSparkTestEnv(t)
 	defer env.Cleanup(t)
-
-	catalogBucket := "warehouse"
-	tableBucket := "iceberg-tables"
-	createTableBucket(t, env, tableBucket)
-	createTableBucket(t, env, catalogBucket)
-
-	configDir := env.writeSparkConfig(t, catalogBucket)
-	env.startSparkContainer(t, configDir)
-
-	time.Sleep(10 * time.Second)
 
 	namespace := "time_travel_test_" + randomString(6)
 	tableName := "tt_table_" + randomString(6)
@@ -176,7 +189,10 @@ USING iceberg
 """)
 print("Setup complete")
 `, namespace, namespace, tableName)
-	runSparkPySQL(t, env.sparkContainer, setupSQL, env.icebergRestPort, env.s3Port)
+	output := runSparkPySQL(t, env.sparkContainer, setupSQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Setup complete") {
+		t.Fatalf("setup failed for namespace %s and table %s, output: %s", namespace, tableName, output)
+	}
 
 	// Insert initial data
 	t.Logf(">>> Inserting initial data")
@@ -187,7 +203,7 @@ INSERT INTO iceberg.%s.%s VALUES (1, 10)
 snapshot_id = spark.sql("SELECT snapshot_id FROM iceberg.%s.%s.snapshots ORDER BY committed_at DESC LIMIT 1").collect()[0][0]
 print(f"Snapshot ID: {snapshot_id}")
 `, namespace, tableName, namespace, tableName)
-	output := runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
+	output = runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Snapshot ID:") {
 		t.Fatalf("failed to get snapshot ID: %s", output)
 	}
@@ -216,7 +232,22 @@ INSERT INTO iceberg.%s.%s VALUES (2, 20)
 """)
 print("More data inserted")
 `, namespace, tableName)
-	runSparkPySQL(t, env.sparkContainer, insertMoreSQL, env.icebergRestPort, env.s3Port)
+	output = runSparkPySQL(t, env.sparkContainer, insertMoreSQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "More data inserted") {
+		t.Fatalf("failed to insert more data, output: %s", output)
+	}
+
+	// Verify count increased to 2
+	t.Logf(">>> Verifying row count after second insert")
+	verifySQL := fmt.Sprintf(`
+result = spark.sql("SELECT COUNT(*) as count FROM iceberg.%s.%s")
+count = result.collect()[0]['count']
+print(f"Current row count: {count}")
+`, namespace, tableName)
+	output = runSparkPySQL(t, env.sparkContainer, verifySQL, env.icebergRestPort, env.s3Port)
+	if !strings.Contains(output, "Current row count: 2") {
+		t.Fatalf("expected current row count 2 after second insert, got output: %s", output)
+	}
 
 	// Time travel to first snapshot
 	t.Logf(">>> Time traveling to first snapshot")
