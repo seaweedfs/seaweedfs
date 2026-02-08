@@ -14,6 +14,7 @@ templ Layout(c *gin.Context, content templ.Component) {
   if username == "" {
     username = "admin"
   }
+  csrfToken := c.GetString("csrf_token")
   
   // Detect if we're on a configuration page to keep submenu expanded
   currentPath := c.Request.URL.Path
@@ -34,6 +35,7 @@ templ Layout(c *gin.Context, content templ.Component) {
     <meta charset="UTF-8">
     <title>SeaweedFS Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content={ csrfToken }>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     
     <!-- Bootstrap CSS -->

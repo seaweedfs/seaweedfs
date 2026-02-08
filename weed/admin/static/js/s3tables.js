@@ -11,6 +11,14 @@ let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
 
+function getCSRFToken() {
+    const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+    if (!tokenMeta) {
+        return '';
+    }
+    return tokenMeta.getAttribute('content') || '';
+}
+
 /**
  * Initialize S3 Tables Buckets Page
  */
@@ -282,6 +290,10 @@ function initIcebergNamespaces() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const catalogName = container.dataset.catalogName || '';
+    const csrfTokenInput = document.getElementById('icebergNamespaceCsrfToken');
+    if (csrfTokenInput) {
+        csrfTokenInput.value = getCSRFToken();
+    }
 
     const namespaceInput = document.getElementById('icebergNamespaceName');
     if (namespaceInput) {
@@ -302,9 +314,14 @@ function initIcebergNamespaces() {
                 return;
             }
             try {
+                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
+                const headers = { 'Content-Type': 'application/json' };
+                if (csrfToken) {
+                    headers['X-CSRF-Token'] = csrfToken;
+                }
                 const response = await fetch('/api/s3tables/namespaces', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ bucket_arn: bucketArn, name: name })
                 });
                 const data = await response.json();
@@ -334,7 +351,7 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
                 await loadIcebergNamespaceTables(node, bucketArn, catalogName);
                 node.dataset.loaded = 'true';
             } catch (error) {
-                node.textContent = 'Failed to load. Click to retry.';
+                node.textContent = 'Failed to load. Collapse and expand to retry.';
                 node.className = 'text-danger small';
                 console.error('Error loading namespace tables:', error);
             }

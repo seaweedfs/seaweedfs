@@ -115,13 +115,19 @@ templ IcebergTables(data dash.IcebergTablesData) {
 											<td>
 												<code class="small">s3://{ data.CatalogName }/{ data.NamespaceName }/{ table.Name }/</code>
 											</td>
-											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if table.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ table.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(table.Name))) } title="View Details">
 														<i class="fas fa-eye"></i>
 													</a>
-													<button type="button" class="btn btn-outline-danger btn-sm iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ table.Name } title="Drop Table">
+													<button type="button" class="btn btn-outline-danger btn-sm iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ table.Name } data-catalog-name={ data.CatalogName } title="Drop Table">
 														<i class="fas fa-trash"></i>
 													</button>
 												</div>

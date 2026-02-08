@@ -51,6 +51,12 @@ func (s *AdminServer) HandleLogin(adminUser, adminPassword, readOnlyUser, readOn
 			session.Set("authenticated", true)
 			session.Set("username", loginUsername)
 			session.Set("role", role)
+			csrfToken, err := generateCSRFToken()
+			if err != nil {
+				c.Redirect(http.StatusSeeOther, "/login?error=Unable to create session. Please try again or contact administrator.")
+				return
+			}
+			session.Set(sessionCSRFTokenKey, csrfToken)
 			if err := session.Save(); err != nil {
 				// Log the detailed error server-side for diagnostics
 				glog.Errorf("Failed to save session for user %s: %v", loginUsername, err)

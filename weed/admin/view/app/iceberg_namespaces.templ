@@ -144,7 +144,13 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 											<td>
 												<code class="small">/v1/{ data.CatalogName }/namespaces/{ ns.Name }/tables</code>
 											</td>
-											<td>{ ns.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if ns.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ ns.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))) } title="Browse Tables">
@@ -185,6 +191,7 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 				<form id="createIcebergNamespaceForm">
 					<div class="modal-body">
 						<input type="hidden" id="icebergNamespaceBucketArn" name="bucket_arn" value={ data.BucketARN }/>
+						<input type="hidden" id="icebergNamespaceCsrfToken" name="csrf_token"/>
 						<div class="mb-3">
 							<label for="icebergNamespaceName" class="form-label">Namespace</label>
 							<input type="text" class="form-control" id="icebergNamespaceName" name="name" placeholder="analytics" required/>

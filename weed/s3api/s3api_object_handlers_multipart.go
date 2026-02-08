@@ -324,6 +324,8 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	uploadID := r.URL.Query().Get("uploadId")
+	// validateTableBucketObjectPath is enforced at multipart initiation. checkUploadId
+	// cryptographically binds uploadID to object path, so parts cannot switch paths.
 	err := s3a.checkUploadId(object, uploadID)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)

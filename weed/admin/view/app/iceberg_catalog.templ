@@ -32,16 +32,17 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 				<i class="fas fa-info-circle fa-2x me-3"></i>
 				<div>
 					<strong>Iceberg REST Catalog</strong>
-					<p class="mb-0 mt-1">
+					<p id="iceberg-rest-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
 						Connect your Iceberg clients (DuckDB, Spark, etc.) to:
 						<code>http://<span id="iceberg-host">localhost</span>:{fmt.Sprintf("%d", data.IcebergPort)}/v1</code>
 					</p>
 					<script>
+						const icebergInfo = document.getElementById('iceberg-rest-info');
 						const icebergHost = window.location.hostname;
-						const icebergPort = {fmt.Sprintf("%d", data.IcebergPort)};
+						const icebergPort = icebergInfo ? icebergInfo.dataset.icebergPort : '';
 						document.getElementById('iceberg-host').innerText = icebergHost;
 						const restLink = document.getElementById('iceberg-rest-link');
-						if (restLink) {
+						if (restLink && icebergPort) {
 							restLink.href = `http://${icebergHost}:${icebergPort}/v1/config`;
 						}
 					</script>
@@ -98,7 +99,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 									Last Updated
 								</div>
 								<div class="h6 mb-0 font-weight-bold text-gray-800">
-									{ data.LastUpdated.Format("15:04") }
+									{ data.LastUpdated.Format("2006-01-02 15:04") }
 								</div>
 							</div>
 							<div class="col-auto">
@@ -153,6 +154,10 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", bucketName)) } title="Browse Namespaces">
 															<i class="fas fa-folder-open"></i>
 														</a>
+													} else {
+														<button type="button" class="btn btn-outline-secondary btn-sm" disabled title={ parseErr.Error() }>
+															<i class="fas fa-exclamation-triangle"></i>
+														</button>
 													}
 												</div>
 											</td>

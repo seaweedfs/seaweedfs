@@ -274,53 +274,60 @@ func IcebergNamespaces(data dash.IcebergNamespacesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var18 string
-			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(ns.CreatedAt.Format("2006-01-02 15:04"))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 147, Col: 56}
+			if ns.CreatedAt.IsZero() {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<span class=\"text-muted\">-</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				var templ_7745c5c3_Var18 string
+				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(ns.CreatedAt.Format("2006-01-02 15:04"))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 151, Col: 54}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var19 templ.SafeURL
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 150, Col: 196}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 156, Col: 196}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\" title=\"Browse Tables\"><i class=\"fas fa-table\"></i></a></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" title=\"Browse Tables\"><i class=\"fas fa-table\"></i></a></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Namespaces) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<tr><td colspan=\"4\" class=\"text-center text-muted py-4\"><i class=\"fas fa-folder-open fa-3x mb-3 text-muted\"></i><div><h5>No namespaces found</h5><p>Create namespaces via the Iceberg REST API or S3 Tables API.</p></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<tr><td colspan=\"4\" class=\"text-center text-muted py-4\"><i class=\"fas fa-folder-open fa-3x mb-3 text-muted\"></i><div><h5>No namespaces found</h5><p>Create namespaces via the Iceberg REST API or S3 Tables API.</p></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createIcebergNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"createIcebergNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createIcebergNamespaceModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createIcebergNamespaceForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"icebergNamespaceBucketArn\" name=\"bucket_arn\" value=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createIcebergNamespaceModal\" tabindex=\"-1\" aria-labelledby=\"createIcebergNamespaceModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createIcebergNamespaceModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Namespace</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createIcebergNamespaceForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"icebergNamespaceBucketArn\" name=\"bucket_arn\" value=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 187, Col: 98}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_namespaces.templ`, Line: 193, Col: 98}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\"><div class=\"mb-3\"><label for=\"icebergNamespaceName\" class=\"form-label\">Namespace</label> <input type=\"text\" class=\"form-control\" id=\"icebergNamespaceName\" name=\"name\" placeholder=\"analytics\" required><div class=\"form-text\">Use lowercase letters, numbers, and underscores. Nested namespaces are not supported.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitIcebergNamespaces();\n\t\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "\"> <input type=\"hidden\" id=\"icebergNamespaceCsrfToken\" name=\"csrf_token\"><div class=\"mb-3\"><label for=\"icebergNamespaceName\" class=\"form-label\">Namespace</label> <input type=\"text\" class=\"form-control\" id=\"icebergNamespaceName\" name=\"name\" placeholder=\"analytics\" required><div class=\"form-text\">Use lowercase letters, numbers, and underscores. Nested namespaces are not supported.</div></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitIcebergNamespaces();\n\t\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

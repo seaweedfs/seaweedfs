@@ -33,8 +33,16 @@ func RequireAuth() gin.HandlerFunc {
 			return
 		}
 
+		csrfToken, err := getOrCreateSessionCSRFToken(session)
+		if err != nil {
+			c.Redirect(http.StatusTemporaryRedirect, "/login?error=Unable to initialize session")
+			c.Abort()
+			return
+		}
+
 		// Set username and role in context for use in handlers
 		setAuthContext(c, username, role)
+		c.Set("csrf_token", csrfToken)
 		c.Next()
 	}
 }
@@ -57,8 +65,19 @@ func RequireAuthAPI() gin.HandlerFunc {
 			return
 		}
 
+		csrfToken, err := getOrCreateSessionCSRFToken(session)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Failed to initialize session",
+				"message": "Unable to initialize CSRF token",
+			})
+			c.Abort()
+			return
+		}
+
 		// Set username and role in context for use in handlers
 		setAuthContext(c, username, role)
+		c.Set("csrf_token", csrfToken)
 		c.Next()
 	}
 }

@@ -27,23 +27,24 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 			}
 		</div>
 	</div>
-	<div id="s3tables-buckets-content">
+	<div id="s3tables-buckets-content" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
 		if data.IcebergPort > 0 {
 			<div class="alert alert-info mb-4">
 				<div class="d-flex align-items-center">
 					<i class="fas fa-info-circle fa-2x me-3"></i>
 					<div>
 						<strong>Iceberg REST Catalog</strong>
-						<p class="mb-0 mt-1">
+						<p id="s3tables-iceberg-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
 							Each table bucket is an Iceberg catalog. Connect clients to:
 							<code>http://<span id="s3tables-iceberg-host">localhost</span>:{ fmt.Sprintf("%d", data.IcebergPort) }/v1</code>
 						</p>
 						<script>
+							const s3tablesInfo = document.getElementById('s3tables-iceberg-info');
 							const s3tablesIcebergHost = window.location.hostname;
-							const s3tablesIcebergPort = { fmt.Sprintf("%d", data.IcebergPort) };
+							const s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';
 							document.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;
 							const s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');
-							if (s3tablesRestLink) {
+							if (s3tablesRestLink && s3tablesIcebergPort) {
 								s3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
 							}
 						</script>
@@ -84,7 +85,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									Last Updated
 								</div>
 								<div class="h6 mb-0 font-weight-bold text-gray-800">
-									{ data.LastUpdated.Format("15:04") }
+									{ data.LastUpdated.Format("2006-01-02 15:04") }
 								</div>
 							</div>
 							<div class="col-auto">
@@ -205,7 +206,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 						<div class="card-body">
 							<h6>DuckDB</h6>
 							<pre class="bg-light p-3 border rounded">
-								<code>
+								<code id="s3tables-duckdb-example">
 									{ `INSTALL iceberg;
 LOAD iceberg;
 
@@ -220,7 +221,7 @@ SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');` }
 							</pre>
 							<h6 class="mt-4">Python (PyIceberg)</h6>
 							<pre class="bg-light p-3 border rounded">
-								<code>
+								<code id="s3tables-pyiceberg-example">
 									{ `from pyiceberg.catalog import load_catalog
 
 catalog = load_catalog(
@@ -234,6 +235,19 @@ catalog = load_catalog(
 namespaces = catalog.list_namespaces()` }
 								</code>
 							</pre>
+							<script>
+								const s3tablesExamplesHost = window.location.hostname;
+								const s3tablesExamples = [
+									document.getElementById('s3tables-duckdb-example'),
+									document.getElementById('s3tables-pyiceberg-example')
+								];
+								s3tablesExamples.forEach(example => {
+									if (!example) {
+										return;
+									}
+									example.textContent = example.textContent.replaceAll('localhost', s3tablesExamplesHost);
+								});
+							</script>
 						</div>
 					</div>
 				</div>

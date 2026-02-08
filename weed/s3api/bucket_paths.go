@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+var tableBucketFileValidator = s3tables.NewTableBucketFileValidator()
+
 func (s3a *S3ApiServer) isTableBucket(bucket string) bool {
 	if bucket == "" {
 		return false
@@ -108,8 +110,7 @@ func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) err
 		fullPath += "/"
 	}
 	fullPath += cleanObject
-	validator := s3tables.NewTableBucketFileValidator()
-	if err := validator.ValidateTableBucketUpload(fullPath); err != nil {
+	if err := tableBucketFileValidator.ValidateTableBucketUpload(fullPath); err != nil {
 		return err
 	}
 	parts := strings.SplitN(cleanObject, "/", 4)

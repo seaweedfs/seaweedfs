@@ -367,16 +367,17 @@ func applyIcebergMetadata(metadata *s3tables.TableMetadata, details *IcebergTabl
 
 func typeToString(t json.RawMessage) json.RawMessage {
 	if t == nil || len(t) == 0 {
-		return json.RawMessage(`""`)
+		return json.RawMessage(`(complex)`)
+	}
+	var primitive string
+	if err := json.Unmarshal(t, &primitive); err == nil {
+		return json.RawMessage(primitive)
 	}
 	var v interface{}
 	if err := json.Unmarshal(t, &v); err != nil {
-		return json.RawMessage(`"(complex)"`)
+		return json.RawMessage(`(complex)`)
 	}
-	if str, ok := v.(string); ok {
-		return json.RawMessage(fmt.Sprintf(`"%s"`, str))
-	}
-	return json.RawMessage(`"(complex)"`)
+	return json.RawMessage(`(complex)`)
 }
 
 func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
@@ -401,7 +402,12 @@ func schemaFieldsFromIceberg(metadata *s3tables.IcebergMetadata) []IcebergSchema
 	}
 	fields := make([]IcebergSchemaFieldInfo, 0, len(metadata.Schema.Fields))
 	for _, field := range metadata.Schema.Fields {
-		typeBytes, _ := json.Marshal(field.Type)
+		typeBytes, err := json.Marshal(field.Type)
+		if err != nil {
+			typeBytes = json.RawMessage(`(complex)`)
+		} else {
+			typeBytes = typeToString(typeBytes)
+		}
 		fields = append(fields, IcebergSchemaFieldInfo{
 			Name:     field.Name,
 			Type:     typeBytes,
@@ -513,13 +519,13 @@ func selectSnapshotForMetrics(full icebergFullMetadata) *icebergSnapshot {
 			return &full.Snapshots[i]
 		}
 	}
-	latest := full.Snapshots[0]
-	for _, snapshot := range full.Snapshots[1:] {
-		if snapshot.TimestampMs > latest.TimestampMs {
-			latest = snapshot
+	latestIdx := 0
+	for i := 1; i < len(full.Snapshots); i++ {
+		if full.Snapshots[i].TimestampMs > full.Snapshots[latestIdx].TimestampMs {
+			latestIdx = i
 		}
 	}
-	return &latest
+	return &full.Snapshots[latestIdx]
 }
 
 func parseSummaryInt(summary map[string]string, keys ...string) (int64, bool) {
@@ -665,6 +671,9 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 }
 
 func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Name      string `json:"name"`
@@ -687,6 +696,9 @@ func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 }
 
 func (s *AdminServer) DeleteS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	bucketArn := c.Query("bucket")
 	namespace := c.Query("name")
 	if bucketArn == "" || namespace == "" {
