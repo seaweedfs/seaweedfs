@@ -58,12 +58,10 @@ func TestTrinoIcebergCatalog(t *testing.T) {
 	env.StartSeaweedFS(t)
 	fmt.Printf(">>> SeaweedFS started.\n")
 
-	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
+	catalogBucket := tableBucket
 	fmt.Printf(">>> Creating table bucket: %s\n", tableBucket)
 	createTableBucket(t, env, tableBucket)
-	fmt.Printf(">>> Creating object bucket: %s\n", catalogBucket)
-	createObjectBucket(t, env, catalogBucket)
 	fmt.Printf(">>> All buckets created.\n")
 
 	// Test Iceberg REST API directly
@@ -186,7 +184,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
-		"ICEBERG_WAREHOUSE=s3://warehouse",
+		"ICEBERG_WAREHOUSE=s3://iceberg-tables",
 		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
 

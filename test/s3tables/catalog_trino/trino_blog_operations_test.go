@@ -16,8 +16,9 @@ func TestTrinoBlogOperations(t *testing.T) {
 	schemaName := "blog_ns_" + randomString(6)
 	customersTable := "customers_" + randomString(6)
 	trinoCustomersTable := "trino_customers_" + randomString(6)
-	customersLocation := fmt.Sprintf("s3://warehouse/data/%s/%s_%s", schemaName, customersTable, randomString(6))
-	trinoCustomersLocation := fmt.Sprintf("s3://warehouse/data/%s/%s_%s", schemaName, trinoCustomersTable, randomString(6))
+	warehouseBucket := "iceberg-tables"
+	customersLocation := fmt.Sprintf("s3://%s/data/%s/%s_%s", warehouseBucket, schemaName, customersTable, randomString(6))
+	trinoCustomersLocation := fmt.Sprintf("s3://%s/data/%s/%s_%s", warehouseBucket, schemaName, trinoCustomersTable, randomString(6))
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", schemaName))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s", schemaName))

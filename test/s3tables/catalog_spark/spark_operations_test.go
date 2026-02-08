@@ -42,10 +42,9 @@ func setupSparkTestEnv(t *testing.T) (*TestEnvironment, string, string) {
 	env.StartSeaweedFS(t)
 	t.Cleanup(func() { env.Cleanup(t) })
 
-	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
+	catalogBucket := tableBucket
 	createTableBucket(t, env, tableBucket)
-	createObjectBucket(t, env, catalogBucket)
 
 	configDir := env.writeSparkConfig(t, catalogBucket)
 	env.startSparkContainer(t, configDir)

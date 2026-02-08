@@ -24,10 +24,9 @@ func setupTrinoTest(t *testing.T) *TestEnvironment {
 	t.Logf(">>> Starting SeaweedFS...")
 	env.StartSeaweedFS(t)
 
-	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
+	catalogBucket := tableBucket
 	createTableBucket(t, env, tableBucket)
-	createObjectBucket(t, env, catalogBucket)
 
 	configDir := env.writeTrinoConfig(t, catalogBucket)
 	env.startTrinoContainer(t, configDir)

@@ -118,7 +118,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
-		"ICEBERG_WAREHOUSE=s3://warehouse",
+		"ICEBERG_WAREHOUSE=s3://iceberg-tables",
 		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
 	if err := env.masterProcess.Start(); err != nil {
