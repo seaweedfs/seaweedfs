@@ -14,7 +14,12 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<a href={ templ.SafeURL("/v1/config") } target="_blank" class="btn btn-sm btn-outline-secondary">
+				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-primary">
+					<i class="fas fa-plus me-1"></i>Create Table Bucket
+				</a>
+			</div>
+			<div class="btn-group me-2">
+				<a id="iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-external-link-alt me-1"></i>REST API
 				</a>
 			</div>
@@ -32,7 +37,13 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 						<code>http://<span id="iceberg-host">localhost</span>:{fmt.Sprintf("%d", data.IcebergPort)}/v1</code>
 					</p>
 					<script>
-						document.getElementById('iceberg-host').innerText = window.location.hostname;
+						const icebergHost = window.location.hostname;
+						const icebergPort = {fmt.Sprintf("%d", data.IcebergPort)};
+						document.getElementById('iceberg-host').innerText = icebergHost;
+						const restLink = document.getElementById('iceberg-rest-link');
+						if (restLink) {
+							restLink.href = `http://${icebergHost}:${icebergPort}/v1`;
+						}
 					</script>
 				</div>
 			</div>
