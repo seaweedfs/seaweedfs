@@ -451,9 +451,6 @@ func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (s3a *S3ApiServer) checkBucket(r *http.Request, bucket string) s3err.ErrorCode {
-	if s3a.isTableBucket(bucket) {
-		return s3err.ErrAccessDenied
-	}
 	// Use cached bucket config instead of direct getEntry call (optimization)
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {

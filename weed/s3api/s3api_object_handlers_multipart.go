@@ -46,6 +46,10 @@ func (s3a *S3ApiServer) NewMultipartUploadHandler(w http.ResponseWriter, r *http
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	// Check if versioning is enabled for the bucket (needed for object lock)
 	versioningEnabled, err := s3a.isVersioningEnabled(bucket)
@@ -126,6 +130,10 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	parts := &CompleteMultipartUpload{}
 	if err := xmlDecoder(r.Body, parts, r.ContentLength); err != nil {
@@ -181,6 +189,10 @@ func (s3a *S3ApiServer) AbortMultipartUploadHandler(w http.ResponseWriter, r *ht
 	// Check if bucket exists before aborting multipart upload
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 

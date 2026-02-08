@@ -18,7 +18,8 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// collect parameters
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectAclHandler %s %s", bucket, object)
-	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 
@@ -164,7 +165,8 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// collect parameters
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectAclHandler %s %s", bucket, object)
-	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 

@@ -2,13 +2,11 @@ package s3api
 
 import (
 	"errors"
-	"net/http"
 	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -94,12 +92,34 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 	return path.Join(s3a.bucketRoot(bucket), bucket)
 }
 
-func (s3a *S3ApiServer) rejectTableBucketObjectAccess(w http.ResponseWriter, r *http.Request, bucket string) bool {
-	if s3a.isTableBucket(bucket) {
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		return true
+func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) error {
+	if !s3a.isTableBucket(bucket) {
+		return nil
 	}
-	return false
+	cleanObject := strings.TrimPrefix(object, "/")
+	if cleanObject == "" {
+		return &s3tables.IcebergLayoutError{
+			Code:    s3tables.ErrCodeInvalidIcebergLayout,
+			Message: "object must be under namespace/table/data or metadata",
+		}
+	}
+	fullPath := s3a.bucketDir(bucket)
+	if !strings.HasSuffix(fullPath, "/") {
+		fullPath += "/"
+	}
+	fullPath += cleanObject
+	validator := s3tables.NewTableBucketFileValidator()
+	if err := validator.ValidateTableBucketUpload(fullPath); err != nil {
+		return err
+	}
+	parts := strings.SplitN(cleanObject, "/", 4)
+	if len(parts) < 4 {
+		return &s3tables.IcebergLayoutError{
+			Code:    s3tables.ErrCodeInvalidIcebergLayout,
+			Message: "object must be under namespace/table/data or metadata",
+		}
+	}
+	return nil
 }
 
 func (s3a *S3ApiServer) bucketPrefix(bucket string) string {

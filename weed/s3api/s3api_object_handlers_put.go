@@ -77,7 +77,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
-	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 

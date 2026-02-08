@@ -24,7 +24,8 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
-	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 
@@ -189,9 +190,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
-	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
-		return
-	}
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -238,6 +236,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
 			if object.Key == "" {
+				continue
+			}
+			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
+				deleteErrors = append(deleteErrors, DeleteError{
+					Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
+					Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
+					Key:       object.Key,
+					VersionId: object.VersionId,
+				})
 				continue
 			}
 
