@@ -221,15 +221,19 @@ print(f"Snapshot timestamp: {ts_for_time_travel.strftime('%%Y-%%m-%%d %%H:%%M:%%
 		t.Fatalf("failed to get snapshot timestamp: %s", output)
 	}
 
-	// Extract snapshot timestamp from output
+	// Extract snapshot timestamp from output - look specifically for the "Snapshot timestamp:" line
 	var snapshotTS string
-	tsRe := regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
-	snapshotTS = tsRe.FindString(output)
+	tsRe := regexp.MustCompile(`Snapshot timestamp:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`)
+	matches := tsRe.FindStringSubmatch(output)
+	if len(matches) > 1 {
+		snapshotTS = matches[1]
+	}
 
 	if snapshotTS == "" {
 		t.Fatalf("could not extract snapshot timestamp from output: %s", output)
 	}
 
+	// Wait to ensure the next insert gets a distinct snapshot timestamp
 	time.Sleep(2 * time.Second)
 
 	// Insert more data
