@@ -5,7 +5,6 @@
 // Shared Modals
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
-let s3tablesNamespaceDeleteModal = null;
 let s3tablesTableDeleteModal = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;

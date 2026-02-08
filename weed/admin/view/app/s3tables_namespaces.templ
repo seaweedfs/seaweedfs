@@ -194,7 +194,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 		</div>
 	</div>
 	<script>
-		let s3tablesNamespaceDeleteModal = null;
+		let s3tablesNamespaceDeleteModalInstance = null;
 		const dataBucketArn = document.getElementById('s3tables-namespaces-content').dataset.bucketArn || '';
 		const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
 		const csrfToken = csrfTokenMeta ? (csrfTokenMeta.getAttribute('content') || '') : '';
@@ -272,13 +272,13 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 		}
 
 		document.addEventListener('DOMContentLoaded', function() {
-			s3tablesNamespaceDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesNamespaceModal'));
+			s3tablesNamespaceDeleteModalInstance = new bootstrap.Modal(document.getElementById('deleteS3TablesNamespaceModal'));
 
 			document.querySelectorAll('.s3tables-delete-namespace-btn').forEach(button => {
 				button.addEventListener('click', function() {
 					document.getElementById('deleteS3TablesNamespaceName').textContent = this.dataset.namespaceName || '';
 					document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName = this.dataset.namespaceName || '';
-					s3tablesNamespaceDeleteModal.show();
+					s3tablesNamespaceDeleteModalInstance.show();
 				});
 			});
 
