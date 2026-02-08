@@ -23,7 +23,7 @@ install-templ:
 .PHONY: generate
 generate: install-templ
 	@echo "Generating templ files..."
-	@templ generate
+	@cd $(BUILD_DIR) && templ generate
 	@echo "Generated: $(TEMPL_GO_FILES)"
 
 # Clean generated files
