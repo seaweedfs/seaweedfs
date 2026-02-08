@@ -15,8 +15,9 @@ import (
 
 // UDS protocol constants
 const (
-	UdsRequestSize  = 24 // fid(16) + version(4) + flags(4)
-	UdsResponseSize = 32 // status(1) + pad(3) + volume_id(4) + offset(8) + length(8) + reserved(8)
+	UdsRequestSize      = 24  // fid(16) + version(4) + flags(4)
+	UdsResponseSize     = 32  // status(1) + pad(3) + volume_id(4) + offset(8) + length(8) + dat_path_len(2) + reserved(6)
+	UdsMaxDatPathLen    = 256 // max .dat file path length
 )
 
 // UDS status codes
@@ -43,12 +44,14 @@ type LocateRequest struct {
 
 // LocateResponse represents a UDS locate response
 type LocateResponse struct {
-	Status   uint8
-	_pad     [3]byte
-	VolumeId uint32
-	Offset   uint64
-	Length   uint64
-	_        [8]byte // reserved
+	Status     uint8
+	_pad       [3]byte
+	VolumeId   uint32
+	Offset     uint64
+	Length     uint64
+	DatPathLen uint16  // length of .dat file path (follows the 32-byte header)
+	_          [6]byte // reserved
+	DatPath    string  // variable-length .dat file path (not in wire header)
 }
 
 // NewUdsServer creates a new UDS server for the volume server
@@ -142,7 +145,7 @@ func (u *UdsServer) handleConnection(conn net.Conn) {
 		// Handle request
 		resp := u.handleLocate(&req)
 
-		// Serialize response
+		// Serialize response header (32 bytes)
 		respBuf[0] = resp.Status
 		respBuf[1] = 0
 		respBuf[2] = 0
@@ -150,12 +153,21 @@ func (u *UdsServer) handleConnection(conn net.Conn) {
 		binary.LittleEndian.PutUint32(respBuf[4:8], resp.VolumeId)
 		binary.LittleEndian.PutUint64(respBuf[8:16], resp.Offset)
 		binary.LittleEndian.PutUint64(respBuf[16:24], resp.Length)
-		// reserved bytes 24-32 are zero
+		binary.LittleEndian.PutUint16(respBuf[24:26], resp.DatPathLen)
+		// reserved bytes 26-32 are zero
 
-		// Write response
+		// Write fixed header
 		if _, err := conn.Write(respBuf); err != nil {
 			glog.V(2).Infof("UDS write error: %v", err)
 			return
+		}
+
+		// Write variable-length .dat path if present
+		if resp.DatPathLen > 0 {
+			if _, err := conn.Write([]byte(resp.DatPath)); err != nil {
+				glog.V(2).Infof("UDS write dat path error: %v", err)
+				return
+			}
 		}
 	}
 }
@@ -228,6 +240,14 @@ func (u *UdsServer) handleLocate(req *LocateRequest) *LocateResponse {
 	resp.Offset = uint64(nv.Offset.ToActualOffset())
 	resp.Length = uint64(nv.Size)
 
-	glog.V(3).Infof("UDS: located %s -> vol=%d offset=%d size=%d", fid, volumeId, resp.Offset, resp.Length)
+	// Include .dat file path so sidecar knows the exact filename
+	// (SeaweedFS uses {collection}_{id}.dat when collection is non-empty)
+	datPath := v.DataFileName() + ".dat"
+	if len(datPath) <= UdsMaxDatPathLen {
+		resp.DatPath = datPath
+		resp.DatPathLen = uint16(len(datPath))
+	}
+
+	glog.V(3).Infof("UDS: located %s -> vol=%d offset=%d size=%d dat=%s", fid, volumeId, resp.Offset, resp.Length, datPath)
 	return resp
 }

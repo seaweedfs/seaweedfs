@@ -167,6 +167,12 @@ func TestUdsServerProtocol(t *testing.T) {
 	if status != UdsStatusError {
 		t.Errorf("Expected UdsStatusError (%d) for nil VolumeServer, got %d", UdsStatusError, status)
 	}
+
+	// DatPathLen should be 0 for error responses
+	datPathLen := binary.LittleEndian.Uint16(respBuf[24:26])
+	if datPathLen != 0 {
+		t.Errorf("Expected DatPathLen=0 for error, got %d", datPathLen)
+	}
 }
 
 // TestUdsSocketCleanup tests that existing socket is removed
