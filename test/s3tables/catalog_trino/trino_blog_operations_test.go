@@ -2,6 +2,7 @@ package catalog_trino
 
 import (
 	"fmt"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,11 +16,15 @@ func TestTrinoBlogOperations(t *testing.T) {
 	schemaName := "blog_ns_" + randomString(6)
 	customersTable := "customers_" + randomString(6)
 	trinoCustomersTable := "trino_customers_" + randomString(6)
+	customersLocation := fmt.Sprintf("s3://warehouse/data/%s/%s_%s", schemaName, customersTable, randomString(6))
+	trinoCustomersLocation := fmt.Sprintf("s3://warehouse/data/%s/%s_%s", schemaName, trinoCustomersTable, randomString(6))
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", schemaName))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s", schemaName))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
 	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, customersTable))
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, trinoCustomersTable))
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS iceberg.%s.%s", schemaName, customersTable))
 
 	createCustomersSQL := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS iceberg.%s.%s (
     customer_sk INT,
@@ -35,9 +40,10 @@ func TestTrinoBlogOperations(t *testing.T) {
     login VARCHAR
 ) WITH (
     format = 'PARQUET',
-    sorted_by = ARRAY['customer_id']
-)`, schemaName, customersTable)
-	runTrinoSQL(t, env.trinoContainer, createCustomersSQL)
+    sorted_by = ARRAY['customer_id'],
+    location = '%s'
+)`, schemaName, customersTable, customersLocation)
+	runTrinoSQLAllowExists(t, env.trinoContainer, createCustomersSQL)
 
 	insertCustomersSQL := fmt.Sprintf(`INSERT INTO iceberg.%s.%s VALUES
     (1, 'AAAAA', 'Mrs', 'Amanda', 'Olson', 'Y', 8, 4, 1984, 'US', 'aolson'),
@@ -64,10 +70,13 @@ func TestTrinoBlogOperations(t *testing.T) {
 
 	ctasSQL := fmt.Sprintf(`CREATE TABLE iceberg.%s.%s
 WITH (
-    format = 'PARQUET'
+    format = 'PARQUET',
+    location = '%s'
 )
-AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, schemaName, customersTable)
-	runTrinoSQL(t, env.trinoContainer, ctasSQL)
+AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, trinoCustomersLocation, schemaName, customersTable)
+	ctasInsertSQL := fmt.Sprintf("INSERT INTO iceberg.%s.%s SELECT * FROM iceberg.%s.%s", schemaName, trinoCustomersTable, schemaName, customersTable)
+	ctasDeleteSQL := fmt.Sprintf("DELETE FROM iceberg.%s.%s", schemaName, trinoCustomersTable)
+	runTrinoCTAS(t, env.trinoContainer, ctasSQL, ctasDeleteSQL, ctasInsertSQL)
 
 	countOutput = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SELECT count(*) FROM iceberg.%s.%s", schemaName, trinoCustomersTable))
 	rowCount = mustParseCSVInt64(t, countOutput)
@@ -127,6 +136,49 @@ AS SELECT * FROM iceberg.%s.%s`, schemaName, trinoCustomersTable, schemaName, cu
 	rowCount = mustParseCSVInt64(t, countOutput)
 	if rowCount != 8 {
 		t.Fatalf("expected 8 rows after rollback, got %d", rowCount)
+	}
+}
+
+func runTrinoSQLAllowExists(t *testing.T, containerName, sql string) string {
+	t.Helper()
+
+	cmd := exec.Command("docker", "exec", containerName,
+		"trino", "--catalog", "iceberg",
+		"--output-format", "CSV",
+		"--execute", sql,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := string(output)
+		if strings.Contains(outputStr, "already exists") {
+			return sanitizeTrinoOutput(outputStr)
+		}
+		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, outputStr, string(logs))
+	}
+	return sanitizeTrinoOutput(string(output))
+}
+
+func runTrinoCTAS(t *testing.T, containerName, createSQL, deleteSQL, insertSQL string) {
+	t.Helper()
+
+	cmd := exec.Command("docker", "exec", containerName,
+		"trino", "--catalog", "iceberg",
+		"--output-format", "CSV",
+		"--execute", createSQL,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := string(output)
+		if strings.Contains(outputStr, "already exists") {
+			if deleteSQL != "" {
+				runTrinoSQL(t, containerName, deleteSQL)
+			}
+			runTrinoSQL(t, containerName, insertSQL)
+			return
+		}
+		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, createSQL, outputStr, string(logs))
 	}
 }
 

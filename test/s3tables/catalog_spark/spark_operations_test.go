@@ -45,7 +45,7 @@ func setupSparkTestEnv(t *testing.T) (*TestEnvironment, string, string) {
 	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
 	createTableBucket(t, env, tableBucket)
-	createTableBucket(t, env, catalogBucket)
+	createObjectBucket(t, env, catalogBucket)
 
 	configDir := env.writeSparkConfig(t, catalogBucket)
 	env.startSparkContainer(t, configDir)

@@ -27,7 +27,7 @@ func setupTrinoTest(t *testing.T) *TestEnvironment {
 	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
 	createTableBucket(t, env, tableBucket)
-	createTableBucket(t, env, catalogBucket)
+	createObjectBucket(t, env, catalogBucket)
 
 	configDir := env.writeTrinoConfig(t, catalogBucket)
 	env.startTrinoContainer(t, configDir)

@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -88,12 +91,10 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	// Allocate port range to avoid collisions
-	basePort := 19000 + rand.Intn(1000)
-	env.masterPort = basePort
-	env.filerPort = basePort + 1
-	env.s3Port = basePort + 2
-	env.icebergRestPort = basePort + 3
+	env.masterPort = mustFreePort(t, "Master")
+	env.filerPort = mustFreePort(t, "Filer")
+	env.s3Port = mustFreePort(t, "S3")
+	env.icebergRestPort = mustFreePort(t, "Iceberg")
 
 	bindIP := testutil.FindBindIP()
 
@@ -117,6 +118,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
+		"ICEBERG_WAREHOUSE=s3://warehouse",
+		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
 	if err := env.masterProcess.Start(); err != nil {
 		t.Fatalf("failed to start weed mini: %v", err)
@@ -136,6 +139,31 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	if !waitForPort(env.icebergRestPort, 15*time.Second) {
 		t.Fatalf("weed mini failed to start - iceberg rest port %d not listening", env.icebergRestPort)
 	}
+}
+
+func mustFreePort(t *testing.T, name string) int {
+	t.Helper()
+
+	for i := 0; i < 200; i++ {
+		port := 20000 + rand.Intn(30000)
+		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+		if err != nil {
+			continue
+		}
+		listener.Close()
+		grpcPort := port + 10000
+		if grpcPort > 65535 {
+			continue
+		}
+		grpcListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
+		if err != nil {
+			continue
+		}
+		grpcListener.Close()
+		return port
+	}
+	t.Fatalf("failed to get free port for %s", name)
+	return 0
 }
 
 func waitForPort(port int, timeout time.Duration) bool {
@@ -342,5 +370,26 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, string(output))
+	}
+}
+
+func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {
+	t.Helper()
+
+	cfg := aws.Config{
+		Region:       "us-east-1",
+		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(env.accessKey, env.secretKey, "")),
+		BaseEndpoint: aws.String(fmt.Sprintf("http://localhost:%d", env.s3Port)),
+	}
+
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
+
+	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	if err != nil {
+		t.Fatalf("failed to create object bucket %s: %v", bucketName, err)
 	}
 }
