@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
@@ -92,7 +93,7 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ "#" + namespaceID } aria-expanded="false" aria-controls={ namespaceID }>
 											<i class="fas fa-folder text-warning me-2"></i>{ ns.Name }
 										</button>
-										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) }>
+										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))) }>
 											<i class="fas fa-table me-1"></i>Open
 										</a>
 									</div>
@@ -146,7 +147,7 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 											<td>{ ns.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
-													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) } title="Browse Tables">
+													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))) } title="Browse Tables">
 														<i class="fas fa-table"></i>
 													</a>
 												</div>

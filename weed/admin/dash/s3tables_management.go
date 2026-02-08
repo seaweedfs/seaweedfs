@@ -364,16 +364,17 @@ func applyIcebergMetadata(metadata *s3tables.TableMetadata, details *IcebergTabl
 }
 
 func typeToString(t json.RawMessage) json.RawMessage {
-	if t == nil {
+	if t == nil || len(t) == 0 {
 		return json.RawMessage(`""`)
 	}
 	var v interface{}
-	if err := json.Unmarshal(t, &v); err == nil {
-		if _, ok := v.(string); ok {
-			return t
-		}
+	if err := json.Unmarshal(t, &v); err != nil {
+		return json.RawMessage(`"(complex)"`)
 	}
-	return t
+	if str, ok := v.(string); ok {
+		return json.RawMessage(fmt.Sprintf(`"%s"`, str))
+	}
+	return json.RawMessage(`"(complex)"`)
 }
 
 func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
@@ -505,11 +506,9 @@ func selectSnapshotForMetrics(full icebergFullMetadata) *icebergSnapshot {
 	if len(full.Snapshots) == 0 {
 		return nil
 	}
-	if full.CurrentSnapshotID != 0 {
-		for i := range full.Snapshots {
-			if full.Snapshots[i].SnapshotID == full.CurrentSnapshotID {
-				return &full.Snapshots[i]
-			}
+	for i := range full.Snapshots {
+		if full.Snapshots[i].SnapshotID == full.CurrentSnapshotID {
+			return &full.Snapshots[i]
 		}
 	}
 	latest := full.Snapshots[0]

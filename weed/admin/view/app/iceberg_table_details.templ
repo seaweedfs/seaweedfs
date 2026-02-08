@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
@@ -17,12 +18,12 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", data.CatalogName)) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(data.CatalogName))) }>
 							{ data.CatalogName }
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, data.NamespaceName)) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName))) }>
 							{ data.NamespaceName }
 						</a>
 					</li>
@@ -155,11 +156,23 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 							</tr>
 							<tr>
 								<th>Created</th>
-								<td>{ data.CreatedAt.Format("2006-01-02 15:04") }</td>
+								<td>
+									if !data.CreatedAt.IsZero() {
+										{ data.CreatedAt.Format("2006-01-02 15:04") }
+									} else {
+										<span class="text-muted">-</span>
+									}
+								</td>
 							</tr>
 							<tr>
 								<th>Modified</th>
-								<td>{ data.ModifiedAt.Format("2006-01-02 15:04") }</td>
+								<td>
+									if !data.ModifiedAt.IsZero() {
+										{ data.ModifiedAt.Format("2006-01-02 15:04") }
+									} else {
+										<span class="text-muted">-</span>
+									}
+								</td>
 							</tr>
 						</tbody>
 					</table>

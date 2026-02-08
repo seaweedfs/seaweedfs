@@ -307,10 +307,16 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
     nodes.forEach(node => {
         node.addEventListener('show.bs.collapse', async function () {
             if (node.dataset.loaded === 'true') return;
-            node.dataset.loaded = 'true';
             node.textContent = 'Loading...';
             node.className = 'text-muted small';
-            await loadIcebergNamespaceTables(node, bucketArn, catalogName);
+            try {
+                await loadIcebergNamespaceTables(node, bucketArn, catalogName);
+                node.dataset.loaded = 'true';
+            } catch (error) {
+                node.textContent = 'Failed to load. Click to retry.';
+                node.className = 'text-danger small';
+                console.error('Error loading namespace tables:', error);
+            }
         });
     });
 }
@@ -320,7 +326,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
     if (!bucketArn || !namespace) {
         node.textContent = 'No namespace data available.';
         node.className = 'text-muted small';
-        return;
+        throw new Error('Missing bucket or namespace');
     }
     try {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace });
@@ -329,7 +335,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
         if (!response.ok) {
             node.textContent = data.error || 'Failed to load tables';
             node.className = 'text-danger small';
-            return;
+            throw new Error(data.error || 'Failed to load tables');
         }
         const tables = data.tables || [];
         if (tables.length === 0) {
@@ -355,11 +361,13 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             item.appendChild(link);
             list.appendChild(item);
         });
-        node.innerHTML = '';
         node.appendChild(list);
     } catch (error) {
-        node.textContent = 'Failed to load tables: ' + (error.message || 'Unknown error');
-        node.className = 'text-danger small';
+        if (!node.textContent) {
+            node.textContent = 'Failed to load tables: ' + (error.message || 'Unknown error');
+            node.className = 'text-danger small';
+        }
+        throw error;
     }
 }
 
