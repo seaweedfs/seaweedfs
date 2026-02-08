@@ -265,7 +265,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
+			return fmt.Errorf("cannot read needle header at offset %d: %w", offset, err)
 		}
 		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
 	}
