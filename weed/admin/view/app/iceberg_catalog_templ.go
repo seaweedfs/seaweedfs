@@ -43,7 +43,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		var templ_7745c5c3_Var2 templ.SafeURL
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL("/v1/config"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 17, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 17, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -56,7 +56,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 32, Col: 96}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 32, Col: 96}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -69,7 +69,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalCatalogs))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 52, Col: 48}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 52, Col: 48}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -82,7 +82,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.IcebergPort))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 71, Col: 46}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 71, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -95,7 +95,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.LastUpdated.Format("15:04"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 90, Col: 43}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 90, Col: 43}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -113,7 +113,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			var templ_7745c5c3_Var7 string
 			templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(catalog.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 131, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 131, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 			if templ_7745c5c3_Err != nil {
@@ -126,7 +126,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			var templ_7745c5c3_Var8 string
 			templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(catalog.OwnerAccountID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 133, Col: 39}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 133, Col: 39}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 			if templ_7745c5c3_Err != nil {
@@ -139,7 +139,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			var templ_7745c5c3_Var9 string
 			templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(catalog.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 135, Col: 50}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 135, Col: 50}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 			if templ_7745c5c3_Err != nil {
@@ -152,7 +152,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			var templ_7745c5c3_Var10 string
 			templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(catalog.CreatedAt.Format("2006-01-02 15:04"))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 137, Col: 61}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 137, Col: 61}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 			if templ_7745c5c3_Err != nil {
@@ -171,7 +171,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 				var templ_7745c5c3_Var11 templ.SafeURL
 				templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", bucketName)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 142, Col: 140}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 142, Col: 140}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 				if templ_7745c5c3_Err != nil {
@@ -212,7 +212,7 @@ CREATE SECRET (
 -- Query tables
 SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 195, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 195, Col: 74}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
@@ -236,7 +236,7 @@ catalog = load_catalog(
 # List namespaces
 namespaces = catalog.list_namespaces()`)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_catalog.templ`, Line: 209, Col: 39}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 209, Col: 39}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 		if templ_7745c5c3_Err != nil {
