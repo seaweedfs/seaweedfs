@@ -218,31 +218,9 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 		}
 
 		bucketDir := path.Join(bucketsPath, bucketName)
-		isTableBucket := false
-		bucketEntry, lookupErr := filer_pb.LookupEntry(opCtx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: bucketsPath,
-			Name:      bucketName,
-		})
-		if lookupErr == nil && s3tables.IsTableBucketEntry(bucketEntry.Entry) {
-			isTableBucket = true
-		} else if lookupErr != nil && lookupErr != filer_pb.ErrNotFound {
-			return fmt.Errorf("lookup bucket directory failed: %w", lookupErr)
-		}
-
-		if isTableBucket {
-			objectRoot := s3tables.GetTableObjectRootDir()
-			if err := ensureDir(path.Dir(objectRoot), path.Base(objectRoot), "table object root directory"); err != nil {
-				return err
-			}
-			bucketDir = s3tables.GetTableObjectBucketPath(bucketName)
-			if err := ensureDir(path.Dir(bucketDir), path.Base(bucketDir), "table object bucket directory"); err != nil {
-				return err
-			}
-		} else {
-			// 1. Ensure bucket directory exists: <bucketsPath>/<bucket>
-			if err := ensureDir(bucketsPath, bucketName, "bucket directory"); err != nil {
-				return err
-			}
+		// 1. Ensure bucket directory exists: <bucketsPath>/<bucket>
+		if err := ensureDir(bucketsPath, bucketName, "bucket directory"); err != nil {
+			return err
 		}
 
 		// 2. Ensure table path exists under the bucket directory

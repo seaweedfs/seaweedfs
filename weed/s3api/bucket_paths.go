@@ -90,7 +90,7 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 		return tablePath
 	}
 	if s3a.isTableBucket(bucket) {
-		return s3tables.GetTableObjectBucketPath(bucket)
+		return path.Join(s3a.bucketRoot(bucket), bucket)
 	}
 	return path.Join(s3a.bucketRoot(bucket), bucket)
 }

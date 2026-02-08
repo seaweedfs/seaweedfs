@@ -198,6 +198,7 @@ print("Setup complete")
 	t.Logf(">>> Inserting initial data")
 	insertSQL := fmt.Sprintf(`
 import time
+from datetime import timedelta
 spark.sql("""
 INSERT INTO iceberg.%s.%s VALUES (1, 10)
 """)
@@ -212,7 +213,8 @@ for _ in range(10):
     time.sleep(1)
 if ts is None:
     raise RuntimeError("Failed to read snapshot committed_at")
-print(f"Snapshot timestamp: {ts.strftime('%%Y-%%m-%%d %%H:%%M:%%S')}")
+ts_for_time_travel = ts + timedelta(seconds=1)
+print(f"Snapshot timestamp: {ts_for_time_travel.strftime('%%Y-%%m-%%d %%H:%%M:%%S')}")
 `, namespace, tableName, namespace, tableName)
 	output = runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Snapshot timestamp:") {
