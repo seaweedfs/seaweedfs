@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -99,7 +100,11 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 									Last Updated
 								</div>
 								<div class="h6 mb-0 font-weight-bold text-gray-800">
-									{ data.LastUpdated.Format("2006-01-02 15:04") }
+									if data.LastUpdated.IsZero() {
+										<span class="text-muted">-</span>
+									} else {
+										{ data.LastUpdated.Format("2006-01-02 15:04") }
+									}
 								</div>
 							</div>
 							<div class="col-auto">
@@ -146,12 +151,18 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 											<td>
 												<code class="small">/v1/{ catalog.Name }/namespaces</code>
 											</td>
-											<td>{ catalog.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if catalog.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ catalog.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(catalog.ARN) }}
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", bucketName)) } title="Browse Namespaces">
+														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(bucketName))) } title="Browse Namespaces">
 															<i class="fas fa-folder-open"></i>
 														</a>
 													} else {
