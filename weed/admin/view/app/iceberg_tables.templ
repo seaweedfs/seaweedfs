@@ -164,6 +164,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				</div>
 				<form id="createIcebergTableForm">
 					<div class="modal-body">
+						<input type="hidden" id="icebergTableCsrfToken" name="csrf_token"/>
 						<div class="mb-3">
 							<label for="icebergTableName" class="form-label">Table Name</label>
 							<input type="text" class="form-control" id="icebergTableName" name="name" required/>

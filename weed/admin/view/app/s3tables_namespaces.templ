@@ -195,6 +195,81 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 	</div>
 	<script>
 		let s3tablesNamespaceDeleteModal = null;
+		const dataBucketArn = document.getElementById('s3tables-namespaces-content').dataset.bucketArn || '';
+		const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
+		const csrfToken = csrfTokenMeta ? (csrfTokenMeta.getAttribute('content') || '') : '';
+
+		function makeJSONHeaders() {
+			const headers = { 'Content-Type': 'application/json' };
+			if (csrfToken) {
+				headers['X-CSRF-Token'] = csrfToken;
+			}
+			return headers;
+		}
+
+		async function readErrorMessage(response, fallbackMessage) {
+			const responseBody = await response.text();
+			if (!responseBody) {
+				return fallbackMessage;
+			}
+			try {
+				const payload = JSON.parse(responseBody);
+				if (payload && typeof payload.error === 'string' && payload.error) {
+					return payload.error;
+				}
+				if (payload && typeof payload.message === 'string' && payload.message) {
+					return payload.message;
+				}
+			} catch (parseError) {
+				// Fall through to the raw response body when parsing fails.
+			}
+			return responseBody;
+		}
+
+		function validateNamespaceInput(input, allowEmpty) {
+			if (typeof window.applyS3TablesNamespaceNameValidity === 'function') {
+				return window.applyS3TablesNamespaceNameValidity(input, allowEmpty);
+			}
+			const name = (input.value || '').trim();
+			if (allowEmpty && name === '') {
+				input.setCustomValidity('');
+				return '';
+			}
+			let message = '';
+			if (!name) {
+				message = 'Namespace name is required';
+			} else if (name.length < 1 || name.length > 255) {
+				message = 'Namespace name must be between 1 and 255 characters';
+			} else if (name === '.' || name === '..') {
+				message = "namespace name cannot be '.' or '..'";
+			} else if (name.includes('/')) {
+				message = "namespace name cannot contain '/'";
+			} else {
+				const start = name[0];
+				const end = name[name.length - 1];
+				const isStartValid = (start >= 'a' && start <= 'z') || (start >= '0' && start <= '9');
+				const isEndValid = (end >= 'a' && end <= 'z') || (end >= '0' && end <= '9');
+				if (!isStartValid) {
+					message = 'Namespace name must start with a letter or digit';
+				} else if (!isEndValid) {
+					message = 'Namespace name must end with a letter or digit';
+				} else {
+					for (const ch of name) {
+						const isLower = ch >= 'a' && ch <= 'z';
+						const isDigit = ch >= '0' && ch <= '9';
+						if (!(isLower || isDigit || ch === '_')) {
+							message = "invalid namespace name: only 'a-z', '0-9', and '_' are allowed";
+							break;
+						}
+					}
+					if (!message && name.startsWith('aws')) {
+						message = "namespace name cannot start with reserved prefix 'aws'";
+					}
+				}
+			}
+			input.setCustomValidity(message);
+			return message;
+		}
 
 		document.addEventListener('DOMContentLoaded', function() {
 			s3tablesNamespaceDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesNamespaceModal'));
@@ -210,7 +285,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 			const namespaceInput = document.getElementById('s3tablesNamespaceName');
 			if (namespaceInput) {
 				namespaceInput.addEventListener('input', function() {
-					applyS3TablesNamespaceNameValidity(this, true);
+					validateNamespaceInput(this, true);
 				});
 			}
 
@@ -218,20 +293,20 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				e.preventDefault();
 				const namespaceInput = document.getElementById('s3tablesNamespaceName');
 				const name = namespaceInput.value.trim();
-				const nameError = applyS3TablesNamespaceNameValidity(namespaceInput, false);
+				const nameError = validateNamespaceInput(namespaceInput, false);
 				if (nameError) {
 					namespaceInput.reportValidity();
 					return;
 				}
 				try {
-						const response = await fetch('/api/s3tables/namespaces', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({ bucket_arn: dataBucketArn, name: name })
-						});
-					const payload = await response.json();
+					const response = await fetch('/api/s3tables/namespaces', {
+						method: 'POST',
+						headers: makeJSONHeaders(),
+						body: JSON.stringify({ bucket_arn: dataBucketArn, name: name })
+					});
 					if (!response.ok) {
-						alert(payload.error || 'Failed to create namespace');
+						const errorMessage = await readErrorMessage(response, 'Failed to create namespace');
+						alert(errorMessage);
 						return;
 					}
 					alert('Namespace created');
@@ -243,16 +318,18 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 
 		});
 
-		const dataBucketArn = document.getElementById('s3tables-namespaces-content').dataset.bucketArn || '';
-
 		async function deleteS3TablesNamespace() {
 			const namespace = document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName;
 			if (!namespace) return;
 			try {
-				const response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(namespace)}`, { method: 'DELETE' });
-				const payload = await response.json();
+				const requestOptions = { method: 'DELETE' };
+				if (csrfToken) {
+					requestOptions.headers = { 'X-CSRF-Token': csrfToken };
+				}
+				const response = await fetch(`/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(namespace)}`, requestOptions);
 				if (!response.ok) {
-					alert(payload.error || 'Failed to delete namespace');
+					const errorMessage = await readErrorMessage(response, 'Failed to delete namespace');
+					alert(errorMessage);
 					return;
 				}
 				alert('Namespace deleted');

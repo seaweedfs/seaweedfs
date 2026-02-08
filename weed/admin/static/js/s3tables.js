@@ -199,9 +199,21 @@ function initS3TablesTables() {
 
     const createForm = document.getElementById('createS3TablesTableForm');
     if (createForm) {
+        const tableNameInput = document.getElementById('s3tablesTableName');
+        if (tableNameInput) {
+            tableNameInput.addEventListener('input', function () {
+                applyS3TablesTableNameValidity(this, true);
+            });
+        }
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('s3tablesTableName').value.trim();
+            const tableNameInput = document.getElementById('s3tablesTableName');
+            const name = tableNameInput.value.trim();
+            const nameError = applyS3TablesTableNameValidity(tableNameInput, false);
+            if (nameError) {
+                tableNameInput.reportValidity();
+                return;
+            }
             const format = document.getElementById('s3tablesTableFormat').value;
             const metadataText = document.getElementById('s3tablesTableMetadata').value.trim();
             const tagsInput = document.getElementById('s3tablesTableTags').value.trim();
@@ -417,14 +429,30 @@ function initIcebergTables() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const namespace = container.dataset.namespace || '';
+    const csrfTokenInput = document.getElementById('icebergTableCsrfToken');
+    if (csrfTokenInput) {
+        csrfTokenInput.value = getCSRFToken();
+    }
 
     initIcebergDeleteModal();
 
     const createForm = document.getElementById('createIcebergTableForm');
     if (createForm) {
+        const tableNameInput = document.getElementById('icebergTableName');
+        if (tableNameInput) {
+            tableNameInput.addEventListener('input', function () {
+                applyS3TablesTableNameValidity(this, true);
+            });
+        }
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('icebergTableName').value.trim();
+            const tableNameInput = document.getElementById('icebergTableName');
+            const name = tableNameInput.value.trim();
+            const nameError = applyS3TablesTableNameValidity(tableNameInput, false);
+            if (nameError) {
+                tableNameInput.reportValidity();
+                return;
+            }
             const format = document.getElementById('icebergTableFormat').value;
             const metadataText = document.getElementById('icebergTableMetadata').value.trim();
             const tagsInput = document.getElementById('icebergTableTags').value.trim();
@@ -444,9 +472,14 @@ function initIcebergTables() {
                 payload.metadata = metadata;
             }
             try {
+                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
+                const headers = { 'Content-Type': 'application/json' };
+                if (csrfToken) {
+                    headers['X-CSRF-Token'] = csrfToken;
+                }
                 const response = await fetch('/api/s3tables/tables', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -584,7 +617,12 @@ async function deleteIcebergTable() {
         query.set('version', versionToken);
     }
     try {
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, { method: 'DELETE' });
+        const csrfToken = getCSRFToken();
+        const requestOptions = { method: 'DELETE' };
+        if (csrfToken) {
+            requestOptions.headers = { 'X-CSRF-Token': csrfToken };
+        }
+        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, requestOptions);
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to drop table');
@@ -706,6 +744,28 @@ function s3TablesNamespaceNameError(name) {
     return '';
 }
 
+function s3TablesTableNameError(name) {
+    if (!name) {
+        return 'Table name is required';
+    }
+    if (name.length < 1 || name.length > 255) {
+        return 'Table name must be between 1 and 255 characters';
+    }
+    if (name === '.' || name === '..' || name.includes('/')) {
+        return "invalid table name: cannot be '.', '..' or contain '/'";
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Table name must start with a letter or digit';
+    }
+    for (const ch of name) {
+        if (isLowercaseLetterOrDigit(ch) || ch === '_') {
+            continue;
+        }
+        return "invalid table name: only 'a-z', '0-9', and '_' are allowed";
+    }
+    return '';
+}
+
 function applyS3TablesBucketNameValidity(input, allowEmpty) {
     const name = input.value.trim();
     if (allowEmpty && name === '') {
@@ -724,6 +784,17 @@ function applyS3TablesNamespaceNameValidity(input, allowEmpty) {
         return '';
     }
     const message = s3TablesNamespaceNameError(name);
+    input.setCustomValidity(message);
+    return message;
+}
+
+function applyS3TablesTableNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesTableNameError(name);
     input.setCustomValidity(message);
     return message;
 }
