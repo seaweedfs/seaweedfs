@@ -13,21 +13,19 @@ import (
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 type TestEnvironment struct {
-	t                   *testing.T
-	dockerAvailable     bool
-	seaweedfsDataDir    string
-	sparkConfigDir      string
-	masterPort          int
-	filerPort           int
-	s3Port              int
-	icebergRestPort     int
-	sparkContainer      testcontainers.Container
-	masterProcess       *exec.Cmd
-	icebergRestProcess  *exec.Cmd
+	t                  *testing.T
+	dockerAvailable    bool
+	seaweedfsDataDir   string
+	sparkConfigDir     string
+	masterPort         int
+	filerPort          int
+	s3Port             int
+	icebergRestPort    int
+	sparkContainer     testcontainers.Container
+	masterProcess      *exec.Cmd
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
@@ -58,12 +56,13 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	env.s3Port = basePort + 2
 	env.icebergRestPort = basePort + 3
 
-	// Start SeaweedFS using weed mini (all-in-one)
+	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
 	env.masterProcess = exec.Command(
 		"weed", "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-filer.port", fmt.Sprintf("%d", env.filerPort),
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
+		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergRestPort),
 		"-dir", env.seaweedfsDataDir,
 	)
 	if err := env.masterProcess.Start(); err != nil {
@@ -80,24 +79,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	if !waitForPort(env.s3Port, 15*time.Second) {
 		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
 	}
-
-	// Start Iceberg REST Catalog (separate service)
-	env.icebergRestProcess = exec.Command(
-		"weed", "server",
-		"-ip=localhost",
-		"-port", fmt.Sprintf("%d", env.icebergRestPort),
-		"-filer", fmt.Sprintf("localhost:%d", env.filerPort),
-	)
-	env.icebergRestProcess.Env = append(
-		os.Environ(),
-		"SEAWEEDFS_S3_PORT="+fmt.Sprintf("%d", env.s3Port),
-	)
-	if err := env.icebergRestProcess.Start(); err != nil {
-		t.Fatalf("failed to start iceberg rest: %v", err)
-	}
-
 	if !waitForPort(env.icebergRestPort, 15*time.Second) {
-		t.Fatalf("iceberg rest failed to start on port %d", env.icebergRestPort)
+		t.Fatalf("weed mini failed to start - iceberg rest port %d not listening", env.icebergRestPort)
 	}
 }
 
@@ -173,8 +156,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 			"SPARK_LOCAL_IP": "localhost",
 		},
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
-		WaitingFor: wait.ForLog("Ready to accept connections").
-			WithStartupTimeout(30 * time.Second),
+		Cmd:        []string{"/bin/sh", "-c", "sleep 3600"},
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -191,11 +173,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 func (env *TestEnvironment) Cleanup(t *testing.T) {
 	t.Helper()
 
-	// Kill all child processes first before removing directories
-	if env.icebergRestProcess != nil && env.icebergRestProcess.Process != nil {
-		env.icebergRestProcess.Process.Kill()
-		env.icebergRestProcess.Wait()
-	}
+	// Kill weed mini process
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		env.masterProcess.Process.Kill()
 		env.masterProcess.Wait()
@@ -250,7 +228,7 @@ result = spark.sql("""
 result.show()
 `, icebergPort, s3Port, sql)
 
-	code, out, err := container.Exec(ctx, []string{"python", "-c", pythonScript})
+	code, out, err := container.Exec(ctx, []string{"python3", "-c", pythonScript})
 	if code != 0 {
 		t.Logf("Spark Python execution failed with code %d: %v", code, err)
 		return ""
