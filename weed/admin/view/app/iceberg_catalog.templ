@@ -19,7 +19,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 				</a>
 			</div>
 			<div class="btn-group me-2">
-				<a id="iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
+				<a id="iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-external-link-alt me-1"></i>REST API
 				</a>
 			</div>
@@ -42,7 +42,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 						document.getElementById('iceberg-host').innerText = icebergHost;
 						const restLink = document.getElementById('iceberg-rest-link');
 						if (restLink) {
-							restLink.href = `http://${icebergHost}:${icebergPort}/v1`;
+							restLink.href = `http://${icebergHost}:${icebergPort}/v1/config`;
 						}
 					</script>
 				</div>

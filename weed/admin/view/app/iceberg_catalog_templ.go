@@ -41,9 +41,9 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 templ.SafeURL
-		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1", data.IcebergPort)))
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 22, Col: 107}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_catalog.templ`, Line: 22, Col: 114}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -62,7 +62,7 @@ func IcebergCatalog(data dash.IcebergCatalogData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "/v1</code></p><script>\n\t\t\t\t\t\tconst icebergHost = window.location.hostname;\n\t\t\t\t\t\tconst icebergPort = {fmt.Sprintf(\"%d\", data.IcebergPort)};\n\t\t\t\t\t\tdocument.getElementById('iceberg-host').innerText = icebergHost;\n\t\t\t\t\t\tconst restLink = document.getElementById('iceberg-rest-link');\n\t\t\t\t\t\tif (restLink) {\n\t\t\t\t\t\t\trestLink.href = `http://${icebergHost}:${icebergPort}/v1`;\n\t\t\t\t\t\t}\n\t\t\t\t\t</script></div></div></div><!-- Stats Cards --><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Catalogs (Table Buckets)</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "/v1</code></p><script>\n\t\t\t\t\t\tconst icebergHost = window.location.hostname;\n\t\t\t\t\t\tconst icebergPort = {fmt.Sprintf(\"%d\", data.IcebergPort)};\n\t\t\t\t\t\tdocument.getElementById('iceberg-host').innerText = icebergHost;\n\t\t\t\t\t\tconst restLink = document.getElementById('iceberg-rest-link');\n\t\t\t\t\t\tif (restLink) {\n\t\t\t\t\t\t\trestLink.href = `http://${icebergHost}:${icebergPort}/v1/config`;\n\t\t\t\t\t\t}\n\t\t\t\t\t</script></div></div></div><!-- Stats Cards --><div class=\"row mb-4\"><div class=\"col-xl-4 col-md-6 mb-4\"><div class=\"card border-left-primary shadow h-100 py-2\"><div class=\"card-body\"><div class=\"row no-gutters align-items-center\"><div class=\"col mr-2\"><div class=\"text-xs font-weight-bold text-primary text-uppercase mb-1\">Catalogs (Table Buckets)</div><div class=\"h5 mb-0 font-weight-bold text-gray-800\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
