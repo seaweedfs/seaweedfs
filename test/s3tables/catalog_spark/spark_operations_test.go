@@ -2,7 +2,6 @@ package catalog_spark
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -10,11 +9,11 @@ import (
 
 // TestSparkCatalogBasicOperations tests basic Spark Iceberg catalog operations
 func TestSparkCatalogBasicOperations(t *testing.T) {
-	env := NewTestEnvironment(t)
-
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+
+	env := NewTestEnvironment(t)
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping Spark integration test")
@@ -41,9 +40,9 @@ func TestSparkCatalogBasicOperations(t *testing.T) {
 spark.sql("CREATE NAMESPACE iceberg.%s")
 print("Namespace created")
 `, namespace)
-	output := runSparkPySQL(t, env.sparkContainer, sparkSQL)
+	output := runSparkPySQL(t, env.sparkContainer, sparkSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Namespace created") {
-		t.Logf("Warning: namespace creation output: %s", output)
+		t.Errorf("namespace creation failed, output: %s", output)
 	}
 
 	// Test 2: Create a table
@@ -60,9 +59,9 @@ USING iceberg
 """)
 print("Table created")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, createTableSQL)
+	output = runSparkPySQL(t, env.sparkContainer, createTableSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Table created") {
-		t.Logf("Warning: table creation output: %s", output)
+		t.Errorf("table creation failed, output: %s", output)
 	}
 
 	// Test 3: Insert data
@@ -76,9 +75,9 @@ INSERT INTO iceberg.%s.%s VALUES
 """)
 print("Data inserted")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, insertDataSQL)
+	output = runSparkPySQL(t, env.sparkContainer, insertDataSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Data inserted") {
-		t.Logf("Warning: data insertion output: %s", output)
+		t.Errorf("data insertion failed, output: %s", output)
 	}
 
 	// Test 4: Query data
@@ -89,9 +88,9 @@ result.show()
 count = result.collect()[0]['count']
 print(f"Row count: {count}")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, querySQL)
+	output = runSparkPySQL(t, env.sparkContainer, querySQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Row count: 3") {
-		t.Logf("Warning: expected row count 3, got output: %s", output)
+		t.Errorf("expected row count 3, got output: %s", output)
 	}
 
 	// Test 5: Update data
@@ -102,9 +101,9 @@ UPDATE iceberg.%s.%s SET age = 31 WHERE id = 1
 """)
 print("Data updated")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, updateSQL)
+	output = runSparkPySQL(t, env.sparkContainer, updateSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Data updated") {
-		t.Logf("Warning: data update output: %s", output)
+		t.Errorf("data update failed, output: %s", output)
 	}
 
 	// Test 6: Delete data
@@ -115,9 +114,9 @@ DELETE FROM iceberg.%s.%s WHERE id = 3
 """)
 print("Data deleted")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, deleteSQL)
+	output = runSparkPySQL(t, env.sparkContainer, deleteSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Data deleted") {
-		t.Logf("Warning: data delete output: %s", output)
+		t.Errorf("data delete failed, output: %s", output)
 	}
 
 	// Verify final count
@@ -128,9 +127,9 @@ result.show()
 count = result.collect()[0]['count']
 print(f"Final row count: {count}")
 `, namespace, tableName)
-	output = runSparkPySQL(t, env.sparkContainer, finalCountSQL)
+	output = runSparkPySQL(t, env.sparkContainer, finalCountSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Final row count: 2") {
-		t.Logf("Warning: expected final row count 2, got output: %s", output)
+		t.Errorf("expected final row count 2, got output: %s", output)
 	}
 
 	t.Logf(">>> All tests passed")
@@ -138,11 +137,11 @@ print(f"Final row count: {count}")
 
 // TestSparkTimeTravel tests Spark Iceberg time travel capabilities
 func TestSparkTimeTravel(t *testing.T) {
-	env := NewTestEnvironment(t)
-
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+
+	env := NewTestEnvironment(t)
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping Spark integration test")
@@ -177,7 +176,7 @@ USING iceberg
 """)
 print("Setup complete")
 `, namespace, namespace, tableName)
-	runSparkPySQL(t, env.sparkContainer, setupSQL)
+	runSparkPySQL(t, env.sparkContainer, setupSQL, env.icebergRestPort, env.s3Port)
 
 	// Insert initial data
 	t.Logf(">>> Inserting initial data")
@@ -185,13 +184,12 @@ print("Setup complete")
 spark.sql("""
 INSERT INTO iceberg.%s.%s VALUES (1, 10)
 """)
-import time
-snapshot_id = spark.sql("SELECT snapshot_id() FROM iceberg.%s.%s").collect()[0][0]
+snapshot_id = spark.sql("SELECT snapshot_id FROM iceberg.%s.%s.snapshots ORDER BY committed_at DESC LIMIT 1").collect()[0][0]
 print(f"Snapshot ID: {snapshot_id}")
 `, namespace, tableName, namespace, tableName)
-	output := runSparkPySQL(t, env.sparkContainer, insertSQL)
+	output := runSparkPySQL(t, env.sparkContainer, insertSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Snapshot ID:") {
-		t.Logf("Warning: failed to get snapshot ID: %s", output)
+		t.Fatalf("failed to get snapshot ID: %s", output)
 	}
 
 	// Extract snapshot ID from output
@@ -207,8 +205,7 @@ print(f"Snapshot ID: {snapshot_id}")
 	}
 
 	if snapshotID == "" {
-		t.Logf("Warning: could not extract snapshot ID")
-		return
+		t.Fatalf("could not extract snapshot ID from output: %s", output)
 	}
 
 	// Insert more data
@@ -219,7 +216,7 @@ INSERT INTO iceberg.%s.%s VALUES (2, 20)
 """)
 print("More data inserted")
 `, namespace, tableName)
-	runSparkPySQL(t, env.sparkContainer, insertMoreSQL)
+	runSparkPySQL(t, env.sparkContainer, insertMoreSQL, env.icebergRestPort, env.s3Port)
 
 	// Time travel to first snapshot
 	t.Logf(">>> Time traveling to first snapshot")
@@ -231,28 +228,10 @@ result.show()
 count = result.collect()[0]['count']
 print(f"Count at snapshot: {count}")
 `, namespace, tableName, snapshotID)
-	output = runSparkPySQL(t, env.sparkContainer, timeTravelSQL)
+	output = runSparkPySQL(t, env.sparkContainer, timeTravelSQL, env.icebergRestPort, env.s3Port)
 	if !strings.Contains(output, "Count at snapshot: 1") {
-		t.Logf("Warning: expected count 1 at first snapshot, got: %s", output)
+		t.Errorf("expected count 1 at first snapshot, got: %s", output)
 	}
 
 	t.Logf(">>> Time travel test passed")
-}
-
-func mustParseCSVInt64(t *testing.T, csvOutput string) int64 {
-	t.Helper()
-
-	lines := strings.Split(strings.TrimSpace(csvOutput), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines in CSV output, got %d: %s", len(lines), csvOutput)
-	}
-
-	// Skip header, get first data row
-	value := strings.TrimSpace(lines[1])
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		t.Fatalf("failed to parse int64 from %q: %v", value, err)
-	}
-
-	return parsed
 }

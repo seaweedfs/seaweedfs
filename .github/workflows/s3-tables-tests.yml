@@ -203,6 +203,9 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
+      - name: Pre-pull Spark image
+        run: docker pull apache/spark:3.5.1
+
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed

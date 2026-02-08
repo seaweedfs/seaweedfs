@@ -201,7 +201,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 	defer cancel()
 
 	req := testcontainers.ContainerRequest{
-		Image:        "apache/spark:latest",
+		Image:        "apache/spark:3.5.1",
 		ExposedPorts: []string{"4040/tcp"},
 		Mounts: testcontainers.Mounts(
 			testcontainers.BindMount(configDir, "/config"),
@@ -209,6 +209,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 		Env: map[string]string{
 			"SPARK_LOCAL_IP": "localhost",
 		},
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		WaitingFor: testcontainers.NewLogStrategy("Ready to accept connections").
 			WithStartupTimeout(30 * time.Second),
 	}
@@ -227,25 +228,36 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 func (env *TestEnvironment) Cleanup(t *testing.T) {
 	t.Helper()
 
+	// Kill all child processes first before removing directories
+	if env.icebergRestProcess != nil && env.icebergRestProcess.Process != nil {
+		env.icebergRestProcess.Process.Kill()
+		env.icebergRestProcess.Wait()
+	}
+	if env.s3Process != nil && env.s3Process.Process != nil {
+		env.s3Process.Process.Kill()
+		env.s3Process.Wait()
+	}
+	if env.filerProcess != nil && env.filerProcess.Process != nil {
+		env.filerProcess.Process.Kill()
+		env.filerProcess.Wait()
+	}
+	if env.volumeProcess != nil && env.volumeProcess.Process != nil {
+		env.volumeProcess.Process.Kill()
+		env.volumeProcess.Wait()
+	}
+	if env.masterProcess != nil && env.masterProcess.Process != nil {
+		env.masterProcess.Process.Kill()
+		env.masterProcess.Wait()
+	}
+
+	// Stop Spark container
 	if env.sparkContainer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		env.sparkContainer.Terminate(ctx)
 	}
 
-	if env.icebergRestProcess != nil {
-		env.icebergRestProcess.Process.Kill()
-	}
-	if env.masterProcess != nil {
-		env.masterProcess.Process.Kill()
-	}
-	if env.filerProcess != nil {
-		env.filerProcess.Process.Kill()
-	}
-	if env.volumeProcess != nil {
-		env.volumeProcess.Process.Kill()
-	}
-
+	// Remove data directory after processes are stopped
 	if env.seaweedfsDataDir != "" {
 		os.RemoveAll(env.seaweedfsDataDir)
 	}
@@ -260,7 +272,7 @@ func randomString(n int) string {
 	return string(b)
 }
 
-func runSparkPySQL(t *testing.T, container testcontainers.Container, sql string) string {
+func runSparkPySQL(t *testing.T, container testcontainers.Container, sql string, icebergPort int, s3Port int) string {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -273,8 +285,8 @@ spark = SparkSession.builder \\
     .appName("SeaweedFS Iceberg Test") \\
     .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \\
     .config("spark.sql.catalog.iceberg.type", "rest") \\
-    .config("spark.sql.catalog.iceberg.uri", "http://localhost:8181") \\
-    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://localhost:8080") \\
+    .config("spark.sql.catalog.iceberg.uri", "http://host.docker.internal:%d") \\
+    .config("spark.sql.catalog.iceberg.s3.endpoint", "http://host.docker.internal:%d") \\
     .getOrCreate()
 
 result = spark.sql("""
@@ -282,15 +294,22 @@ result = spark.sql("""
 """)
 
 result.show()
-`, sql)
+`, icebergPort, s3Port, sql)
 
 	code, out, err := container.Exec(ctx, []string{"python", "-c", pythonScript})
 	if code != 0 {
-		t.Logf("Spark Python execution failed with code %d: %s\n%v", code, out, err)
+		t.Logf("Spark Python execution failed with code %d: %v", code, err)
 		return ""
 	}
 
-	return out
+	// Convert io.Reader to string
+	outputBytes, err := io.ReadAll(out)
+	if err != nil {
+		t.Logf("failed to read output: %v", err)
+		return ""
+	}
+
+	return string(outputBytes)
 }
 
 func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
@@ -299,10 +318,15 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	cmd := exec.Command("aws", "s3api", "create-bucket",
 		"--bucket", bucketName,
 		"--endpoint-url", fmt.Sprintf("http://localhost:%d", env.s3Port),
-		"--access-key", "test",
-		"--secret-key", "test",
 	)
+
+	// Set AWS credentials via environment
+	cmd.Env = append(os.Environ(),
+		"AWS_ACCESS_KEY_ID=test",
+		"AWS_SECRET_ACCESS_KEY=test",
+	)
+
 	if err := cmd.Run(); err != nil {
-		t.Logf("Warning: failed to create bucket %s: %v", bucketName, err)
+		t.Fatalf("failed to create bucket %s: %v", bucketName, err)
 	}
 }
