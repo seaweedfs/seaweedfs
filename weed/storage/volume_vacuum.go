@@ -326,7 +326,8 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			var needleBytes []byte
 			needleBytes, err = needle.ReadNeedleBlob(oldDatBackend, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, v.Version())
 			if err != nil {
-				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %v", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
+				v.checkReadWriteError(err)
+				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
 			dstDatBackend.Write(needleBytes)
 			if err := dstDatBackend.Sync(); err != nil {
@@ -421,6 +422,7 @@ func (v *Volume) copyDataAndGenerateIndexFile(dstName, idxName string, prealloca
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
 	if err != nil {
+		v.checkReadWriteError(err)
 		return err
 	}
 
@@ -476,7 +478,8 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 
 		n := new(needle.Needle)
 		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, version); err != nil {
-			return fmt.Errorf("cannot hydrate needle from file: %s", err)
+			v.checkReadWriteError(err)
+			return fmt.Errorf("cannot hydrate needle from file: %w", err)
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(sb.Ttl.Minutes()*60) {
