@@ -20,6 +20,7 @@ func TestIcebergLayoutValidator_ValidateFilePath(t *testing.T) {
 		{"valid general manifest", "metadata/abc12345-1234-5678-9abc-def012345678.avro", false},
 		{"valid version hint", "metadata/version-hint.text", false},
 		{"valid uuid metadata", "metadata/abc12345-1234-5678-9abc-def012345678.metadata.json", false},
+		{"valid trino stats", "metadata/20260208_212535_00007_bn4hb-d3599c32-1709-4b94-b6b2-1957b6d6db04.stats", false},
 
 		// Valid data files
 		{"valid parquet file", "data/file.parquet", false},
@@ -112,6 +113,7 @@ func TestTableBucketFileValidator_ValidateTableBucketUpload(t *testing.T) {
 		// Valid table bucket file uploads
 		{"valid parquet upload", "/buckets/mybucket/myns/mytable/data/file.parquet", false},
 		{"valid metadata upload", "/buckets/mybucket/myns/mytable/metadata/v1.metadata.json", false},
+		{"valid trino stats upload", "/buckets/mybucket/myns/mytable/metadata/20260208_212535_00007_bn4hb-d3599c32-1709-4b94-b6b2-1957b6d6db04.stats", false},
 		{"valid partitioned data", "/buckets/mybucket/myns/mytable/data/year=2024/file.parquet", false},
 
 		// Invalid table bucket file uploads

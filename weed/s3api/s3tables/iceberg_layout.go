@@ -39,6 +39,7 @@ var (
 		regexp.MustCompile(`^` + uuidPattern + `\.avro$`),              // General manifest files
 		regexp.MustCompile(`^version-hint\.text$`),                     // Version hint file
 		regexp.MustCompile(`^` + uuidPattern + `\.metadata\.json$`),    // UUID-named metadata
+		regexp.MustCompile(`^[^/]+\.stats$`),                           // Trino/Iceberg stats files
 	}
 
 	// Patterns for valid data files
