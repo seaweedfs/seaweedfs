@@ -25,8 +25,19 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				</ol>
 			</nav>
 		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createIcebergTableModal">
+					<i class="fas fa-plus me-1"></i>Create Table
+				</button>
+			</div>
+		</div>
 	</div>
-	<div id="iceberg-tables-content">
+	<div class="mb-3">
+		<span class="text-muted">Bucket ARN: { data.BucketARN }</span>
+		<span class="text-muted ms-2">Namespace: { data.NamespaceName }</span>
+	</div>
+	<div id="iceberg-tables-content" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-catalog-name={ data.CatalogName }>
 		<!-- Stats Cards -->
 		<div class="row mb-4">
 			<div class="col-xl-4 col-md-6 mb-4">
@@ -87,6 +98,7 @@ templ IcebergTables(data dash.IcebergTablesData) {
 										<th>Type</th>
 										<th>S3 Location</th>
 										<th>Created</th>
+										<th>Actions</th>
 									</tr>
 								</thead>
 								<tbody>
@@ -103,11 +115,21 @@ templ IcebergTables(data dash.IcebergTablesData) {
 												<code class="small">s3://{ data.CatalogName }/{ data.NamespaceName }/{ table.Name }/</code>
 											</td>
 											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												<div class="btn-group btn-group-sm" role="group">
+													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", data.CatalogName, data.NamespaceName, table.Name)) } title="View Details">
+														<i class="fas fa-eye"></i>
+													</a>
+													<button type="button" class="btn btn-outline-danger btn-sm iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ table.Name } title="Drop Table">
+														<i class="fas fa-trash"></i>
+													</button>
+												</div>
+											</td>
 										</tr>
 									}
 									if len(data.Tables) == 0 {
 										<tr>
-											<td colspan="4" class="text-center text-muted py-4">
+											<td colspan="5" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>
@@ -124,4 +146,76 @@ templ IcebergTables(data dash.IcebergTablesData) {
 			</div>
 		</div>
 	</div>
+	<div class="modal fade" id="createIcebergTableModal" tabindex="-1" aria-labelledby="createIcebergTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="createIcebergTableModalLabel">
+						<i class="fas fa-plus me-2"></i>Create Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="createIcebergTableForm">
+					<div class="modal-body">
+						<input type="hidden" id="icebergTableBucketArn" value={ data.BucketARN }/>
+						<input type="hidden" id="icebergTableNamespace" value={ data.NamespaceName }/>
+						<div class="mb-3">
+							<label for="icebergTableName" class="form-label">Table Name</label>
+							<input type="text" class="form-control" id="icebergTableName" name="name" required/>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableFormat" class="form-label">Format</label>
+							<select class="form-select" id="icebergTableFormat" name="format">
+								<option value="ICEBERG" selected>ICEBERG</option>
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableMetadata" class="form-label">Metadata JSON (optional)</label>
+							<textarea class="form-control" id="icebergTableMetadata" name="metadata" rows="6" placeholder="{ }"></textarea>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableTags" class="form-label">Tags</label>
+							<input type="text" class="form-control" id="icebergTableTags" name="tags" placeholder="key1=value1,key2=value2"/>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-plus me-1"></i>Create
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="deleteIcebergTableModal" tabindex="-1" aria-labelledby="deleteIcebergTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="deleteIcebergTableModalLabel">
+						<i class="fas fa-exclamation-triangle me-2 text-warning"></i>Drop Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p>Are you sure you want to drop the table <strong id="deleteIcebergTableName"></strong>?</p>
+					<div class="mb-3">
+						<label for="deleteIcebergTableVersion" class="form-label">Version Token (optional)</label>
+						<input type="text" class="form-control" id="deleteIcebergTableVersion" placeholder="Version token"/>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-danger" onclick="deleteIcebergTable()">
+						<i class="fas fa-trash me-1"></i>Drop Table
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			initIcebergTables();
+		});
+	</script>
 }

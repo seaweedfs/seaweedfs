@@ -20,8 +20,18 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 				</ol>
 			</nav>
 		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createIcebergNamespaceModal">
+					<i class="fas fa-plus me-1"></i>Create Namespace
+				</button>
+			</div>
+		</div>
 	</div>
-	<div id="iceberg-namespaces-content">
+	<div class="mb-3">
+		<span class="text-muted">Bucket ARN: { data.BucketARN }</span>
+	</div>
+	<div id="iceberg-namespaces-content" data-bucket-arn={ data.BucketARN } data-catalog-name={ data.CatalogName }>
 		<!-- Stats Cards -->
 		<div class="row mb-4">
 			<div class="col-xl-4 col-md-6 mb-4">
@@ -59,6 +69,45 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 								<i class="fas fa-folder fa-2x text-gray-300"></i>
 							</div>
 						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Catalog Browser Tree -->
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-sitemap me-2"></i>Catalog Browser
+						</h6>
+					</div>
+					<div class="card-body">
+						<ul class="list-group" id="icebergNamespaceTree">
+							for idx, ns := range data.Namespaces {
+								<li class="list-group-item">
+									{{ namespaceID := fmt.Sprintf("iceberg-namespace-%d", idx) }}
+									<div class="d-flex align-items-center justify-content-between">
+										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ templ.SafeURL("#" + namespaceID) } aria-expanded="false" aria-controls={ namespaceID }>
+											<i class="fas fa-folder text-warning me-2"></i>{ ns.Name }
+										</button>
+										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) }>
+											<i class="fas fa-table me-1"></i>Open
+										</a>
+									</div>
+									<div class="collapse mt-2 iceberg-namespace-collapse" id={ namespaceID } data-namespace={ ns.Name } data-catalog-name={ data.CatalogName }>
+										<div class="text-muted small">Loading...</div>
+									</div>
+								</li>
+							}
+							if len(data.Namespaces) == 0 {
+								<li class="list-group-item text-center text-muted py-4">
+									<i class="fas fa-folder-open fa-2x mb-2 text-muted"></i>
+									<div>No namespaces available.</div>
+								</li>
+							}
+						</ul>
 					</div>
 				</div>
 			</div>
@@ -123,4 +172,37 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 			</div>
 		</div>
 	</div>
+	<div class="modal fade" id="createIcebergNamespaceModal" tabindex="-1" aria-labelledby="createIcebergNamespaceModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="createIcebergNamespaceModalLabel">
+						<i class="fas fa-plus me-2"></i>Create Namespace
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="createIcebergNamespaceForm">
+					<div class="modal-body">
+						<input type="hidden" id="icebergNamespaceBucketArn" name="bucket_arn" value={ data.BucketARN }/>
+						<div class="mb-3">
+							<label for="icebergNamespaceName" class="form-label">Namespace</label>
+							<input type="text" class="form-control" id="icebergNamespaceName" name="name" placeholder="analytics" required/>
+							<div class="form-text">Use dot-separated names for nested namespaces.</div>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-plus me-1"></i>Create
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			initIcebergNamespaces();
+		});
+	</script>
 }
