@@ -24,6 +24,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
+	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+		return
+	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
@@ -186,6 +189,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
+	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+		return
+	}
 
 	deleteXMLBytes, err := io.ReadAll(r.Body)
 	if err != nil {

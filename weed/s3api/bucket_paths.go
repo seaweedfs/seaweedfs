@@ -2,11 +2,13 @@ package s3api
 
 import (
 	"errors"
+	"net/http"
 	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -89,10 +91,15 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 	if tablePath, ok := s3a.tableLocationDir(bucket); ok {
 		return tablePath
 	}
-	if s3a.isTableBucket(bucket) {
-		return s3tables.GetTableObjectBucketPath(bucket)
-	}
 	return path.Join(s3a.bucketRoot(bucket), bucket)
+}
+
+func (s3a *S3ApiServer) rejectTableBucketObjectAccess(w http.ResponseWriter, r *http.Request, bucket string) bool {
+	if s3a.isTableBucket(bucket) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return true
+	}
+	return false
 }
 
 func (s3a *S3ApiServer) bucketPrefix(bucket string) string {

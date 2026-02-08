@@ -588,6 +588,9 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectHandler %s %s", bucket, object)
+	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+		return
+	}
 
 	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
 	// These are dynamically generated and don't exist on disk
@@ -2082,6 +2085,9 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadObjectHandler %s %s", bucket, object)
+	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+		return
+	}
 
 	// Check for SOSAPI virtual objects (system.xml, capacity.xml)
 	// These are dynamically generated and don't exist on disk

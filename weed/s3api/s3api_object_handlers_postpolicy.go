@@ -27,6 +27,9 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	bucket := mux.Vars(r)["bucket"]
 
 	glog.V(3).Infof("PostPolicyBucketHandler %s", bucket)
+	if s3a.rejectTableBucketObjectAccess(w, r, bucket) {
+		return
+	}
 
 	reader, err := r.MultipartReader()
 	if err != nil {

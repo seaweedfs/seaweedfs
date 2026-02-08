@@ -46,6 +46,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
+	if s3a.rejectTableBucketObjectAccess(w, r, dstBucket) {
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket && s3a.rejectTableBucketObjectAccess(w, r, srcBucket) {
+		return
+	}
 
 	// Validate copy source and destination
 	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
