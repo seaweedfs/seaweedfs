@@ -9,6 +9,7 @@ let s3tablesNamespaceDeleteModal = null;
 let s3tablesTableDeleteModal = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
+let icebergTableDeleteModal = null;
 
 /**
  * Initialize S3 Tables Buckets Page
@@ -261,6 +262,173 @@ function initS3TablesTables() {
     }
 }
 
+/**
+ * Initialize Iceberg Namespaces Page
+ */
+function initIcebergNamespaces() {
+    const container = document.getElementById('iceberg-namespaces-content');
+    if (!container) return;
+    const bucketArn = container.dataset.bucketArn || '';
+    const catalogName = container.dataset.catalogName || '';
+
+    const createForm = document.getElementById('createIcebergNamespaceForm');
+    if (createForm) {
+        createForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const name = document.getElementById('icebergNamespaceName').value.trim();
+            if (!name) {
+                alert('Namespace name is required');
+                return;
+            }
+            try {
+                const response = await fetch('/api/s3tables/namespaces', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ bucket_arn: bucketArn, name: name })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error || 'Failed to create namespace');
+                    return;
+                }
+                alert('Namespace created');
+                location.reload();
+            } catch (error) {
+                alert('Failed to create namespace: ' + error.message);
+            }
+        });
+    }
+
+    initIcebergNamespaceTree(container, bucketArn, catalogName);
+}
+
+function initIcebergNamespaceTree(container, bucketArn, catalogName) {
+    const nodes = container.querySelectorAll('.iceberg-namespace-collapse');
+    nodes.forEach(node => {
+        node.addEventListener('show.bs.collapse', async function () {
+            if (node.dataset.loaded === 'true') return;
+            node.dataset.loaded = 'true';
+            node.innerHTML = '<div class="text-muted small">Loading...</div>';
+            await loadIcebergNamespaceTables(node, bucketArn, catalogName);
+        });
+    });
+}
+
+async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
+    const namespace = node.dataset.namespace || '';
+    if (!bucketArn || !namespace) {
+        node.innerHTML = '<div class="text-muted small">No namespace data available.</div>';
+        return;
+    }
+    try {
+        const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace });
+        const response = await fetch(`/api/s3tables/tables?${query.toString()}`);
+        const data = await response.json();
+        if (!response.ok) {
+            node.innerHTML = `<div class="text-danger small">${data.error || 'Failed to load tables'}</div>`;
+            return;
+        }
+        const tables = data.tables || [];
+        if (tables.length === 0) {
+            node.innerHTML = '<div class="text-muted small ms-3">No tables found.</div>';
+            return;
+        }
+        const list = document.createElement('ul');
+        list.className = 'list-group list-group-flush ms-3';
+        tables.forEach(table => {
+            const item = document.createElement('li');
+            item.className = 'list-group-item py-1';
+            const link = document.createElement('a');
+            link.className = 'text-decoration-none';
+            link.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
+            link.innerHTML = `<i class="fas fa-table text-primary me-2"></i>${table.name}`;
+            item.appendChild(link);
+            list.appendChild(item);
+        });
+        node.innerHTML = '';
+        node.appendChild(list);
+    } catch (error) {
+        node.innerHTML = `<div class="text-danger small">${error.message}</div>`;
+    }
+}
+
+/**
+ * Initialize Iceberg Tables Page
+ */
+function initIcebergTables() {
+    const container = document.getElementById('iceberg-tables-content');
+    if (!container) return;
+    const bucketArn = container.dataset.bucketArn || '';
+    const namespace = container.dataset.namespace || '';
+
+    initIcebergDeleteModal();
+
+    const createForm = document.getElementById('createIcebergTableForm');
+    if (createForm) {
+        createForm.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const name = document.getElementById('icebergTableName').value.trim();
+            const format = document.getElementById('icebergTableFormat').value;
+            const metadataText = document.getElementById('icebergTableMetadata').value.trim();
+            const tagsInput = document.getElementById('icebergTableTags').value.trim();
+            const tags = parseTagsInput(tagsInput);
+            if (tags === null) return;
+            let metadata = null;
+            if (metadataText) {
+                try {
+                    metadata = JSON.parse(metadataText);
+                } catch (error) {
+                    alert('Invalid metadata JSON');
+                    return;
+                }
+            }
+            const payload = { bucket_arn: bucketArn, namespace: namespace, name: name, format: format, tags: tags };
+            if (metadata) {
+                payload.metadata = metadata;
+            }
+            try {
+                const response = await fetch('/api/s3tables/tables', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error || 'Failed to create table');
+                    return;
+                }
+                alert('Table created');
+                location.reload();
+            } catch (error) {
+                alert('Failed to create table: ' + error.message);
+            }
+        });
+    }
+}
+
+/**
+ * Initialize Iceberg Table Details Page
+ */
+function initIcebergTableDetails() {
+    initIcebergDeleteModal();
+}
+
+function initIcebergDeleteModal() {
+    const modalEl = document.getElementById('deleteIcebergTableModal');
+    if (!modalEl) return;
+    icebergTableDeleteModal = new bootstrap.Modal(modalEl);
+    document.querySelectorAll('.iceberg-delete-table-btn').forEach(button => {
+        button.addEventListener('click', function () {
+            modalEl.dataset.bucketArn = this.dataset.bucketArn || '';
+            modalEl.dataset.namespace = this.dataset.namespace || '';
+            modalEl.dataset.tableName = this.dataset.tableName || '';
+            document.getElementById('deleteIcebergTableName').textContent = this.dataset.tableName || '';
+            document.getElementById('deleteIcebergTableVersion').value = '';
+            icebergTableDeleteModal.show();
+        });
+    });
+}
+
 // Global scope functions used by onclick handlers
 
 async function deleteS3TablesBucket() {
@@ -337,6 +505,36 @@ async function deleteS3TablesTable() {
         location.reload();
     } catch (error) {
         alert('Failed to delete table: ' + error.message);
+    }
+}
+
+async function deleteIcebergTable() {
+    const modalEl = document.getElementById('deleteIcebergTableModal');
+    if (!modalEl) return;
+    const bucketArn = modalEl.dataset.bucketArn || '';
+    const namespace = modalEl.dataset.namespace || '';
+    const tableName = modalEl.dataset.tableName || '';
+    const versionToken = document.getElementById('deleteIcebergTableVersion').value.trim();
+    if (!bucketArn || !namespace || !tableName) return;
+    const query = new URLSearchParams({
+        bucket: bucketArn,
+        namespace: namespace,
+        name: tableName
+    });
+    if (versionToken) {
+        query.set('version', versionToken);
+    }
+    try {
+        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, { method: 'DELETE' });
+        const data = await response.json();
+        if (!response.ok) {
+            alert(data.error || 'Failed to drop table');
+            return;
+        }
+        alert('Table dropped');
+        location.reload();
+    } catch (error) {
+        alert('Failed to drop table: ' + error.message);
     }
 }
 

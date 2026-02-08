@@ -94,6 +94,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/iceberg", h.ShowIcebergCatalog)
 		protected.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
 		protected.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
+		protected.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables/:table", h.ShowIcebergTableDetails)
 
 		// File browser routes
 		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -265,6 +266,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/iceberg", h.ShowIcebergCatalog)
 		r.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
 		r.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
+		r.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables/:table", h.ShowIcebergTableDetails)
 
 		// File browser routes
 		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
@@ -603,6 +605,32 @@ func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
 
 	c.Header("Content-Type", "text/html")
 	component := app.IcebergTables(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
+// ShowIcebergTableDetails renders the table metadata and snapshot details view.
+func (h *AdminHandlers) ShowIcebergTableDetails(c *gin.Context) {
+	catalogName := c.Param("catalog")
+	namespace := c.Param("namespace")
+	tableName := c.Param("table")
+	arn, err := buildS3TablesBucketArn(catalogName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergTableDetailsData(c.Request.Context(), catalogName, arn, namespace, tableName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg table details: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergTableDetails(data)
 	layoutComponent := layout.Layout(c, component)
 	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
