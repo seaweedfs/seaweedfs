@@ -27,6 +27,9 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
+      - name: Run go mod tidy
+        run: go mod tidy
+
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed
@@ -83,6 +86,9 @@ jobs:
         with:
           go-version-file: 'go.mod'
         id: go
+
+      - name: Run go mod tidy
+        run: go mod tidy
 
       - name: Run Iceberg Catalog Integration Tests
         timeout-minutes: 25
@@ -143,6 +149,9 @@ jobs:
       - name: Pre-pull Trino image
         run: docker pull trinodb/trino:479
 
+      - name: Run go mod tidy
+        run: go mod tidy
+
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed
@@ -183,6 +192,72 @@ jobs:
         with:
           name: trino-iceberg-catalog-test-logs
           path: test/s3tables/catalog_trino/test-output.log
+          retention-days: 3
+
+  spark-iceberg-catalog-tests:
+    name: Spark Iceberg Catalog Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-pull Spark image
+        run: docker pull apache/spark:3.5.1
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Spark Iceberg Catalog Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/catalog_spark
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Spark Iceberg Catalog Tests ==="
+          
+          # Run Spark + Iceberg catalog integration tests
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "Spark Iceberg catalog integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/catalog_spark
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+          
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: spark-iceberg-catalog-test-logs
+          path: test/s3tables/catalog_spark/test-output.log
           retention-days: 3
 
   s3-tables-build-verification:
