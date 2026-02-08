@@ -1,10 +1,11 @@
 package catalog_spark
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,18 +17,20 @@ import (
 )
 
 type TestEnvironment struct {
-	t                    *testing.T
-	dockerAvailable      bool
-	seaweedfsDataDir     string
-	masterPort           int
-	filerPort            int
-	s3Port               int
-	icebergRestPort      int
-	sparkContainer       testcontainers.Container
-	masterProcess        *exec.Cmd
-	filerProcess         *exec.Cmd
-	volumeProcess        *exec.Cmd
-	icebergRestProcess   *exec.Cmd
+	t                  *testing.T
+	dockerAvailable    bool
+	seaweedfsDataDir   string
+	masterPort         int
+	volumePort         int
+	filerPort          int
+	s3Port             int
+	icebergRestPort    int
+	sparkContainer     testcontainers.Container
+	masterProcess      *exec.Cmd
+	filerProcess       *exec.Cmd
+	volumeProcess      *exec.Cmd
+	icebergRestProcess *exec.Cmd
+	s3Process          *exec.Cmd
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
@@ -51,8 +54,15 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
+	// Allocate port range to avoid collisions
+	basePort := 19000 + rand.Intn(1000)
+	env.masterPort = basePort
+	env.volumePort = basePort + 1
+	env.filerPort = basePort + 2
+	env.s3Port = basePort + 3
+	env.icebergRestPort = basePort + 4
+
 	// Start Master
-	env.masterPort = 19000 + rand.Intn(100)
 	env.masterProcess = exec.Command(
 		"weed", "master",
 		"-port", fmt.Sprintf("%d", env.masterPort),
@@ -62,13 +72,14 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to start master: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	if !waitForPort(env.masterPort, 10*time.Second) {
+		t.Fatalf("master failed to start on port %d", env.masterPort)
+	}
 
 	// Start Volume
-	volumePort := 19001 + rand.Intn(100)
 	env.volumeProcess = exec.Command(
 		"weed", "volume",
-		"-port", fmt.Sprintf("%d", volumePort),
+		"-port", fmt.Sprintf("%d", env.volumePort),
 		"-master", fmt.Sprintf("localhost:%d", env.masterPort),
 		"-dir", env.seaweedfsDataDir,
 	)
@@ -76,10 +87,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to start volume: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	if !waitForPort(env.volumePort, 10*time.Second) {
+		t.Fatalf("volume failed to start on port %d", env.volumePort)
+	}
 
 	// Start Filer
-	env.filerPort = 19002 + rand.Intn(100)
 	env.filerProcess = exec.Command(
 		"weed", "filer",
 		"-port", fmt.Sprintf("%d", env.filerPort),
@@ -89,25 +101,27 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to start filer: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	if !waitForPort(env.filerPort, 10*time.Second) {
+		t.Fatalf("filer failed to start on port %d", env.filerPort)
+	}
 
 	// Start S3
-	env.s3Port = 19003 + rand.Intn(100)
-	s3Process := exec.Command(
+	env.s3Process = exec.Command(
 		"weed", "s3",
 		"-port", fmt.Sprintf("%d", env.s3Port),
 		"-filer", fmt.Sprintf("localhost:%d", env.filerPort),
 		"-cert", "",
 		"-key", "",
 	)
-	if err := s3Process.Start(); err != nil {
+	if err := env.s3Process.Start(); err != nil {
 		t.Fatalf("failed to start s3: %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	if !waitForPort(env.s3Port, 10*time.Second) {
+		t.Fatalf("s3 failed to start on port %d", env.s3Port)
+	}
 
 	// Start Iceberg REST Catalog
-	env.icebergRestPort = 19004 + rand.Intn(100)
 	env.icebergRestProcess = exec.Command(
 		"weed", "server",
 		"-ip=localhost",
@@ -122,7 +136,22 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to start iceberg rest: %v", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	if !waitForPort(env.icebergRestPort, 10*time.Second) {
+		t.Fatalf("iceberg rest failed to start on port %d", env.icebergRestPort)
+	}
+}
+
+func waitForPort(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
 
 func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string) string {
@@ -133,8 +162,8 @@ func (env *TestEnvironment) writeSparkConfig(t *testing.T, catalogBucket string)
 		t.Fatalf("failed to create config directory: %v", err)
 	}
 
-	s3Endpoint := fmt.Sprintf("http://localhost:%d", env.s3Port)
-	catalogEndpoint := fmt.Sprintf("http://localhost:%d", env.icebergRestPort)
+	s3Endpoint := fmt.Sprintf("http://host.docker.internal:%d", env.s3Port)
+	catalogEndpoint := fmt.Sprintf("http://host.docker.internal:%d", env.icebergRestPort)
 
 	sparkConfig := fmt.Sprintf(`
 [spark]
