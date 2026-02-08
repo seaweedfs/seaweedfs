@@ -372,7 +372,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             item.className = 'list-group-item py-1';
             const link = document.createElement('a');
             link.className = 'text-decoration-none';
-            link.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
+            link.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
             const icon = document.createElement('i');
             icon.className = 'fas fa-table text-primary me-2';
             link.appendChild(icon);
@@ -576,7 +576,7 @@ async function deleteIcebergTable() {
         alert('Table dropped');
         const isDetailsPage = window.location.pathname.includes('/tables/') && window.location.pathname.includes('/namespaces/');
         if (isDetailsPage && catalogName && namespace) {
-            window.location.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
+            window.location.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
         } else {
             location.reload();
         }

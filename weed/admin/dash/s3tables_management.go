@@ -25,6 +25,7 @@ type S3TablesBucketsData struct {
 	Username     string                  `json:"username"`
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
+	IcebergPort  int                     `json:"iceberg_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -134,6 +135,7 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 	return S3TablesBucketsData{
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
+		IcebergPort:  s.icebergPort,
 		LastUpdated:  time.Now(),
 	}, nil
 }

@@ -13,17 +13,17 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 			<nav aria-label="breadcrumb">
 				<ol class="breadcrumb mb-0">
 					<li class="breadcrumb-item">
-						<a href="/object-store/iceberg">
-							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+						<a href="/object-store/s3tables/buckets">
+							<i class="fas fa-table me-1"></i>Table Buckets
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(data.CatalogName))) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(data.CatalogName))) }>
 							{ data.CatalogName }
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName))) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName))) }>
 							{ data.NamespaceName }
 						</a>
 					</li>

@@ -26,6 +26,10 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 			<i class="fas fa-arrow-left me-1"></i>Back to Buckets
 		</a>
 		<span class="text-muted ms-2">Bucket ARN: { data.BucketARN }</span>
+		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
+		if parseErr != nil {
+			<span class="text-danger ms-2">Invalid bucket ARN</span>
+		}
 	</div>
 	<div id="s3tables-namespaces-content" data-bucket-arn={ data.BucketARN }>
 		<div class="row mb-4">
@@ -82,6 +86,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 								<thead>
 									<tr>
 										<th>Namespace</th>
+										<th>Iceberg Endpoint</th>
 										<th>Created</th>
 										<th>Actions</th>
 									</tr>
@@ -89,12 +94,18 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 								<tbody>
 									for _, namespace := range data.Namespaces {
 										<tr>
-											<td>{ strings.Join(namespace.Namespace, ".") }</td>
+											{{ namespaceName := strings.Join(namespace.Namespace, ".") }}
+											<td>{ namespaceName }</td>
+											<td>
+												if parseErr == nil {
+													<code class="small">/v1/{ bucketName }/namespaces/{ namespaceName }/tables</code>
+												} else {
+													<span class="text-muted">-</span>
+												}
+											</td>
 											<td>{ namespace.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
-													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
-													{{ namespaceName := strings.Join(namespace.Namespace, ".") }}
 													if parseErr == nil {
 														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)) }>
 															<i class="fas fa-table"></i>
@@ -113,7 +124,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 									}
 									if len(data.Namespaces) == 0 {
 										<tr>
-											<td colspan="3" class="text-center text-muted py-4">
+											<td colspan="4" class="text-center text-muted py-4">
 												<i class="fas fa-layer-group fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No namespaces found</h5>
@@ -142,9 +153,9 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 					</h5>
 					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
 				</div>
-	<form id="createS3TablesNamespaceForm">
-				<div class="modal-body">
-					<input type="hidden" name="bucket_arn" value={ data.BucketARN }/>
+				<form id="createS3TablesNamespaceForm">
+					<div class="modal-body">
+						<input type="hidden" name="bucket_arn" value={ data.BucketARN }/>
 						<div class="mb-3">
 							<label for="s3tablesNamespaceName" class="form-label">Namespace</label>
 							<input type="text" class="form-control" id="s3tablesNamespaceName" name="name" placeholder="analytics" required/>
