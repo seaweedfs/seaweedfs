@@ -32,7 +32,7 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<button type="button" class="btn btn-sm btn-danger iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ data.TableName }>
+				<button type="button" class="btn btn-sm btn-danger iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ data.TableName } data-catalog-name={ data.CatalogName }>
 					<i class="fas fa-trash me-1"></i>Drop Table
 				</button>
 			</div>

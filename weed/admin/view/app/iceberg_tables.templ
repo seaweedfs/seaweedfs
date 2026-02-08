@@ -157,8 +157,6 @@ templ IcebergTables(data dash.IcebergTablesData) {
 				</div>
 				<form id="createIcebergTableForm">
 					<div class="modal-body">
-						<input type="hidden" id="icebergTableBucketArn" value={ data.BucketARN }/>
-						<input type="hidden" id="icebergTableNamespace" value={ data.NamespaceName }/>
 						<div class="mb-3">
 							<label for="icebergTableName" class="form-label">Table Name</label>
 							<input type="text" class="form-control" id="icebergTableName" name="name" required/>

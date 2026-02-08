@@ -89,7 +89,7 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 								<li class="list-group-item">
 									{{ namespaceID := fmt.Sprintf("iceberg-namespace-%d", idx) }}
 									<div class="d-flex align-items-center justify-content-between">
-										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ templ.SafeURL("#" + namespaceID) } aria-expanded="false" aria-controls={ namespaceID }>
+										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ "#" + namespaceID } aria-expanded="false" aria-controls={ namespaceID }>
 											<i class="fas fa-folder text-warning me-2"></i>{ ns.Name }
 										</button>
 										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) }>

@@ -308,7 +308,8 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
         node.addEventListener('show.bs.collapse', async function () {
             if (node.dataset.loaded === 'true') return;
             node.dataset.loaded = 'true';
-            node.innerHTML = '<div class="text-muted small">Loading...</div>';
+            node.textContent = 'Loading...';
+            node.className = 'text-muted small';
             await loadIcebergNamespaceTables(node, bucketArn, catalogName);
         });
     });
@@ -317,7 +318,8 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
 async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
     const namespace = node.dataset.namespace || '';
     if (!bucketArn || !namespace) {
-        node.innerHTML = '<div class="text-muted small">No namespace data available.</div>';
+        node.textContent = 'No namespace data available.';
+        node.className = 'text-muted small';
         return;
     }
     try {
@@ -325,14 +327,17 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
         const response = await fetch(`/api/s3tables/tables?${query.toString()}`);
         const data = await response.json();
         if (!response.ok) {
-            node.innerHTML = `<div class="text-danger small">${data.error || 'Failed to load tables'}</div>`;
+            node.textContent = data.error || 'Failed to load tables';
+            node.className = 'text-danger small';
             return;
         }
         const tables = data.tables || [];
         if (tables.length === 0) {
-            node.innerHTML = '<div class="text-muted small ms-3">No tables found.</div>';
+            node.textContent = 'No tables found.';
+            node.className = 'text-muted small ms-3';
             return;
         }
+        node.innerHTML = '';
         const list = document.createElement('ul');
         list.className = 'list-group list-group-flush ms-3';
         tables.forEach(table => {
@@ -341,14 +346,20 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             const link = document.createElement('a');
             link.className = 'text-decoration-none';
             link.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
-            link.innerHTML = `<i class="fas fa-table text-primary me-2"></i>${table.name}`;
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-table text-primary me-2';
+            link.appendChild(icon);
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = table.name;
+            link.appendChild(nameSpan);
             item.appendChild(link);
             list.appendChild(item);
         });
         node.innerHTML = '';
         node.appendChild(list);
     } catch (error) {
-        node.innerHTML = `<div class="text-danger small">${error.message}</div>`;
+        node.textContent = 'Failed to load tables: ' + (error.message || 'Unknown error');
+        node.className = 'text-danger small';
     }
 }
 
@@ -422,6 +433,7 @@ function initIcebergDeleteModal() {
             modalEl.dataset.bucketArn = this.dataset.bucketArn || '';
             modalEl.dataset.namespace = this.dataset.namespace || '';
             modalEl.dataset.tableName = this.dataset.tableName || '';
+            modalEl.dataset.catalogName = this.dataset.catalogName || '';
             document.getElementById('deleteIcebergTableName').textContent = this.dataset.tableName || '';
             document.getElementById('deleteIcebergTableVersion').value = '';
             icebergTableDeleteModal.show();
@@ -514,6 +526,7 @@ async function deleteIcebergTable() {
     const bucketArn = modalEl.dataset.bucketArn || '';
     const namespace = modalEl.dataset.namespace || '';
     const tableName = modalEl.dataset.tableName || '';
+    const catalogName = modalEl.dataset.catalogName || '';
     const versionToken = document.getElementById('deleteIcebergTableVersion').value.trim();
     if (!bucketArn || !namespace || !tableName) return;
     const query = new URLSearchParams({
@@ -532,7 +545,12 @@ async function deleteIcebergTable() {
             return;
         }
         alert('Table dropped');
-        location.reload();
+        const isDetailsPage = window.location.pathname.includes('/tables/') && window.location.pathname.includes('/namespaces/');
+        if (isDetailsPage && catalogName && namespace) {
+            window.location.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
+        } else {
+            location.reload();
+        }
     } catch (error) {
         alert('Failed to drop table: ' + error.message);
     }

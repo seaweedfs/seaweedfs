@@ -401,11 +401,9 @@ func selectSchema(full icebergFullMetadata) *icebergSchema {
 	if len(full.Schemas) == 0 {
 		return full.Schema
 	}
-	if full.CurrentSchemaID != 0 {
-		for i := range full.Schemas {
-			if full.Schemas[i].SchemaID == full.CurrentSchemaID {
-				return &full.Schemas[i]
-			}
+	for i := range full.Schemas {
+		if full.Schemas[i].SchemaID == full.CurrentSchemaID {
+			return &full.Schemas[i]
 		}
 	}
 	return &full.Schemas[0]
@@ -419,12 +417,10 @@ func partitionFieldsFromFullMetadata(full icebergFullMetadata) []IcebergPartitio
 	if len(full.PartitionSpecs) == 0 {
 		spec = full.PartitionSpec
 	} else {
-		if full.DefaultSpecID != 0 {
-			for i := range full.PartitionSpecs {
-				if full.PartitionSpecs[i].SpecID == full.DefaultSpecID {
-					spec = &full.PartitionSpecs[i]
-					break
-				}
+		for i := range full.PartitionSpecs {
+			if full.PartitionSpecs[i].SpecID == full.DefaultSpecID {
+				spec = &full.PartitionSpecs[i]
+				break
 			}
 		}
 		if spec == nil {
@@ -466,11 +462,13 @@ func snapshotsFromFullMetadata(snapshots []icebergSnapshot) []IcebergSnapshotInf
 	if len(snapshots) == 0 {
 		return nil
 	}
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].TimestampMs > snapshots[j].TimestampMs
+	sorted := make([]icebergSnapshot, len(snapshots))
+	copy(sorted, snapshots)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].TimestampMs > sorted[j].TimestampMs
 	})
-	info := make([]IcebergSnapshotInfo, 0, len(snapshots))
-	for _, snapshot := range snapshots {
+	info := make([]IcebergSnapshotInfo, 0, len(sorted))
+	for _, snapshot := range sorted {
 		operation := ""
 		if snapshot.Summary != nil {
 			operation = snapshot.Summary["operation"]
