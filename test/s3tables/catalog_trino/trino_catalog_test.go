@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
 )
 
 type TestEnvironment struct {
@@ -57,12 +58,10 @@ func TestTrinoIcebergCatalog(t *testing.T) {
 	env.StartSeaweedFS(t)
 	fmt.Printf(">>> SeaweedFS started.\n")
 
-	catalogBucket := "warehouse"
 	tableBucket := "iceberg-tables"
+	catalogBucket := tableBucket
 	fmt.Printf(">>> Creating table bucket: %s\n", tableBucket)
 	createTableBucket(t, env, tableBucket)
-	fmt.Printf(">>> Creating table bucket: %s\n", catalogBucket)
-	createTableBucket(t, env, catalogBucket)
 	fmt.Printf(">>> All buckets created.\n")
 
 	// Test Iceberg REST API directly
@@ -117,7 +116,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	bindIP := findBindIP()
+	bindIP := testutil.FindBindIP()
 
 	masterPort, masterGrpcPort := mustFreePortPair(t, "Master")
 	volumePort, volumeGrpcPort := mustFreePortPair(t, "Volume")
@@ -149,29 +148,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
 	// Create IAM config file
-	iamConfigPath := filepath.Join(env.dataDir, "iam_config.json")
-	iamConfig := fmt.Sprintf(`{
-  "identities": [
-    {
-      "name": "admin",
-      "credentials": [
-        {
-          "accessKey": "%s",
-          "secretKey": "%s"
-        }
-      ],
-      "actions": [
-        "Admin",
-        "Read",
-        "List",
-        "Tagging",
-        "Write"
-      ]
-    }
-  ]
-}`, env.accessKey, env.secretKey)
-
-	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
+	iamConfigPath, err := testutil.WriteIAMConfig(env.dataDir, env.accessKey, env.secretKey)
+	if err != nil {
 		t.Fatalf("Failed to create IAM config: %v", err)
 	}
 
@@ -206,6 +184,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
+		"ICEBERG_WAREHOUSE=s3://iceberg-tables",
+		"S3TABLES_DEFAULT_BUCKET=iceberg-tables",
 	)
 
 	if err := cmd.Start(); err != nil {
@@ -282,12 +262,13 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	fmt.Printf(">>> Testing Iceberg REST API directly...\n")
 
 	// First, verify the service is listening
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", env.bindIP, env.icebergPort))
+	addr := net.JoinHostPort(env.bindIP, fmt.Sprintf("%d", env.icebergPort))
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		t.Fatalf("Cannot connect to Iceberg service at %s:%d: %v", env.bindIP, env.icebergPort, err)
+		t.Fatalf("Cannot connect to Iceberg service at %s: %v", addr, err)
 	}
 	conn.Close()
-	t.Logf("Successfully connected to Iceberg service at %s:%d", env.bindIP, env.icebergPort)
+	t.Logf("Successfully connected to Iceberg service at %s", addr)
 
 	// Test /v1/config endpoint
 	url := fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort)
@@ -319,7 +300,7 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
-iceberg.rest-catalog.warehouse=s3tablescatalog/%s
+iceberg.rest-catalog.warehouse=s3://%s
 iceberg.file-format=PARQUET
 iceberg.unique-table-location=true
 
@@ -399,8 +380,7 @@ func waitForTrino(t *testing.T, containerName string, timeout time.Duration) {
 		return
 	}
 
-	logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s\nTrino logs:\n%s", string(lastOutput), string(logs))
+	t.Fatalf("Timed out waiting for Trino to be ready\nLast output:\n%s", string(lastOutput))
 }
 
 func runTrinoSQL(t *testing.T, containerName, sql string) string {
@@ -413,8 +393,7 @@ func runTrinoSQL(t *testing.T, containerName, sql string) string {
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logs, _ := exec.Command("docker", "logs", containerName).CombinedOutput()
-		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s\nTrino logs:\n%s", err, sql, string(output), string(logs))
+		t.Fatalf("Trino command failed: %v\nSQL: %s\nOutput:\n%s", err, sql, string(output))
 	}
 	return sanitizeTrinoOutput(string(output))
 }
@@ -533,25 +512,6 @@ func getFreePort() (int, error) {
 
 	addr := listener.Addr().(*net.TCPAddr)
 	return addr.Port, nil
-}
-
-func findBindIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP == nil {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		return ip.String()
-	}
-	return "127.0.0.1"
 }
 
 func randomString(length int) string {

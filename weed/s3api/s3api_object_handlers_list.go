@@ -524,7 +524,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 	stream, listErr := client.ListEntries(ctx, request)
 	if listErr != nil {
 		if errors.Is(listErr, filer_pb.ErrNotFound) {
-			err = filer_pb.ErrNotFound
 			return
 		}
 		err = fmt.Errorf("list entries %+v: %w", request, listErr)

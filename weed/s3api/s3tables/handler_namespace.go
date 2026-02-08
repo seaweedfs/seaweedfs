@@ -50,12 +50,38 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	var bucketMetadata tableBucketMetadata
 	var bucketPolicy string
 	var bucketTags map[string]string
+	ownerAccountID := h.getAccountID(r)
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+			if errors.Is(err, ErrAttributeNotFound) {
+				dir, name := splitPath(bucketPath)
+				entryResp, lookupErr := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+					Directory: dir,
+					Name:      name,
+				})
+				if lookupErr != nil {
+					return lookupErr
+				}
+				if entryResp.Entry == nil || !IsTableBucketEntry(entryResp.Entry) {
+					return filer_pb.ErrNotFound
+				}
+				bucketMetadata = tableBucketMetadata{
+					Name:           bucketName,
+					CreatedAt:      time.Now(),
+					OwnerAccountID: ownerAccountID,
+				}
+				metadataBytes, err := json.Marshal(&bucketMetadata)
+				if err != nil {
+					return fmt.Errorf("failed to marshal bucket metadata: %w", err)
+				}
+				if err := h.setExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata, metadataBytes); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		} else if err := json.Unmarshal(data, &bucketMetadata); err != nil {
 			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 		}
 

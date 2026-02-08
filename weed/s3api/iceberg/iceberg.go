@@ -217,13 +217,14 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 			return nil
 		}
 
+		bucketDir := path.Join(bucketsPath, bucketName)
 		// 1. Ensure bucket directory exists: <bucketsPath>/<bucket>
 		if err := ensureDir(bucketsPath, bucketName, "bucket directory"); err != nil {
 			return err
 		}
 
-		// 2. Ensure table path exists: <bucketsPath>/<bucket>/<tablePath>
-		tableDir := path.Join(bucketsPath, bucketName)
+		// 2. Ensure table path exists under the bucket directory
+		tableDir := bucketDir
 		if tablePath != "" {
 			segments := strings.Split(tablePath, "/")
 			for _, segment := range segments {
@@ -353,6 +354,9 @@ func getBucketFromPrefix(r *http.Request) string {
 	vars := mux.Vars(r)
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
+	}
+	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
+		return bucket
 	}
 	// Default bucket if no prefix - use "warehouse" for Iceberg
 	return "warehouse"
@@ -680,24 +684,32 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	location := strings.TrimSuffix(req.Location, "/")
 	tablePath := path.Join(encodeNamespace(namespace), req.Name)
-	storageBucket := bucketName
-	tableLocationBucket := ""
-	if location != "" {
+	location := strings.TrimSuffix(req.Location, "/")
+	if location == "" {
+		if req.Properties != nil {
+			if warehouse := strings.TrimSuffix(req.Properties["warehouse"], "/"); warehouse != "" {
+				location = fmt.Sprintf("%s/%s", warehouse, tablePath)
+			}
+		}
+		if location == "" {
+			if warehouse := strings.TrimSuffix(os.Getenv("ICEBERG_WAREHOUSE"), "/"); warehouse != "" {
+				location = fmt.Sprintf("%s/%s", warehouse, tablePath)
+			}
+		}
+		if location == "" {
+			location = fmt.Sprintf("s3://%s/%s", bucketName, tablePath)
+		}
+	} else {
 		parsedBucket, parsedPath, err := parseS3Location(location)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid table location: "+err.Error())
 			return
 		}
-		if strings.HasSuffix(parsedBucket, "--table-s3") && parsedPath == "" {
-			tableLocationBucket = parsedBucket
+		if parsedPath == "" {
+			location = fmt.Sprintf("s3://%s/%s", parsedBucket, tablePath)
 		}
 	}
-	if tableLocationBucket == "" {
-		tableLocationBucket = fmt.Sprintf("%s--table-s3", tableUUID.String())
-	}
-	location = fmt.Sprintf("s3://%s", tableLocationBucket)
 
 	// Build proper Iceberg table metadata using iceberg-go types
 	metadata := newTableMetadata(tableUUID, location, req.Schema, req.PartitionSpec, req.WriteOrder, req.Properties)
@@ -713,15 +725,21 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Save metadata file to filer
 	tableName := req.Name
 	metadataFileName := "v1.metadata.json" // Initial version is always 1
-	if err := s.saveMetadataFile(r.Context(), storageBucket, tablePath, metadataFileName, metadataBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
-		return
-	}
-
 	metadataLocation := fmt.Sprintf("%s/metadata/%s", location, metadataFileName)
+	if !req.StageCreate {
+		// Save metadata file to filer for immediate table creation.
+		metadataBucket, metadataPath, err := parseS3Location(location)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+			return
+		}
+		if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
+			return
+		}
+	}
 
 	// Use S3 Tables manager to create table
 	createReq := &s3tables.CreateTableRequest{
@@ -746,8 +764,42 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		if tableErr, ok := err.(*s3tables.S3TablesError); ok && tableErr.Type == s3tables.ErrCodeTableAlreadyExists {
+			getReq := &s3tables.GetTableRequest{
+				TableBucketARN: bucketARN,
+				Namespace:      namespace,
+				Name:           tableName,
+			}
+			var getResp s3tables.GetTableResponse
+			getErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+				mgrClient := s3tables.NewManagerClient(client)
+				return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
+			})
+			if getErr != nil {
+				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
+				return
+			}
+			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			writeJSON(w, http.StatusOK, result)
+			return
+		}
 		if strings.Contains(err.Error(), "already exists") {
-			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
+			getReq := &s3tables.GetTableRequest{
+				TableBucketARN: bucketARN,
+				Namespace:      namespace,
+				Name:           tableName,
+			}
+			var getResp s3tables.GetTableResponse
+			getErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+				mgrClient := s3tables.NewManagerClient(client)
+				return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", getReq, &getResp, identityName)
+			})
+			if getErr != nil {
+				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
+				return
+			}
+			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			writeJSON(w, http.StatusOK, result)
 			return
 		}
 		glog.V(1).Infof("Iceberg: CreateTable error: %v", err)
@@ -809,7 +861,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build table metadata using iceberg-go types
+	result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+	writeJSON(w, http.StatusOK, result)
+}
+
+func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
@@ -840,12 +896,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		metadata = newTableMetadata(tableUUID, location, nil, nil, nil, nil)
 	}
 
-	result := LoadTableResult{
+	return LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
 		Config:           make(iceberg.Properties),
 	}
-	writeJSON(w, http.StatusOK, result)
 }
 
 // handleTableExists checks if a table exists.
@@ -943,11 +998,51 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	// Extract identity from context
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
-	// Parse the commit request
-	var req CommitTableRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Parse the commit request, skipping update actions not supported by iceberg-go.
+	var raw struct {
+		Identifier   *TableIdentifier  `json:"identifier,omitempty"`
+		Requirements json.RawMessage   `json:"requirements"`
+		Updates      []json.RawMessage `json:"updates"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid request body: "+err.Error())
 		return
+	}
+
+	var req CommitTableRequest
+	req.Identifier = raw.Identifier
+	if len(raw.Requirements) > 0 {
+		if err := json.Unmarshal(raw.Requirements, &req.Requirements); err != nil {
+			writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid requirements: "+err.Error())
+			return
+		}
+	}
+	if len(raw.Updates) > 0 {
+		filtered := make([]json.RawMessage, 0, len(raw.Updates))
+		for _, update := range raw.Updates {
+			var action struct {
+				Action string `json:"action"`
+			}
+			if err := json.Unmarshal(update, &action); err != nil {
+				writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid update: "+err.Error())
+				return
+			}
+			if action.Action == "set-statistics" {
+				continue
+			}
+			filtered = append(filtered, update)
+		}
+		if len(filtered) > 0 {
+			updatesBytes, err := json.Marshal(filtered)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse updates: "+err.Error())
+				return
+			}
+			if err := json.Unmarshal(updatesBytes, &req.Updates); err != nil {
+				writeError(w, http.StatusBadRequest, "BadRequestException", "Invalid updates: "+err.Error())
+				return
+			}
+		}
 	}
 
 	// First, load current table metadata
@@ -1049,8 +1144,12 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Save metadata file to filer
-	tablePath := path.Join(encodeNamespace(namespace), tableName)
-	if err := s.saveMetadataFile(r.Context(), bucketName, tablePath, metadataFileName, metadataBytes); err != nil {
+	metadataBucket, metadataPath, err := parseS3Location(location)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+		return
+	}
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}

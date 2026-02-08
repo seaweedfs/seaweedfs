@@ -164,14 +164,26 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
 	// Check if table already exists
+	var existingMetadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
-		return err
+		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if unmarshalErr := json.Unmarshal(data, &existingMetadata); unmarshalErr != nil {
+			return fmt.Errorf("failed to parse existing table metadata: %w", unmarshalErr)
+		}
+		return nil
 	})
 
 	if err == nil {
-		h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
-		return fmt.Errorf("table already exists")
+		tableARN := h.generateTableARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
+		h.writeJSON(w, http.StatusOK, &CreateTableResponse{
+			TableARN:         tableARN,
+			VersionToken:     existingMetadata.VersionToken,
+			MetadataLocation: existingMetadata.MetadataLocation,
+		})
+		return nil
 	} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		return err
@@ -201,14 +213,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Create table directory
-		if err := h.createDirectory(r.Context(), client, tablePath); err != nil {
+		// Ensure table directory exists (may already be created by object storage clients)
+		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
 
 		// Create data subdirectory for Iceberg files
 		dataPath := tablePath + "/data"
-		if err := h.createDirectory(r.Context(), client, dataPath); err != nil {
+		if err := h.ensureDirectory(r.Context(), client, dataPath); err != nil {
 			return err
 		}
 

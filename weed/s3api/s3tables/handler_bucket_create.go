@@ -105,14 +105,6 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 			}
 		}
 
-		// Ensure object root directory exists for table bucket S3 operations
-		if err := h.ensureDirectory(r.Context(), client, GetTableObjectRootDir()); err != nil {
-			return fmt.Errorf("failed to create table object root directory: %w", err)
-		}
-		if err := h.ensureDirectory(r.Context(), client, GetTableObjectBucketPath(req.Name)); err != nil {
-			return fmt.Errorf("failed to create table object bucket directory: %w", err)
-		}
-
 		// Create bucket directory
 		if err := h.createDirectory(r.Context(), client, bucketPath); err != nil {
 			return err
