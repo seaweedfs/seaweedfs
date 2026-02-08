@@ -162,11 +162,10 @@ func TestUdsServerProtocol(t *testing.T) {
 		t.Fatalf("Failed to read response: %v", err)
 	}
 
-	// Since vs is nil, we expect an error status (handleLocate will panic or return error)
-	// In this case, we just check we got a valid response back
+	// Since vs is nil, we expect UdsStatusError
 	status := respBuf[0]
-	if status != UdsStatusOk && status != UdsStatusNotFound && status != UdsStatusError {
-		t.Errorf("Unexpected status: %d", status)
+	if status != UdsStatusError {
+		t.Errorf("Expected UdsStatusError (%d) for nil VolumeServer, got %d", UdsStatusError, status)
 	}
 }
 

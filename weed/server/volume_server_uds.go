@@ -189,6 +189,11 @@ func (u *UdsServer) handleLocate(req *LocateRequest) *LocateResponse {
 		return resp
 	}
 
+	if u.vs == nil {
+		resp.Status = UdsStatusError
+		return resp
+	}
+
 	volumeId := fileId.VolumeId
 	needleId := fileId.Key
 
