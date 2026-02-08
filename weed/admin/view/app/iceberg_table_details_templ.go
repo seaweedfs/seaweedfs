@@ -421,9 +421,9 @@ func IcebergTableDetails(data dash.IcebergTableDetailsData) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var25 string
-			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(field.Type)
+			templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(string(field.Type))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_table_details.templ`, Line: 226, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_table_details.templ`, Line: 226, Col: 40}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 			if templ_7745c5c3_Err != nil {
