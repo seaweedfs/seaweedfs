@@ -223,7 +223,7 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 									<tr>
 										<td>{ fmt.Sprintf("%d", field.ID) }</td>
 										<td>{ field.Name }</td>
-										<td><code>{ field.Type }</code></td>
+										<td><code>{ string(field.Type) }</code></td>
 										<td>
 											if field.Required {
 												<span class="badge bg-success">Yes</span>

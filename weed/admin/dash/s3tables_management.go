@@ -302,10 +302,10 @@ type icebergSchema struct {
 }
 
 type icebergSchemaField struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
 }
 
 type icebergPartitionSpec struct {
@@ -363,6 +363,19 @@ func applyIcebergMetadata(metadata *s3tables.TableMetadata, details *IcebergTabl
 	}
 }
 
+func typeToString(t json.RawMessage) json.RawMessage {
+	if t == nil {
+		return json.RawMessage(`""`)
+	}
+	var v interface{}
+	if err := json.Unmarshal(t, &v); err == nil {
+		if _, ok := v.(string); ok {
+			return t
+		}
+	}
+	return t
+}
+
 func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
 	if schema := selectSchema(full); schema != nil {
 		fields := make([]IcebergSchemaFieldInfo, 0, len(schema.Fields))
@@ -370,7 +383,7 @@ func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.I
 			fields = append(fields, IcebergSchemaFieldInfo{
 				ID:       field.ID,
 				Name:     field.Name,
-				Type:     field.Type,
+				Type:     typeToString(field.Type),
 				Required: field.Required,
 			})
 		}
@@ -385,9 +398,10 @@ func schemaFieldsFromIceberg(metadata *s3tables.IcebergMetadata) []IcebergSchema
 	}
 	fields := make([]IcebergSchemaFieldInfo, 0, len(metadata.Schema.Fields))
 	for _, field := range metadata.Schema.Fields {
+		typeBytes, _ := json.Marshal(field.Type)
 		fields = append(fields, IcebergSchemaFieldInfo{
 			Name:     field.Name,
-			Type:     field.Type,
+			Type:     typeBytes,
 			Required: field.Required,
 		})
 	}

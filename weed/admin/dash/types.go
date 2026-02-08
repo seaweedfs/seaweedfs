@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -643,10 +644,10 @@ type IcebergTablesData struct {
 }
 
 type IcebergSchemaFieldInfo struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
 }
 
 type IcebergPartitionFieldInfo struct {
