@@ -16,16 +16,16 @@ import (
 )
 
 type TestEnvironment struct {
-	t                  *testing.T
-	dockerAvailable    bool
-	seaweedfsDataDir   string
-	sparkConfigDir     string
-	masterPort         int
-	filerPort          int
-	s3Port             int
-	icebergRestPort    int
-	sparkContainer     testcontainers.Container
-	masterProcess      *exec.Cmd
+	t                *testing.T
+	dockerAvailable  bool
+	seaweedfsDataDir string
+	sparkConfigDir   string
+	masterPort       int
+	filerPort        int
+	s3Port           int
+	icebergRestPort  int
+	sparkContainer   testcontainers.Container
+	masterProcess    *exec.Cmd
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
