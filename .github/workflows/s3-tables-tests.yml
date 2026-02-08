@@ -27,6 +27,9 @@ jobs:
           go-version-file: 'go.mod'
         id: go
 
+      - name: Run go mod tidy
+        run: go mod tidy
+
       - name: Install SeaweedFS
         run: |
           go install -buildvcs=false ./weed
@@ -83,6 +86,9 @@ jobs:
         with:
           go-version-file: 'go.mod'
         id: go
+
+      - name: Run go mod tidy
+        run: go mod tidy
 
       - name: Run Iceberg Catalog Integration Tests
         timeout-minutes: 25
@@ -142,6 +148,9 @@ jobs:
 
       - name: Pre-pull Trino image
         run: docker pull trinodb/trino:479
+
+      - name: Run go mod tidy
+        run: go mod tidy
 
       - name: Install SeaweedFS
         run: |
@@ -205,6 +214,9 @@ jobs:
 
       - name: Pre-pull Spark image
         run: docker pull apache/spark:3.5.1
+
+      - name: Run go mod tidy
+        run: go mod tidy
 
       - name: Install SeaweedFS
         run: |
