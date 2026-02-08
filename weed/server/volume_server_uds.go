@@ -36,10 +36,13 @@ type UdsServer struct {
 }
 
 // LocateRequest represents a UDS locate request
+// Wire format matches sra-common::uds_proto::LocateRequest (repr(C)):
+//   opcode(1) + pad(3) + request_id(4) + fid(16) = 24 bytes
 type LocateRequest struct {
-	Fid     [16]byte // ASCII fid, null-padded
-	Version uint32
-	Flags   uint32
+	Opcode    uint8
+	_pad      [3]byte
+	RequestId uint32
+	Fid       [16]byte // ASCII fid, null-padded
 }
 
 // LocateResponse represents a UDS locate response
@@ -136,11 +139,12 @@ func (u *UdsServer) handleConnection(conn net.Conn) {
 			return
 		}
 
-		// Parse request
+		// Parse request (matches sra-common::uds_proto::LocateRequest repr(C))
+		// opcode(1) + pad(3) + request_id(4) + fid(16) = 24 bytes
 		var req LocateRequest
-		copy(req.Fid[:], reqBuf[0:16])
-		req.Version = binary.LittleEndian.Uint32(reqBuf[16:20])
-		req.Flags = binary.LittleEndian.Uint32(reqBuf[20:24])
+		req.Opcode = reqBuf[0]
+		req.RequestId = binary.LittleEndian.Uint32(reqBuf[4:8])
+		copy(req.Fid[:], reqBuf[8:24])
 
 		// Handle request
 		resp := u.handleLocate(&req)

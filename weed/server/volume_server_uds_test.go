@@ -21,27 +21,28 @@ func TestLocateRequestResponseSize(t *testing.T) {
 }
 
 func TestLocateRequestSerialization(t *testing.T) {
+	// Wire format: opcode(1) + pad(3) + request_id(4) + fid(16) = 24
 	req := LocateRequest{
-		Version: 1,
-		Flags:   0,
+		Opcode:    1, // VolumeOpcode::Locate
+		RequestId: 42,
 	}
 	copy(req.Fid[:], "3,01637037")
 
 	buf := make([]byte, UdsRequestSize)
-	copy(buf[0:16], req.Fid[:])
-	binary.LittleEndian.PutUint32(buf[16:20], req.Version)
-	binary.LittleEndian.PutUint32(buf[20:24], req.Flags)
+	buf[0] = req.Opcode
+	binary.LittleEndian.PutUint32(buf[4:8], req.RequestId)
+	copy(buf[8:24], req.Fid[:])
 
-	// Verify fid is correctly placed
-	fid := string(buf[0:10])
+	// Verify fid is correctly placed at offset 8
+	fid := string(buf[8:18])
 	if fid != "3,01637037" {
 		t.Errorf("Expected fid='3,01637037', got '%s'", fid)
 	}
 
-	// Verify version
-	version := binary.LittleEndian.Uint32(buf[16:20])
-	if version != 1 {
-		t.Errorf("Expected version=1, got %d", version)
+	// Verify request_id
+	requestId := binary.LittleEndian.Uint32(buf[4:8])
+	if requestId != 42 {
+		t.Errorf("Expected request_id=42, got %d", requestId)
 	}
 }
 
@@ -145,10 +146,11 @@ func TestUdsServerProtocol(t *testing.T) {
 	defer conn.Close()
 
 	// Send a request (will fail because vs is nil, but we're testing protocol)
+	// Wire format: opcode(1) + pad(3) + request_id(4) + fid(16)
 	reqBuf := make([]byte, UdsRequestSize)
-	copy(reqBuf[0:16], "3,01637037")
-	binary.LittleEndian.PutUint32(reqBuf[16:20], 1) // version
-	binary.LittleEndian.PutUint32(reqBuf[20:24], 0) // flags
+	reqBuf[0] = 1 // VolumeOpcode::Locate
+	binary.LittleEndian.PutUint32(reqBuf[4:8], 1) // request_id
+	copy(reqBuf[8:24], "3,01637037")              // fid at offset 8
 
 	_, err = conn.Write(reqBuf)
 	if err != nil {
@@ -195,8 +197,8 @@ func TestUdsSocketCleanup(t *testing.T) {
 
 func TestFidParsing(t *testing.T) {
 	tests := []struct {
-		fid    string
-		valid  bool
+		fid   string
+		valid bool
 	}{
 		{"3,01637037", true},
 		{"1,abc123", true},
@@ -221,7 +223,6 @@ func TestFidParsing(t *testing.T) {
 			}
 			fid := string(fidBytes[:fidLen])
 
-			// For empty fid, we expect empty string
 			if tt.fid == "" && fid != "" {
 				t.Errorf("Expected empty fid, got '%s'", fid)
 			}
