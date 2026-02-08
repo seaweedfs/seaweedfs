@@ -282,12 +282,13 @@ func testIcebergRestAPI(t *testing.T, env *TestEnvironment) {
 	fmt.Printf(">>> Testing Iceberg REST API directly...\n")
 
 	// First, verify the service is listening
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", env.bindIP, env.icebergPort))
+	addr := net.JoinHostPort(env.bindIP, fmt.Sprintf("%d", env.icebergPort))
+	conn, err := net.Dial("tcp", addr)
 	if err != nil {
-		t.Fatalf("Cannot connect to Iceberg service at %s:%d: %v", env.bindIP, env.icebergPort, err)
+		t.Fatalf("Cannot connect to Iceberg service at %s: %v", addr, err)
 	}
 	conn.Close()
-	t.Logf("Successfully connected to Iceberg service at %s:%d", env.bindIP, env.icebergPort)
+	t.Logf("Successfully connected to Iceberg service at %s", addr)
 
 	// Test /v1/config endpoint
 	url := fmt.Sprintf("http://%s:%d/v1/config", env.bindIP, env.icebergPort)

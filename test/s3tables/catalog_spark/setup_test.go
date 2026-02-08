@@ -9,11 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 type TestEnvironment struct {
@@ -210,7 +210,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 			"SPARK_LOCAL_IP": "localhost",
 		},
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
-		WaitingFor: testcontainers.NewLogStrategy("Ready to accept connections").
+		WaitingFor: wait.ForLog("Ready to accept connections").
 			WithStartupTimeout(30 * time.Second),
 	}
 
