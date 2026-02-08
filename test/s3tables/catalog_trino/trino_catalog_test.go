@@ -300,7 +300,7 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 	config := fmt.Sprintf(`connector.name=iceberg
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
-iceberg.rest-catalog.warehouse=s3tablescatalog/%s
+iceberg.rest-catalog.warehouse=s3://%s
 iceberg.file-format=PARQUET
 iceberg.unique-table-location=true
 
