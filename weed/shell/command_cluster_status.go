@@ -33,7 +33,17 @@ type VolumeReplicaStats struct {
 	FilesDeleted uint64
 	TotalSize    uint64
 }
-type RegularVolumeStats map[uint32][]*VolumeReplicaStats
+type RegularVolumesStats map[uint32][]*VolumeReplicaStats
+
+// Map of ec_volume_id -> stat details.
+type EcVolumeStats struct {
+	VolumeId uint32
+
+	Files        uint64
+	FilesDeleted uint64
+	TotalSize    uint64
+}
+type EcVolumesStats map[uint32]*EcVolumeStats
 
 type commandClusterStatus struct{}
 type ClusterStatusPrinter struct {
@@ -42,11 +52,12 @@ type ClusterStatusPrinter struct {
 	humanize           bool
 	maxParallelization int
 
-	locked             bool
-	collections        []string
-	topology           *master_pb.TopologyInfo
-	volumeSizeLimitMb  uint64
-	regularVolumeStats RegularVolumeStats
+	locked              bool
+	collections         []string
+	topology            *master_pb.TopologyInfo
+	volumeSizeLimitMb   uint64
+	regularVolumesStats RegularVolumesStats
+	ecVolumesStats      EcVolumesStats
 }
 
 func (c *commandClusterStatus) Name() string {
@@ -137,7 +148,12 @@ func (sp *ClusterStatusPrinter) bytes(b uint64) string {
 func (sp *ClusterStatusPrinter) uint64Ratio(a, b uint64) string {
 	var p float64
 	if b != 0 {
-		p = float64(a) / float64(b)
+		if a%b == 0 {
+			// Avoid float precision issues on integer ratios.
+			p = float64(a / b)
+		} else {
+			p = float64(a) / float64(b)
+		}
 	}
 	if !sp.humanize {
 		return fmt.Sprintf("%.02f", p)
@@ -151,8 +167,14 @@ func (sp *ClusterStatusPrinter) intRatio(a, b int) string {
 
 func (sp *ClusterStatusPrinter) uint64Pct(a, b uint64) string {
 	var p float64
+
 	if b != 0 {
-		p = 100 * float64(a) / float64(b)
+		if a%b == 0 {
+			// avoid float rounding errors on exact ratios
+			p = float64(a / b * 100)
+		} else {
+			p = 100 * float64(a) / float64(b)
+		}
 	}
 	if !sp.humanize {
 		return fmt.Sprintf("%.02f%%", p)
@@ -188,13 +210,21 @@ func (sp *ClusterStatusPrinter) Print() {
 	sp.printFilesInfo()
 }
 
-// TODO: collect stats for EC volumes as well
 func (sp *ClusterStatusPrinter) loadFileStats(commandEnv *CommandEnv) error {
-	sp.regularVolumeStats = RegularVolumeStats{}
+	sp.regularVolumesStats = RegularVolumesStats{}
+	sp.ecVolumesStats = EcVolumesStats{}
 
 	var mu sync.Mutex
 	var progressTotal, progressDone uint64
 	ewg := NewErrorWaitGroup(sp.maxParallelization)
+
+	updateProgress := func() {
+		mu.Lock()
+		defer mu.Unlock()
+
+		progressDone++
+		sp.write("collecting file stats: %s     \r", sp.uint64Pct(progressDone, progressTotal))
+	}
 
 	for _, dci := range sp.topology.DataCenterInfos {
 		for _, ri := range dci.RackInfos {
@@ -202,7 +232,9 @@ func (sp *ClusterStatusPrinter) loadFileStats(commandEnv *CommandEnv) error {
 				for _, d := range dni.DiskInfos {
 					mu.Lock()
 					progressTotal += uint64(len(d.VolumeInfos))
+					progressTotal += uint64(len(d.EcShardInfos))
 					mu.Unlock()
+
 					for _, v := range d.VolumeInfos {
 						ewg.Add(func() error {
 							// Collect regular volume stats
@@ -217,10 +249,10 @@ func (sp *ClusterStatusPrinter) loadFileStats(commandEnv *CommandEnv) error {
 								mu.Lock()
 								defer mu.Unlock()
 								if resp != nil {
-									if _, ok := sp.regularVolumeStats[v.Id]; !ok {
-										sp.regularVolumeStats[v.Id] = []*VolumeReplicaStats{}
+									if _, ok := sp.regularVolumesStats[v.Id]; !ok {
+										sp.regularVolumesStats[v.Id] = []*VolumeReplicaStats{}
 									}
-									sp.regularVolumeStats[v.Id] = append(sp.regularVolumeStats[v.Id], &VolumeReplicaStats{
+									sp.regularVolumesStats[v.Id] = append(sp.regularVolumesStats[v.Id], &VolumeReplicaStats{
 										Id:           dni.Id,
 										VolumeId:     v.Id,
 										Files:        resp.FileCount,
@@ -228,17 +260,51 @@ func (sp *ClusterStatusPrinter) loadFileStats(commandEnv *CommandEnv) error {
 										TotalSize:    resp.VolumeSize,
 									})
 								}
-								progressDone++
 								return nil
 							})
-							if err != nil {
-								return err
-							}
+
+							updateProgress()
+							return err
+						})
+					}
+
+					for _, eci := range d.EcShardInfos {
+						ewg.Add(func() error {
+							// Collect EC shard stats
+
+							var err error
 
 							mu.Lock()
-							sp.write("collecting file stats: %s     \r", sp.uint64Pct(progressDone, progressTotal))
+							_, ok := sp.ecVolumesStats[eci.Id]
 							mu.Unlock()
-							return nil
+							if ok {
+								// this EC volume has been already processed, likely on a different node
+								return nil
+							}
+
+							err = operation.WithVolumeServerClient(false, pb.NewServerAddressWithGrpcPort(dni.Id, int(dni.GrpcPort)), commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+								resp, reqErr := volumeServerClient.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{
+									VolumeId: uint32(eci.Id),
+								})
+								if reqErr != nil {
+									return reqErr
+								}
+
+								mu.Lock()
+								defer mu.Unlock()
+								if resp != nil {
+									sp.ecVolumesStats[eci.Id] = &EcVolumeStats{
+										VolumeId:     eci.Id,
+										Files:        resp.FileCount,
+										FilesDeleted: resp.FileDeletedCount,
+										TotalSize:    resp.VolumeSize,
+									}
+								}
+								return nil
+							})
+
+							updateProgress()
+							return err
 						})
 					}
 				}
@@ -380,32 +446,27 @@ func (sp *ClusterStatusPrinter) printStorageInfo() {
 		ecVolumeSize += s
 	}
 	totalSize := volumeSize + ecVolumeSize
+	totalRawSize := rawVolumeSize + rawEcVolumeSize
 
 	sp.write("storage:")
-	sp.write("\ttotal:           %s", sp.bytes(totalSize))
-	sp.write("\tregular volumes: %s", sp.bytes(volumeSize))
-	sp.write("\tEC volumes:      %s", sp.bytes(ecVolumeSize))
-	sp.write("\traw:             %s on volume replicas, %s on EC shards", sp.bytes(rawVolumeSize), sp.bytes(rawEcVolumeSize))
+	sp.write("\ttotal:           %s (%s raw, %s)", sp.bytes(totalSize), sp.bytes(totalRawSize), sp.uint64Pct(totalRawSize, totalSize))
+	sp.write("\tregular volumes: %s (%s raw, %s)", sp.bytes(volumeSize), sp.bytes(rawVolumeSize), sp.uint64Pct(rawVolumeSize, volumeSize))
+	sp.write("\tEC volumes:      %s (%s raw, %s)", sp.bytes(ecVolumeSize), sp.bytes(rawEcVolumeSize), sp.uint64Pct(rawEcVolumeSize, ecVolumeSize))
 	sp.write("")
 }
 
 func (sp *ClusterStatusPrinter) printFilesInfo() {
-	if len(sp.regularVolumeStats) == 0 {
+	if len(sp.regularVolumesStats) == 0 && len(sp.ecVolumesStats) == 0 {
 		return
 	}
 
 	var regularFilesTotal, regularFilesDeleted, regularFilesSize uint64
-	var regularFilesTotalRaw, regularFilesDeletedRaw, regularFilesSizeRaw uint64
 
-	for _, replicaStats := range sp.regularVolumeStats {
+	for _, replicaStats := range sp.regularVolumesStats {
 		rc := uint64(len(replicaStats))
 
 		var volumeFilesTotal, volumeFilesSize, volumeFilesDeleted uint64
 		for _, rs := range replicaStats {
-			regularFilesTotalRaw += rs.Files
-			regularFilesSizeRaw += rs.TotalSize
-			regularFilesDeletedRaw += rs.FilesDeleted
-
 			volumeFilesTotal += rs.Files
 			volumeFilesSize += rs.TotalSize
 			volumeFilesDeleted += rs.FilesDeleted
@@ -414,26 +475,49 @@ func (sp *ClusterStatusPrinter) printFilesInfo() {
 		regularFilesSize += (volumeFilesSize / rc)
 		regularFilesDeleted += (volumeFilesDeleted / rc)
 	}
-
 	regularFiles := regularFilesTotal - regularFilesDeleted
-	regularFilesRaw := regularFilesTotalRaw - regularFilesDeletedRaw
-	var avgFileSize uint64
+	var avgRegularFileSize uint64
 	if regularFilesTotal != 0 {
-		avgFileSize = regularFilesSize / regularFilesTotal
+		avgRegularFileSize = regularFilesSize / regularFilesTotal
+	}
+
+	var ecFilesTotal, ecFilesDeleted, ecFilesSize uint64
+
+	for _, ecStats := range sp.ecVolumesStats {
+		ecFilesTotal += ecStats.Files
+		ecFilesSize += ecStats.TotalSize
+		ecFilesDeleted += ecStats.FilesDeleted
+	}
+	ecFiles := ecFilesTotal - ecFilesDeleted
+	var avgEcFileSize uint64
+	if ecFilesTotal != 0 {
+		avgEcFileSize = ecFilesSize / ecFilesTotal
+	}
+
+	files := regularFiles + ecFiles
+	filesDeleted := regularFilesDeleted + ecFilesDeleted
+	filesTotal := regularFilesTotal + ecFilesTotal
+	filesSize := regularFilesSize + ecFilesSize
+	var avgFileSize uint64
+	if filesTotal != 0 {
+		avgFileSize = filesSize / filesTotal
 	}
 
 	sp.write("files:")
-	sp.write("\tregular:     %s %s, %s readable (%s), %s deleted (%s), avg %s per file",
+	sp.write("\ttotal:   %s %s, %s readable (%s), %s deleted (%s), avg %s per file",
+		sp.uint64(filesTotal), sp.uint64Plural(filesTotal, "file"),
+		sp.uint64(files), sp.uint64Pct(files, filesTotal),
+		sp.uint64(filesDeleted), sp.uint64Pct(filesDeleted, filesTotal),
+		sp.bytes(avgFileSize))
+	sp.write("\tregular: %s %s, %s readable (%s), %s deleted (%s), avg %s per file",
 		sp.uint64(regularFilesTotal), sp.uint64Plural(regularFilesTotal, "file"),
 		sp.uint64(regularFiles), sp.uint64Pct(regularFiles, regularFilesTotal),
 		sp.uint64(regularFilesDeleted), sp.uint64Pct(regularFilesDeleted, regularFilesTotal),
-		sp.bytes(avgFileSize))
-	sp.write("\tregular raw: %s %s, %s readable (%s), %s deleted (%s), %s total",
-		sp.uint64(regularFilesTotalRaw), sp.uint64Plural(regularFilesTotalRaw, "file"),
-		sp.uint64(regularFilesRaw), sp.uint64Pct(regularFilesRaw, regularFilesTotalRaw),
-		sp.uint64(regularFilesDeletedRaw), sp.uint64Pct(regularFilesDeletedRaw, regularFilesTotalRaw),
-		sp.bytes(regularFilesSizeRaw))
-	sp.write("\tEC:          [no data]")
-	sp.write("\tEC raw:      [no data]")
+		sp.bytes(avgRegularFileSize))
+	sp.write("\tEC:      %s %s, %s readable (%s), %s deleted (%s), avg %s per file",
+		sp.uint64(ecFilesTotal), sp.uint64Plural(ecFilesTotal, "file"),
+		sp.uint64(ecFiles), sp.uint64Pct(ecFiles, ecFilesTotal),
+		sp.uint64(ecFilesDeleted), sp.uint64Pct(ecFilesDeleted, ecFilesTotal),
+		sp.bytes(avgEcFileSize))
 	sp.write("")
 }
