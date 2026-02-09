@@ -11,7 +11,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
@@ -34,22 +33,21 @@ const (
 )
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
-	peerIDsMap := make(map[string]struct{}, len(mapPeers))
+	peerIDs := make([]string, 0, len(mapPeers))
+	seen := make(map[string]struct{}, len(mapPeers))
 	for _, peer := range mapPeers {
-		peerIDsMap[raftServerID(peer)] = struct{}{}
-	}
-	peerIDs := make([]string, 0, len(peerIDsMap))
-	for peerID := range peerIDsMap {
-		peerIDs = append(peerIDs, peerID)
-	}
-	sort.Slice(peerIDs, func(i, j int) bool {
-		return strings.Compare(peerIDs[i], peerIDs[j]) < 0
-	})
-	selfID := raftServerID(self)
-	for i, peerID := range peerIDs {
-		if peerID == selfID {
-			return i
+		id := raftServerID(peer)
+		if _, ok := seen[id]; ok {
+			continue
 		}
+		seen[id] = struct{}{}
+		peerIDs = append(peerIDs, id)
+	}
+	sort.Strings(peerIDs)
+	selfID := raftServerID(self)
+	idx := sort.SearchStrings(peerIDs, selfID)
+	if idx < len(peerIDs) && peerIDs[idx] == selfID {
+		return idx
 	}
 	return -1
 }
