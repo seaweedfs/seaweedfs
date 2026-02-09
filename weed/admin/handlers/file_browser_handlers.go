@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -349,6 +350,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 	if err := h.validateFilerAddress(filerAddress); err != nil {
 		return fmt.Errorf("invalid filer address: %w", err)
 	}
+	filerHttpAddress := pb.ServerAddress(filerAddress).ToHttpAddress()
 
 	// Validate and sanitize the file path
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
@@ -389,7 +391,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
 	// based on the https.client configuration in security.toml
-	uploadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	uploadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
 
 	// Normalize the URL scheme based on TLS configuration
 	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
@@ -437,12 +439,14 @@ func (h *FileBrowserHandlers) validateFilerAddress(address string) error {
 
 	// CRITICAL: Only allow the configured filer address to prevent SSRF
 	configuredFiler := h.adminServer.GetFilerAddress()
-	if address != configuredFiler {
+	normalizedAddress := pb.ServerAddress(address).ToHttpAddress()
+	normalizedConfigured := pb.ServerAddress(configuredFiler).ToHttpAddress()
+	if normalizedAddress != normalizedConfigured {
 		return fmt.Errorf("address does not match configured filer: got %s, expected %s", address, configuredFiler)
 	}
 
-	// Parse the address to validate it's a proper host:port format
-	host, port, err := net.SplitHostPort(address)
+	// Parse the normalized HTTP address to validate it's a proper host:port format.
+	host, port, err := net.SplitHostPort(normalizedAddress)
 	if err != nil {
 		return fmt.Errorf("invalid address format: %w", err)
 	}
@@ -510,6 +514,7 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	if err := h.validateFilerAddress(filerAddress); err != nil {
 		return "", fmt.Errorf("invalid filer address configuration: %w", err)
 	}
+	filerHttpAddress := pb.ServerAddress(filerAddress).ToHttpAddress()
 
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
@@ -517,7 +522,7 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to construct file URL: %w", err)
@@ -575,6 +580,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid filer address configuration"})
 		return
 	}
+	filerHttpAddress := pb.ServerAddress(filerAddress).ToHttpAddress()
 
 	// Validate and sanitize the file path
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
@@ -584,7 +590,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	}
 
 	// Create the download URL with proper scheme based on TLS configuration
-	downloadURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	downloadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
 	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct download URL: " + err.Error()})
@@ -1022,6 +1028,7 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 		glog.Errorf("Invalid filer address: %v", err)
 		return false
 	}
+	filerHttpAddress := pb.ServerAddress(filerAddress).ToHttpAddress()
 
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
@@ -1029,7 +1036,7 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerAddress, cleanFilePath)
+	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		glog.Errorf("Failed to normalize URL scheme: %v", err)

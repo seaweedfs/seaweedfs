@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -14,7 +15,12 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<a href={ templ.SafeURL("/v1/config") } target="_blank" class="btn btn-sm btn-outline-secondary">
+				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-primary">
+					<i class="fas fa-plus me-1"></i>Create Table Bucket
+				</a>
+			</div>
+			<div class="btn-group me-2">
+				<a id="iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-external-link-alt me-1"></i>REST API
 				</a>
 			</div>
@@ -27,12 +33,19 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 				<i class="fas fa-info-circle fa-2x me-3"></i>
 				<div>
 					<strong>Iceberg REST Catalog</strong>
-					<p class="mb-0 mt-1">
+					<p id="iceberg-rest-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
 						Connect your Iceberg clients (DuckDB, Spark, etc.) to:
 						<code>http://<span id="iceberg-host">localhost</span>:{fmt.Sprintf("%d", data.IcebergPort)}/v1</code>
 					</p>
 					<script>
-						document.getElementById('iceberg-host').innerText = window.location.hostname;
+						const icebergInfo = document.getElementById('iceberg-rest-info');
+						const icebergHost = window.location.hostname;
+						const icebergPort = icebergInfo ? icebergInfo.dataset.icebergPort : '';
+						document.getElementById('iceberg-host').innerText = icebergHost;
+						const restLink = document.getElementById('iceberg-rest-link');
+						if (restLink && icebergPort) {
+							restLink.href = `http://${icebergHost}:${icebergPort}/v1/config`;
+						}
 					</script>
 				</div>
 			</div>
@@ -87,7 +100,11 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 									Last Updated
 								</div>
 								<div class="h6 mb-0 font-weight-bold text-gray-800">
-									{ data.LastUpdated.Format("15:04") }
+									if data.LastUpdated.IsZero() {
+										<span class="text-muted">-</span>
+									} else {
+										{ data.LastUpdated.Format("2006-01-02 15:04") }
+									}
 								</div>
 							</div>
 							<div class="col-auto">
@@ -134,14 +151,24 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 											<td>
 												<code class="small">/v1/{ catalog.Name }/namespaces</code>
 											</td>
-											<td>{ catalog.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if catalog.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ catalog.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(catalog.ARN) }}
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", bucketName)) } title="Browse Namespaces">
+														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(bucketName))) } title="Browse Namespaces">
 															<i class="fas fa-folder-open"></i>
 														</a>
+													} else {
+														<button type="button" class="btn btn-outline-secondary btn-sm" disabled title={ parseErr.Error() }>
+															<i class="fas fa-exclamation-triangle"></i>
+														</button>
 													}
 												</div>
 											</td>

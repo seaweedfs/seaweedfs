@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
@@ -12,17 +13,17 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 			<nav aria-label="breadcrumb">
 				<ol class="breadcrumb mb-0">
 					<li class="breadcrumb-item">
-						<a href="/object-store/iceberg">
-							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+						<a href="/object-store/s3tables/buckets">
+							<i class="fas fa-table me-1"></i>Table Buckets
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", data.CatalogName)) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(data.CatalogName))) }>
 							{ data.CatalogName }
 						</a>
 					</li>
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, data.NamespaceName)) }>
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName))) }>
 							{ data.NamespaceName }
 						</a>
 					</li>
@@ -32,7 +33,7 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<button type="button" class="btn btn-sm btn-danger iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ data.TableName }>
+				<button type="button" class="btn btn-sm btn-danger iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ data.TableName } data-catalog-name={ data.CatalogName }>
 					<i class="fas fa-trash me-1"></i>Drop Table
 				</button>
 			</div>
@@ -155,11 +156,23 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 							</tr>
 							<tr>
 								<th>Created</th>
-								<td>{ data.CreatedAt.Format("2006-01-02 15:04") }</td>
+								<td>
+									if !data.CreatedAt.IsZero() {
+										{ data.CreatedAt.Format("2006-01-02 15:04") }
+									} else {
+										<span class="text-muted">-</span>
+									}
+								</td>
 							</tr>
 							<tr>
 								<th>Modified</th>
-								<td>{ data.ModifiedAt.Format("2006-01-02 15:04") }</td>
+								<td>
+									if !data.ModifiedAt.IsZero() {
+										{ data.ModifiedAt.Format("2006-01-02 15:04") }
+									} else {
+										<span class="text-muted">-</span>
+									}
+								</td>
 							</tr>
 						</tbody>
 					</table>
@@ -223,7 +236,7 @@ templ IcebergTableDetails(data dash.IcebergTableDetailsData) {
 									<tr>
 										<td>{ fmt.Sprintf("%d", field.ID) }</td>
 										<td>{ field.Name }</td>
-										<td><code>{ field.Type }</code></td>
+										<td><code>{ string(field.Type) }</code></td>
 										<td>
 											if field.Required {
 												<span class="badge bg-success">Yes</span>

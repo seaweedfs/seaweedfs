@@ -316,6 +316,14 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 			if resp.Entry.IsDirectory {
 				bucketName := resp.Entry.Name
+				if strings.HasPrefix(bucketName, ".") {
+					// Skip internal/system directories from Object Store bucket listing.
+					continue
+				}
+				if s3tables.IsTableBucketEntry(resp.Entry) || strings.HasSuffix(bucketName, "--table-s3") {
+					// Keep table buckets in the S3 Tables pages, not regular Object Store buckets.
+					continue
+				}
 
 				// Determine collection name for this bucket
 				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)

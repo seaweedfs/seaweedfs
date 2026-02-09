@@ -18,9 +18,44 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 					<i class="fas fa-plus me-1"></i>Create Bucket
 				</button>
 			</div>
+			if data.IcebergPort > 0 {
+				<div class="btn-group me-2">
+					<a id="s3tables-iceberg-rest-link" href={ templ.SafeURL(fmt.Sprintf("http://localhost:%d/v1/config", data.IcebergPort)) } target="_blank" class="btn btn-sm btn-outline-secondary">
+						<i class="fas fa-snowflake me-1"></i>Iceberg REST API
+					</a>
+				</div>
+			}
 		</div>
 	</div>
-	<div id="s3tables-buckets-content">
+	<div id="s3tables-buckets-content" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
+		if data.IcebergPort > 0 {
+			<div class="alert alert-info mb-4">
+				<div class="d-flex align-items-center">
+					<i class="fas fa-info-circle fa-2x me-3"></i>
+					<div>
+						<strong>Iceberg REST Catalog</strong>
+						<p id="s3tables-iceberg-info" class="mb-0 mt-1" data-iceberg-port={ fmt.Sprintf("%d", data.IcebergPort) }>
+							Each table bucket is an Iceberg catalog. Connect clients to:
+							<code>http://<span id="s3tables-iceberg-host">localhost</span>:{ fmt.Sprintf("%d", data.IcebergPort) }/v1</code>
+						</p>
+						<script>
+							const s3tablesInfo = document.getElementById('s3tables-iceberg-info');
+							const s3tablesIcebergHost = window.location.hostname;
+							const s3tablesIcebergPort = s3tablesInfo ? s3tablesInfo.dataset.icebergPort : '';
+							document.getElementById('s3tables-iceberg-host').innerText = s3tablesIcebergHost;
+							const s3tablesRestLink = document.getElementById('s3tables-iceberg-rest-link');
+							if (s3tablesRestLink && s3tablesIcebergPort) {
+								s3tablesRestLink.href = `http://${s3tablesIcebergHost}:${s3tablesIcebergPort}/v1/config`;
+							}
+						</script>
+					</div>
+				</div>
+			</div>
+		} else {
+			<div class="alert alert-warning mb-4">
+				<i class="fas fa-exclamation-triangle me-2"></i>Iceberg REST endpoint is disabled. Start `weed s3` with `-s3.port.iceberg` to enable it.
+			</div>
+		}
 		<div class="row mb-4">
 			<div class="col-xl-4 col-md-6 mb-4">
 				<div class="card border-left-primary shadow h-100 py-2">
@@ -50,11 +85,34 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									Last Updated
 								</div>
 								<div class="h6 mb-0 font-weight-bold text-gray-800">
-									{ data.LastUpdated.Format("15:04") }
+									{ data.LastUpdated.Format("2006-01-02 15:04") }
 								</div>
 							</div>
 							<div class="col-auto">
 								<i class="fas fa-clock fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-success shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+									Iceberg REST Port
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									if data.IcebergPort > 0 {
+										{ fmt.Sprintf("%d", data.IcebergPort) }
+									} else {
+										-
+									}
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-snowflake fa-2x text-gray-300"></i>
 							</div>
 						</div>
 					</div>
@@ -77,6 +135,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 										<th>Name</th>
 										<th>Owner</th>
 										<th>ARN</th>
+										<th>Iceberg Endpoint</th>
 										<th>Created</th>
 										<th>Actions</th>
 									</tr>
@@ -87,6 +146,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 											<td>{ bucket.Name }</td>
 											<td>{ bucket.OwnerAccountID }</td>
 											<td class="text-muted small">{ bucket.ARN }</td>
+											<td><code class="small">/v1/{ bucket.Name }/namespaces</code></td>
 											<td>{ bucket.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
@@ -115,7 +175,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 									}
 									if len(data.Buckets) == 0 {
 										<tr>
-											<td colspan="5" class="text-center text-muted py-4">
+											<td colspan="6" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No table buckets found</h5>
@@ -134,6 +194,65 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 				</div>
 			</div>
 		</div>
+		if data.IcebergPort > 0 {
+			<div class="row">
+				<div class="col-12">
+					<div class="card shadow mb-4">
+						<div class="card-header py-3">
+							<h6 class="m-0 font-weight-bold text-primary">
+								<i class="fas fa-code me-2"></i>Iceberg Client Examples
+							</h6>
+						</div>
+						<div class="card-body">
+							<h6>DuckDB</h6>
+							<pre class="bg-light p-3 border rounded">
+								<code id="s3tables-duckdb-example">
+									{ `INSTALL iceberg;
+LOAD iceberg;
+
+CREATE SECRET (
+    TYPE ICEBERG,
+    ENDPOINT 'http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `',
+    SCOPE 's3://my-table-bucket/'
+);
+
+SELECT * FROM iceberg_scan('s3://my-table-bucket/my-namespace/my-table');` }
+								</code>
+							</pre>
+							<h6 class="mt-4">Python (PyIceberg)</h6>
+							<pre class="bg-light p-3 border rounded">
+								<code id="s3tables-pyiceberg-example">
+									{ `from pyiceberg.catalog import load_catalog
+
+catalog = load_catalog(
+    name="seaweedfs",
+    **{
+        "type": "rest",
+        "uri": "http://localhost:` + fmt.Sprintf("%d", data.IcebergPort) + `",
+    }
+)
+
+namespaces = catalog.list_namespaces()` }
+								</code>
+							</pre>
+							<script>
+								const s3tablesExamplesHost = window.location.hostname;
+								const s3tablesExamples = [
+									document.getElementById('s3tables-duckdb-example'),
+									document.getElementById('s3tables-pyiceberg-example')
+								];
+								s3tablesExamples.forEach(example => {
+									if (!example) {
+										return;
+									}
+									example.textContent = example.textContent.replaceAll('localhost', s3tablesExamplesHost);
+								});
+							</script>
+						</div>
+					</div>
+				</div>
+			</div>
+		}
 	</div>
 	<div class="modal fade" id="createS3TablesBucketModal" tabindex="-1" aria-labelledby="createS3TablesBucketModalLabel" aria-hidden="true">
 		<div class="modal-dialog">

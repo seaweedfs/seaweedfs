@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
+var tableBucketFileValidator = s3tables.NewTableBucketFileValidator()
+
 func (s3a *S3ApiServer) isTableBucket(bucket string) bool {
 	if bucket == "" {
 		return false
@@ -90,6 +92,35 @@ func (s3a *S3ApiServer) bucketDir(bucket string) string {
 		return tablePath
 	}
 	return path.Join(s3a.bucketRoot(bucket), bucket)
+}
+
+func (s3a *S3ApiServer) validateTableBucketObjectPath(bucket, object string) error {
+	if !s3a.isTableBucket(bucket) {
+		return nil
+	}
+	cleanObject := strings.TrimPrefix(object, "/")
+	if cleanObject == "" {
+		return &s3tables.IcebergLayoutError{
+			Code:    s3tables.ErrCodeInvalidIcebergLayout,
+			Message: "object must be under namespace/table/data or metadata",
+		}
+	}
+	fullPath := s3a.bucketDir(bucket)
+	if !strings.HasSuffix(fullPath, "/") {
+		fullPath += "/"
+	}
+	fullPath += cleanObject
+	if err := tableBucketFileValidator.ValidateTableBucketUpload(fullPath); err != nil {
+		return err
+	}
+	parts := strings.SplitN(cleanObject, "/", 4)
+	if len(parts) < 4 {
+		return &s3tables.IcebergLayoutError{
+			Code:    s3tables.ErrCodeInvalidIcebergLayout,
+			Message: "object must be under namespace/table/data or metadata",
+		}
+	}
+	return nil
 }
 
 func (s3a *S3ApiServer) bucketPrefix(bucket string) string {

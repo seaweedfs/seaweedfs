@@ -10,6 +10,7 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
@@ -40,9 +41,9 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var2 templ.SafeURL
-		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", data.CatalogName)))
+		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(data.CatalogName))))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 20, Col: 99}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 21, Col: 115}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -55,7 +56,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.CatalogName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 21, Col: 25}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 22, Col: 25}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -68,7 +69,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var4 string
 		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 24, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 25, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
@@ -81,7 +82,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var5 string
 		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 37, Col: 55}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 38, Col: 55}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
@@ -94,7 +95,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 38, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 39, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -107,7 +108,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 40, Col: 66}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 41, Col: 66}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -120,7 +121,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var8 string
 		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 40, Col: 104}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 41, Col: 104}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
@@ -133,7 +134,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var9 string
 		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(data.CatalogName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 40, Col: 143}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 41, Col: 143}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 		if templ_7745c5c3_Err != nil {
@@ -146,7 +147,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var10 string
 		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 52, Col: 29}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 53, Col: 29}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 		if templ_7745c5c3_Err != nil {
@@ -159,7 +160,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalTables))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 71, Col: 46}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 72, Col: 46}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -177,7 +178,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(table.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 109, Col: 32}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 110, Col: 32}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -190,7 +191,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(data.CatalogName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 115, Col: 55}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 116, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -203,7 +204,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 115, Col: 78}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 116, Col: 78}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -216,7 +217,7 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(table.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 115, Col: 93}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 116, Col: 93}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -226,105 +227,99 @@ func IcebergTables(data dash.IcebergTablesData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			var templ_7745c5c3_Var16 string
-			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(table.CreatedAt.Format("2006-01-02 15:04"))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 117, Col: 59}
+			if table.CreatedAt.IsZero() {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "<span class=\"text-muted\">-</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				var templ_7745c5c3_Var16 string
+				templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(table.CreatedAt.Format("2006-01-02 15:04"))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 122, Col: 57}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "</td><td><div class=\"btn-group btn-group-sm\" role=\"group\"><a class=\"btn btn-outline-primary btn-sm\" href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var17 templ.SafeURL
-			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", data.CatalogName, data.NamespaceName, table.Name)))
+			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(table.Name))))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 120, Col: 190}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 127, Col: 238}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, "\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm iceberg-delete-table-btn\" data-bucket-arn=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\" title=\"View Details\"><i class=\"fas fa-eye\"></i></a> <button type=\"button\" class=\"btn btn-outline-danger btn-sm iceberg-delete-table-btn\" data-bucket-arn=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 123, Col: 130}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 130, Col: 130}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "\" data-namespace=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" data-namespace=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 123, Col: 168}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 130, Col: 168}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "\" data-table-name=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" data-table-name=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(table.Name)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 123, Col: 199}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 130, Col: 199}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "\" title=\"Drop Table\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" data-catalog-name=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var21 string
+			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(data.CatalogName)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/iceberg_tables.templ`, Line: 130, Col: 238}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\" title=\"Drop Table\"><i class=\"fas fa-trash\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
 		if len(data.Tables) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"fas fa-table fa-3x mb-3 text-muted\"></i><div><h5>No tables found</h5><p>Create tables via the Iceberg REST API.</p></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<tr><td colspan=\"5\" class=\"text-center text-muted py-4\"><i class=\"fas fa-table fa-3x mb-3 text-muted\"></i><div><h5>No tables found</h5><p>Create tables via the Iceberg REST API.</p></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createIcebergTableModal\" tabindex=\"-1\" aria-labelledby=\"createIcebergTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createIcebergTableModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createIcebergTableForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"icebergTableBucketArn\" value=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var21 string
-		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(data.BucketARN)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 160, Col: 76}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "\"> <input type=\"hidden\" id=\"icebergTableNamespace\" value=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var22 string
-		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(data.NamespaceName)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/iceberg_tables.templ`, Line: 161, Col: 80}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\"><div class=\"mb-3\"><label for=\"icebergTableName\" class=\"form-label\">Table Name</label> <input type=\"text\" class=\"form-control\" id=\"icebergTableName\" name=\"name\" required></div><div class=\"mb-3\"><label for=\"icebergTableFormat\" class=\"form-label\">Format</label> <select class=\"form-select\" id=\"icebergTableFormat\" name=\"format\"><option value=\"ICEBERG\" selected>ICEBERG</option></select></div><div class=\"mb-3\"><label for=\"icebergTableMetadata\" class=\"form-label\">Metadata JSON (optional)</label> <textarea class=\"form-control\" id=\"icebergTableMetadata\" name=\"metadata\" rows=\"6\" placeholder=\"{ }\"></textarea></div><div class=\"mb-3\"><label for=\"icebergTableTags\" class=\"form-label\">Tags</label> <input type=\"text\" class=\"form-control\" id=\"icebergTableTags\" name=\"tags\" placeholder=\"key1=value1,key2=value2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteIcebergTableModal\" tabindex=\"-1\" aria-labelledby=\"deleteIcebergTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteIcebergTableModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Drop Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to drop the table <strong id=\"deleteIcebergTableName\"></strong>?</p><div class=\"mb-3\"><label for=\"deleteIcebergTableVersion\" class=\"form-label\">Version Token (optional)</label> <input type=\"text\" class=\"form-control\" id=\"deleteIcebergTableVersion\" placeholder=\"Version token\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteIcebergTable()\"><i class=\"fas fa-trash me-1\"></i>Drop Table</button></div></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitIcebergTables();\n\t\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "</tbody></table></div></div></div></div></div></div><div class=\"modal fade\" id=\"createIcebergTableModal\" tabindex=\"-1\" aria-labelledby=\"createIcebergTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog modal-lg\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"createIcebergTableModalLabel\"><i class=\"fas fa-plus me-2\"></i>Create Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><form id=\"createIcebergTableForm\"><div class=\"modal-body\"><input type=\"hidden\" id=\"icebergTableCsrfToken\" name=\"csrf_token\"><div class=\"mb-3\"><label for=\"icebergTableName\" class=\"form-label\">Table Name</label> <input type=\"text\" class=\"form-control\" id=\"icebergTableName\" name=\"name\" required></div><div class=\"mb-3\"><label for=\"icebergTableFormat\" class=\"form-label\">Format</label> <select class=\"form-select\" id=\"icebergTableFormat\" name=\"format\"><option value=\"ICEBERG\" selected>ICEBERG</option></select></div><div class=\"mb-3\"><label for=\"icebergTableMetadata\" class=\"form-label\">Metadata JSON (optional)</label> <textarea class=\"form-control\" id=\"icebergTableMetadata\" name=\"metadata\" rows=\"6\" placeholder=\"{ }\"></textarea></div><div class=\"mb-3\"><label for=\"icebergTableTags\" class=\"form-label\">Tags</label> <input type=\"text\" class=\"form-control\" id=\"icebergTableTags\" name=\"tags\" placeholder=\"key1=value1,key2=value2\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"submit\" class=\"btn btn-primary\"><i class=\"fas fa-plus me-1\"></i>Create</button></div></form></div></div></div><div class=\"modal fade\" id=\"deleteIcebergTableModal\" tabindex=\"-1\" aria-labelledby=\"deleteIcebergTableModalLabel\" aria-hidden=\"true\"><div class=\"modal-dialog\"><div class=\"modal-content\"><div class=\"modal-header\"><h5 class=\"modal-title\" id=\"deleteIcebergTableModalLabel\"><i class=\"fas fa-exclamation-triangle me-2 text-warning\"></i>Drop Table</h5><button type=\"button\" class=\"btn-close\" data-bs-dismiss=\"modal\" aria-label=\"Close\"></button></div><div class=\"modal-body\"><p>Are you sure you want to drop the table <strong id=\"deleteIcebergTableName\"></strong>?</p><div class=\"mb-3\"><label for=\"deleteIcebergTableVersion\" class=\"form-label\">Version Token (optional)</label> <input type=\"text\" class=\"form-control\" id=\"deleteIcebergTableVersion\" placeholder=\"Version token\"></div></div><div class=\"modal-footer\"><button type=\"button\" class=\"btn btn-secondary\" data-bs-dismiss=\"modal\">Cancel</button> <button type=\"button\" class=\"btn btn-danger\" onclick=\"deleteIcebergTable()\"><i class=\"fas fa-trash me-1\"></i>Drop Table</button></div></div></div></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function() {\n\t\t\tinitIcebergTables();\n\t\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

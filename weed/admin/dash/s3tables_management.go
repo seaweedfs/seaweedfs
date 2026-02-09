@@ -25,6 +25,7 @@ type S3TablesBucketsData struct {
 	Username     string                  `json:"username"`
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
+	IcebergPort  int                     `json:"iceberg_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -134,6 +135,7 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 	return S3TablesBucketsData{
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
+		IcebergPort:  s.icebergPort,
 		LastUpdated:  time.Now(),
 	}, nil
 }
@@ -302,10 +304,10 @@ type icebergSchema struct {
 }
 
 type icebergSchemaField struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
 }
 
 type icebergPartitionSpec struct {
@@ -363,6 +365,21 @@ func applyIcebergMetadata(metadata *s3tables.TableMetadata, details *IcebergTabl
 	}
 }
 
+func typeToString(t json.RawMessage) json.RawMessage {
+	if t == nil || len(t) == 0 {
+		return json.RawMessage(`(complex)`)
+	}
+	var primitive string
+	if err := json.Unmarshal(t, &primitive); err == nil {
+		return json.RawMessage(primitive)
+	}
+	var v interface{}
+	if err := json.Unmarshal(t, &v); err != nil {
+		return json.RawMessage(`(complex)`)
+	}
+	return json.RawMessage(`(complex)`)
+}
+
 func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
 	if schema := selectSchema(full); schema != nil {
 		fields := make([]IcebergSchemaFieldInfo, 0, len(schema.Fields))
@@ -370,7 +387,7 @@ func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.I
 			fields = append(fields, IcebergSchemaFieldInfo{
 				ID:       field.ID,
 				Name:     field.Name,
-				Type:     field.Type,
+				Type:     typeToString(field.Type),
 				Required: field.Required,
 			})
 		}
@@ -385,9 +402,15 @@ func schemaFieldsFromIceberg(metadata *s3tables.IcebergMetadata) []IcebergSchema
 	}
 	fields := make([]IcebergSchemaFieldInfo, 0, len(metadata.Schema.Fields))
 	for _, field := range metadata.Schema.Fields {
+		typeBytes, err := json.Marshal(field.Type)
+		if err != nil {
+			typeBytes = json.RawMessage(`(complex)`)
+		} else {
+			typeBytes = typeToString(typeBytes)
+		}
 		fields = append(fields, IcebergSchemaFieldInfo{
 			Name:     field.Name,
-			Type:     field.Type,
+			Type:     typeBytes,
 			Required: field.Required,
 		})
 	}
@@ -401,11 +424,9 @@ func selectSchema(full icebergFullMetadata) *icebergSchema {
 	if len(full.Schemas) == 0 {
 		return full.Schema
 	}
-	if full.CurrentSchemaID != 0 {
-		for i := range full.Schemas {
-			if full.Schemas[i].SchemaID == full.CurrentSchemaID {
-				return &full.Schemas[i]
-			}
+	for i := range full.Schemas {
+		if full.Schemas[i].SchemaID == full.CurrentSchemaID {
+			return &full.Schemas[i]
 		}
 	}
 	return &full.Schemas[0]
@@ -419,12 +440,10 @@ func partitionFieldsFromFullMetadata(full icebergFullMetadata) []IcebergPartitio
 	if len(full.PartitionSpecs) == 0 {
 		spec = full.PartitionSpec
 	} else {
-		if full.DefaultSpecID != 0 {
-			for i := range full.PartitionSpecs {
-				if full.PartitionSpecs[i].SpecID == full.DefaultSpecID {
-					spec = &full.PartitionSpecs[i]
-					break
-				}
+		for i := range full.PartitionSpecs {
+			if full.PartitionSpecs[i].SpecID == full.DefaultSpecID {
+				spec = &full.PartitionSpecs[i]
+				break
 			}
 		}
 		if spec == nil {
@@ -466,11 +485,13 @@ func snapshotsFromFullMetadata(snapshots []icebergSnapshot) []IcebergSnapshotInf
 	if len(snapshots) == 0 {
 		return nil
 	}
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].TimestampMs > snapshots[j].TimestampMs
+	sorted := make([]icebergSnapshot, len(snapshots))
+	copy(sorted, snapshots)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].TimestampMs > sorted[j].TimestampMs
 	})
-	info := make([]IcebergSnapshotInfo, 0, len(snapshots))
-	for _, snapshot := range snapshots {
+	info := make([]IcebergSnapshotInfo, 0, len(sorted))
+	for _, snapshot := range sorted {
 		operation := ""
 		if snapshot.Summary != nil {
 			operation = snapshot.Summary["operation"]
@@ -493,20 +514,18 @@ func selectSnapshotForMetrics(full icebergFullMetadata) *icebergSnapshot {
 	if len(full.Snapshots) == 0 {
 		return nil
 	}
-	if full.CurrentSnapshotID != 0 {
-		for i := range full.Snapshots {
-			if full.Snapshots[i].SnapshotID == full.CurrentSnapshotID {
-				return &full.Snapshots[i]
-			}
+	for i := range full.Snapshots {
+		if full.Snapshots[i].SnapshotID == full.CurrentSnapshotID {
+			return &full.Snapshots[i]
 		}
 	}
-	latest := full.Snapshots[0]
-	for _, snapshot := range full.Snapshots[1:] {
-		if snapshot.TimestampMs > latest.TimestampMs {
-			latest = snapshot
+	latestIdx := 0
+	for i := 1; i < len(full.Snapshots); i++ {
+		if full.Snapshots[i].TimestampMs > full.Snapshots[latestIdx].TimestampMs {
+			latestIdx = i
 		}
 	}
-	return &latest
+	return &full.Snapshots[latestIdx]
 }
 
 func parseSummaryInt(summary map[string]string, keys ...string) (int64, bool) {
@@ -652,6 +671,9 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 }
 
 func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Name      string `json:"name"`
@@ -674,6 +696,9 @@ func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 }
 
 func (s *AdminServer) DeleteS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	bucketArn := c.Query("bucket")
 	namespace := c.Query("name")
 	if bucketArn == "" || namespace == "" {

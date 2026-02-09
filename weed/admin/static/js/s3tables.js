@@ -5,11 +5,18 @@
 // Shared Modals
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
-let s3tablesNamespaceDeleteModal = null;
 let s3tablesTableDeleteModal = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
+
+function getCSRFToken() {
+    const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+    if (!tokenMeta) {
+        return '';
+    }
+    return tokenMeta.getAttribute('content') || '';
+}
 
 /**
  * Initialize S3 Tables Buckets Page
@@ -41,6 +48,12 @@ function initS3TablesBuckets() {
             }
         });
     }
+    const bucketNameInput = document.getElementById('s3tablesBucketName');
+    if (bucketNameInput) {
+        bucketNameInput.addEventListener('input', function () {
+            applyS3TablesBucketNameValidity(this, true);
+        });
+    }
 
     document.querySelectorAll('.s3tables-delete-bucket-btn').forEach(button => {
         button.addEventListener('click', function () {
@@ -70,7 +83,13 @@ function initS3TablesBuckets() {
     if (createForm) {
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('s3tablesBucketName').value.trim();
+            const bucketNameInput = document.getElementById('s3tablesBucketName');
+            const name = bucketNameInput.value.trim();
+            const nameError = applyS3TablesBucketNameValidity(bucketNameInput, false);
+            if (nameError) {
+                bucketNameInput.reportValidity();
+                return;
+            }
             const owner = ownerSelect.value;
             const tagsInput = document.getElementById('s3tablesBucketTags').value.trim();
             const tags = parseTagsInput(tagsInput);
@@ -179,9 +198,21 @@ function initS3TablesTables() {
 
     const createForm = document.getElementById('createS3TablesTableForm');
     if (createForm) {
+        const tableNameInput = document.getElementById('s3tablesTableName');
+        if (tableNameInput) {
+            tableNameInput.addEventListener('input', function () {
+                applyS3TablesTableNameValidity(this, true);
+            });
+        }
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('s3tablesTableName').value.trim();
+            const tableNameInput = document.getElementById('s3tablesTableName');
+            const name = tableNameInput.value.trim();
+            const nameError = applyS3TablesTableNameValidity(tableNameInput, false);
+            if (nameError) {
+                tableNameInput.reportValidity();
+                return;
+            }
             const format = document.getElementById('s3tablesTableFormat').value;
             const metadataText = document.getElementById('s3tablesTableMetadata').value.trim();
             const tagsInput = document.getElementById('s3tablesTableTags').value.trim();
@@ -270,20 +301,38 @@ function initIcebergNamespaces() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const catalogName = container.dataset.catalogName || '';
+    const csrfTokenInput = document.getElementById('icebergNamespaceCsrfToken');
+    if (csrfTokenInput) {
+        csrfTokenInput.value = getCSRFToken();
+    }
+
+    const namespaceInput = document.getElementById('icebergNamespaceName');
+    if (namespaceInput) {
+        namespaceInput.addEventListener('input', function () {
+            applyS3TablesNamespaceNameValidity(this, true);
+        });
+    }
 
     const createForm = document.getElementById('createIcebergNamespaceForm');
     if (createForm) {
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('icebergNamespaceName').value.trim();
-            if (!name) {
-                alert('Namespace name is required');
+            const namespaceInput = document.getElementById('icebergNamespaceName');
+            const name = namespaceInput.value.trim();
+            const nameError = applyS3TablesNamespaceNameValidity(namespaceInput, false);
+            if (nameError) {
+                namespaceInput.reportValidity();
                 return;
             }
             try {
+                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
+                const headers = { 'Content-Type': 'application/json' };
+                if (csrfToken) {
+                    headers['X-CSRF-Token'] = csrfToken;
+                }
                 const response = await fetch('/api/s3tables/namespaces', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify({ bucket_arn: bucketArn, name: name })
                 });
                 const data = await response.json();
@@ -307,9 +356,16 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
     nodes.forEach(node => {
         node.addEventListener('show.bs.collapse', async function () {
             if (node.dataset.loaded === 'true') return;
-            node.dataset.loaded = 'true';
-            node.innerHTML = '<div class="text-muted small">Loading...</div>';
-            await loadIcebergNamespaceTables(node, bucketArn, catalogName);
+            node.textContent = 'Loading...';
+            node.className = 'text-muted small';
+            try {
+                await loadIcebergNamespaceTables(node, bucketArn, catalogName);
+                node.dataset.loaded = 'true';
+            } catch (error) {
+                node.textContent = 'Failed to load. Collapse and expand to retry.';
+                node.className = 'text-danger small';
+                console.error('Error loading namespace tables:', error);
+            }
         });
     });
 }
@@ -317,22 +373,26 @@ function initIcebergNamespaceTree(container, bucketArn, catalogName) {
 async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
     const namespace = node.dataset.namespace || '';
     if (!bucketArn || !namespace) {
-        node.innerHTML = '<div class="text-muted small">No namespace data available.</div>';
-        return;
+        node.textContent = 'No namespace data available.';
+        node.className = 'text-muted small';
+        throw new Error('Missing bucket or namespace');
     }
     try {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace });
         const response = await fetch(`/api/s3tables/tables?${query.toString()}`);
         const data = await response.json();
         if (!response.ok) {
-            node.innerHTML = `<div class="text-danger small">${data.error || 'Failed to load tables'}</div>`;
-            return;
+            node.textContent = data.error || 'Failed to load tables';
+            node.className = 'text-danger small';
+            throw new Error(data.error || 'Failed to load tables');
         }
         const tables = data.tables || [];
         if (tables.length === 0) {
-            node.innerHTML = '<div class="text-muted small ms-3">No tables found.</div>';
+            node.textContent = 'No tables found.';
+            node.className = 'text-muted small ms-3';
             return;
         }
+        node.innerHTML = '';
         const list = document.createElement('ul');
         list.className = 'list-group list-group-flush ms-3';
         tables.forEach(table => {
@@ -340,15 +400,23 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             item.className = 'list-group-item py-1';
             const link = document.createElement('a');
             link.className = 'text-decoration-none';
-            link.href = `/object-store/iceberg/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
-            link.innerHTML = `<i class="fas fa-table text-primary me-2"></i>${table.name}`;
+            link.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-table text-primary me-2';
+            link.appendChild(icon);
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = table.name;
+            link.appendChild(nameSpan);
             item.appendChild(link);
             list.appendChild(item);
         });
-        node.innerHTML = '';
         node.appendChild(list);
     } catch (error) {
-        node.innerHTML = `<div class="text-danger small">${error.message}</div>`;
+        if (!node.textContent) {
+            node.textContent = 'Failed to load tables: ' + (error.message || 'Unknown error');
+            node.className = 'text-danger small';
+        }
+        throw error;
     }
 }
 
@@ -360,14 +428,30 @@ function initIcebergTables() {
     if (!container) return;
     const bucketArn = container.dataset.bucketArn || '';
     const namespace = container.dataset.namespace || '';
+    const csrfTokenInput = document.getElementById('icebergTableCsrfToken');
+    if (csrfTokenInput) {
+        csrfTokenInput.value = getCSRFToken();
+    }
 
     initIcebergDeleteModal();
 
     const createForm = document.getElementById('createIcebergTableForm');
     if (createForm) {
+        const tableNameInput = document.getElementById('icebergTableName');
+        if (tableNameInput) {
+            tableNameInput.addEventListener('input', function () {
+                applyS3TablesTableNameValidity(this, true);
+            });
+        }
         createForm.addEventListener('submit', async function (e) {
             e.preventDefault();
-            const name = document.getElementById('icebergTableName').value.trim();
+            const tableNameInput = document.getElementById('icebergTableName');
+            const name = tableNameInput.value.trim();
+            const nameError = applyS3TablesTableNameValidity(tableNameInput, false);
+            if (nameError) {
+                tableNameInput.reportValidity();
+                return;
+            }
             const format = document.getElementById('icebergTableFormat').value;
             const metadataText = document.getElementById('icebergTableMetadata').value.trim();
             const tagsInput = document.getElementById('icebergTableTags').value.trim();
@@ -387,9 +471,14 @@ function initIcebergTables() {
                 payload.metadata = metadata;
             }
             try {
+                const csrfToken = csrfTokenInput ? csrfTokenInput.value : getCSRFToken();
+                const headers = { 'Content-Type': 'application/json' };
+                if (csrfToken) {
+                    headers['X-CSRF-Token'] = csrfToken;
+                }
                 const response = await fetch('/api/s3tables/tables', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: headers,
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
@@ -422,6 +511,7 @@ function initIcebergDeleteModal() {
             modalEl.dataset.bucketArn = this.dataset.bucketArn || '';
             modalEl.dataset.namespace = this.dataset.namespace || '';
             modalEl.dataset.tableName = this.dataset.tableName || '';
+            modalEl.dataset.catalogName = this.dataset.catalogName || '';
             document.getElementById('deleteIcebergTableName').textContent = this.dataset.tableName || '';
             document.getElementById('deleteIcebergTableVersion').value = '';
             icebergTableDeleteModal.show();
@@ -514,6 +604,7 @@ async function deleteIcebergTable() {
     const bucketArn = modalEl.dataset.bucketArn || '';
     const namespace = modalEl.dataset.namespace || '';
     const tableName = modalEl.dataset.tableName || '';
+    const catalogName = modalEl.dataset.catalogName || '';
     const versionToken = document.getElementById('deleteIcebergTableVersion').value.trim();
     if (!bucketArn || !namespace || !tableName) return;
     const query = new URLSearchParams({
@@ -525,14 +616,24 @@ async function deleteIcebergTable() {
         query.set('version', versionToken);
     }
     try {
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, { method: 'DELETE' });
+        const csrfToken = getCSRFToken();
+        const requestOptions = { method: 'DELETE' };
+        if (csrfToken) {
+            requestOptions.headers = { 'X-CSRF-Token': csrfToken };
+        }
+        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, requestOptions);
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to drop table');
             return;
         }
         alert('Table dropped');
-        location.reload();
+        const isDetailsPage = window.location.pathname.includes('/tables/') && window.location.pathname.includes('/namespaces/');
+        if (isDetailsPage && catalogName && namespace) {
+            window.location.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
+        } else {
+            location.reload();
+        }
     } catch (error) {
         alert('Failed to drop table: ' + error.message);
     }
@@ -570,6 +671,131 @@ async function deleteS3TablesTablePolicy() {
     } catch (error) {
         alert('Failed to delete policy: ' + error.message);
     }
+}
+
+function isLowercaseLetterOrDigit(ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
+}
+
+function s3TablesBucketNameError(name) {
+    if (!name) {
+        return 'Bucket name is required';
+    }
+    if (name.length < 3 || name.length > 63) {
+        return 'Bucket name must be between 3 and 63 characters';
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Bucket name must start with a letter or digit';
+    }
+    if (!isLowercaseLetterOrDigit(name[name.length - 1])) {
+        return 'Bucket name must end with a letter or digit';
+    }
+    for (let i = 0; i < name.length; i++) {
+        const ch = name[i];
+        if (isLowercaseLetterOrDigit(ch) || ch === '-') {
+            continue;
+        }
+        return 'Bucket name can only contain lowercase letters, numbers, and hyphens';
+    }
+    const reservedPrefixes = ['xn--', 'sthree-', 'amzn-s3-demo-', 'aws'];
+    for (const prefix of reservedPrefixes) {
+        if (name.startsWith(prefix)) {
+            return `Bucket name cannot start with reserved prefix: ${prefix}`;
+        }
+    }
+    const reservedSuffixes = ['-s3alias', '--ol-s3', '--x-s3', '--table-s3'];
+    for (const suffix of reservedSuffixes) {
+        if (name.endsWith(suffix)) {
+            return `Bucket name cannot end with reserved suffix: ${suffix}`;
+        }
+    }
+    return '';
+}
+
+function s3TablesNamespaceNameError(name) {
+    if (!name) {
+        return 'Namespace name is required';
+    }
+    if (name.length < 1 || name.length > 255) {
+        return 'Namespace name must be between 1 and 255 characters';
+    }
+    if (name === '.' || name === '..') {
+        return "namespace name cannot be '.' or '..'";
+    }
+    if (name.includes('/')) {
+        return "namespace name cannot contain '/'";
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Namespace name must start with a letter or digit';
+    }
+    if (!isLowercaseLetterOrDigit(name[name.length - 1])) {
+        return 'Namespace name must end with a letter or digit';
+    }
+    for (const ch of name) {
+        if (isLowercaseLetterOrDigit(ch) || ch === '_') {
+            continue;
+        }
+        return "invalid namespace name: only 'a-z', '0-9', and '_' are allowed";
+    }
+    if (name.startsWith('aws')) {
+        return "namespace name cannot start with reserved prefix 'aws'";
+    }
+    return '';
+}
+
+function s3TablesTableNameError(name) {
+    if (!name) {
+        return 'Table name is required';
+    }
+    if (name.length < 1 || name.length > 255) {
+        return 'Table name must be between 1 and 255 characters';
+    }
+    if (name === '.' || name === '..' || name.includes('/')) {
+        return "invalid table name: cannot be '.', '..' or contain '/'";
+    }
+    if (!isLowercaseLetterOrDigit(name[0])) {
+        return 'Table name must start with a letter or digit';
+    }
+    for (const ch of name) {
+        if (isLowercaseLetterOrDigit(ch) || ch === '_') {
+            continue;
+        }
+        return "invalid table name: only 'a-z', '0-9', and '_' are allowed";
+    }
+    return '';
+}
+
+function applyS3TablesBucketNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesBucketNameError(name);
+    input.setCustomValidity(message);
+    return message;
+}
+
+function applyS3TablesNamespaceNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesNamespaceNameError(name);
+    input.setCustomValidity(message);
+    return message;
+}
+
+function applyS3TablesTableNameValidity(input, allowEmpty) {
+    const name = input.value.trim();
+    if (allowEmpty && name === '') {
+        input.setCustomValidity('');
+        return '';
+    }
+    const message = s3TablesTableNameError(name);
+    input.setCustomValidity(message);
+    return message;
 }
 
 function parseTagsInput(input) {

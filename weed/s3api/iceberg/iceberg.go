@@ -370,18 +370,14 @@ func buildTableBucketARN(bucketName string) string {
 
 // handleConfig returns catalog configuration.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	glog.Infof("handleConfig: START")
-	glog.Infof("handleConfig: setting Content-Type header")
 	w.Header().Set("Content-Type", "application/json")
 	config := CatalogConfig{
 		Defaults:  map[string]string{},
 		Overrides: map[string]string{},
 	}
-	glog.Infof("handleConfig: encoding JSON")
 	if err := json.NewEncoder(w).Encode(config); err != nil {
 		glog.Warningf("handleConfig: Failed to encode config: %v", err)
 	}
-	glog.Infof("handleConfig: COMPLETE")
 }
 
 // handleListNamespaces lists namespaces in a catalog.

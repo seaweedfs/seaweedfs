@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
 		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
 		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		protected.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables/:table", h.ShowS3TablesTableDetails)
 		protected.GET("/object-store/iceberg", h.ShowIcebergCatalog)
 		protected.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
 		protected.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
@@ -263,6 +265,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/object-store/s3tables/buckets", h.ShowS3TablesBuckets)
 		r.GET("/object-store/s3tables/buckets/:bucket/namespaces", h.ShowS3TablesNamespaces)
 		r.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables", h.ShowS3TablesTables)
+		r.GET("/object-store/s3tables/buckets/:bucket/namespaces/:namespace/tables/:table", h.ShowS3TablesTableDetails)
 		r.GET("/object-store/iceberg", h.ShowIcebergCatalog)
 		r.GET("/object-store/iceberg/:catalog/namespaces", h.ShowIcebergNamespaces)
 		r.GET("/object-store/iceberg/:catalog/namespaces/:namespace/tables", h.ShowIcebergTables)
@@ -532,6 +535,32 @@ func (h *AdminHandlers) ShowS3TablesTables(c *gin.Context) {
 	}
 }
 
+// ShowS3TablesTableDetails renders Iceberg table metadata and snapshot details on the merged S3 Tables path.
+func (h *AdminHandlers) ShowS3TablesTableDetails(c *gin.Context) {
+	bucketName := c.Param("bucket")
+	namespace := c.Param("namespace")
+	tableName := c.Param("table")
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	data, err := h.adminServer.GetIcebergTableDetailsData(c.Request.Context(), bucketName, arn, namespace, tableName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get table details: " + err.Error()})
+		return
+	}
+	data.Username = h.getUsername(c)
+
+	c.Header("Content-Type", "text/html")
+	component := app.IcebergTableDetails(data)
+	layoutComponent := layout.Layout(c, component)
+	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	}
+}
+
 func buildS3TablesBucketArn(bucketName string) (string, error) {
 	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
 }
@@ -545,96 +574,30 @@ func (h *AdminHandlers) getUsername(c *gin.Context) string {
 	return username
 }
 
-// ShowIcebergCatalog renders the Iceberg Catalog overview page
+// ShowIcebergCatalog redirects legacy Iceberg catalog URL to the merged S3 Tables buckets page.
 func (h *AdminHandlers) ShowIcebergCatalog(c *gin.Context) {
-	data, err := h.adminServer.GetIcebergCatalogData(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg catalog data: " + err.Error()})
-		return
-	}
-	data.Username = h.getUsername(c)
-
-	c.Header("Content-Type", "text/html")
-	component := app.IcebergCatalog(data)
-	layoutComponent := layout.Layout(c, component)
-	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-	}
+	c.Redirect(http.StatusMovedPermanently, "/object-store/s3tables/buckets")
 }
 
-// ShowIcebergNamespaces renders namespaces for an Iceberg catalog
+// ShowIcebergNamespaces redirects legacy Iceberg namespaces URL to the merged S3 Tables namespaces page.
 func (h *AdminHandlers) ShowIcebergNamespaces(c *gin.Context) {
 	catalogName := c.Param("catalog")
-	arn, err := buildS3TablesBucketArn(catalogName)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	data, err := h.adminServer.GetIcebergNamespacesData(c.Request.Context(), catalogName, arn)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg namespaces: " + err.Error()})
-		return
-	}
-	data.Username = h.getUsername(c)
-
-	c.Header("Content-Type", "text/html")
-	component := app.IcebergNamespaces(data)
-	layoutComponent := layout.Layout(c, component)
-	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-	}
+	c.Redirect(http.StatusMovedPermanently, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces")
 }
 
-// ShowIcebergTables renders tables for an Iceberg namespace
+// ShowIcebergTables redirects legacy Iceberg tables URL to the merged S3 Tables tables page.
 func (h *AdminHandlers) ShowIcebergTables(c *gin.Context) {
 	catalogName := c.Param("catalog")
 	namespace := c.Param("namespace")
-	arn, err := buildS3TablesBucketArn(catalogName)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	data, err := h.adminServer.GetIcebergTablesData(c.Request.Context(), catalogName, arn, namespace)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg tables: " + err.Error()})
-		return
-	}
-	data.Username = h.getUsername(c)
-
-	c.Header("Content-Type", "text/html")
-	component := app.IcebergTables(data)
-	layoutComponent := layout.Layout(c, component)
-	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-	}
+	c.Redirect(http.StatusMovedPermanently, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables")
 }
 
-// ShowIcebergTableDetails renders the table metadata and snapshot details view.
+// ShowIcebergTableDetails redirects legacy Iceberg table details URL to the merged S3 Tables details page.
 func (h *AdminHandlers) ShowIcebergTableDetails(c *gin.Context) {
 	catalogName := c.Param("catalog")
 	namespace := c.Param("namespace")
 	tableName := c.Param("table")
-	arn, err := buildS3TablesBucketArn(catalogName)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	data, err := h.adminServer.GetIcebergTableDetailsData(c.Request.Context(), catalogName, arn, namespace, tableName)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get Iceberg table details: " + err.Error()})
-		return
-	}
-	data.Username = h.getUsername(c)
-
-	c.Header("Content-Type", "text/html")
-	component := app.IcebergTableDetails(data)
-	layoutComponent := layout.Layout(c, component)
-	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
-	}
+	c.Redirect(http.StatusMovedPermanently, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables/"+url.PathEscape(tableName))
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket

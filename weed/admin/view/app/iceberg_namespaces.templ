@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
@@ -89,10 +90,10 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 								<li class="list-group-item">
 									{{ namespaceID := fmt.Sprintf("iceberg-namespace-%d", idx) }}
 									<div class="d-flex align-items-center justify-content-between">
-										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ templ.SafeURL("#" + namespaceID) } aria-expanded="false" aria-controls={ namespaceID }>
+										<button class="btn btn-link p-0 text-decoration-none iceberg-namespace-toggle" type="button" data-bs-toggle="collapse" data-bs-target={ "#" + namespaceID } aria-expanded="false" aria-controls={ namespaceID }>
 											<i class="fas fa-folder text-warning me-2"></i>{ ns.Name }
 										</button>
-										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) }>
+										<a class="btn btn-sm btn-outline-primary" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))) }>
 											<i class="fas fa-table me-1"></i>Open
 										</a>
 									</div>
@@ -143,10 +144,16 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 											<td>
 												<code class="small">/v1/{ data.CatalogName }/namespaces/{ ns.Name }/tables</code>
 											</td>
-											<td>{ ns.CreatedAt.Format("2006-01-02 15:04") }</td>
+											<td>
+												if ns.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ ns.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
-													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", data.CatalogName, ns.Name)) } title="Browse Tables">
+													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables", url.PathEscape(data.CatalogName), url.PathEscape(ns.Name))) } title="Browse Tables">
 														<i class="fas fa-table"></i>
 													</a>
 												</div>
@@ -184,10 +191,11 @@ templ IcebergNamespaces(data dash.IcebergNamespacesData) {
 				<form id="createIcebergNamespaceForm">
 					<div class="modal-body">
 						<input type="hidden" id="icebergNamespaceBucketArn" name="bucket_arn" value={ data.BucketARN }/>
+						<input type="hidden" id="icebergNamespaceCsrfToken" name="csrf_token"/>
 						<div class="mb-3">
 							<label for="icebergNamespaceName" class="form-label">Namespace</label>
 							<input type="text" class="form-control" id="icebergNamespaceName" name="name" placeholder="analytics" required/>
-							<div class="form-text">Use dot-separated names for nested namespaces.</div>
+							<div class="form-text">Use lowercase letters, numbers, and underscores. Nested namespaces are not supported.</div>
 						</div>
 					</div>
 					<div class="modal-footer">

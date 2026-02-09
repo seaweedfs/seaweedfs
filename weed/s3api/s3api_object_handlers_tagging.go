@@ -21,6 +21,11 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectTaggingHandler %s %s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		glog.V(3).Infof("GetObjectTaggingHandler: table bucket path validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
@@ -105,6 +110,11 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectTaggingHandler %s %s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		glog.V(3).Infof("PutObjectTaggingHandler: table bucket path validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	tagging := &Tagging{}
 	input, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
@@ -263,6 +273,11 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteObjectTaggingHandler %s/%s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		glog.V(3).Infof("DeleteObjectTaggingHandler: table bucket path validation failed for %s/%s: %v", bucket, object, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
