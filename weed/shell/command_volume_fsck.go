@@ -198,7 +198,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
+			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
@@ -284,9 +284,15 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					if _, err := f.Write([]byte(i.path)); err != nil {
 						return err
 					}
-				} else if *c.findMissingChunksInFiler && len(c.volumeIds) == 0 {
+				} else if *c.findMissingChunksInFiler {
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
+						// check if the volume matches the filter
+						if len(c.volumeIds) > 0 {
+							if _, ok := c.volumeIds[i.vid]; !ok {
+								continue
+							}
+						}
 						fmt.Printf("deleting path %s after volume not found", i.path)
 						c.httpDelete(i.path)
 					}
