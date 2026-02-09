@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"time"
 
@@ -364,6 +365,11 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 
 	fmt.Printf("collect volumes with collection pattern '%s', quiet for: %d seconds and %.1f%% full\n", collectionPattern, quietSeconds, fullPercentage)
 
+	vids, matchedCollections = selectVolumeIdsFromTopology(topologyInfo, volumeSizeLimitMb, collectionRegex, sourceDiskType, quietSeconds, nowUnixSeconds, fullPercentage, verbose)
+	return
+}
+
+func selectVolumeIdsFromTopology(topologyInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, collectionRegex *regexp.Regexp, sourceDiskType *types.DiskType, quietSeconds int64, nowUnixSeconds int64, fullPercentage float64, verbose bool) (vids []needle.VolumeId, matchedCollections []string) {
 	// Statistics for verbose mode
 	var (
 		totalVolumes    int
@@ -397,7 +403,7 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern strin
 					wrongCollection++
 					if verbose {
 						fmt.Printf("skip volume %d on %s: collection doesn't match pattern (pattern: %s, actual: %s)\n",
-							v.Id, dn.Id, collectionPattern, v.Collection)
+							v.Id, dn.Id, collectionRegex.String(), v.Collection)
 					}
 					continue
 				}
