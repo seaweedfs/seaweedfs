@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -11,41 +10,40 @@ import (
 
 const defaultStorageClass = "STANDARD"
 
+var storageClassDefaults = map[string]string{
+	"STANDARD":            "ssd",
+	"REDUCED_REDUNDANCY":  "hdd",
+	"STANDARD_IA":         "hdd",
+	"ONEZONE_IA":          "hdd",
+	"INTELLIGENT_TIERING": "hdd",
+	"GLACIER":             "hdd",
+	"DEEP_ARCHIVE":        "hdd",
+	"OUTPOSTS":            "hdd",
+	"GLACIER_IR":          "hdd",
+	"SNOW":                "hdd",
+}
+
 func normalizeStorageClass(storageClass string) string {
 	return strings.ToUpper(strings.TrimSpace(storageClass))
 }
 
-func parseStorageClassDiskTypeMap(raw string) (map[string]string, error) {
+func loadStorageClassDiskTypeMap(overrides map[string]string) map[string]string {
 	mappings := make(map[string]string)
-	if strings.TrimSpace(raw) == "" {
-		return mappings, nil
+	normalizedOverrides := make(map[string]string)
+	for k, v := range overrides {
+		normalizedOverrides[normalizeStorageClass(k)] = v
 	}
-
-	for _, token := range strings.Split(raw, ",") {
-		token = strings.TrimSpace(token)
-		if token == "" {
+	for storageClass, defaultDiskType := range storageClassDefaults {
+		diskType := defaultDiskType
+		if v, ok := normalizedOverrides[storageClass]; ok {
+			diskType = strings.TrimSpace(v)
+		}
+		if diskType == "" {
 			continue
 		}
-
-		parts := strings.SplitN(token, "=", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid mapping %q, expected STORAGE_CLASS=diskType", token)
-		}
-
-		storageClass := normalizeStorageClass(parts[0])
-		if !validateStorageClass(storageClass) {
-			return nil, fmt.Errorf("invalid storage class %q in mapping %q", storageClass, token)
-		}
-
-		diskType := strings.TrimSpace(parts[1])
-		if diskType == "" {
-			return nil, fmt.Errorf("empty disk type in mapping %q", token)
-		}
-
 		mappings[storageClass] = diskType
 	}
-
-	return mappings, nil
+	return mappings
 }
 
 func resolveEffectiveStorageClass(header http.Header, entryExtended map[string][]byte) (string, s3err.ErrorCode) {

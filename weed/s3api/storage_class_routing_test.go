@@ -8,31 +8,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-func TestParseStorageClassDiskTypeMap(t *testing.T) {
-	mappings, err := parseStorageClassDiskTypeMap("STANDARD_IA=ssd,GLACIER=hdd")
-	if err != nil {
-		t.Fatalf("parseStorageClassDiskTypeMap returned error: %v", err)
-	}
+func TestLoadStorageClassDiskTypeMap(t *testing.T) {
+	mappings := loadStorageClassDiskTypeMap(map[string]string{
+		"STANDARD_IA": "nvme",
+	})
 
-	if got, want := mappings["STANDARD_IA"], "ssd"; got != want {
+	if got, want := mappings["STANDARD_IA"], "nvme"; got != want {
 		t.Fatalf("STANDARD_IA mapping mismatch: got %q want %q", got, want)
 	}
+	if got, want := mappings["STANDARD"], "ssd"; got != want {
+		t.Fatalf("STANDARD default mismatch: got %q want %q", got, want)
+	}
 	if got, want := mappings["GLACIER"], "hdd"; got != want {
-		t.Fatalf("GLACIER mapping mismatch: got %q want %q", got, want)
-	}
-}
-
-func TestParseStorageClassDiskTypeMapRejectsInvalidInput(t *testing.T) {
-	testCases := []string{
-		"INVALID=ssd",
-		"STANDARD_IA=",
-		"STANDARD_IA",
-	}
-
-	for _, tc := range testCases {
-		if _, err := parseStorageClassDiskTypeMap(tc); err == nil {
-			t.Fatalf("expected parse failure for %q", tc)
-		}
+		t.Fatalf("GLACIER default mismatch: got %q want %q", got, want)
 	}
 }
 

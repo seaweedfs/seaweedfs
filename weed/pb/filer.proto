@@ -357,6 +357,7 @@ message GetFilerConfigurationResponse {
     string filer_group = 13;
     int32 major_version = 14;
     int32 minor_version = 15;
+    map<string, string> storage_class_disk_type = 16;
 }
 
 message SubscribeMetadataRequest {

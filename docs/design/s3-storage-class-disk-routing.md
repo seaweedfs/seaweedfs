@@ -10,19 +10,25 @@ SeaweedFS already stores S3 `x-amz-storage-class` as object metadata, but write 
 
 ## Phase 1 (implemented in this PR)
 ### Scope
-1. Add S3 server option `storageClassDiskTypeMap` (`-s3.storageClassDiskTypeMap` in composite commands, `-storageClassDiskTypeMap` in standalone `weed s3`).
-2. Parse map format: `STORAGE_CLASS=diskType` comma-separated, e.g. `STANDARD_IA=ssd,GLACIER=hdd`.
-3. Resolve effective storage class from:
+1. Configure routing in `filer.toml`:
+   - section: `[s3.storage_class_disk_type]`
+   - keys: lowercase storage classes (e.g. `standard_ia = "hdd"`).
+2. Load this routing map from filer via gRPC (`GetFilerConfiguration`) so S3 instances use filer-provided config.
+3. Provide explicit defaults (when not set in `filer.toml`):
+   - `standard = "ssd"`
+   - all colder classes default to `"hdd"`.
+4. Resolve effective storage class from:
    - request header `X-Amz-Storage-Class`
    - fallback to stored entry metadata (when available)
    - fallback to `STANDARD`
-4. Apply mapped disk type on `AssignVolume` for `putToFiler` upload path.
-5. For multipart uploads, propagate storage class from upload metadata to part requests so part chunk allocation also follows routing.
+5. Apply mapped disk type on `AssignVolume` for `putToFiler` upload path.
+6. For multipart uploads, propagate storage class from upload metadata to part requests so part chunk allocation also follows routing.
 
 ### Behavior
-1. If mapping is empty or class is unmapped: unchanged behavior (`DiskType=""`).
-2. Invalid storage class in request header: return `InvalidStorageClass`.
-3. Metadata storage remains AWS-compatible (`X-Amz-Storage-Class` is still saved when explicitly provided).
+1. If class mapping is not configured explicitly in `filer.toml`, filer defaults are applied.
+2. If class is unknown to the routing table at runtime: unchanged behavior (`DiskType=""`).
+3. Invalid storage class in request header: return `InvalidStorageClass`.
+4. Metadata storage remains AWS-compatible (`X-Amz-Storage-Class` is still saved when explicitly provided).
 
 ## Phase 2 (next)
 1. Apply the same routing decision to server-side copy chunk allocation paths.
@@ -42,4 +48,3 @@ SeaweedFS already stores S3 `x-amz-storage-class` as object metadata, but write 
 1. Lifecycle-driven transitions (`STANDARD` -> `GLACIER` by age).
 2. Cost-aware placement balancing.
 3. Cross-cluster migration.
-

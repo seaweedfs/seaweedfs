@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -11,8 +12,36 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
+
+var storageClassDiskTypeDefaults = map[string]string{
+	"STANDARD":            "ssd",
+	"REDUCED_REDUNDANCY":  "hdd",
+	"STANDARD_IA":         "hdd",
+	"ONEZONE_IA":          "hdd",
+	"INTELLIGENT_TIERING": "hdd",
+	"GLACIER":             "hdd",
+	"DEEP_ARCHIVE":        "hdd",
+	"OUTPOSTS":            "hdd",
+	"GLACIER_IR":          "hdd",
+	"SNOW":                "hdd",
+}
+
+func loadStorageClassDiskTypeConfigFromViper(v util.Configuration) map[string]string {
+	mappings := make(map[string]string)
+	for storageClass, defaultDiskType := range storageClassDiskTypeDefaults {
+		key := "s3.storage_class_disk_type." + strings.ToLower(storageClass)
+		v.SetDefault(key, defaultDiskType)
+		diskType := strings.TrimSpace(v.GetString(key))
+		if diskType == "" {
+			continue
+		}
+		mappings[storageClass] = diskType
+	}
+	return mappings
+}
 
 func (fs *FilerServer) Statistics(ctx context.Context, req *filer_pb.StatisticsRequest) (resp *filer_pb.StatisticsResponse, err error) {
 
@@ -84,20 +113,22 @@ func (fs *FilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (res
 
 func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.GetFilerConfigurationRequest) (resp *filer_pb.GetFilerConfigurationResponse, err error) {
 
+	v := util.GetViper()
 	t := &filer_pb.GetFilerConfigurationResponse{
-		Masters:            fs.option.Masters.GetInstancesAsStrings(),
-		Collection:         fs.option.Collection,
-		Replication:        fs.option.DefaultReplication,
-		MaxMb:              uint32(fs.option.MaxMB),
-		DirBuckets:         fs.filer.DirBucketsPath,
-		Cipher:             fs.filer.Cipher,
-		Signature:          fs.filer.Signature,
-		MetricsAddress:     fs.metricsAddress,
-		MetricsIntervalSec: int32(fs.metricsIntervalSec),
-		Version:            version.Version(),
-		FilerGroup:         fs.option.FilerGroup,
-		MajorVersion:       version.MAJOR_VERSION,
-		MinorVersion:       version.MINOR_VERSION,
+		Masters:              fs.option.Masters.GetInstancesAsStrings(),
+		Collection:           fs.option.Collection,
+		Replication:          fs.option.DefaultReplication,
+		MaxMb:                uint32(fs.option.MaxMB),
+		DirBuckets:           fs.filer.DirBucketsPath,
+		Cipher:               fs.filer.Cipher,
+		Signature:            fs.filer.Signature,
+		MetricsAddress:       fs.metricsAddress,
+		MetricsIntervalSec:   int32(fs.metricsIntervalSec),
+		Version:              version.Version(),
+		FilerGroup:           fs.option.FilerGroup,
+		MajorVersion:         version.MAJOR_VERSION,
+		MinorVersion:         version.MINOR_VERSION,
+		StorageClassDiskType: loadStorageClassDiskTypeConfigFromViper(v),
 	}
 
 	glog.V(4).InfofCtx(ctx, "GetFilerConfiguration: %v", t)

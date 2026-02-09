@@ -241,7 +241,6 @@ func initMiniS3Flags() {
 	miniS3Options.iamReadOnly = miniS3IamReadOnly
 	miniS3Options.dataCenter = cmdMini.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
 	miniS3Options.cipher = cmdMini.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
-	miniS3Options.storageClassDiskTypeMap = cmdMini.Flag.String("s3.storageClassDiskTypeMap", "", "map S3 storage classes to filer disk types, e.g. STANDARD_IA=ssd,GLACIER=hdd")
 	miniS3Options.config = miniS3Config
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")

@@ -14,6 +14,21 @@
 recursive_delete = false
 #max_file_name_length = 255
 
+[s3.storage_class_disk_type]
+# Route S3 object writes to volume disk types by storage class.
+# Valid disk types are existing SeaweedFS disk tags, e.g. "hdd", "ssd", or custom tags.
+# Defaults: STANDARD on ssd, all colder tiers on hdd.
+standard = "ssd"
+reduced_redundancy = "hdd"
+standard_ia = "hdd"
+onezone_ia = "hdd"
+intelligent_tiering = "hdd"
+glacier = "hdd"
+deep_archive = "hdd"
+outposts = "hdd"
+glacier_ir = "hdd"
+snow = "hdd"
+
 ####################################################
 # The following are filer store options
 ####################################################
@@ -439,5 +454,4 @@ user = "guest"
 password = ""
 timeout = "5s"
 maxReconnects = 1000
-
 
