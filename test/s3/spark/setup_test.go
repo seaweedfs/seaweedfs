@@ -141,7 +141,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T) {
 	defer cancel()
 
 	req := testcontainers.ContainerRequest{
-		Image:        "apache/spark:3.5.8",
+		Image:        "apache/spark:3.5.1",
 		ExposedPorts: []string{"4040/tcp"},
 		Env: map[string]string{
 			"SPARK_LOCAL_IP": "localhost",
