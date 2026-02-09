@@ -1,11 +1,14 @@
 package s3api
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 )
@@ -131,4 +134,59 @@ func TestGetEntryNameAndDir(t *testing.T) {
 			assert.Equal(t, tt.expectedDirEnd, dirName, "directory mismatch")
 		})
 	}
+}
+
+func TestValidateCompletePartETag(t *testing.T) {
+	t.Run("matches_composite_etag_from_extended", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte("ea58527f14c6ae0dd53089966e44941b-2"),
+			},
+			Attributes: &filer_pb.FuseAttributes{},
+		}
+		match, invalid, part, stored := validateCompletePartETag(`"ea58527f14c6ae0dd53089966e44941b-2"`, entry)
+		assert.True(t, match)
+		assert.False(t, invalid)
+		assert.Equal(t, "ea58527f14c6ae0dd53089966e44941b-2", part)
+		assert.Equal(t, "ea58527f14c6ae0dd53089966e44941b-2", stored)
+	})
+
+	t.Run("matches_md5_from_attributes", func(t *testing.T) {
+		md5Bytes, err := hex.DecodeString("324b2665939fde5b8678d3a8b5c46970")
+		assert.NoError(t, err)
+		entry := &filer_pb.Entry{
+			Attributes: &filer_pb.FuseAttributes{
+				Md5: md5Bytes,
+			},
+		}
+		match, invalid, part, stored := validateCompletePartETag("324b2665939fde5b8678d3a8b5c46970", entry)
+		assert.True(t, match)
+		assert.False(t, invalid)
+		assert.Equal(t, "324b2665939fde5b8678d3a8b5c46970", part)
+		assert.Equal(t, "324b2665939fde5b8678d3a8b5c46970", stored)
+	})
+
+	t.Run("detects_mismatch", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte("67fdd2e302502ff9f9b606bc036e6892-2"),
+			},
+			Attributes: &filer_pb.FuseAttributes{},
+		}
+		match, invalid, _, _ := validateCompletePartETag("686f7d71bacdcd539dd4e17a0d7f1e5f-2", entry)
+		assert.False(t, match)
+		assert.False(t, invalid)
+	})
+
+	t.Run("flags_empty_client_etag_as_invalid", func(t *testing.T) {
+		entry := &filer_pb.Entry{
+			Extended: map[string][]byte{
+				s3_constants.ExtETagKey: []byte("67fdd2e302502ff9f9b606bc036e6892-2"),
+			},
+			Attributes: &filer_pb.FuseAttributes{},
+		}
+		match, invalid, _, _ := validateCompletePartETag(`""`, entry)
+		assert.False(t, match)
+		assert.True(t, invalid)
+	})
 }

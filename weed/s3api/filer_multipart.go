@@ -243,17 +243,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			continue
 		}
 		for _, partETag := range completedPartsByNumber {
-			partETag = strings.Trim(partETag, `"`)
-			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
-			if partETag != "" && len(partETag) == 32 && entryETag != "" {
-				if entryETag != partETag {
-					glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
-					stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
-					continue
-				}
-			} else {
-				glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
+			match, invalid, normalizedPartETag, normalizedEntryETag := validateCompletePartETag(partETag, entry)
+			if invalid {
+				glog.Warningf("invalid complete etag %s, storedEtag %s", normalizedPartETag, normalizedEntryETag)
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
+				continue
+			}
+			if !match {
+				glog.Errorf("completeMultipartUpload %s ETag mismatch stored: %s part: %s", entry.Name, normalizedEntryETag, normalizedPartETag)
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
+				continue
 			}
 			if len(entry.Chunks) == 0 && partNumber != maxPartNo {
 				glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
@@ -1000,4 +999,18 @@ func getEtagFromEntry(entry *filer_pb.Entry) string {
 	}
 	glog.V(4).Infof("getEtagFromEntry: fallback to filer.ETag for %s: %s, chunkCount: %d", entryName, etag, len(entry.Chunks))
 	return "\"" + etag + "\""
+}
+
+func validateCompletePartETag(partETag string, entry *filer_pb.Entry) (match bool, invalid bool, normalizedPartETag string, normalizedEntryETag string) {
+	normalizedPartETag = strings.Trim(strings.TrimSpace(partETag), `"`)
+	if normalizedPartETag == "" {
+		return false, true, normalizedPartETag, ""
+	}
+
+	normalizedEntryETag = strings.Trim(getEtagFromEntry(entry), `"`)
+	if normalizedEntryETag == "" {
+		return false, true, normalizedPartETag, normalizedEntryETag
+	}
+
+	return normalizedPartETag == normalizedEntryETag, false, normalizedPartETag, normalizedEntryETag
 }
