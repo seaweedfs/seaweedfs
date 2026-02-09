@@ -34,26 +34,35 @@ const (
 )
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
-	peers := make([]pb.ServerAddress, 0, len(mapPeers))
+	peerIDsMap := make(map[string]struct{}, len(mapPeers))
 	for _, peer := range mapPeers {
-		peers = append(peers, peer)
+		peerIDsMap[raftServerID(peer)] = struct{}{}
 	}
-	sort.Slice(peers, func(i, j int) bool {
-		return strings.Compare(string(peers[i]), string(peers[j])) < 0
+	peerIDs := make([]string, 0, len(peerIDsMap))
+	for peerID := range peerIDsMap {
+		peerIDs = append(peerIDs, peerID)
+	}
+	sort.Slice(peerIDs, func(i, j int) bool {
+		return strings.Compare(peerIDs[i], peerIDs[j]) < 0
 	})
-	for i, peer := range peers {
-		if string(peer) == string(self) {
+	selfID := raftServerID(self)
+	for i, peerID := range peerIDs {
+		if peerID == selfID {
 			return i
 		}
 	}
 	return -1
 }
 
+func raftServerID(server pb.ServerAddress) string {
+	return server.ToHttpAddress()
+}
+
 func (s *RaftServer) AddPeersConfiguration() (cfg raft.Configuration) {
 	for _, peer := range s.peers {
 		cfg.Servers = append(cfg.Servers, raft.Server{
 			Suffrage: raft.Voter,
-			ID:       raft.ServerID(peer),
+			ID:       raft.ServerID(raftServerID(peer)),
 			Address:  raft.ServerAddress(peer.ToGrpcAddress()),
 		})
 	}
@@ -98,7 +107,12 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 }
 
 func (s *RaftServer) updatePeers() {
-	peerLeader := string(s.serverAddr)
+	peerLeader := raftServerID(s.serverAddr)
+	desiredPeers := make(map[string]pb.ServerAddress, len(s.peers))
+	for _, peer := range s.peers {
+		desiredPeers[raftServerID(peer)] = peer
+	}
+
 	existsPeerName := make(map[string]bool)
 	for _, server := range s.RaftHashicorp.GetConfiguration().Configuration().Servers {
 		if string(server.ID) == peerLeader {
@@ -106,8 +120,7 @@ func (s *RaftServer) updatePeers() {
 		}
 		existsPeerName[string(server.ID)] = true
 	}
-	for _, peer := range s.peers {
-		peerName := string(peer)
+	for peerName, peer := range desiredPeers {
 		if peerName == peerLeader || existsPeerName[peerName] {
 			continue
 		}
@@ -116,12 +129,12 @@ func (s *RaftServer) updatePeers() {
 			raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
 	}
 	for peer := range existsPeerName {
-		if _, found := s.peers[peer]; !found {
+		if _, found := desiredPeers[peer]; !found {
 			glog.V(0).Infof("removing old peer: %s", peer)
 			s.RaftHashicorp.RemoveServer(raft.ServerID(peer), 0, 0)
 		}
 	}
-	if _, found := s.peers[peerLeader]; !found {
+	if _, found := desiredPeers[peerLeader]; !found {
 		glog.V(0).Infof("removing old leader peer: %s", peerLeader)
 		s.RaftHashicorp.RemoveServer(raft.ServerID(peerLeader), 0, 0)
 	}
@@ -136,7 +149,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	c := raft.DefaultConfig()
-	c.LocalID = raft.ServerID(s.serverAddr) // TODO maybee the IP:port address will change
+	c.LocalID = raft.ServerID(raftServerID(s.serverAddr))
 	c.HeartbeatTimeout = time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
 	c.ElectionTimeout = option.ElectionTimeout
 	if c.LeaderLeaseTimeout > c.HeartbeatTimeout {
