@@ -434,8 +434,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	s3a.registerS3TablesRoutes(apiRouter)
 
 	// Readiness Probe
-	apiRouter.Methods(http.MethodGet).Path("/status").HandlerFunc(s3a.StatusHandler)
-	apiRouter.Methods(http.MethodGet).Path("/healthz").HandlerFunc(s3a.StatusHandler)
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/status").HandlerFunc(s3a.StatusHandler)
+	apiRouter.Methods(http.MethodGet, http.MethodHead).Path("/healthz").HandlerFunc(s3a.StatusHandler)
 
 	// Object path pattern with (?s) flag to match newlines in object keys
 	const objectPath = "/{object:(?s).+}"

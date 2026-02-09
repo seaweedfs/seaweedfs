@@ -276,8 +276,10 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		// dirParts[0] == "" and dirParts[1] == "buckets"
 		isUnderBuckets := len(dirParts) >= 3 && dirParts[1] == "buckets"
 		if isUnderBuckets {
-			if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
-				return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+			if !strings.HasPrefix(dirParts[2], ".") {
+				if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
+					return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+				}
 			}
 		}
 
