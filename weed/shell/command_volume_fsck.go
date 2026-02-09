@@ -198,7 +198,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
+			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
@@ -284,10 +284,16 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					if _, err := f.Write([]byte(i.path)); err != nil {
 						return err
 					}
-				} else if *c.findMissingChunksInFiler && len(c.volumeIds) == 0 {
+				} else if *c.findMissingChunksInFiler {
+					// check if the volume matches the filter
+					if len(c.volumeIds) > 0 {
+						if _, ok := c.volumeIds[i.vid]; !ok {
+							continue
+						}
+					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
-						fmt.Printf("deleting path %s after volume not found", i.path)
+						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
 						c.httpDelete(i.path)
 					}
 				}
@@ -540,6 +546,10 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
+	if err != nil {
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
+		return
+	}
 
 	req.URL = &url.URL{
 		Scheme: "http",
@@ -549,13 +559,11 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}
-	if err != nil {
-		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
-	}
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
+		return
 	}
 	defer resp.Body.Close()
 
