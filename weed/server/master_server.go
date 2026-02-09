@@ -418,7 +418,7 @@ func (ms *MasterServer) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, startF
 	glog.V(4).Infof("OnPeerUpdate: %+v", update)
 
 	peerAddress := pb.ServerAddress(update.Address)
-	peerName := string(peerAddress)
+	peerName := raftServerID(peerAddress)
 	if ms.Topo.HashicorpRaft.State() != hashicorpRaft.Leader {
 		return
 	}
