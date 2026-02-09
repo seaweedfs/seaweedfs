@@ -498,6 +498,9 @@ message VolumeEcShardsInfoRequest {
 }
 message VolumeEcShardsInfoResponse {
     repeated EcShardInfo ec_shard_infos = 1;
+    uint64 volume_size = 2;
+    uint64 file_count = 3;
+    uint64 file_deleted_count = 4;
 }
 
 message EcShardInfo {

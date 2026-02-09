@@ -559,26 +559,43 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
 
-	var ecShardInfos []*volume_server_pb.EcShardInfo
+	glog.V(0).Infof("VolumeEcStatus: %v", req)
 
-	// Find the EC volume
-	for _, location := range vs.store.Locations {
-		if v, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
-			// Get shard details from the EC volume
-			for _, si := range erasure_coding.ShardsInfoFromVolume(v).AsSlice() {
-				ecShardInfo := &volume_server_pb.EcShardInfo{
-					ShardId:    uint32(si.Id),
-					Size:       int64(si.Size),
-					Collection: v.Collection,
-					VolumeId:   uint32(v.VolumeId),
-				}
-				ecShardInfos = append(ecShardInfos, ecShardInfo)
-			}
-			break
-		}
+	vid := needle.VolumeId(req.GetVolumeId())
+	ecv, found := vs.store.FindEcVolume(vid)
+	if !found {
+		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
 	}
 
-	return &volume_server_pb.VolumeEcShardsInfoResponse{
-		EcShardInfos: ecShardInfos,
-	}, nil
+	shardInfos := make([]*volume_server_pb.EcShardInfo, len(ecv.Shards))
+	for i, s := range ecv.Shards {
+		shardInfos[i] = s.ToEcShardInfo()
+	}
+
+	var files, filesDeleted, totalSize uint64
+	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+		// deleted files are counted when computing EC volume sizes. this aligns with VolumeStatus(),
+		// which reports the raw data backend file size, regardless of deleted files.
+		totalSize += uint64(size.Raw())
+
+		if size.IsDeleted() {
+			filesDeleted++
+		} else {
+			files++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &volume_server_pb.VolumeEcShardsInfoResponse{
+		EcShardInfos:     shardInfos,
+		FileCount:        files,
+		FileDeletedCount: filesDeleted,
+		VolumeSize:       totalSize,
+	}
+
+	return res, nil
 }

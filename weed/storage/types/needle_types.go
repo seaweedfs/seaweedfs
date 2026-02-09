@@ -30,6 +30,17 @@ func (s Size) IsValid() bool {
 	return s > 0 && s != TombstoneFileSize
 }
 
+// Raw returns the raw storage size for a needle, regardless of its deleted status.
+func (s Size) Raw() uint32 {
+	if s == TombstoneFileSize {
+		return 0
+	}
+	if s < 0 {
+		return uint32((-1) * s)
+	}
+	return uint32(s)
+}
+
 type OffsetLower struct {
 	b3 byte
 	b2 byte
