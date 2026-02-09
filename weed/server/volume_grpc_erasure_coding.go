@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -338,11 +339,28 @@ func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFi
 			hasIdxFile = true
 			continue
 		}
-		if strings.HasPrefix(fileInfo.Name(), bName+".ec") {
+		if isEcDataShardFile(fileInfo.Name(), bName) {
 			existingShardCount++
 		}
 	}
 	return hasEcxFile, hasIdxFile, existingShardCount, nil
+}
+
+func isEcDataShardFile(fileName, baseName string) bool {
+	const ecDataShardSuffixLen = 2 // ".ecNN"
+	prefix := baseName + ".ec"
+	if !strings.HasPrefix(fileName, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(fileName, prefix)
+	if len(suffix) != ecDataShardSuffixLen {
+		return false
+	}
+	shardId, err := strconv.Atoi(suffix)
+	if err != nil {
+		return false
+	}
+	return shardId >= 0 && shardId < erasure_coding.MaxShardCount
 }
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
