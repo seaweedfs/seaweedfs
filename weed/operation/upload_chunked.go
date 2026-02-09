@@ -113,7 +113,9 @@ uploadLoop:
 		// Only break if we've already read some data (chunkOffset > 0) or if this is truly EOF
 		if dataSize == 0 {
 			if chunkOffset == 0 {
-				glog.Warningf("UploadReaderInChunks: received 0 bytes on first read - creating empty file")
+				// Empty objects are valid for S3/HTTP uploads (e.g. zero-byte files).
+				// Keep this at verbose level to avoid warning noise in normal operation.
+				glog.V(4).Infof("UploadReaderInChunks: received 0 bytes on first read - creating empty file")
 			}
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
