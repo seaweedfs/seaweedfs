@@ -188,7 +188,10 @@ populate-trino: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 		'  customer_name VARCHAR,' \
 		'  country VARCHAR,' \
 		'  signup_date DATE' \
-		') WITH (format = '\''PARQUET'\'');' \
+		') WITH (' \
+		'  format = '\''PARQUET'\'',' \
+		'  partitioning = ARRAY['\''country'\'']' \
+		');' \
 		'INSERT INTO iceberg.$(TRINO_NAMESPACE).$(TRINO_TABLE)' \
 		'SELECT *' \
 		'FROM (' \
@@ -204,6 +207,8 @@ populate-trino: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 		'  WHERE dst.customer_id = src.customer_id' \
 		');' \
 		'SELECT count(*) AS row_count FROM iceberg.$(TRINO_NAMESPACE).$(TRINO_TABLE);' \
+		'SELECT count(*) AS us_row_count FROM iceberg.$(TRINO_NAMESPACE).$(TRINO_TABLE) WHERE country = '\''US'\'';' \
+		'SELECT count(*) AS partition_count FROM iceberg.$(TRINO_NAMESPACE)."$(TRINO_TABLE)$$partitions";' \
 	> "$(WORK_DIR)/trino_seed.sql"
 	@echo "populate-trino: starting Trino docker run"
 	@set -eu; \
@@ -250,7 +255,7 @@ populate-spark: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 		'  user_id STRING,' \
 		'  event_type STRING,' \
 		'  event_day STRING' \
-		') USING iceberg;' \
+		') USING iceberg PARTITIONED BY (event_day);' \
 		'INSERT INTO iceberg.$(SPARK_NAMESPACE).$(SPARK_TABLE)' \
 		'SELECT *' \
 		'FROM (' \
@@ -266,6 +271,8 @@ populate-spark: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 		'  WHERE dst.event_id = src.event_id' \
 		');' \
 		'SELECT count(*) AS row_count FROM iceberg.$(SPARK_NAMESPACE).$(SPARK_TABLE);' \
+		'SELECT count(*) AS partition_day_rows FROM iceberg.$(SPARK_NAMESPACE).$(SPARK_TABLE) WHERE event_day = '\''2026-02-02'\'';' \
+		'SELECT event_day, count(*) AS rows_per_day FROM iceberg.$(SPARK_NAMESPACE).$(SPARK_TABLE) GROUP BY event_day ORDER BY event_day;' \
 	> "$(WORK_DIR)/spark_seed.sql"
 	@echo "populate-spark: starting Spark docker run"
 	@docker run --rm \
