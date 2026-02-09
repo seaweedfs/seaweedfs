@@ -293,7 +293,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
-						fmt.Printf("deleting path %s after volume not found", i.path)
+						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
 						c.httpDelete(i.path)
 					}
 				}
