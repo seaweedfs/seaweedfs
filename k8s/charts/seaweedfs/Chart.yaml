@@ -1,6 +1,6 @@
 apiVersion: v1
 description: SeaweedFS
 name: seaweedfs
-appVersion: "4.09"
+appVersion: "4.10"
 # Dev note: Trigger a helm chart release by `git tag -a helm-<version>`
-version: 4.0.409
+version: 4.0.410
