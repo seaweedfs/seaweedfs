@@ -44,6 +44,9 @@ func (s s3RemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.R
 	}
 	if conf.S3AccessKey != "" && conf.S3SecretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(conf.S3AccessKey, conf.S3SecretKey, "")
+	} else if conf.S3AccessKey == "" && conf.S3SecretKey == "" {
+		// Explicitly disable signing for public buckets.
+		config.Credentials = credentials.AnonymousCredentials
 	}
 
 	sess, err := session.NewSession(config)
