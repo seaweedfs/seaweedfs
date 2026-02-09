@@ -285,14 +285,14 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 						return err
 					}
 				} else if *c.findMissingChunksInFiler {
+					// check if the volume matches the filter
+					if len(c.volumeIds) > 0 {
+						if _, ok := c.volumeIds[i.vid]; !ok {
+							continue
+						}
+					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
-						// check if the volume matches the filter
-						if len(c.volumeIds) > 0 {
-							if _, ok := c.volumeIds[i.vid]; !ok {
-								continue
-							}
-						}
 						fmt.Printf("deleting path %s after volume not found", i.path)
 						c.httpDelete(i.path)
 					}
@@ -546,6 +546,10 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
+	if err != nil {
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
+		return
+	}
 
 	req.URL = &url.URL{
 		Scheme: "http",
@@ -555,13 +559,11 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}
-	if err != nil {
-		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
-	}
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
+		return
 	}
 	defer resp.Body.Close()
 
