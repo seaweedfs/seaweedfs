@@ -56,6 +56,7 @@ type S3ApiServerOption struct {
 	Cipher                    bool // encrypt data on volume servers
 	BindIp                    string
 	GrpcPort                  int
+	StorageClassDiskTypeMap   string // e.g. "STANDARD_IA=ssd,GLACIER=hdd"
 }
 
 type S3ApiServer struct {
@@ -78,6 +79,7 @@ type S3ApiServer struct {
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
+	storageClassDiskTypes map[string]string
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -167,6 +169,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		cipher:                option.Cipher,
+	}
+	if option.StorageClassDiskTypeMap != "" {
+		parsedMappings, parseErr := parseStorageClassDiskTypeMap(option.StorageClassDiskTypeMap)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid -s3.storageClassDiskTypeMap: %w", parseErr)
+		}
+		s3ApiServer.storageClassDiskTypes = parsedMappings
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting

@@ -144,6 +144,7 @@ func init() {
 	filerS3Options.enableIam = cmdFiler.Flag.Bool("s3.iam", true, "enable embedded IAM API on the same S3 port")
 	filerS3Options.cipher = cmdFiler.Flag.Bool("s3.encryptVolumeData", false, "encrypt data on volume servers for S3 uploads")
 	filerS3Options.iamReadOnly = cmdFiler.Flag.Bool("s3.iam.readOnly", true, "disable IAM write operations on this server")
+	filerS3Options.storageClassDiskTypeMap = cmdFiler.Flag.String("s3.storageClassDiskTypeMap", "", "map S3 storage classes to filer disk types, e.g. STANDARD_IA=ssd,GLACIER=hdd")
 	filerS3Options.portIceberg = cmdFiler.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 
 	// start webdav on filer

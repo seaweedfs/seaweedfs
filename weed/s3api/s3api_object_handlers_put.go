@@ -357,6 +357,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		collection = s3a.getCollectionName(bucket)
 	}
 
+	effectiveStorageClass, errCode := resolveEffectiveStorageClass(r.Header, nil)
+	if errCode != s3err.ErrNone {
+		return "", errCode, SSEResponseMetadata{}
+	}
+	targetDiskType := s3a.mapStorageClassToDiskType(effectiveStorageClass)
+
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
@@ -365,7 +371,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				Count:       int32(count),
 				Replication: "",
 				Collection:  collection,
-				DiskType:    "",
+				DiskType:    targetDiskType,
 				DataCenter:  s3a.option.DataCenter,
 				Path:        filePath,
 			})
@@ -585,12 +591,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Store the storage class from header
-	if sc := r.Header.Get(s3_constants.AmzStorageClass); sc != "" {
-		if !validateStorageClass(sc) {
-			glog.Warningf("putToFiler: Invalid storage class '%s' for %s", sc, filePath)
-			return "", s3err.ErrInvalidStorageClass, SSEResponseMetadata{}
-		}
-		entry.Extended[s3_constants.AmzStorageClass] = []byte(sc)
+	if sc := strings.TrimSpace(r.Header.Get(s3_constants.AmzStorageClass)); sc != "" {
+		entry.Extended[s3_constants.AmzStorageClass] = []byte(effectiveStorageClass)
 	}
 
 	// Parse and store object tags from X-Amz-Tagging header

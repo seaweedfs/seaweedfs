@@ -365,6 +365,12 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		// No SSE-C headers, check for SSE-KMS settings from upload directory
 		if uploadEntry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID); err == nil {
 			if uploadEntry.Extended != nil {
+				if r.Header.Get(s3_constants.AmzStorageClass) == "" {
+					if storageClass := strings.TrimSpace(string(uploadEntry.Extended[s3_constants.AmzStorageClass])); storageClass != "" {
+						r.Header.Set(s3_constants.AmzStorageClass, storageClass)
+					}
+				}
+
 				// Check if this upload uses SSE-KMS
 				if keyIDBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; exists {
 					keyID := string(keyIDBytes)
