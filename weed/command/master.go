@@ -360,12 +360,12 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 
 func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
 	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
-		return strings.Compare(string(a), string(b))
+		return strings.Compare(a.ToHttpAddress(), b.ToHttpAddress())
 	})
 	if len(peers) <= 0 {
 		return true
 	}
-	return self == peers[0]
+	return self.ToHttpAddress() == peers[0].ToHttpAddress()
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
