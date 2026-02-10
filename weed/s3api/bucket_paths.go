@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"context"
 	"errors"
+	"io"
 	"path"
 	"strings"
 
@@ -58,8 +60,13 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 
 	entry, err := s3a.getEntry(s3tables.GetTableLocationMappingDir(), bucket)
 	tablePath := ""
-	if err == nil && entry != nil && len(entry.Content) > 0 {
-		tablePath = strings.TrimSpace(string(entry.Content))
+	if err == nil && entry != nil {
+		if entry.IsDirectory {
+			tablePath, err = s3a.readTableLocationMappingFromDirectory(bucket)
+		} else if len(entry.Content) > 0 {
+			// Backward compatibility with legacy single-file mappings.
+			tablePath = normalizeTableLocationMappingPath(string(entry.Content))
+		}
 	}
 
 	// Only cache definitive results: successful lookup (tablePath set) or definitive not-found (ErrNotFound)
@@ -80,6 +87,77 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 	}
 
 	return tablePath, true
+}
+
+func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(bucket string) (string, error) {
+	mappingDir := s3tables.GetTableLocationMappingPath(bucket)
+	var mappedPath string
+	conflict := false
+
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+			Directory: mappingDir,
+			Limit:     1024,
+		})
+		if err != nil {
+			return err
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr == io.EOF {
+				return nil
+			}
+			if recvErr != nil {
+				return recvErr
+			}
+			if resp == nil || resp.Entry == nil || resp.Entry.IsDirectory || len(resp.Entry.Content) == 0 {
+				continue
+			}
+
+			candidate := normalizeTableLocationMappingPath(string(resp.Entry.Content))
+			if candidate == "" {
+				continue
+			}
+			if mappedPath == "" {
+				mappedPath = candidate
+				continue
+			}
+			if mappedPath != candidate {
+				conflict = true
+				return nil
+			}
+		}
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if conflict {
+		glog.V(1).Infof("table location mapping conflict for %s: multiple mapped roots found", bucket)
+		return "", nil
+	}
+	return mappedPath, nil
+}
+
+func normalizeTableLocationMappingPath(rawPath string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return ""
+	}
+
+	normalized := path.Clean("/" + strings.TrimPrefix(rawPath, "/"))
+	tablesPrefix := strings.TrimSuffix(s3tables.TablesPath, "/") + "/"
+	if !strings.HasPrefix(normalized, tablesPrefix) {
+		return normalized
+	}
+
+	remaining := strings.TrimPrefix(normalized, tablesPrefix)
+	bucketName, _, _ := strings.Cut(remaining, "/")
+	if bucketName == "" {
+		return ""
+	}
+	return path.Join(s3tables.TablesPath, bucketName)
 }
 
 func (s3a *S3ApiServer) bucketRoot(bucket string) string {
