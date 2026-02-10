@@ -1,6 +1,8 @@
 package s3tables
 
 import (
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,63 @@ func TestExpandNamespace(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("expandNamespace = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestNamespaceMetadataPropertiesRoundTrip(t *testing.T) {
+	testCases := []struct {
+		name     string
+		metadata namespaceMetadata
+	}{
+		{
+			name: "with properties",
+			metadata: namespaceMetadata{
+				Namespace:      []string{"analytics"},
+				Properties:     map[string]string{"owner": "finance"},
+				OwnerAccountID: "123456789012",
+			},
+		},
+		{
+			name: "nil properties",
+			metadata: namespaceMetadata{
+				Namespace:      []string{"analytics"},
+				Properties:     nil,
+				OwnerAccountID: "123456789012",
+			},
+		},
+		{
+			name: "empty properties",
+			metadata: namespaceMetadata{
+				Namespace:      []string{"analytics"},
+				Properties:     map[string]string{},
+				OwnerAccountID: "123456789012",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.metadata)
+			if err != nil {
+				t.Fatalf("json.Marshal(metadata) returned error: %v", err)
+			}
+
+			var decoded namespaceMetadata
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal(data) returned error: %v", err)
+			}
+
+			// Due to `omitempty`, nil and empty maps are unmarshaled as nil.
+			if len(tc.metadata.Properties) == 0 {
+				if decoded.Properties != nil {
+					t.Fatalf("expected nil properties for empty/nil input, got %v", decoded.Properties)
+				}
+				return
+			}
+
+			if !reflect.DeepEqual(decoded.Properties, tc.metadata.Properties) {
+				t.Fatalf("decoded.Properties = %v, want %v", decoded.Properties, tc.metadata.Properties)
+			}
+		})
 	}
 }

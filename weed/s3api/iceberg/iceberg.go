@@ -401,6 +401,13 @@ func parsePagination(r *http.Request) (pageToken string, pageSize int, err error
 	return pageToken, parsedPageSize, nil
 }
 
+func normalizeNamespaceProperties(properties map[string]string) map[string]string {
+	if properties == nil {
+		return map[string]string{}
+	}
+	return properties
+}
+
 // handleConfig returns catalog configuration.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -482,36 +489,29 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	createReq := &s3tables.CreateNamespaceRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      req.Namespace,
+		Properties:     normalizeNamespaceProperties(req.Properties),
 	}
 	var createResp s3tables.CreateNamespaceResponse
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		glog.Errorf("Iceberg: handleCreateNamespace calling Execute with identityName=%s", identityName)
+		glog.V(2).Infof("Iceberg: handleCreateNamespace calling Execute with identityName=%s", identityName)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateNamespace", createReq, &createResp, identityName)
 	})
 
 	if err != nil {
-		glog.Errorf("Iceberg: handleCreateNamespace error: %v", err)
-
 		if strings.Contains(err.Error(), "already exists") {
 			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
-		glog.Infof("Iceberg: CreateNamespace error: %v", err)
+		glog.Errorf("Iceberg: CreateNamespace error: %v", err)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
 
-	// Standardize property initialization for consistency with GetNamespace
-	props := req.Properties
-	if props == nil {
-		props = make(map[string]string)
-	}
-
 	result := CreateNamespaceResponse{
-		Namespace:  req.Namespace,
-		Properties: props,
+		Namespace:  Namespace(createResp.Namespace),
+		Properties: normalizeNamespaceProperties(createResp.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -554,8 +554,8 @@ func (s *Server) handleGetNamespace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := GetNamespaceResponse{
-		Namespace:  namespace,
-		Properties: make(map[string]string),
+		Namespace:  Namespace(getResp.Namespace),
+		Properties: normalizeNamespaceProperties(getResp.Properties),
 	}
 	writeJSON(w, http.StatusOK, result)
 }
