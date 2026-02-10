@@ -161,6 +161,11 @@ func TestBuildTruncatedNextMarker(t *testing.T) {
 		actual := buildTruncatedNextMarker("xemu", "export_2026-02-10_17-00-23", "", true, "nested")
 		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/nested/", actual)
 	})
+
+	t.Run("includes prefix for common prefix marker when request dir is empty", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("", "foo", "", true, "bar")
+		assert.Equal(t, "foo/bar/", actual)
+	})
 }
 
 func TestAllowUnorderedParameterValidation(t *testing.T) {

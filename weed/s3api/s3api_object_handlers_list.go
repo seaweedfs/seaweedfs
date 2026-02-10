@@ -472,6 +472,9 @@ func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWa
 			}
 			return requestDir + "/" + lastCommonPrefixName + "/"
 		}
+		if prefix != "" {
+			return prefix + "/" + lastCommonPrefixName + "/"
+		}
 		return lastCommonPrefixName + "/"
 	}
 
