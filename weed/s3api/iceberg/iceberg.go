@@ -392,10 +392,10 @@ func parsePagination(r *http.Request) (pageToken string, pageSize int, err error
 
 	parsedPageSize, parseErr := strconv.Atoi(pageSizeValue)
 	if parseErr != nil || parsedPageSize <= 0 {
-		return "", 0, fmt.Errorf("invalid pageSize %q: must be a positive integer", pageSizeValue)
+		return pageToken, 0, fmt.Errorf("invalid pageSize %q: must be a positive integer", pageSizeValue)
 	}
 	if parsedPageSize > maxListPageSize {
-		return "", 0, fmt.Errorf("invalid pageSize %q: must be <= %d", pageSizeValue, maxListPageSize)
+		return pageToken, 0, fmt.Errorf("invalid pageSize %q: must be <= %d", pageSizeValue, maxListPageSize)
 	}
 
 	return pageToken, parsedPageSize, nil
