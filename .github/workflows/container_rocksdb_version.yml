@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       rocksdb_version:
-        description: 'RocksDB git tag or branch to build (e.g. v10.5.1)'
+        description: 'RocksDB git tag or branch to build (e.g. v10.10.1)'
         required: true
-        default: 'v10.5.1'
+        default: 'v10.10.1'
       seaweedfs_ref:
         description: 'SeaweedFS git tag, branch, or commit to build'
         required: true
