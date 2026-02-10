@@ -329,6 +329,10 @@ func stageCreateMarkerDir(bucketName string, namespace []string, tableName strin
 	return path.Join(s3tables.TablesPath, bucketName, stageCreateMarkerDirName, stageCreateMarkerNamespaceKey(namespace), tableName)
 }
 
+func stageCreateStagedTablePath(namespace []string, tableName string, tableUUID uuid.UUID) string {
+	return path.Join(stageCreateMarkerDirName, stageCreateMarkerNamespaceKey(namespace), tableName, tableUUID.String())
+}
+
 func (s *Server) pruneExpiredStageCreateMarkers(ctx context.Context, bucketName string, namespace []string, tableName string) error {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -376,15 +380,76 @@ func (s *Server) pruneExpiredStageCreateMarkers(ctx context.Context, bucketName 
 	})
 }
 
-func (s *Server) writeStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string, tableUUID uuid.UUID, location string) error {
+func (s *Server) loadLatestStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string) (*stageCreateMarker, error) {
+	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	markerDir := stageCreateMarkerDir(bucketName, namespace, tableName)
+	now := time.Now().UTC()
+
+	var latestMarker *stageCreateMarker
+	var latestCreatedAt time.Time
+
+	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		stream, err := client.ListEntries(opCtx, &filer_pb.ListEntriesRequest{
+			Directory: markerDir,
+			Limit:     1024,
+		})
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+				return nil
+			}
+			return err
+		}
+
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr == io.EOF {
+				return nil
+			}
+			if recvErr != nil {
+				return recvErr
+			}
+			if resp.Entry == nil || resp.Entry.IsDirectory || len(resp.Entry.Content) == 0 {
+				continue
+			}
+
+			var marker stageCreateMarker
+			if err := json.Unmarshal(resp.Entry.Content, &marker); err != nil {
+				continue
+			}
+			expiresAt, err := time.Parse(time.RFC3339Nano, marker.ExpiresAt)
+			if err != nil || !expiresAt.After(now) {
+				continue
+			}
+
+			createdAt, err := time.Parse(time.RFC3339Nano, marker.CreatedAt)
+			if err != nil {
+				createdAt = time.Time{}
+			}
+			if latestMarker == nil || createdAt.After(latestCreatedAt) {
+				candidate := marker
+				latestMarker = &candidate
+				latestCreatedAt = createdAt
+			}
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return latestMarker, nil
+}
+
+func (s *Server) writeStageCreateMarker(ctx context.Context, bucketName string, namespace []string, tableName string, tableUUID uuid.UUID, location string, stagedMetadataLocation string) error {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	marker := stageCreateMarker{
-		TableUUID: tableUUID.String(),
-		Location:  location,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		ExpiresAt: time.Now().UTC().Add(stageCreateMarkerTTL).Format(time.RFC3339Nano),
+		TableUUID:              tableUUID.String(),
+		Location:               location,
+		StagedMetadataLocation: stagedMetadataLocation,
+		CreatedAt:              time.Now().UTC().Format(time.RFC3339Nano),
+		ExpiresAt:              time.Now().UTC().Add(stageCreateMarkerTTL).Format(time.RFC3339Nano),
 	}
 	content, err := json.Marshal(marker)
 	if err != nil {
@@ -499,10 +564,11 @@ const (
 )
 
 type stageCreateMarker struct {
-	TableUUID string `json:"table_uuid"`
-	Location  string `json:"location"`
-	CreatedAt string `json:"created_at"`
-	ExpiresAt string `json:"expires_at"`
+	TableUUID              string `json:"table_uuid"`
+	Location               string `json:"location"`
+	StagedMetadataLocation string `json:"staged_metadata_location,omitempty"`
+	CreatedAt              string `json:"created_at"`
+	ExpiresAt              string `json:"expires_at"`
 }
 
 type icebergRequestError struct {
@@ -517,6 +583,7 @@ func (e *icebergRequestError) Error() string {
 
 type createOnCommitInput struct {
 	bucketARN         string
+	markerBucket      string
 	namespace         []string
 	tableName         string
 	identityName      string
@@ -857,7 +924,11 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		}
 	}
 
-	if markerErr := s.deleteStageCreateMarkers(ctx, metadataBucket, input.namespace, input.tableName); markerErr != nil {
+	markerBucket := input.markerBucket
+	if markerBucket == "" {
+		markerBucket = metadataBucket
+	}
+	if markerErr := s.deleteStageCreateMarkers(ctx, markerBucket, input.namespace, input.tableName); markerErr != nil {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after finalize: %v", encodeNamespace(input.namespace), input.tableName, markerErr)
 	}
 
@@ -1398,14 +1469,16 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
 		return
 	}
-	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
-		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
-		return
-	}
 
-	// Stage-create writes the initial metadata file but does not register table state in S3Tables.
+	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
 	if req.StageCreate {
-		if markerErr := s.writeStageCreateMarker(r.Context(), metadataBucket, namespace, tableName, tableUUID, location); markerErr != nil {
+		stagedTablePath := stageCreateStagedTablePath(namespace, tableName, tableUUID)
+		if err := s.saveMetadataFile(r.Context(), metadataBucket, stagedTablePath, metadataFileName, metadataBytes); err != nil {
+			writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save staged metadata file: "+err.Error())
+			return
+		}
+		stagedMetadataLocation := fmt.Sprintf("s3://%s/%s/metadata/%s", metadataBucket, stagedTablePath, metadataFileName)
+		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
 			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", encodeNamespace(namespace), tableName, markerErr)
 		}
 		result := LoadTableResult{
@@ -1414,6 +1487,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			Config:           make(iceberg.Properties),
 		}
 		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save metadata file: "+err.Error())
 		return
 	}
 
@@ -1488,7 +1565,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	if finalLocation == "" {
 		finalLocation = metadataLocation
 	}
-	if markerErr := s.deleteStageCreateMarkers(r.Context(), metadataBucket, namespace, tableName); markerErr != nil {
+	if markerErr := s.deleteStageCreateMarkers(r.Context(), bucketName, namespace, tableName); markerErr != nil {
 		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", encodeNamespace(namespace), tableName, markerErr)
 	}
 
@@ -1706,10 +1783,9 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
 	maxCommitAttempts := 3
 	generatedLegacyUUID := uuid.New()
-	canCreateOnCommit := isStageCreateEnabled() && hasAssertCreateRequirement(req.Requirements)
+	stageCreateEnabled := isStageCreateEnabled()
 	for attempt := 1; attempt <= maxCommitAttempts; attempt++ {
 		getReq := &s3tables.GetTableRequest{
 			TableBucketARN: bucketARN,
@@ -1724,47 +1800,80 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			if isS3TablesNotFound(err) {
-				if !canCreateOnCommit {
-					writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
-					return
-				}
-
-				for _, requirement := range req.Requirements {
-					if requirementErr := requirement.Validate(nil); requirementErr != nil {
-						writeError(w, http.StatusConflict, "CommitFailedException", "Requirement failed: "+requirementErr.Error())
-						return
-					}
-				}
-
 				location := fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
 				tableUUID := generatedLegacyUUID
 				baseMetadataVersion := 0
 				baseMetadataLocation := ""
 				var baseMetadata table.Metadata
 
-				stagedFileName := "v1.metadata.json"
-				metadataBucket, metadataPath, parseLocationErr := parseS3Location(location)
-				if parseLocationErr != nil {
-					writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+parseLocationErr.Error())
-					return
-				}
-				stagedMetadataBytes, loadErr := s.loadMetadataFile(r.Context(), metadataBucket, metadataPath, stagedFileName)
-				if loadErr == nil && len(stagedMetadataBytes) > 0 {
-					stagedMetadata, parseErr := table.ParseMetadataBytes(stagedMetadataBytes)
-					if parseErr != nil {
-						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse staged metadata: "+parseErr.Error())
+				var latestMarker *stageCreateMarker
+				if stageCreateEnabled {
+					var markerErr error
+					latestMarker, markerErr = s.loadLatestStageCreateMarker(r.Context(), bucketName, namespace, tableName)
+					if markerErr != nil {
+						writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to load stage-create marker: "+markerErr.Error())
 						return
 					}
-					baseMetadata = stagedMetadata
-					baseMetadataLocation = fmt.Sprintf("%s/metadata/%s", strings.TrimSuffix(location, "/"), stagedFileName)
-					baseMetadataVersion = parseMetadataVersionFromLocation(baseMetadataLocation)
-					if stagedMetadata.TableUUID() != uuid.Nil {
-						tableUUID = stagedMetadata.TableUUID()
+				}
+				if latestMarker != nil {
+					if latestMarker.Location != "" {
+						location = strings.TrimSuffix(latestMarker.Location, "/")
+					}
+					if latestMarker.TableUUID != "" {
+						if parsedUUID, parseErr := uuid.Parse(latestMarker.TableUUID); parseErr == nil {
+							tableUUID = parsedUUID
+						}
+					}
+
+					stagedMetadataLocation := latestMarker.StagedMetadataLocation
+					if stagedMetadataLocation == "" {
+						stagedMetadataLocation = fmt.Sprintf("%s/metadata/v1.metadata.json", strings.TrimSuffix(location, "/"))
+					}
+					stagedLocation := tableLocationFromMetadataLocation(stagedMetadataLocation)
+					stagedFileName := path.Base(stagedMetadataLocation)
+					stagedBucket, stagedPath, parseLocationErr := parseS3Location(stagedLocation)
+					if parseLocationErr != nil {
+						writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid staged metadata location: "+parseLocationErr.Error())
+						return
+					}
+					stagedMetadataBytes, loadErr := s.loadMetadataFile(r.Context(), stagedBucket, stagedPath, stagedFileName)
+					if loadErr != nil {
+						if !errors.Is(loadErr, filer_pb.ErrNotFound) {
+							writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to load staged metadata: "+loadErr.Error())
+							return
+						}
+					} else if len(stagedMetadataBytes) > 0 {
+						stagedMetadata, parseErr := table.ParseMetadataBytes(stagedMetadataBytes)
+						if parseErr != nil {
+							writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to parse staged metadata: "+parseErr.Error())
+							return
+						}
+						// Staged metadata is only a template for table creation; commit starts from version 1.
+						baseMetadata = stagedMetadata
+						baseMetadataLocation = ""
+						baseMetadataVersion = 0
+						if stagedMetadata.TableUUID() != uuid.Nil {
+							tableUUID = stagedMetadata.TableUUID()
+						}
 					}
 				}
-				if loadErr != nil && !errors.Is(loadErr, filer_pb.ErrNotFound) {
-					writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to load staged metadata: "+loadErr.Error())
+
+				hasAssertCreate := hasAssertCreateRequirement(req.Requirements)
+				hasStagedTemplate := baseMetadata != nil
+				if !(stageCreateEnabled && (hasAssertCreate || hasStagedTemplate)) {
+					writeError(w, http.StatusNotFound, "NoSuchTableException", fmt.Sprintf("Table does not exist: %s", tableName))
 					return
+				}
+
+				for _, requirement := range req.Requirements {
+					validateAgainst := table.Metadata(nil)
+					if hasStagedTemplate && requirement.GetType() != requirementAssertCreate {
+						validateAgainst = baseMetadata
+					}
+					if requirementErr := requirement.Validate(validateAgainst); requirementErr != nil {
+						writeError(w, http.StatusConflict, "CommitFailedException", "Requirement failed: "+requirementErr.Error())
+						return
+					}
 				}
 
 				if baseMetadata == nil {
@@ -1777,6 +1886,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
 					bucketARN:         bucketARN,
+					markerBucket:      bucketName,
 					namespace:         namespace,
 					tableName:         tableName,
 					identityName:      identityName,

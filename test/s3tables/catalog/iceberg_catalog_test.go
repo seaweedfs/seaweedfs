@@ -292,64 +292,6 @@ func TestIcebergNamespaces(t *testing.T) {
 	}
 }
 
-// TestStageCreateMissingNameReturnsBadRequest ensures stage-create enforces table name.
-func TestStageCreateMissingNameReturnsBadRequest(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
-
-	env.StartSeaweedFS(t)
-
-	createTableBucket(t, env, "warehouse")
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
-		"namespace": []string{"ns1"},
-	})
-	if err != nil {
-		t.Fatalf("Create namespace request failed: %v", err)
-	}
-	if status != http.StatusOK && status != http.StatusConflict {
-		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
-	}
-
-	reqBody := `{"stage-create": true}`
-	url := fmt.Sprintf("%s/v1/namespaces/%s/tables", env.IcebergURL(), "ns1")
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(reqBody))
-	if err != nil {
-		t.Fatalf("Failed to build request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Stage create request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Expected status 400, got %d: %s", resp.StatusCode, body)
-	}
-
-	var decoded map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		t.Fatalf("Failed to decode error response: %v", err)
-	}
-	errorObj, ok := decoded["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("Response missing or invalid error object: %#v", decoded)
-	}
-	if got := errorObj["type"]; got != "BadRequestException" {
-		t.Fatalf("error.type = %v, want BadRequestException", got)
-	}
-	msg, _ := errorObj["message"].(string)
-	if !strings.Contains(strings.ToLower(msg), "table name is required") {
-		t.Fatalf("error.message = %v, want it to include %q", errorObj["message"], "table name is required")
-	}
-}
-
 // TestStageCreateAndFinalizeFlow verifies staged create remains invisible until assert-create commit finalizes table creation.
 func TestStageCreateAndFinalizeFlow(t *testing.T) {
 	if testing.Short() {
@@ -373,6 +315,24 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 	}
 	if status != http.StatusOK && status != http.StatusConflict {
 		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
+	}
+
+	status, badReqResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
+		"stage-create": true,
+	})
+	if err != nil {
+		t.Fatalf("Stage create missing-name request failed: %v", err)
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("Stage create missing-name status = %d, want 400", status)
+	}
+	errorObj, _ := badReqResp["error"].(map[string]any)
+	if got := errorObj["type"]; got != "BadRequestException" {
+		t.Fatalf("error.type = %v, want BadRequestException", got)
+	}
+	msg, _ := errorObj["message"].(string)
+	if !strings.Contains(strings.ToLower(msg), "table name is required") {
+		t.Fatalf("error.message = %v, want it to include %q", errorObj["message"], "table name is required")
 	}
 
 	status, stageResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
@@ -411,8 +371,8 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("Finalize commit status = %d, want 200", status)
 	}
 	commitLocation, _ := commitResp["metadata-location"].(string)
-	if !strings.HasSuffix(commitLocation, "/metadata/v2.metadata.json") {
-		t.Fatalf("final metadata-location = %q, want suffix /metadata/v2.metadata.json", commitLocation)
+	if !strings.HasSuffix(commitLocation, "/metadata/v1.metadata.json") {
+		t.Fatalf("final metadata-location = %q, want suffix /metadata/v1.metadata.json", commitLocation)
 	}
 
 	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), nil)

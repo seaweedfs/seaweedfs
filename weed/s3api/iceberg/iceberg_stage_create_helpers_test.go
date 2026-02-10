@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/apache/iceberg-go/table"
+	"github.com/google/uuid"
 )
 
 func TestHasAssertCreateRequirement(t *testing.T) {
@@ -26,6 +27,10 @@ func TestParseMetadataVersionFromLocation(t *testing.T) {
 	}{
 		{location: "s3://b/ns/t/metadata/v1.metadata.json", version: 1},
 		{location: "s3://b/ns/t/metadata/v25.metadata.json", version: 25},
+		{location: "v1.metadata.json", version: 1},
+		{location: "s3://b/ns/t/metadata/v0.metadata.json", version: 0},
+		{location: "s3://b/ns/t/metadata/v-1.metadata.json", version: 0},
+		{location: "s3://b/ns/t/metadata/vABC.metadata.json", version: 0},
 		{location: "s3://b/ns/t/metadata/current.json", version: 0},
 		{location: "", version: 0},
 	}
@@ -56,5 +61,16 @@ func TestStageCreateMarkerDir(t *testing.T) {
 	}
 	if !strings.HasSuffix(dir, "/orders") {
 		t.Fatalf("stageCreateMarkerDir() = %q, want suffix /orders", dir)
+	}
+}
+
+func TestStageCreateStagedTablePath(t *testing.T) {
+	tableUUID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	stagedPath := stageCreateStagedTablePath([]string{"ns"}, "orders", tableUUID)
+	if !strings.Contains(stagedPath, stageCreateMarkerDirName) {
+		t.Fatalf("stageCreateStagedTablePath() = %q, want marker dir segment %q", stagedPath, stageCreateMarkerDirName)
+	}
+	if !strings.HasSuffix(stagedPath, "/"+tableUUID.String()) {
+		t.Fatalf("stageCreateStagedTablePath() = %q, want UUID suffix %q", stagedPath, tableUUID.String())
 	}
 }
