@@ -566,6 +566,8 @@ const (
 	maxListPageSize     = 1000
 )
 
+var errStageCreateUnsupported = errors.New("stage-create is not supported")
+
 func getPaginationQueryParam(r *http.Request, primary, fallback string) string {
 	if v := strings.TrimSpace(r.URL.Query().Get(primary)); v != "" {
 		return v
@@ -598,6 +600,16 @@ func normalizeNamespaceProperties(properties map[string]string) map[string]strin
 		return map[string]string{}
 	}
 	return properties
+}
+
+func validateCreateTableRequest(req CreateTableRequest) error {
+	if req.Name == "" {
+		return errors.New("table name is required")
+	}
+	if req.StageCreate {
+		return errStageCreateUnsupported
+	}
+	return nil
 }
 
 // handleConfig returns catalog configuration.
@@ -908,8 +920,12 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "BadRequestException", "Table name is required")
+	if err := validateCreateTableRequest(req); err != nil {
+		if errors.Is(err, errStageCreateUnsupported) {
+			writeError(w, http.StatusNotImplemented, "NotImplementedException", "stage-create is not supported; submit create without stage-create")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 		return
 	}
 
