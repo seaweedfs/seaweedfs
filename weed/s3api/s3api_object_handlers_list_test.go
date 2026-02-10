@@ -148,6 +148,21 @@ func Test_normalizePrefixMarker(t *testing.T) {
 	}
 }
 
+func TestBuildTruncatedNextMarker(t *testing.T) {
+	t.Run("does not duplicate prefix segment in next continuation token", func(t *testing.T) {
+		prefix := "export_2026-02-10_17-00-23"
+		nextMarker := "export_2026-02-10_17-00-23/4156000e.jpg"
+
+		actual := buildTruncatedNextMarker("xemu", prefix, nextMarker, false, "")
+		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/4156000e.jpg", actual)
+	})
+
+	t.Run("keeps common prefix marker trailing slash", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("xemu", "export_2026-02-10_17-00-23", "", true, "nested")
+		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/nested/", actual)
+	})
+}
+
 func TestAllowUnorderedParameterValidation(t *testing.T) {
 	// Test getListObjectsV1Args with allow-unordered parameter
 	t.Run("getListObjectsV1Args with allow-unordered", func(t *testing.T) {
