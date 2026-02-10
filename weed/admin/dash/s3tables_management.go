@@ -67,6 +67,18 @@ func parseNamespaceInput(namespace string) ([]string, error) {
 	return s3tables.ParseNamespace(namespace)
 }
 
+<<<<<<< HEAD
+=======
+func (s *AdminServer) parseNamespaceFromGin(c *gin.Context, namespace string) ([]string, bool) {
+	parts, err := parseNamespaceInput(namespace)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid namespace: " + err.Error()})
+		return nil, false
+	}
+	return parts, true
+}
+
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 func newS3TablesManager() *s3tables.Manager {
 	manager := s3tables.NewManager()
 	manager.SetAccountID(s3_constants.AccountAdminId)
@@ -698,9 +710,14 @@ func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn and name are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(req.Name)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Name)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	createReq := &s3tables.CreateNamespaceRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts}
@@ -722,9 +739,14 @@ func (s *AdminServer) DeleteS3TablesNamespace(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket and name query parameters are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: namespaceParts}
@@ -767,9 +789,14 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn, namespace, and name are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(req.Namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	format := req.Format
@@ -807,9 +834,14 @@ func (s *AdminServer) DeleteS3TablesTable(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name, VersionToken: version}
@@ -885,9 +917,14 @@ func (s *AdminServer) PutS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn, namespace, name, and policy are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(req.Namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	putReq := &s3tables.PutTablePolicyRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts, Name: req.Name, ResourcePolicy: req.Policy}
@@ -906,9 +943,14 @@ func (s *AdminServer) GetS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
@@ -928,9 +970,14 @@ func (s *AdminServer) DeleteS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
+<<<<<<< HEAD
 	namespaceParts, err := parseNamespaceInput(namespace)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Invalid namespace: " + err.Error()})
+=======
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+>>>>>>> aef2de31093544cb64a1e7042161ebaa8699f271
 		return
 	}
 	deleteReq := &s3tables.DeleteTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
