@@ -319,9 +319,8 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	}
 
 	if !isImplicit {
-		// Some S3 clients create directory markers without implicit-dir metadata.
-		// For delete-driven cleanup, still verify emptiness and remove if safe.
-		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), proceeding with delete-driven empty check", folder, implicitSource, implicitAttr)
+		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), skipping", folder, implicitSource, implicitAttr)
+		return
 	}
 
 	// Check if folder is actually empty (count up to maxCountCheck)

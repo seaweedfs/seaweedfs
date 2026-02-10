@@ -149,6 +149,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 					entry.Content, _ = io.ReadAll(r.Body)
 				}
 				entry.Attributes.Mime = objectContentType
+				if entry.Extended == nil {
+					entry.Extended = make(map[string][]byte, 1)
+				}
+				// Treat directory-marker PUT entries as implicit so async cleanup can prune
+				// them when all children are deleted.
+				entry.Extended[s3_constants.ExtS3ImplicitDir] = []byte("true")
 
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)

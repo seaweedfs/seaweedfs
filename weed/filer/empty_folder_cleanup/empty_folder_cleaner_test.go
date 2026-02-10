@@ -644,7 +644,7 @@ func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testin
 	}
 }
 
-func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeStillDeletes(t *testing.T) {
+func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeSkips(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
@@ -679,7 +679,7 @@ func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeStillDeletes(
 	folder := "/buckets/test/folder"
 	cleaner.executeCleanup(folder)
 
-	if len(deleted) != 1 || deleted[0] != folder {
-		t.Fatalf("expected folder %s to be deleted, got %v", folder, deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("expected folder %s to be skipped, got deletions %v", folder, deleted)
 	}
 }
