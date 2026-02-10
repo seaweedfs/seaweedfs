@@ -4,7 +4,21 @@ on:
   push:
     tags:
       - '*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Git ref to build (branch, tag, or commit SHA)'
+        required: true
+        default: 'master'
+      variant:
+        description: 'Variant to build manually'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - standard
+          - large_disk
 
 permissions:
   contents: read
@@ -12,6 +26,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.variant == 'all' ||
+      github.event.inputs.variant == matrix.variant
     strategy:
       matrix:
         platform: [amd64, arm64, arm, 386]
@@ -20,6 +38,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Free Disk Space
         run: |
           echo "Available disk space before cleanup:"
@@ -116,13 +136,21 @@ jobs:
   create-manifest:
     runs-on: ubuntu-latest
     needs: [build]
-    if: github.event_name != 'pull_request'
+    if: |
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'workflow_dispatch' ||
+        github.event.inputs.variant == 'all' ||
+        github.event.inputs.variant == matrix.variant
+      )
     strategy:
       matrix:
         variant: [standard, large_disk]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       
       - name: Configure variant
         id: config
