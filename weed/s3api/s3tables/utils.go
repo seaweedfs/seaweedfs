@@ -128,9 +128,10 @@ type tableBucketMetadata struct {
 
 // namespaceMetadata stores metadata for a namespace
 type namespaceMetadata struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 // tableMetadataInternal stores metadata for a table

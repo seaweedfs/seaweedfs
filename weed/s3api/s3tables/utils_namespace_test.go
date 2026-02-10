@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -122,5 +123,27 @@ func TestExpandNamespace(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("expandNamespace = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestNamespaceMetadataPropertiesRoundTrip(t *testing.T) {
+	metadata := namespaceMetadata{
+		Namespace:      []string{"analytics"},
+		Properties:     map[string]string{"owner": "finance"},
+		OwnerAccountID: "123456789012",
+	}
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("json.Marshal(metadata) returned error: %v", err)
+	}
+
+	var decoded namespaceMetadata
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(data) returned error: %v", err)
+	}
+
+	if decoded.Properties["owner"] != "finance" {
+		t.Fatalf("decoded.Properties[owner] = %q, want %q", decoded.Properties["owner"], "finance")
 	}
 }
