@@ -125,36 +125,43 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
 		// Split the object into directory path and name
 		objectWithoutSlash := strings.TrimSuffix(object, "/")
-		dirName := path.Dir(objectWithoutSlash)
-		entryName := path.Base(objectWithoutSlash)
+		if containsTemporaryPathSegment(objectWithoutSlash) {
+			// Spark and Hadoop committers may create explicit "_temporary" directory markers.
+			// Persisting these markers can accumulate stale empty directories.
+			// Skip materializing temporary markers and rely on implicit directories from actual object writes.
+			glog.V(3).Infof("PutObjectHandler: skipping temporary directory marker %s/%s", bucket, object)
+		} else {
+			dirName := path.Dir(objectWithoutSlash)
+			entryName := path.Base(objectWithoutSlash)
 
-		if dirName == "." {
-			dirName = ""
-		}
-		dirName = strings.TrimPrefix(dirName, "/")
+			if dirName == "." {
+				dirName = ""
+			}
+			dirName = strings.TrimPrefix(dirName, "/")
 
-		// Construct full directory path
-		fullDirPath := s3a.bucketDir(bucket)
-		if dirName != "" {
-			fullDirPath = fullDirPath + "/" + dirName
-		}
+			// Construct full directory path
+			fullDirPath := s3a.bucketDir(bucket)
+			if dirName != "" {
+				fullDirPath = fullDirPath + "/" + dirName
+			}
 
-		if err := s3a.mkdir(
-			fullDirPath, entryName,
-			func(entry *filer_pb.Entry) {
-				if objectContentType == "" {
-					objectContentType = s3_constants.FolderMimeType
-				}
-				if r.ContentLength > 0 {
-					entry.Content, _ = io.ReadAll(r.Body)
-				}
-				entry.Attributes.Mime = objectContentType
+			if err := s3a.mkdir(
+				fullDirPath, entryName,
+				func(entry *filer_pb.Entry) {
+					if objectContentType == "" {
+						objectContentType = s3_constants.FolderMimeType
+					}
+					if r.ContentLength > 0 {
+						entry.Content, _ = io.ReadAll(r.Body)
+					}
+					entry.Attributes.Mime = objectContentType
 
-				// Set object owner for directory objects (same as regular objects)
-				s3a.setObjectOwnerFromRequest(r, bucket, entry)
-			}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
+					// Set object owner for directory objects (same as regular objects)
+					s3a.setObjectOwnerFromRequest(r, bucket, entry)
+				}); err != nil {
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
 		}
 	} else {
 		// Get detailed versioning state for the bucket

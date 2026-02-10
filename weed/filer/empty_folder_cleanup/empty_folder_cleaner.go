@@ -161,8 +161,15 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 		return
 	}
 
+	// For Spark-style temporary folders, prioritize cleanup on the next processor tick.
+	// These paths are expected to be ephemeral and can otherwise accumulate quickly.
+	queueTime := eventTime
+	if containsTemporaryPathSegment(directory) {
+		queueTime = eventTime.Add(-efc.cleanupQueue.maxAge)
+	}
+
 	// Add to cleanup queue with event time (handles out-of-order events)
-	if efc.cleanupQueue.Add(directory, eventTime) {
+	if efc.cleanupQueue.Add(directory, queueTime) {
 		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
 	}
 }
@@ -304,7 +311,8 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 		efc.mu.Unlock()
 	}
 
-	if !isImplicit {
+	isTemporaryWorkPath := containsTemporaryPathSegment(folder)
+	if !isImplicit && !isTemporaryWorkPath {
 		glog.V(4).Infof("EmptyFolderCleaner: folder %s is not marked as implicit, skipping", folder)
 		return
 	}
@@ -399,6 +407,19 @@ func isUnderBucketPath(directory, bucketPath string) bool {
 	bucketPathDepth := strings.Count(bucketPath, "/")
 	directoryDepth := strings.Count(directory, "/")
 	return directoryDepth >= bucketPathDepth+2
+}
+
+func containsTemporaryPathSegment(path string) bool {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return false
+	}
+	for _, segment := range strings.Split(trimmed, "/") {
+		if segment == "_temporary" {
+			return true
+		}
+	}
+	return false
 }
 
 // cacheEvictionLoop periodically removes stale entries from folderCounts
