@@ -43,6 +43,23 @@ func AllShardIds() []ShardId {
 	return res
 }
 
+// Compares a pair of EcShardInfo protos for sorting.
+func CmpEcShardInfo(a, b *volume_server_pb.EcShardInfo) int {
+	if a.VolumeId < b.VolumeId {
+		return -1
+	}
+	if a.VolumeId > b.VolumeId {
+		return 1
+	}
+	if a.ShardId < b.ShardId {
+		return -1
+	}
+	if a.ShardId > b.ShardId {
+		return 1
+	}
+	return 0
+}
+
 type EcVolumeShard struct {
 	VolumeId    needle.VolumeId
 	ShardId     ShardId
