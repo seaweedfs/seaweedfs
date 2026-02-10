@@ -18,7 +18,7 @@ const (
 	DefaultMaxCountCheck  = 1000
 	DefaultCacheExpiry    = 5 * time.Minute
 	DefaultQueueMaxSize   = 1000
-	DefaultQueueMaxAge    = 10 * time.Minute
+	DefaultQueueMaxAge    = 5 * time.Second
 	DefaultProcessorSleep = 10 * time.Second // How often to check queue
 )
 
@@ -239,11 +239,6 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 
 		// Execute cleanup for this folder
 		efc.executeCleanup(folder)
-
-		// If queue is no longer full and oldest item is not old enough, stop processing
-		if !efc.cleanupQueue.ShouldProcess() {
-			break
-		}
 	}
 }
 
@@ -324,8 +319,9 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	}
 
 	if !isImplicit {
-		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), skipping", folder, implicitSource, implicitAttr)
-		return
+		// Some S3 clients create directory markers without implicit-dir metadata.
+		// For delete-driven cleanup, still verify emptiness and remove if safe.
+		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), proceeding with delete-driven empty check", folder, implicitSource, implicitAttr)
 	}
 
 	// Check if folder is actually empty (count up to maxCountCheck)

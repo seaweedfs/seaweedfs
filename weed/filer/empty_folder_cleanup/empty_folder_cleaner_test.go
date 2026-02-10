@@ -1,12 +1,42 @@
 package empty_folder_cleanup
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+type mockFilerOps struct {
+	countFn  func(path util.FullPath) (int, error)
+	deleteFn func(path util.FullPath) error
+	attrsFn  func(path util.FullPath) (map[string][]byte, error)
+}
+
+func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.FullPath, _ int) (int, error) {
+	if m.countFn == nil {
+		return 0, nil
+	}
+	return m.countFn(dirPath)
+}
+
+func (m *mockFilerOps) DeleteEntryMetaAndData(_ context.Context, p util.FullPath, _, _, _, _ bool, _ []int32, _ int64) error {
+	if m.deleteFn == nil {
+		return nil
+	}
+	return m.deleteFn(p)
+}
+
+func (m *mockFilerOps) GetEntryAttributes(_ context.Context, p util.FullPath) (map[string][]byte, error) {
+	if m.attrsFn == nil {
+		return nil, nil
+	}
+	return m.attrsFn(p)
+}
 
 func Test_isUnderPath(t *testing.T) {
 	tests := []struct {
@@ -565,4 +595,91 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 	}
 
 	cleaner.Stop()
+}
+
+func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+
+	var deleted []string
+	mock := &mockFilerOps{
+		countFn: func(_ util.FullPath) (int, error) {
+			return 0, nil
+		},
+		deleteFn: func(path util.FullPath) error {
+			deleted = append(deleted, string(path))
+			return nil
+		},
+		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
+			return map[string][]byte{s3_constants.ExtS3ImplicitDir: []byte("true")}, nil
+		},
+	}
+
+	cleaner := &EmptyFolderCleaner{
+		filer:          mock,
+		lockRing:       lockRing,
+		host:           "filer1:8888",
+		bucketPath:     "/buckets",
+		enabled:        true,
+		folderCounts:   make(map[string]*folderState),
+		cleanupQueue:   NewCleanupQueue(2, time.Hour),
+		maxCountCheck:  1000,
+		cacheExpiry:    time.Minute,
+		processorSleep: time.Second,
+		stopCh:         make(chan struct{}),
+	}
+
+	now := time.Now()
+	cleaner.cleanupQueue.Add("/buckets/test/folder1", now)
+	cleaner.cleanupQueue.Add("/buckets/test/folder2", now.Add(time.Millisecond))
+	cleaner.cleanupQueue.Add("/buckets/test/folder3", now.Add(2*time.Millisecond))
+
+	cleaner.processCleanupQueue()
+
+	if got := cleaner.cleanupQueue.Len(); got != 0 {
+		t.Fatalf("expected queue to be drained, got len=%d", got)
+	}
+	if len(deleted) != 3 {
+		t.Fatalf("expected 3 deleted folders, got %d", len(deleted))
+	}
+}
+
+func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeStillDeletes(t *testing.T) {
+	lockRing := lock_manager.NewLockRing(5 * time.Second)
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+
+	var deleted []string
+	mock := &mockFilerOps{
+		countFn: func(_ util.FullPath) (int, error) {
+			return 0, nil
+		},
+		deleteFn: func(path util.FullPath) error {
+			deleted = append(deleted, string(path))
+			return nil
+		},
+		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
+			return map[string][]byte{}, nil
+		},
+	}
+
+	cleaner := &EmptyFolderCleaner{
+		filer:          mock,
+		lockRing:       lockRing,
+		host:           "filer1:8888",
+		bucketPath:     "/buckets",
+		enabled:        true,
+		folderCounts:   make(map[string]*folderState),
+		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
+		maxCountCheck:  1000,
+		cacheExpiry:    time.Minute,
+		processorSleep: time.Second,
+		stopCh:         make(chan struct{}),
+	}
+
+	folder := "/buckets/test/folder"
+	cleaner.executeCleanup(folder)
+
+	if len(deleted) != 1 || deleted[0] != folder {
+		t.Fatalf("expected folder %s to be deleted, got %v", folder, deleted)
+	}
 }
