@@ -214,8 +214,10 @@ func (efc *EmptyFolderCleaner) cleanupProcessor() {
 func (efc *EmptyFolderCleaner) processCleanupQueue() {
 	// Check if we should process
 	if !efc.cleanupQueue.ShouldProcess() {
-		glog.V(4).Infof("EmptyFolderCleaner: skipping queue processing (len=%d, oldest_age=%v, max_size=%d, max_age=%v)",
-			efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge(), efc.cleanupQueue.maxSize, efc.cleanupQueue.maxAge)
+		if efc.cleanupQueue.Len() > 0 {
+			glog.Infof("EmptyFolderCleaner: pending queue not processed yet (len=%d, oldest_age=%v, max_size=%d, max_age=%v)",
+				efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge(), efc.cleanupQueue.maxSize, efc.cleanupQueue.maxAge)
+		}
 		return
 	}
 
@@ -322,7 +324,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	}
 
 	if !isImplicit {
-		glog.V(2).Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), skipping", folder, implicitSource, implicitAttr)
+		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), skipping", folder, implicitSource, implicitAttr)
 		return
 	}
 
