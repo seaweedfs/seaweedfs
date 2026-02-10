@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/apache/iceberg-go/table"
@@ -33,5 +34,25 @@ func TestParseMetadataVersionFromLocation(t *testing.T) {
 		if got := parseMetadataVersionFromLocation(tc.location); got != tc.version {
 			t.Fatalf("parseMetadataVersionFromLocation(%q) = %d, want %d", tc.location, got, tc.version)
 		}
+	}
+}
+
+func TestStageCreateMarkerNamespaceKey(t *testing.T) {
+	key := stageCreateMarkerNamespaceKey([]string{"a", "b"})
+	if key == "a\x1fb" {
+		t.Fatalf("stageCreateMarkerNamespaceKey() returned unescaped namespace key %q", key)
+	}
+	if !strings.Contains(key, "%1F") {
+		t.Fatalf("stageCreateMarkerNamespaceKey() = %q, want escaped unit separator", key)
+	}
+}
+
+func TestStageCreateMarkerDir(t *testing.T) {
+	dir := stageCreateMarkerDir("warehouse", []string{"ns"}, "orders")
+	if !strings.Contains(dir, stageCreateMarkerDirName) {
+		t.Fatalf("stageCreateMarkerDir() = %q, want marker dir segment %q", dir, stageCreateMarkerDirName)
+	}
+	if !strings.HasSuffix(dir, "/orders") {
+		t.Fatalf("stageCreateMarkerDir() = %q, want suffix /orders", dir)
 	}
 }
