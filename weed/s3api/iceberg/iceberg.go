@@ -500,13 +500,11 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		glog.Errorf("Iceberg: handleCreateNamespace error: %v", err)
-
 		if strings.Contains(err.Error(), "already exists") {
 			writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 			return
 		}
-		glog.Infof("Iceberg: CreateNamespace error: %v", err)
+		glog.Errorf("Iceberg: CreateNamespace error: %v", err)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
 	}
