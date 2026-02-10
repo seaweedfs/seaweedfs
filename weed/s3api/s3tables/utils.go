@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"net/url"
@@ -116,6 +117,33 @@ func GetTableLocationMappingDir() string {
 // GetTableLocationMappingPath returns the filer path for a table location bucket mapping
 func GetTableLocationMappingPath(tableLocationBucket string) string {
 	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
+}
+
+// GetTableLocationMappingEntryPath returns the filer path for a table-specific mapping entry.
+// Each table gets its own entry so multiple tables can share the same external table-location bucket.
+func GetTableLocationMappingEntryPath(tableLocationBucket, tablePath string) string {
+	return path.Join(GetTableLocationMappingPath(tableLocationBucket), tableLocationMappingEntryName(tablePath))
+}
+
+func tableLocationMappingEntryName(tablePath string) string {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	sum := sha1.Sum([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+func tableBucketPathFromTablePath(tablePath string) (string, bool) {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	tablesPrefix := strings.TrimSuffix(TablesPath, "/") + "/"
+	if !strings.HasPrefix(normalized, tablesPrefix) {
+		return "", false
+	}
+
+	remaining := strings.TrimPrefix(normalized, tablesPrefix)
+	bucketName, _, _ := strings.Cut(remaining, "/")
+	if bucketName == "" {
+		return "", false
+	}
+	return path.Join(TablesPath, bucketName), true
 }
 
 // Metadata structures

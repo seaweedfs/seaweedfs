@@ -49,7 +49,7 @@ type BucketRegistry struct {
 	metadataCache     map[string]*BucketMetaData
 	metadataCacheLock sync.RWMutex
 
-	tableLocationCache map[string]string // Cache for table location mappings (bucket -> table path)
+	tableLocationCache map[string]string // Cache for table location mappings (external bucket -> mapped root path)
 	tableLocationLock  sync.RWMutex
 
 	notFound     map[string]struct{}
