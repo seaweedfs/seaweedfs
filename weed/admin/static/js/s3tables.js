@@ -731,6 +731,9 @@ function s3TablesNamespaceNameError(name) {
         if (!part) {
             return 'namespace levels cannot be empty';
         }
+        if (part === '.' || part === '..') {
+            return "namespace name parts cannot be '.' or '..'";
+        }
         if (part.length < 1 || part.length > 255) {
             return 'Namespace name must be between 1 and 255 characters';
         }

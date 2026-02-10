@@ -245,11 +245,15 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				} else if (name.includes('/')) {
 					message = "namespace name cannot contain '/'";
 				} else {
-					for (const part of name.split('.')) {
-						if (!part) {
-							message = 'namespace levels cannot be empty';
-							break;
-						}
+						for (const part of name.split('.')) {
+							if (!part) {
+								message = 'namespace levels cannot be empty';
+								break;
+							}
+							if (part === '.' || part === '..') {
+								message = "namespace name parts cannot be '.' or '..'";
+								break;
+							}
 						const start = part[0];
 						const end = part[part.length - 1];
 						const isStartValid = (start >= 'a' && start <= 'z') || (start >= '0' && start <= '9');
