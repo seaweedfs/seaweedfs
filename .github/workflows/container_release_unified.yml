@@ -21,7 +21,7 @@ on:
       rocksdb_version:
         description: 'RocksDB git tag to use when variant=rocksdb'
         required: false
-        default: 'v10.5.1'
+        default: 'v10.10.1'
 
 permissions:
   contents: read
@@ -159,7 +159,7 @@ jobs:
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
-            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.5.1') || '' }}
+            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.10.1') || '' }}
             
       - name: Clean up build artifacts
         if: always()
@@ -268,6 +268,5 @@ jobs:
           target_dir: helm
           branch: gh-pages
           helm_version: "3.18.4"
-
 
 
