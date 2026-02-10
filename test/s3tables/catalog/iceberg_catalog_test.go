@@ -4,6 +4,7 @@ package catalog
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -287,6 +288,55 @@ func TestIcebergNamespaces(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+// TestStageCreateMissingNameReturnsBadRequest ensures stage-create enforces table name.
+func TestStageCreateMissingNameReturnsBadRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env := NewTestEnvironment(t)
+	defer env.Cleanup(t)
+
+	env.StartSeaweedFS(t)
+
+	createTableBucket(t, env, "warehouse")
+
+	reqBody := `{"stage-create": true}`
+	url := fmt.Sprintf("%s/v1/namespaces/%s/tables", env.IcebergURL(), "ns1")
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("Failed to build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Stage create request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected status 400, got %d: %s", resp.StatusCode, body)
+	}
+
+	var decoded map[string]map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		t.Fatalf("Failed to decode error response: %v", err)
+	}
+	errorObj, ok := decoded["error"]
+	if !ok {
+		t.Fatalf("Response missing error object: %#v", decoded)
+	}
+	if got := errorObj["type"]; got != "BadRequestException" {
+		t.Fatalf("error.type = %v, want BadRequestException", got)
+	}
+	msg, _ := errorObj["message"].(string)
+	if !strings.Contains(strings.ToLower(msg), "table name is required") {
+		t.Fatalf("error.message = %v, want it to include %q", errorObj["message"], "table name is required")
 	}
 }
 
