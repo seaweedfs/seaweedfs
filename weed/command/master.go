@@ -342,10 +342,12 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
 
 	hasSelf := false
-	for _, peer := range cleanedPeers {
+	for i, peer := range cleanedPeers {
 		if peer.ToHttpAddress() == masterAddress.ToHttpAddress() {
+			// Canonicalize self to avoid adding a second logical self peer
+			// when -peers uses host:port and local name is host:port.grpcPort.
+			cleanedPeers[i] = masterAddress
 			hasSelf = true
-			break
 		}
 	}
 

@@ -33,3 +33,13 @@ func TestCheckPeersAddsSelfWhenGrpcPortMismatches(t *testing.T) {
 		t.Fatalf("expected peers %+v to contain self %s by HTTP address", peers, self)
 	}
 }
+
+func TestCheckPeersCanonicalizesSelfEntry(t *testing.T) {
+	self, peers := checkPeers("127.0.0.1", 9000, 19000, "127.0.0.1:9000,127.0.0.1:9002,127.0.0.1:9003")
+
+	for _, peer := range peers {
+		if peer.ToHttpAddress() == self.ToHttpAddress() && peer != self {
+			t.Fatalf("expected self peer to be canonicalized to %q, got %q", self, peer)
+		}
+	}
+}
