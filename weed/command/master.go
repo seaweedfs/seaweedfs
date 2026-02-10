@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -338,16 +340,22 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 	}
 
 	peers = strings.TrimSpace(peers)
-
-	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
+	seenPeers := make(map[string]struct{})
+	for _, peer := range pb.ServerAddresses(peers).ToAddresses() {
+		normalizedPeer := normalizeMasterPeerAddress(peer, masterAddress)
+		key := string(normalizedPeer)
+		if _, found := seenPeers[key]; found {
+			continue
+		}
+		seenPeers[key] = struct{}{}
+		cleanedPeers = append(cleanedPeers, normalizedPeer)
+	}
 
 	hasSelf := false
-	for i, peer := range cleanedPeers {
+	for _, peer := range cleanedPeers {
 		if peer.ToHttpAddress() == masterAddress.ToHttpAddress() {
-			// Canonicalize self to avoid adding a second logical self peer
-			// when -peers uses host:port and local name is host:port.grpcPort.
-			cleanedPeers[i] = masterAddress
 			hasSelf = true
+			break
 		}
 	}
 
@@ -358,6 +366,23 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 		glog.Fatalf("Only odd number of masters are supported: %+v", cleanedPeers)
 	}
 	return
+}
+
+func normalizeMasterPeerAddress(peer pb.ServerAddress, self pb.ServerAddress) pb.ServerAddress {
+	if peer.ToHttpAddress() == self.ToHttpAddress() {
+		return self
+	}
+
+	_, grpcPort, err := net.SplitHostPort(peer.ToGrpcAddress())
+	if err != nil {
+		return peer
+	}
+	grpcPortValue, err := strconv.Atoi(grpcPort)
+	if err != nil {
+		return peer
+	}
+
+	return pb.NewServerAddressWithGrpcPort(peer.ToHttpAddress(), grpcPortValue)
 }
 
 func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
