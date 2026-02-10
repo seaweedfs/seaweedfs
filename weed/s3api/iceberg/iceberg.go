@@ -322,6 +322,7 @@ type statisticsUpdate struct {
 }
 
 var ErrIncompleteSetStatistics = errors.New("set-statistics requires snapshot-id, statistics-path, file-size-in-bytes, and file-footer-size-in-bytes")
+var errTableNameRequired = errors.New("table name is required")
 
 type commitAction struct {
 	Action string `json:"action"`
@@ -536,6 +537,13 @@ func parseMetadataVersionFromLocation(metadataLocation string) int {
 		return 0
 	}
 	return version
+}
+
+func validateCreateTableRequest(req CreateTableRequest) error {
+	if req.Name == "" {
+		return errTableNameRequired
+	}
+	return nil
 }
 
 // parseNamespace parses the namespace from path parameter.
@@ -983,8 +991,8 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "BadRequestException", "Table name is required")
+	if err := validateCreateTableRequest(req); err != nil {
+		writeError(w, http.StatusBadRequest, "BadRequestException", err.Error())
 		return
 	}
 
