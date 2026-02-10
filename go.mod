@@ -49,7 +49,7 @@ require (
 	github.com/klauspost/compress v1.18.3
 	github.com/klauspost/reedsolomon v1.13.0
 	github.com/kurin/blazer v0.5.3
-	github.com/linxGnu/grocksdb v1.10.7
+	github.com/linxGnu/grocksdb v1.10.6
 	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect

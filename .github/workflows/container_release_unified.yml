@@ -4,7 +4,24 @@ on:
   push:
     tags:
       - '*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Variant to build manually'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - normal
+          - large_disk
+          - full
+          - large_disk_full
+          - rocksdb
+      rocksdb_version:
+        description: 'RocksDB git tag to use when variant=rocksdb'
+        required: false
+        default: 'v10.5.1'
 
 permissions:
   contents: read
@@ -17,6 +34,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.variant == 'all' ||
+      github.event.inputs.variant == matrix.variant
     strategy:
       # Build sequentially to avoid rate limits
       max-parallel: 2
@@ -138,6 +159,7 @@ jobs:
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
+            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.5.1') || '' }}
             
       - name: Clean up build artifacts
         if: always()
@@ -148,7 +170,13 @@ jobs:
   copy-to-dockerhub:
     runs-on: ubuntu-latest
     needs: [build]
-    if: github.event_name != 'pull_request'
+    if: |
+      github.event_name != 'pull_request' &&
+      (
+        github.event_name != 'workflow_dispatch' ||
+        github.event.inputs.variant == 'all' ||
+        github.event.inputs.variant == matrix.variant
+      )
     strategy:
       matrix:
         variant: [normal, large_disk, full, large_disk_full, rocksdb]
@@ -226,6 +254,7 @@ jobs:
   helm-release:
     runs-on: ubuntu-latest
     needs: [copy-to-dockerhub]
+    if: github.event_name == 'push'
     permissions:
       contents: write
       pages: write
@@ -239,7 +268,6 @@ jobs:
           target_dir: helm
           branch: gh-pages
           helm_version: "3.18.4"
-
 
 
 
