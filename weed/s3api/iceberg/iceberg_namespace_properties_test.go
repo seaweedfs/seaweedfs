@@ -12,7 +12,7 @@ func TestNormalizeNamespacePropertiesNil(t *testing.T) {
 	}
 }
 
-func TestNormalizeNamespacePropertiesClonesInput(t *testing.T) {
+func TestNormalizeNamespacePropertiesReturnsInputWhenSet(t *testing.T) {
 	input := map[string]string{
 		"owner": "analytics",
 	}
@@ -22,8 +22,8 @@ func TestNormalizeNamespacePropertiesClonesInput(t *testing.T) {
 		t.Fatalf("normalized properties value = %q, want %q", properties["owner"], "analytics")
 	}
 
-	input["owner"] = "mutated"
-	if properties["owner"] != "analytics" {
-		t.Fatalf("normalized properties was mutated via input map")
+	input["owner"] = "updated"
+	if properties["owner"] != "updated" {
+		t.Fatalf("normalizeNamespaceProperties should reuse the input map when non-nil")
 	}
 }

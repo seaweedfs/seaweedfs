@@ -402,15 +402,10 @@ func parsePagination(r *http.Request) (pageToken string, pageSize int, err error
 }
 
 func normalizeNamespaceProperties(properties map[string]string) map[string]string {
-	if len(properties) == 0 {
+	if properties == nil {
 		return map[string]string{}
 	}
-
-	normalized := make(map[string]string, len(properties))
-	for k, v := range properties {
-		normalized[k] = v
-	}
-	return normalized
+	return properties
 }
 
 // handleConfig returns catalog configuration.
