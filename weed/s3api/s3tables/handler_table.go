@@ -408,7 +408,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
 		TableARN:         tableARN,
-		Namespace:        []string{metadata.Namespace},
+		Namespace:        expandNamespace(metadata.Namespace),
 		Format:           metadata.Format,
 		CreatedAt:        metadata.CreatedAt,
 		ModifiedAt:       metadata.ModifiedAt,
@@ -683,7 +683,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			tables = append(tables, TableSummary{
 				Name:       entry.Entry.Name,
 				TableARN:   tableARN,
-				Namespace:  []string{namespaceName},
+				Namespace:  expandNamespace(namespaceName),
 				CreatedAt:  metadata.CreatedAt,
 				ModifiedAt: metadata.ModifiedAt,
 			})

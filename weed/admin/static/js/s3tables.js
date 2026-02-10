@@ -725,20 +725,27 @@ function s3TablesNamespaceNameError(name) {
     if (name.includes('/')) {
         return "namespace name cannot contain '/'";
     }
-    if (!isLowercaseLetterOrDigit(name[0])) {
-        return 'Namespace name must start with a letter or digit';
-    }
-    if (!isLowercaseLetterOrDigit(name[name.length - 1])) {
-        return 'Namespace name must end with a letter or digit';
-    }
-    for (const ch of name) {
-        if (isLowercaseLetterOrDigit(ch) || ch === '_') {
-            continue;
+
+    const parts = name.split('.');
+    for (const part of parts) {
+        if (!part) {
+            return 'namespace levels cannot be empty';
         }
-        return "invalid namespace name: only 'a-z', '0-9', and '_' are allowed";
-    }
-    if (name.startsWith('aws')) {
-        return "namespace name cannot start with reserved prefix 'aws'";
+        if (!isLowercaseLetterOrDigit(part[0])) {
+            return 'Namespace name must start with a letter or digit';
+        }
+        if (!isLowercaseLetterOrDigit(part[part.length - 1])) {
+            return 'Namespace name must end with a letter or digit';
+        }
+        for (const ch of part) {
+            if (isLowercaseLetterOrDigit(ch) || ch === '_') {
+                continue;
+            }
+            return "invalid namespace name: only 'a-z', '0-9', and '_' are allowed";
+        }
+        if (part.startsWith('aws')) {
+            return "namespace name cannot start with reserved prefix 'aws'";
+        }
     }
     return '';
 }
