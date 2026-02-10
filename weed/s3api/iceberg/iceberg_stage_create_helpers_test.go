@@ -31,9 +31,11 @@ func TestParseMetadataVersionFromLocation(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		if got := parseMetadataVersionFromLocation(tc.location); got != tc.version {
-			t.Fatalf("parseMetadataVersionFromLocation(%q) = %d, want %d", tc.location, got, tc.version)
-		}
+		t.Run(tc.location, func(t *testing.T) {
+			if got := parseMetadataVersionFromLocation(tc.location); got != tc.version {
+				t.Errorf("parseMetadataVersionFromLocation(%q) = %d, want %d", tc.location, got, tc.version)
+			}
+		})
 	}
 }
 

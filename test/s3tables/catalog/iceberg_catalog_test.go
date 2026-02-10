@@ -304,6 +304,15 @@ func TestStageCreateMissingNameReturnsBadRequest(t *testing.T) {
 	env.StartSeaweedFS(t)
 
 	createTableBucket(t, env, "warehouse")
+	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
+		"namespace": []string{"ns1"},
+	})
+	if err != nil {
+		t.Fatalf("Create namespace request failed: %v", err)
+	}
+	if status != http.StatusOK && status != http.StatusConflict {
+		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
+	}
 
 	reqBody := `{"stage-create": true}`
 	url := fmt.Sprintf("%s/v1/namespaces/%s/tables", env.IcebergURL(), "ns1")
@@ -324,13 +333,13 @@ func TestStageCreateMissingNameReturnsBadRequest(t *testing.T) {
 		t.Fatalf("Expected status 400, got %d: %s", resp.StatusCode, body)
 	}
 
-	var decoded map[string]map[string]any
+	var decoded map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		t.Fatalf("Failed to decode error response: %v", err)
 	}
-	errorObj, ok := decoded["error"]
+	errorObj, ok := decoded["error"].(map[string]any)
 	if !ok {
-		t.Fatalf("Response missing error object: %#v", decoded)
+		t.Fatalf("Response missing or invalid error object: %#v", decoded)
 	}
 	if got := errorObj["type"]; got != "BadRequestException" {
 		t.Fatalf("error.type = %v, want BadRequestException", got)
@@ -456,6 +465,7 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 	}
 }
 
+// doIcebergJSONRequest decodes JSON object responses used by catalog tests.
 func doIcebergJSONRequest(env *TestEnvironment, method, path string, payload any) (int, map[string]any, error) {
 	url := env.IcebergURL() + path
 
