@@ -2,9 +2,9 @@ package s3api
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -125,15 +125,13 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		target := util.NewFullPath(s3a.bucketDir(bucket), object)
+		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			if deleteErr := doDeleteEntry(client, dir, name, true, false); deleteErr != nil {
-				return deleteErr
-			}
-			s3a.cleanupEmptyParentDirectories(client, bucket, object)
-			return nil
+			return doDeleteEntry(client, dir, name, true, false)
+			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
+			// which listens to metadata events and uses consistent hashing for coordination
 		})
 
 		if err != nil {
@@ -213,13 +211,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	var deletedObjects []ObjectIdentifier
 	var deleteErrors []DeleteError
 	var auditLog *s3err.AccessLog
-	type pendingDirectoryDelete struct {
-		key    string
-		parent string
-		name   string
-	}
-	var pendingDirectoryDeletes []pendingDirectoryDelete
-	pendingDirectoryDeleteSeen := make(map[string]struct{})
 
 	if s3err.Logger != nil {
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
@@ -349,28 +340,19 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				}
 			} else {
 				// Handle non-versioned delete (original logic)
-				target := util.NewFullPath(s3a.bucketDir(bucket), object.Key)
-				parentDirectoryPath, entryName := target.DirAndName()
-				isDeleteData, isRecursive := true, false
+				lastSeparator := strings.LastIndex(object.Key, "/")
+				parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
+				if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
+					entryName = object.Key[lastSeparator+1:]
+					parentDirectoryPath = object.Key[:lastSeparator]
+				}
+				parentDirectoryPath = fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), parentDirectoryPath)
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
 					deletedObjects = append(deletedObjects, object)
-					s3a.cleanupEmptyParentDirectories(client, bucket, object.Key)
 				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 					deletedObjects = append(deletedObjects, object)
-					s3a.cleanupEmptyParentDirectories(client, bucket, object.Key)
-					if entryName != "" {
-						normalizedKey := strings.TrimSuffix(object.Key, "/")
-						if _, seen := pendingDirectoryDeleteSeen[normalizedKey]; !seen {
-							pendingDirectoryDeleteSeen[normalizedKey] = struct{}{}
-							pendingDirectoryDeletes = append(pendingDirectoryDeletes, pendingDirectoryDelete{
-								key:    normalizedKey,
-								parent: parentDirectoryPath,
-								name:   entryName,
-							})
-						}
-					}
 				} else {
 					deleteErrors = append(deleteErrors, DeleteError{
 						Code:      "",
@@ -384,22 +366,6 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			if auditLog != nil {
 				auditLog.Key = object.Key
 				s3err.PostAccessLog(*auditLog)
-			}
-		}
-
-		if len(pendingDirectoryDeletes) > 0 {
-			sort.Slice(pendingDirectoryDeletes, func(i, j int) bool {
-				return len(pendingDirectoryDeletes[i].key) > len(pendingDirectoryDeletes[j].key)
-			})
-			for _, pending := range pendingDirectoryDeletes {
-				retryErr := doDeleteEntry(client, pending.parent, pending.name, true, false)
-				if retryErr == nil {
-					continue
-				}
-				if strings.Contains(retryErr.Error(), filer.MsgFailDelNonEmptyFolder) || strings.Contains(retryErr.Error(), filer_pb.ErrNotFound.Error()) {
-					continue
-				}
-				glog.V(2).Infof("DeleteMultipleObjectsHandler: retry delete failed for %s: %v", pending.key, retryErr)
 			}
 		}
 
@@ -419,37 +385,4 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 	writeSuccessResponseXML(w, r, deleteResp)
 
-}
-
-func (s3a *S3ApiServer) cleanupEmptyParentDirectories(client filer_pb.SeaweedFilerClient, bucket, objectKey string) {
-	normalizedKey := strings.Trim(strings.TrimSpace(objectKey), "/")
-	if normalizedKey == "" {
-		return
-	}
-
-	target := util.NewFullPath(s3a.bucketDir(bucket), normalizedKey)
-	parentDirectoryPath, _ := target.DirAndName()
-	bucketRoot := s3a.bucketDir(bucket)
-
-	for parentDirectoryPath != "" && parentDirectoryPath != "/" && parentDirectoryPath != bucketRoot {
-		grandParent, directoryName := util.FullPath(parentDirectoryPath).DirAndName()
-		if directoryName == "" {
-			return
-		}
-
-		err := doDeleteEntry(client, grandParent, directoryName, true, false)
-		if err == nil {
-			parentDirectoryPath = grandParent
-			continue
-		}
-		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
-			return
-		}
-		if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
-			parentDirectoryPath = grandParent
-			continue
-		}
-		glog.V(2).Infof("cleanupEmptyParentDirectories: failed deleting %s/%s: %v", grandParent, directoryName, err)
-		return
-	}
 }
