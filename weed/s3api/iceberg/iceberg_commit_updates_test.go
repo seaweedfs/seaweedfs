@@ -39,10 +39,13 @@ func TestParseCommitUpdatesRejectsIncompleteSetStatistics(t *testing.T) {
 	if err == nil {
 		t.Fatalf("parseCommitUpdates() expected error")
 	}
+	if !errors.Is(err, ErrIncompleteSetStatistics) {
+		t.Fatalf("parseCommitUpdates() error = %v, want ErrIncompleteSetStatistics", err)
+	}
 }
 
 func TestApplyStatisticsUpdatesUpsertAndRemove(t *testing.T) {
-	metadata := []byte(`{"format-version":2,"statistics":[{"snapshot-id":1,"statistics-path":"s3://bucket/stats-1.puffin","file-size-in-bytes":10,"file-footer-size-in-bytes":1,"blob-metadata":[]}]} `)
+	metadata := []byte(`{"format-version":2,"statistics":[{"snapshot-id":1,"statistics-path":"s3://bucket/stats-1.puffin","file-size-in-bytes":10,"file-footer-size-in-bytes":1,"blob-metadata":[]},{"snapshot-id":2,"statistics-path":"s3://bucket/stats-2.puffin","file-size-in-bytes":20,"file-footer-size-in-bytes":2,"blob-metadata":[]}]} `)
 
 	snapshotID := int64(2)
 	setUpdates := []statisticsUpdate{
@@ -73,6 +76,9 @@ func TestApplyStatisticsUpdatesUpsertAndRemove(t *testing.T) {
 	}
 	if got := int64(stats[0]["snapshot-id"].(float64)); got != 1 {
 		t.Fatalf("remaining snapshot-id = %d, want 1", got)
+	}
+	if got := int64(stats[0]["file-size-in-bytes"].(float64)); got != 11 {
+		t.Fatalf("remaining file-size-in-bytes = %d, want 11", got)
 	}
 }
 
