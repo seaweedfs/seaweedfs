@@ -491,7 +491,8 @@ var errTableNameRequired = errors.New("table name is required")
 
 const (
 	stageCreateMarkerDirName = ".iceberg_staged"
-	stageCreateMarkerTTL     = 24 * time.Hour
+	// Keep staged markers long enough to avoid deleting in-progress create transactions.
+	stageCreateMarkerTTL = 72 * time.Hour
 )
 
 type stageCreateMarker struct {
