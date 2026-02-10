@@ -67,4 +67,3 @@ func TestParsePaginationRejectsInvalidPageSize(t *testing.T) {
 		})
 	}
 }
-

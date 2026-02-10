@@ -454,7 +454,7 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 
 	result := ListNamespacesResponse{
 		NextPageToken: resp.ContinuationToken,
-		Namespaces: namespaces,
+		Namespaces:    namespaces,
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -696,7 +696,7 @@ func (s *Server) handleListTables(w http.ResponseWriter, r *http.Request) {
 
 	result := ListTablesResponse{
 		NextPageToken: listResp.ContinuationToken,
-		Identifiers: identifiers,
+		Identifiers:   identifiers,
 	}
 	writeJSON(w, http.StatusOK, result)
 }
