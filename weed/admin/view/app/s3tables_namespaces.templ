@@ -250,14 +250,10 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 								message = 'namespace levels cannot be empty';
 								break;
 							}
-							if (part === '.' || part === '..') {
-								message = "namespace name parts cannot be '.' or '..'";
-								break;
-							}
-						const start = part[0];
-						const end = part[part.length - 1];
-						const isStartValid = (start >= 'a' && start <= 'z') || (start >= '0' && start <= '9');
-						const isEndValid = (end >= 'a' && end <= 'z') || (end >= '0' && end <= '9');
+							const start = part[0];
+							const end = part[part.length - 1];
+							const isStartValid = (start >= 'a' && start <= 'z') || (start >= '0' && start <= '9');
+							const isEndValid = (end >= 'a' && end <= 'z') || (end >= '0' && end <= '9');
 						if (!isStartValid) {
 							message = 'Namespace name must start with a letter or digit';
 							break;
