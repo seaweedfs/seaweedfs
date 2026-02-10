@@ -132,7 +132,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			if deleteErr := doDeleteEntry(client, dir, name, true, false); deleteErr != nil {
 				return deleteErr
 			}
-			s3a.cleanupTemporaryParentDirectories(client, bucket, object)
+			s3a.cleanupEmptyParentDirectories(client, bucket, object)
 			return nil
 		})
 
@@ -356,10 +356,10 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
 					deletedObjects = append(deletedObjects, object)
-					s3a.cleanupTemporaryParentDirectories(client, bucket, object.Key)
+					s3a.cleanupEmptyParentDirectories(client, bucket, object.Key)
 				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 					deletedObjects = append(deletedObjects, object)
-					s3a.cleanupTemporaryParentDirectories(client, bucket, object.Key)
+					s3a.cleanupEmptyParentDirectories(client, bucket, object.Key)
 					if entryName != "" {
 						normalizedKey := strings.TrimSuffix(object.Key, "/")
 						if _, seen := pendingDirectoryDeleteSeen[normalizedKey]; !seen {
@@ -421,9 +421,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 }
 
-func (s3a *S3ApiServer) cleanupTemporaryParentDirectories(client filer_pb.SeaweedFilerClient, bucket, objectKey string) {
+func (s3a *S3ApiServer) cleanupEmptyParentDirectories(client filer_pb.SeaweedFilerClient, bucket, objectKey string) {
 	normalizedKey := strings.Trim(strings.TrimSpace(objectKey), "/")
-	if normalizedKey == "" || !containsTemporaryPathSegment(normalizedKey) {
+	if normalizedKey == "" {
 		return
 	}
 
@@ -432,12 +432,6 @@ func (s3a *S3ApiServer) cleanupTemporaryParentDirectories(client filer_pb.Seawee
 	bucketRoot := s3a.bucketDir(bucket)
 
 	for parentDirectoryPath != "" && parentDirectoryPath != "/" && parentDirectoryPath != bucketRoot {
-		relativeParent := strings.TrimPrefix(parentDirectoryPath, bucketRoot)
-		relativeParent = strings.TrimPrefix(relativeParent, "/")
-		if !containsTemporaryPathSegment(relativeParent) {
-			return
-		}
-
 		grandParent, directoryName := util.FullPath(parentDirectoryPath).DirAndName()
 		if directoryName == "" {
 			return
@@ -455,16 +449,7 @@ func (s3a *S3ApiServer) cleanupTemporaryParentDirectories(client filer_pb.Seawee
 			parentDirectoryPath = grandParent
 			continue
 		}
-		glog.V(2).Infof("cleanupTemporaryParentDirectories: failed deleting %s/%s: %v", grandParent, directoryName, err)
+		glog.V(2).Infof("cleanupEmptyParentDirectories: failed deleting %s/%s: %v", grandParent, directoryName, err)
 		return
 	}
-}
-
-func containsTemporaryPathSegment(path string) bool {
-	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
-		if segment == "_temporary" {
-			return true
-		}
-	}
-	return false
 }

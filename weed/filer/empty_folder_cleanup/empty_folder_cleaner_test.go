@@ -66,29 +66,6 @@ func Test_isUnderBucketPath(t *testing.T) {
 	}
 }
 
-func Test_containsTemporaryPathSegment(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected bool
-	}{
-		{"spark temporary root", "/buckets/mybucket/output/_temporary", true},
-		{"spark temporary nested", "/buckets/mybucket/output/_temporary/0/task", true},
-		{"no temporary segment", "/buckets/mybucket/output/temp", false},
-		{"empty path", "", false},
-		{"root path", "/", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsTemporaryPathSegment(tt.path)
-			if result != tt.expected {
-				t.Errorf("containsTemporaryPathSegment(%q) = %v, want %v", tt.path, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestEmptyFolderCleaner_ownsFolder(t *testing.T) {
 	// Create a LockRing with multiple servers
 	lockRing := lock_manager.NewLockRing(5 * time.Second)

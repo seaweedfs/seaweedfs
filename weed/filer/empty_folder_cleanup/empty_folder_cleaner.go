@@ -9,8 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -161,14 +159,9 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 		return
 	}
 
-	// For Spark-style temporary folders, prioritize cleanup on the next processor tick.
-	// These paths are expected to be ephemeral and can otherwise accumulate quickly.
-	queueTime := eventTime
-	if containsTemporaryPathSegment(directory) {
-		queueTime = eventTime.Add(-efc.cleanupQueue.maxAge)
-	}
-
-	// Add to cleanup queue with event time (handles out-of-order events)
+	// Queue with an age that is immediately eligible at next processor tick.
+	// This keeps empty-folder cleanup responsive while preserving queue ordering/dedup.
+	queueTime := eventTime.Add(-efc.cleanupQueue.maxAge)
 	if efc.cleanupQueue.Add(directory, queueTime) {
 		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
 	}
@@ -276,48 +269,8 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 		return
 	}
 
-	// Check for explicit implicit_dir attribute
-	// First check cache
-	ctx := context.Background()
-	efc.mu.RLock()
-	var cachedImplicit *bool
-	if state, exists := efc.folderCounts[folder]; exists {
-		cachedImplicit = state.isImplicit
-	}
-	efc.mu.RUnlock()
-
-	var isImplicit bool
-	if cachedImplicit != nil {
-		isImplicit = *cachedImplicit
-	} else {
-		// Not cached, check filer
-		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				return
-			}
-			glog.V(2).Infof("EmptyFolderCleaner: error getting attributes for %s: %v", folder, err)
-			return
-		}
-
-		isImplicit = attrs != nil && string(attrs[s3_constants.ExtS3ImplicitDir]) == "true"
-
-		// Update cache
-		efc.mu.Lock()
-		if _, exists := efc.folderCounts[folder]; !exists {
-			efc.folderCounts[folder] = &folderState{}
-		}
-		efc.folderCounts[folder].isImplicit = &isImplicit
-		efc.mu.Unlock()
-	}
-
-	isTemporaryWorkPath := containsTemporaryPathSegment(folder)
-	if !isImplicit && !isTemporaryWorkPath {
-		glog.V(4).Infof("EmptyFolderCleaner: folder %s is not marked as implicit, skipping", folder)
-		return
-	}
-
 	// Check if folder is actually empty (count up to maxCountCheck)
+	ctx := context.Background()
 	count, err := efc.countItems(ctx, folder)
 	if err != nil {
 		glog.V(2).Infof("EmptyFolderCleaner: error counting items in %s: %v", folder, err)
@@ -407,19 +360,6 @@ func isUnderBucketPath(directory, bucketPath string) bool {
 	bucketPathDepth := strings.Count(bucketPath, "/")
 	directoryDepth := strings.Count(directory, "/")
 	return directoryDepth >= bucketPathDepth+2
-}
-
-func containsTemporaryPathSegment(path string) bool {
-	trimmed := strings.Trim(path, "/")
-	if trimmed == "" {
-		return false
-	}
-	for _, segment := range strings.Split(trimmed, "/") {
-		if segment == "_temporary" {
-			return true
-		}
-	}
-	return false
 }
 
 // cacheEvictionLoop periodically removes stale entries from folderCounts
