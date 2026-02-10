@@ -495,7 +495,7 @@ func (s *Server) handleCreateNamespace(w http.ResponseWriter, r *http.Request) {
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		glog.Errorf("Iceberg: handleCreateNamespace calling Execute with identityName=%s", identityName)
+		glog.V(2).Infof("Iceberg: handleCreateNamespace calling Execute with identityName=%s", identityName)
 		return s.tablesManager.Execute(r.Context(), mgrClient, "CreateNamespace", createReq, &createResp, identityName)
 	})
 
