@@ -7,8 +7,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
-script changePageSize(path string, lastFileName string) {
-	window.location.href = '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + this.value
+script changePageSize(path string, lastFileName string, pageSizeSelectId string) {
+	const pageSizeSelect = document.getElementById(pageSizeSelectId)
+	if (pageSizeSelect == null) {
+		return
+	}
+	window.location.href = '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + pageSizeSelect.value
 }
 
 templ FileBrowser(data dash.FileBrowserData) {
@@ -94,7 +98,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="d-flex align-items-center gap-2 ms-auto">
 				<div class="d-flex align-items-center">
 					<label class="me-1 mb-0 small text-muted">Show:</label>
-					<select class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
+					<select id="file-browser-page-size-top" class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName, "file-browser-page-size-top") }>
 						<option value="20" selected?={ data.PageSize == 20 }>20</option>
 						<option value="50" selected?={ data.PageSize == 50 }>50</option>
 						<option value="100" selected?={ data.PageSize == 100 }>100</option>
@@ -221,7 +225,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<div class="col-md-6">
 				<div class="d-flex align-items-center">
 					<label class="me-2 mb-0">Show:</label>
-					<select class="form-select form-select-sm" style="width: auto;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName) }>
+					<select id="file-browser-page-size-bottom" class="form-select form-select-sm" style="width: auto;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName, "file-browser-page-size-bottom") }>
 						<option value="20" selected?={ data.PageSize == 20 }>20</option>
 						<option value="50" selected?={ data.PageSize == 50 }>50</option>
 						<option value="100" selected?={ data.PageSize == 100 }>100</option>
