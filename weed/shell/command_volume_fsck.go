@@ -40,7 +40,8 @@ func init() {
 }
 
 const (
-	readbufferSize = 16
+	readbufferSize                 = 16
+	jwtFilerTokenExpirationSeconds = 300
 )
 
 type commandVolumeFsck struct {
@@ -54,6 +55,7 @@ type commandVolumeFsck struct {
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
 	verifyNeedle             *bool
+	filerSigningKey          string
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -139,6 +141,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		fmt.Fprintf(c.writer, "working directory: %s\n", c.tempFolder)
 	}
 	defer os.RemoveAll(c.tempFolder)
+
+	c.filerSigningKey = util.GetViper().GetString("jwt.filer_signing.key")
 
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
@@ -558,9 +562,8 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		Path:   string(path),
 	}
 
-	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
-	if signingKey != "" {
-		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(signingKey), 5*60)
+	if c.filerSigningKey != "" {
+		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
 		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
 	}
 
