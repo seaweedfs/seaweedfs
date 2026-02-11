@@ -151,7 +151,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]
-		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, allLocations); err != nil {
+		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, allLocations, volumeSizeLimitMb); err != nil {
 			fmt.Printf("tier move volume %d: %v\n", vid, err)
 		}
 		allLocations = rotateDataNodes(allLocations)
@@ -200,7 +200,7 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, allLocations []location) (err error) {
+func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, allLocations []location, volumeSizeLimitMb uint64) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
@@ -209,9 +209,10 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 
 	// find one server with the most empty volume slots with target disk type
 	hasFoundTarget := false
-	fn := capacityByFreeVolumeCount(toDiskType)
+	fn := capacityByFreeVolumeCount(toDiskType, volumeSizeLimitMb)
 	for _, dst := range allLocations {
-		if fn(dst.dataNode) > 0 && !hasFoundTarget {
+		freeVolumeCount, _, _ := fn(dst.dataNode)
+		if freeVolumeCount > 0 && !hasFoundTarget {
 			// ask the volume server to replicate the volume
 			if isOneOf(dst.dataNode.Id, locations) {
 				continue
