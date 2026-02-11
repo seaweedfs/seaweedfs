@@ -286,7 +286,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	}
 
 	if !autoRemove {
-		glog.Infof("EmptyFolderCleaner: skipping folder %s (triggered by %s), bucket %s auto-remove-empty-folders disabled (source=%s attr=%s)",
+		glog.V(3).Infof("EmptyFolderCleaner: skipping folder %s (triggered by %s), bucket %s auto-remove-empty-folders disabled (source=%s attr=%s)",
 			folder, triggeredBy, bucketPath, source, attrValue)
 		return
 	}
