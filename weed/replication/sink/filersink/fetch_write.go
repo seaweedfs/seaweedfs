@@ -141,7 +141,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		return nil
 	}, func(uploadErr error) (shouldContinue bool) {
 		if fs.hasSourceNewerVersion(path, sourceMtime) {
-			glog.V(0).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
+			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
 			return false
 		}
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), uploadErr)
@@ -182,18 +182,17 @@ func (fs *FilerSink) targetPathToSourcePath(targetPath string) (util.FullPath, b
 		return "", false
 	}
 
-	sourceRoot := strings.TrimSuffix(fs.filerSource.Dir, "/")
-	targetRoot := strings.TrimSuffix(fs.dir, "/")
-	targetPath = strings.TrimSuffix(targetPath, "/")
-	if sourceRoot == "" {
-		sourceRoot = "/"
+	normalizePath := func(p string) string {
+		p = strings.TrimSuffix(p, "/")
+		if p == "" {
+			return "/"
+		}
+		return p
 	}
-	if targetRoot == "" {
-		targetRoot = "/"
-	}
-	if targetPath == "" {
-		targetPath = "/"
-	}
+
+	sourceRoot := normalizePath(fs.filerSource.Dir)
+	targetRoot := normalizePath(fs.dir)
+	targetPath = normalizePath(targetPath)
 
 	var relative string
 	switch {
