@@ -16,11 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
+	"golang.org/x/sync/singleflight"
 )
 
 // OIDCProvider implements OpenID Connect authentication
@@ -32,6 +34,8 @@ type OIDCProvider struct {
 	httpClient    *http.Client
 	jwksFetchedAt time.Time
 	jwksTTL       time.Duration
+	jwksMutex     sync.RWMutex         // Protects jwksCache and jwksFetchedAt
+	jwksFetchGroup singleflight.Group   // Prevents duplicate concurrent JWKS fetches
 }
 
 // OIDCConfig holds OIDC provider configuration
@@ -551,45 +555,89 @@ func (p *OIDCProvider) mapClaimsToRolesWithConfig(claims *providers.TokenClaims)
 }
 
 // getPublicKey retrieves the public key for the given key ID from JWKS
+// Uses singleflight pattern to prevent duplicate concurrent JWKS fetches
+// and proper locking to avoid use-after-unlock bugs
 func (p *OIDCProvider) getPublicKey(ctx context.Context, kid string) (interface{}, error) {
-	// Fetch JWKS if not cached or refresh if expired
-	if p.jwksCache == nil || (!p.jwksFetchedAt.IsZero() && time.Since(p.jwksFetchedAt) > p.jwksTTL) {
-		if err := p.fetchJWKS(ctx); err != nil {
-			return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
+	// Fast path: Try to find key in cache with read lock
+	p.jwksMutex.RLock()
+	cacheValid := p.jwksCache != nil && (p.jwksFetchedAt.IsZero() || time.Since(p.jwksFetchedAt) <= p.jwksTTL)
+	if cacheValid {
+		// Make a copy of the JWK to avoid use-after-unlock
+		jwkCopy := p.findAndCopyKey(kid)
+		p.jwksMutex.RUnlock()
+
+		if jwkCopy != nil {
+			// Parse key outside lock for better concurrency
+			return p.parseJWK(jwkCopy)
 		}
+		// Key not found in valid cache - need refresh
+	} else {
+		p.jwksMutex.RUnlock()
 	}
 
-	// Find the key with matching kid
-	for _, key := range p.jwksCache.Keys {
-		if key.Kid == kid {
-			return p.parseJWK(&key)
+	// Slow path: Need to fetch/refresh JWKS
+	// Use singleflight to ensure only one fetch happens even with many concurrent requests
+	_, err, _ := p.jwksFetchGroup.Do("jwks", func() (interface{}, error) {
+		// Double-check: another goroutine may have just fetched
+		p.jwksMutex.RLock()
+		stillNeedFetch := p.jwksCache == nil || time.Since(p.jwksFetchedAt) > p.jwksTTL
+		p.jwksMutex.RUnlock()
+
+		if stillNeedFetch {
+			// Fetch JWKS WITHOUT holding any locks (critical for performance)
+			return nil, p.fetchJWKS(ctx)
 		}
+		return nil, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch JWKS: %v", err)
 	}
 
-	// Key not found in cache. Refresh JWKS once to handle key rotation and retry.
-	if err := p.fetchJWKS(ctx); err != nil {
-		return nil, fmt.Errorf("failed to refresh JWKS after key miss: %v", err)
+	// Search in newly fetched JWKS
+	p.jwksMutex.RLock()
+	jwkCopy := p.findAndCopyKey(kid)
+	p.jwksMutex.RUnlock()
+
+	if jwkCopy != nil {
+		return p.parseJWK(jwkCopy)
 	}
-	for _, key := range p.jwksCache.Keys {
-		if key.Kid == kid {
-			return p.parseJWK(&key)
-		}
-	}
+
+	// Key not found even after refresh - this could be key rotation
 	return nil, fmt.Errorf("key with ID %s not found in JWKS after refresh", kid)
 }
 
-// fetchJWKS fetches the JWKS from the provider
+// findAndCopyKey searches for a key and returns a copy (not a pointer)
+// Must be called with at least a read lock held
+func (p *OIDCProvider) findAndCopyKey(kid string) *JWK {
+	if p.jwksCache == nil {
+		return nil
+	}
+	for i := range p.jwksCache.Keys {
+		if p.jwksCache.Keys[i].Kid == kid {
+			// Return a copy to avoid use-after-unlock bugs
+			keyCopy := p.jwksCache.Keys[i]
+			return &keyCopy
+		}
+	}
+	return nil
+}
+
+// fetchJWKS fetches the JWKS from the provider WITHOUT holding locks during HTTP call
+// This is critical for performance - HTTP calls can take seconds
 func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
 	jwksURL := p.config.JWKSUri
 	if jwksURL == "" {
 		jwksURL = strings.TrimSuffix(p.config.Issuer, "/") + "/.well-known/jwks.json"
 	}
 
+	// Create request WITHOUT holding any locks
 	req, err := http.NewRequestWithContext(ctx, "GET", jwksURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create JWKS request: %v", err)
 	}
 
+	// Make HTTP call WITHOUT holding any locks (critical for performance)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch JWKS: %v", err)
@@ -600,13 +648,18 @@ func (p *OIDCProvider) fetchJWKS(ctx context.Context) error {
 		return fmt.Errorf("JWKS endpoint returned status: %d", resp.StatusCode)
 	}
 
+	// Decode response WITHOUT holding any locks
 	var jwks JWKS
 	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
 		return fmt.Errorf("failed to decode JWKS response: %v", err)
 	}
 
+	// Only acquire write lock for the actual cache update (very fast)
+	p.jwksMutex.Lock()
 	p.jwksCache = &jwks
 	p.jwksFetchedAt = time.Now()
+	p.jwksMutex.Unlock()
+
 	glog.V(3).Infof("Fetched JWKS with %d keys from %s", len(jwks.Keys), jwksURL)
 	return nil
 }
