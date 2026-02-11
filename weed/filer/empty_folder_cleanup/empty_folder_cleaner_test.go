@@ -96,50 +96,6 @@ func Test_isUnderBucketPath(t *testing.T) {
 	}
 }
 
-func Test_extractBucketPath(t *testing.T) {
-	tests := []struct {
-		name       string
-		folder     string
-		bucketRoot string
-		expected   string
-		ok         bool
-	}{
-		{
-			name:       "folder under bucket",
-			folder:     "/buckets/test/a/b",
-			bucketRoot: "/buckets",
-			expected:   "/buckets/test",
-			ok:         true,
-		},
-		{
-			name:       "bucket root folder should not match",
-			folder:     "/buckets/test",
-			bucketRoot: "/buckets",
-			expected:   "",
-			ok:         false,
-		},
-		{
-			name:       "outside buckets",
-			folder:     "/data/test/a",
-			bucketRoot: "/buckets",
-			expected:   "",
-			ok:         false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotPath, gotOK := extractBucketPath(tt.folder, tt.bucketRoot)
-			if gotOK != tt.ok {
-				t.Fatalf("expected ok=%v, got %v", tt.ok, gotOK)
-			}
-			if gotPath != tt.expected {
-				t.Fatalf("expected path %q, got %q", tt.expected, gotPath)
-			}
-		})
-	}
-}
-
 func Test_autoRemoveEmptyFoldersEnabled(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -750,7 +706,7 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 		},
 		attrsFn: func(path util.FullPath) (map[string][]byte, error) {
 			if string(path) == "/buckets/test" {
-			return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
+				return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
 			}
 			return nil, nil
 		},

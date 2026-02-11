@@ -340,7 +340,7 @@ func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) 
 }
 
 func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {
-	bucketPath, ok := extractBucketPath(folder, efc.bucketPath)
+	bucketPath, ok := util.ExtractBucketPath(efc.bucketPath, folder, true)
 	if !ok {
 		return "", true, "default", "<not_bucket_path>", nil
 	}
@@ -373,26 +373,6 @@ func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folde
 	efc.mu.Unlock()
 
 	return bucketPath, autoRemove, "filer", attrValue, nil
-}
-
-func extractBucketPath(folder string, bucketPath string) (string, bool) {
-	if bucketPath == "" {
-		return "", false
-	}
-
-	cleanBucketPath := strings.TrimSuffix(bucketPath, "/")
-	prefix := cleanBucketPath + "/"
-	if !strings.HasPrefix(folder, prefix) {
-		return "", false
-	}
-
-	rest := strings.TrimPrefix(folder, prefix)
-	bucketName, _, found := strings.Cut(rest, "/")
-	if !found || bucketName == "" {
-		return "", false
-	}
-
-	return prefix + bucketName, true
 }
 
 func autoRemoveEmptyFoldersEnabled(attrs map[string][]byte) (bool, string) {
