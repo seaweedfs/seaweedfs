@@ -475,16 +475,15 @@ func extractSourceIP(r *http.Request) string {
 		if ip := net.ParseIP(host); ip != nil {
 			return ip.String()
 		}
-		// Do not return DNS names; fall through to other checks/fallbacks.
-	}
-
-	// Not in host:port or could be bracketed IPv6.
-	if len(remoteAddr) > 1 && remoteAddr[0] == '[' && remoteAddr[len(remoteAddr)-1] == ']' {
-		if ip := net.ParseIP(remoteAddr[1 : len(remoteAddr)-1]); ip != nil {
+		// Do not return DNS names; fall through to the fallback path.
+	} else {
+		ipCandidate := remoteAddr
+		if len(remoteAddr) > 1 && remoteAddr[0] == '[' && remoteAddr[len(remoteAddr)-1] == ']' {
+			ipCandidate = remoteAddr[1 : len(remoteAddr)-1]
+		}
+		if ip := net.ParseIP(ipCandidate); ip != nil {
 			return ip.String()
 		}
-	} else if ip := net.ParseIP(remoteAddr); ip != nil {
-		return ip.String()
 	}
 
 	// Fall back to unix socket markers or other non-IP placeholders.
