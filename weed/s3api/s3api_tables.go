@@ -226,17 +226,16 @@ func parseOptionalIntParam(r *http.Request, name string) (int, error) {
 	return parsed, nil
 }
 
-func parseOptionalNamespace(r *http.Request, name string) []string {
+func parseOptionalNamespace(r *http.Request, name string) ([]string, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
-		return nil
+		return nil, nil
 	}
 	parts, err := s3tables.ParseNamespace(value)
 	if err != nil {
-		glog.V(1).Infof("invalid namespace value for %s: %q: %v", name, value, err)
-		return nil
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
 	}
-	return parts
+	return parts, nil
 }
 
 func parseRequiredNamespacePathParam(r *http.Request, name string) ([]string, error) {
@@ -412,13 +411,17 @@ func buildListTablesRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	namespace, err := parseOptionalNamespace(r, "namespace")
+	if err != nil {
+		return nil, err
+	}
 	maxTables, err := parseOptionalIntParam(r, "maxTables")
 	if err != nil {
 		return nil, err
 	}
 	return &s3tables.ListTablesRequest{
 		TableBucketARN:    tableBucketARN,
-		Namespace:         parseOptionalNamespace(r, "namespace"),
+		Namespace:         namespace,
 		Prefix:            r.URL.Query().Get("prefix"),
 		ContinuationToken: r.URL.Query().Get("continuationToken"),
 		MaxTables:         maxTables,
@@ -433,7 +436,11 @@ func buildGetTableRequest(r *http.Request) (interface{}, error) {
 	}
 	if tableARN == "" {
 		req.TableBucketARN = query.Get("tableBucketARN")
-		req.Namespace = parseOptionalNamespace(r, "namespace")
+		namespace, err := parseOptionalNamespace(r, "namespace")
+		if err != nil {
+			return nil, err
+		}
+		req.Namespace = namespace
 		req.Name = query.Get("name")
 		if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 			return nil, fmt.Errorf("either tableArn or (tableBucketARN, namespace, name) must be provided")
