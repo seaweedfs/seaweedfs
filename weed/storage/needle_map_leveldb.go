@@ -132,7 +132,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 }
 
 func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
-	bytes := make([]byte, NeedleIdSize)
+func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	if m.ldbTimeout > 0 {
 		if m.ldbTimeout > 0 {
 			if err := m.ensureLdbLoaded(); err != nil {
@@ -141,6 +141,11 @@ func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, o
 			defer m.ldbAccessLock.RUnlock()
 		}
 	}
+	return m.getFromDb(key)
+}
+
+func (m *LevelDbNeedleMap) getFromDb(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
+	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
 	if err != nil || len(data) != OffsetSize+SizeSize {
@@ -162,7 +167,7 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 			defer m.ldbAccessLock.RUnlock()
 		}
 	}
-	if oldNeedle, ok := m.Get(key); ok {
+	if oldNeedle, ok := m.getFromDb(key); ok {
 		oldSize = oldNeedle.Size
 	}
 	m.logPut(key, oldSize, size)
@@ -229,7 +234,7 @@ func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 			defer m.ldbAccessLock.RUnlock()
 		}
 	}
-	oldNeedle, found := m.Get(key)
+	oldNeedle, found := m.getFromDb(key)
 	if !found || oldNeedle.Size.IsDeleted() {
 		return nil
 	}
