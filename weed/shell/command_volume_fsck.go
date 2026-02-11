@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -39,7 +40,8 @@ func init() {
 }
 
 const (
-	readbufferSize = 16
+	readbufferSize                 = 16
+	jwtFilerTokenExpirationSeconds = 300
 )
 
 type commandVolumeFsck struct {
@@ -53,6 +55,7 @@ type commandVolumeFsck struct {
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
 	verifyNeedle             *bool
+	filerSigningKey          string
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -138,6 +141,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		fmt.Fprintf(c.writer, "working directory: %s\n", c.tempFolder)
 	}
 	defer os.RemoveAll(c.tempFolder)
+
+	c.filerSigningKey = util.GetViper().GetString("jwt.filer_signing.key")
 
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
@@ -556,6 +561,12 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		Host:   c.env.option.FilerAddress.ToHttpAddress(),
 		Path:   string(path),
 	}
+
+	if c.filerSigningKey != "" {
+		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
+		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+	}
+
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}
