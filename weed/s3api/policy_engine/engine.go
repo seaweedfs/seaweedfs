@@ -477,11 +477,7 @@ func extractSourceIP(r *http.Request) string {
 		}
 		// Do not return DNS names; fall through to the fallback path.
 	} else {
-		ipCandidate := remoteAddr
-		if len(remoteAddr) > 1 && remoteAddr[0] == '[' && remoteAddr[len(remoteAddr)-1] == ']' {
-			ipCandidate = remoteAddr[1 : len(remoteAddr)-1]
-		}
-		if ip := net.ParseIP(ipCandidate); ip != nil {
+		if ip := net.ParseIP(remoteAddr); ip != nil {
 			return ip.String()
 		}
 	}
