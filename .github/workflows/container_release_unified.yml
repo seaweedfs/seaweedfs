@@ -261,7 +261,7 @@ jobs:
   helm-release:
     runs-on: ubuntu-latest
     needs: [copy-to-dockerhub]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       pages: write
