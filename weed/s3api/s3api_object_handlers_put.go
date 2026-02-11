@@ -139,6 +139,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			fullDirPath = fullDirPath + "/" + dirName
 		}
 
+		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
+			bucket, object, objectContentType, r.ContentLength)
 		if err := s3a.mkdir(
 			fullDirPath, entryName,
 			func(entry *filer_pb.Entry) {

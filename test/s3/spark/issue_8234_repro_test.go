@@ -14,7 +14,7 @@ func setupSparkIssue8234Env(t *testing.T) *TestEnvironment {
 	}
 
 	env.StartSeaweedFS(t)
-	t.Cleanup(func() { env.Cleanup() })
+	t.Cleanup(func() { env.Cleanup(t) })
 
 	createObjectBucket(t, env, "test")
 	env.startSparkContainer(t)

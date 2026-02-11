@@ -21,8 +21,9 @@ type CleanupQueue struct {
 
 // queueItem represents an item in the cleanup queue
 type queueItem struct {
-	folder    string
-	queueTime time.Time
+	folder      string
+	triggeredBy string
+	queueTime   time.Time
 }
 
 // NewCleanupQueue creates a new CleanupQueue with the specified limits
@@ -39,7 +40,7 @@ func NewCleanupQueue(maxSize int, maxAge time.Duration) *CleanupQueue {
 // The item is inserted in time-sorted order (oldest at front) to handle out-of-order events.
 // If folder already exists with an older time, the time is updated and position adjusted.
 // Returns true if the folder was newly added, false if it was updated.
-func (q *CleanupQueue) Add(folder string, eventTime time.Time) bool {
+func (q *CleanupQueue) Add(folder string, triggeredBy string, eventTime time.Time) bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -51,23 +52,24 @@ func (q *CleanupQueue) Add(folder string, eventTime time.Time) bool {
 			// Remove from current position
 			q.items.Remove(elem)
 			// Re-insert with new time in sorted position
-			newElem := q.insertSorted(folder, eventTime)
+			newElem := q.insertSorted(folder, triggeredBy, eventTime)
 			q.itemsMap[folder] = newElem
 		}
 		return false
 	}
 
 	// Insert new folder in sorted position
-	elem := q.insertSorted(folder, eventTime)
+	elem := q.insertSorted(folder, triggeredBy, eventTime)
 	q.itemsMap[folder] = elem
 	return true
 }
 
 // insertSorted inserts an item in the correct position to maintain time ordering (oldest at front)
-func (q *CleanupQueue) insertSorted(folder string, eventTime time.Time) *list.Element {
+func (q *CleanupQueue) insertSorted(folder string, triggeredBy string, eventTime time.Time) *list.Element {
 	item := &queueItem{
-		folder:    folder,
-		queueTime: eventTime,
+		folder:      folder,
+		triggeredBy: triggeredBy,
+		queueTime:   eventTime,
 	}
 
 	// Find the correct position (insert before the first item with a later time)
@@ -135,35 +137,35 @@ func (q *CleanupQueue) shouldProcessLocked() bool {
 
 // Pop removes and returns the oldest folder from the queue.
 // Returns the folder and true if an item was available, or empty string and false if queue is empty.
-func (q *CleanupQueue) Pop() (string, bool) {
+func (q *CleanupQueue) Pop() (string, string, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	front := q.items.Front()
 	if front == nil {
-		return "", false
+		return "", "", false
 	}
 
 	item := front.Value.(*queueItem)
 	q.items.Remove(front)
 	delete(q.itemsMap, item.folder)
 
-	return item.folder, true
+	return item.folder, item.triggeredBy, true
 }
 
 // Peek returns the oldest folder without removing it.
 // Returns the folder and queue time if available, or empty values if queue is empty.
-func (q *CleanupQueue) Peek() (folder string, queueTime time.Time, ok bool) {
+func (q *CleanupQueue) Peek() (folder string, triggeredBy string, queueTime time.Time, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	front := q.items.Front()
 	if front == nil {
-		return "", time.Time{}, false
+		return "", "", time.Time{}, false
 	}
 
 	item := front.Value.(*queueItem)
-	return item.folder, item.queueTime, true
+	return item.folder, item.triggeredBy, item.queueTime, true
 }
 
 // Len returns the current queue size.
