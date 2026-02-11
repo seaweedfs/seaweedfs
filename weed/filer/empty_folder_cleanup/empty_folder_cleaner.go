@@ -400,7 +400,7 @@ func autoRemoveEmptyFoldersEnabled(attrs map[string][]byte) (bool, string) {
 		return true, "<no_attrs>"
 	}
 
-	value, found := attrs[s3_constants.ExtAutoRemoveEmptyFolders]
+	value, found := attrs[s3_constants.ExtAllowEmptyFolders]
 	if !found {
 		return true, "<missing>"
 	}
@@ -410,7 +410,7 @@ func autoRemoveEmptyFoldersEnabled(attrs map[string][]byte) (bool, string) {
 		return true, "<empty>"
 	}
 
-	return !strings.EqualFold(text, "false"), text
+	return !strings.EqualFold(text, "true"), text
 }
 
 // isUnderPath checks if child is under parent path

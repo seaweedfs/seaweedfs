@@ -160,20 +160,20 @@ func Test_autoRemoveEmptyFoldersEnabled(t *testing.T) {
 			attrValue: "<missing>",
 		},
 		{
-			name: "false disables cleanup",
+			name: "allow-empty disables cleanup",
 			attrs: map[string][]byte{
-				s3_constants.ExtAutoRemoveEmptyFolders: []byte("false"),
+				s3_constants.ExtAllowEmptyFolders: []byte("true"),
 			},
 			enabled:   false,
-			attrValue: "false",
+			attrValue: "true",
 		},
 		{
-			name: "true enables cleanup",
+			name: "explicit false keeps cleanup enabled",
 			attrs: map[string][]byte{
-				s3_constants.ExtAutoRemoveEmptyFolders: []byte("true"),
+				s3_constants.ExtAllowEmptyFolders: []byte("false"),
 			},
 			enabled:   true,
-			attrValue: "true",
+			attrValue: "false",
 		},
 	}
 
@@ -750,7 +750,7 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 		},
 		attrsFn: func(path util.FullPath) (map[string][]byte, error) {
 			if string(path) == "/buckets/test" {
-				return map[string][]byte{s3_constants.ExtAutoRemoveEmptyFolders: []byte("false")}, nil
+			return map[string][]byte{s3_constants.ExtAllowEmptyFolders: []byte("true")}, nil
 			}
 			return nil, nil
 		},
