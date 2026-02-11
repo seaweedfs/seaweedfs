@@ -494,6 +494,26 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 			remoteAddr: "@",
 			expectedIP: "@",
 		},
+		{
+			name: "uses IPv6 X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
+			},
+			remoteAddr: "192.0.2.5:12345",
+			expectedIP: "2001:db8::8",
+		},
+		{
+			name:       "handles bracketed IPv6 remote address",
+			header:     map[string][]string{},
+			remoteAddr: "[2001:db8::1]:12345",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name:       "avoids returning DNS host names",
+			header:     map[string][]string{},
+			remoteAddr: "example.com:9000",
+			expectedIP: "",
+		},
 	}
 
 	for _, tt := range tests {

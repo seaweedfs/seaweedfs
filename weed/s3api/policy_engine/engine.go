@@ -439,6 +439,9 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 
 // extractSourceIP returns the best-effort client IP address for condition evaluation.
 // Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
+// IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
+// When the service is exposed directly, clients can spoof aws:SourceIp unless a
+// reverse proxy overwrites these headers.
 func extractSourceIP(r *http.Request) string {
 	if r == nil {
 		return ""
@@ -472,10 +475,10 @@ func extractSourceIP(r *http.Request) string {
 		if ip := net.ParseIP(host); ip != nil {
 			return ip.String()
 		}
-		return host
+		// Do not return DNS names; fall through to other checks/fallbacks.
 	}
 
-	// Not in host:port or could be bracketed IPv6
+	// Not in host:port or could be bracketed IPv6.
 	if len(remoteAddr) > 1 && remoteAddr[0] == '[' && remoteAddr[len(remoteAddr)-1] == ']' {
 		if ip := net.ParseIP(remoteAddr[1 : len(remoteAddr)-1]); ip != nil {
 			return ip.String()
@@ -484,8 +487,12 @@ func extractSourceIP(r *http.Request) string {
 		return ip.String()
 	}
 
-	// Fall back to the original address (e.g. unix socket marker "@").
-	return remoteAddr
+	// Fall back to unix socket markers or other non-IP placeholders.
+	if remoteAddr == "@" {
+		return remoteAddr
+	}
+
+	return ""
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
