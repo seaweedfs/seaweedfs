@@ -127,7 +127,7 @@ func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures [
 			}
 		}
 
-		replicatedChunks, err := fs.replicateChunks(entry.GetChunks(), key)
+		replicatedChunks, err := fs.replicateChunks(entry.GetChunks(), key, getEntryMtime(entry))
 
 		if err != nil {
 			// only warning here since the source chunk may have been deleted already
@@ -211,7 +211,7 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 		}
 
 		// replicate the chunks that are new in the source
-		replicatedChunks, err := fs.replicateChunks(newChunks, key)
+		replicatedChunks, err := fs.replicateChunks(newChunks, key, getEntryMtime(newEntry))
 		if err != nil {
 			glog.Warningf("replicate entry chunks %s: %v", key, err)
 			return true, nil
@@ -260,4 +260,11 @@ func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunc
 	newChunks = append(newChunks, filer.DoMinusChunks(bMeta, aMeta)...)
 
 	return
+}
+
+func getEntryMtime(entry *filer_pb.Entry) int64 {
+	if entry == nil || entry.Attributes == nil {
+		return 0
+	}
+	return entry.Attributes.Mtime
 }
