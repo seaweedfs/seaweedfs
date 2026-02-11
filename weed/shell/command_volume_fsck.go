@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -556,6 +557,13 @@ func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 		Host:   c.env.option.FilerAddress.ToHttpAddress(),
 		Path:   string(path),
 	}
+
+	signingKey := util.GetViper().GetString("jwt.filer_signing.key")
+	if signingKey != "" {
+		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(signingKey), 5*60)
+		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+	}
+
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
 	}
