@@ -442,27 +442,44 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 // IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
 // When the service is exposed directly, clients can spoof aws:SourceIp unless a
 // reverse proxy overwrites these headers.
+
+// isPrivateIP returns true if the given IP is considered a "trusted proxy"
+// address, such as loopback, link-local, or RFC1918 private ranges.
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+
+	// Standard helpers for obvious local addresses.
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+
+	// Check IPv4 RFC1918 private address space.
+	ip4 := ip.To4()
+	if ip4 == nil {
+		// For now, only treat IPv4 private ranges as trusted proxies.
+		return false
+	}
+
+	switch {
+	// 10.0.0.0/8
+	case ip4[0] == 10:
+		return true
+	// 172.16.0.0/12: 172.16.0.0 - 172.31.255.255
+	case ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31:
+		return true
+	// 192.168.0.0/16
+	case ip4[0] == 192 && ip4[1] == 168:
+		return true
+	}
+
+	return false
+}
+
 func extractSourceIP(r *http.Request) string {
 	if r == nil {
 		return ""
-	}
-
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		for _, candidate := range strings.Split(xff, ",") {
-			candidate = strings.TrimSpace(candidate)
-			if candidate == "" {
-				continue
-			}
-			if ip := net.ParseIP(candidate); ip != nil {
-				return ip.String()
-			}
-		}
-	}
-
-	if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
-		if ip := net.ParseIP(xRealIP); ip != nil {
-			return ip.String()
-		}
 	}
 
 	remoteAddr := strings.TrimSpace(r.RemoteAddr)
@@ -470,24 +487,47 @@ func extractSourceIP(r *http.Request) string {
 		return ""
 	}
 
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		if ip := net.ParseIP(host); ip != nil {
-			return ip.String()
-		}
-		// Do not return DNS names; fall through to the fallback path.
-	} else {
-		if ip := net.ParseIP(remoteAddr); ip != nil {
-			return ip.String()
-		}
-	}
-
 	// Fall back to unix socket markers or other non-IP placeholders.
 	if remoteAddr == "@" {
 		return remoteAddr
 	}
 
-	return ""
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+
+	remoteIP := net.ParseIP(host)
+	if remoteIP == nil {
+		// Do not return DNS names or unparseable values.
+		return ""
+	}
+
+	// Only trust forwarding headers when the connection appears to come from
+	// a trusted proxy (e.g., private/loopback address).
+	if isPrivateIP(remoteIP) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			for _, candidate := range strings.Split(xff, ",") {
+				candidate = strings.TrimSpace(candidate)
+				if candidate == "" {
+					continue
+				}
+				if ip := net.ParseIP(candidate); ip != nil {
+					return ip.String()
+				}
+			}
+		}
+
+		if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
+			if ip := net.ParseIP(xRealIP); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+
+	// Default to the actual peer IP when no trusted proxy is detected or the
+	// forwarding headers are absent/invalid.
+	return remoteIP.String()
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
