@@ -11,7 +11,7 @@ const (
 	ExtETagKey                  = "Seaweed-X-Amz-ETag"
 	ExtLatestVersionIdKey       = "Seaweed-X-Amz-Latest-Version-Id"
 	ExtLatestVersionFileNameKey = "Seaweed-X-Amz-Latest-Version-File-Name"
-	ExtAutoRemoveEmptyFolders   = "Seaweed-X-Amz-Auto-Remove-Empty-Folders"
+	ExtAllowEmptyFolders         = "Seaweed-X-Amz-Allow-Empty-Folders"
 	// Cached list metadata in .versions directory for single-scan efficiency
 	ExtLatestVersionSizeKey        = "Seaweed-X-Amz-Latest-Version-Size"
 	ExtLatestVersionETagKey        = "Seaweed-X-Amz-Latest-Version-ETag"

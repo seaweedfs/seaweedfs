@@ -61,7 +61,7 @@ func runMount(cmd *Command, args []string) bool {
 	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
-func ensureBucketAutoRemoveEmptyFoldersDisabled(ctx context.Context, filerClient filer_pb.FilerClient, mountRoot, bucketRootPath string) error {
+func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.FilerClient, mountRoot, bucketRootPath string) error {
 	bucketPath, isBucketRootMount := bucketPathForMountRoot(mountRoot, bucketRootPath)
 	if !isBucketRootMount {
 		return nil
@@ -78,11 +78,11 @@ func ensureBucketAutoRemoveEmptyFoldersDisabled(ctx context.Context, filerClient
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAutoRemoveEmptyFolders])), "false") {
+	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
 		return nil
 	}
 
-	entry.Extended[s3_constants.ExtAutoRemoveEmptyFolders] = []byte("false")
+	entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
 
 	bucketFullPath := util.FullPath(bucketPath)
 	parent, _ := bucketFullPath.DirAndName()
@@ -95,7 +95,7 @@ func ensureBucketAutoRemoveEmptyFoldersDisabled(ctx context.Context, filerClient
 		return err
 	}
 
-	glog.Infof("RunMount: set bucket %s %s=false", bucketPath, s3_constants.ExtAutoRemoveEmptyFolders)
+	glog.Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
 	return nil
 }
 
@@ -351,7 +351,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
 		return false
 	}
-	if err := ensureBucketAutoRemoveEmptyFoldersDisabled(context.Background(), seaweedFileSystem, mountRoot, bucketRootPath); err != nil {
+	if err := ensureBucketAllowEmptyFolders(context.Background(), seaweedFileSystem, mountRoot, bucketRootPath); err != nil {
 		fmt.Printf("failed to set bucket auto-remove-empty-folders policy for %s: %v\n", mountRoot, err)
 		return false
 	}
