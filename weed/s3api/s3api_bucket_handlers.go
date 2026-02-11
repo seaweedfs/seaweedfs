@@ -860,6 +860,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	collectionName := s3a.getCollectionName(bucket)
 	collectionTtls := fc.GetCollectionTtls(collectionName)
 	changed := false
+	lifecycleRules := make([]bucketLifecycleTTLRule, 0, len(lifeCycleConfig.Rules))
 
 	for _, rule := range lifeCycleConfig.Rules {
 		if rule.Status != Enabled {
@@ -879,6 +880,12 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Expiration.Days == 0 {
 			continue
 		}
+		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
+		lifecycleRules = append(lifecycleRules, bucketLifecycleTTLRule{
+			Prefix: rulePrefix,
+			TtlSec: ttlSec,
+		})
+
 		locationPrefix := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix)
 		locConf := &filer_pb.FilerConf_PathConf{
 			LocationPrefix: locationPrefix,
@@ -893,7 +900,6 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
-		ttlSec := int32((time.Duration(rule.Expiration.Days) * util.LifeCycleInterval).Seconds())
 		glog.V(2).Infof("Start updating TTL for %s", locationPrefix)
 		if updErr := s3a.updateEntriesTTL(locationPrefix, ttlSec); updErr != nil {
 			glog.Errorf("PutBucketLifecycleConfigurationHandler update TTL for %s: %s", locationPrefix, updErr)
@@ -916,6 +922,11 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+	}
+	if err := s3a.persistBucketLifecycleTTLRules(bucket, lifecycleRules); err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler persist lifecycle metadata for %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	writeSuccessResponseEmpty(w, r)
@@ -966,6 +977,11 @@ func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *h
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+	}
+	if err := s3a.persistBucketLifecycleTTLRules(bucket, nil); err != nil {
+		glog.Errorf("DeleteBucketLifecycleHandler clear lifecycle metadata for %s: %v", bucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
 	}
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
