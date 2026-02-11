@@ -43,16 +43,15 @@ func hasDocker() bool {
 	return cmd.Run() == nil
 }
 
-// getFreePort returns an available ephemeral port
-func getFreePort() (int, error) {
+// getFreePort returns an available ephemeral port and its listener
+func getFreePort() (int, net.Listener, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	defer listener.Close()
 
 	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
+	return addr.Port, listener, nil
 }
 
 // NewTestEnvironment creates a new test environment
@@ -91,43 +90,67 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	}
 
 	// Allocate free ephemeral ports for each service
-	s3Port, err := getFreePort()
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
+
+	var l net.Listener
+	s3Port, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for S3: %v", err)
 	}
-	icebergPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	icebergPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Iceberg: %v", err)
 	}
-	s3GrpcPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	s3GrpcPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for S3 gRPC: %v", err)
 	}
-	masterPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	masterPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Master: %v", err)
 	}
-	masterGrpcPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	masterGrpcPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Master gRPC: %v", err)
 	}
-	filerPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	filerPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Filer: %v", err)
 	}
-	filerGrpcPort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	filerGrpcPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Filer gRPC: %v", err)
 	}
-	volumePort, err := getFreePort()
+	listeners = append(listeners, l)
+
+	volumePort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Volume: %v", err)
 	}
+	listeners = append(listeners, l)
 
-	volumeGrpcPort, err := getFreePort()
+	volumeGrpcPort, l, err := getFreePort()
 	if err != nil {
 		t.Fatalf("Failed to get free port for Volume gRPC: %v", err)
 	}
+	listeners = append(listeners, l)
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
