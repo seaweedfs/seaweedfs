@@ -579,6 +579,9 @@ func (s *AdminServer) ListS3TablesBucketsAPI(c *gin.Context) {
 }
 
 func (s *AdminServer) CreateS3TablesBucket(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	var req struct {
 		Name  string            `json:"name"`
 		Tags  map[string]string `json:"tags"`
@@ -664,6 +667,9 @@ func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner
 }
 
 func (s *AdminServer) DeleteS3TablesBucket(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	bucketArn := c.Query("bucket")
 	if bucketArn == "" {
 		c.JSON(400, gin.H{"error": "Bucket ARN is required"})
