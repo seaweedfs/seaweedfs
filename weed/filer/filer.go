@@ -303,7 +303,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			},
 		}
 		if isUnderBuckets && level > 3 {
-			glog.InfofCtx(ctx, "ensureParentDirectoryEntry: auto-created parent directory %s", dirPath)
+			// Parent directories under buckets are created automatically; no additional logging.
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
