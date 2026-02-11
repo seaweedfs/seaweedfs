@@ -96,6 +96,100 @@ func Test_isUnderBucketPath(t *testing.T) {
 	}
 }
 
+func Test_extractBucketPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		folder     string
+		bucketRoot string
+		expected   string
+		ok         bool
+	}{
+		{
+			name:       "folder under bucket",
+			folder:     "/buckets/test/a/b",
+			bucketRoot: "/buckets",
+			expected:   "/buckets/test",
+			ok:         true,
+		},
+		{
+			name:       "bucket root folder should not match",
+			folder:     "/buckets/test",
+			bucketRoot: "/buckets",
+			expected:   "",
+			ok:         false,
+		},
+		{
+			name:       "outside buckets",
+			folder:     "/data/test/a",
+			bucketRoot: "/buckets",
+			expected:   "",
+			ok:         false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPath, gotOK := extractBucketPath(tt.folder, tt.bucketRoot)
+			if gotOK != tt.ok {
+				t.Fatalf("expected ok=%v, got %v", tt.ok, gotOK)
+			}
+			if gotPath != tt.expected {
+				t.Fatalf("expected path %q, got %q", tt.expected, gotPath)
+			}
+		})
+	}
+}
+
+func Test_autoRemoveEmptyFoldersEnabled(t *testing.T) {
+	tests := []struct {
+		name      string
+		attrs     map[string][]byte
+		enabled   bool
+		attrValue string
+	}{
+		{
+			name:      "no attrs defaults enabled",
+			attrs:     nil,
+			enabled:   true,
+			attrValue: "<no_attrs>",
+		},
+		{
+			name:      "missing key defaults enabled",
+			attrs:     map[string][]byte{},
+			enabled:   true,
+			attrValue: "<missing>",
+		},
+		{
+			name: "false disables cleanup",
+			attrs: map[string][]byte{
+				s3_constants.ExtAutoRemoveEmptyFolders: []byte("false"),
+			},
+			enabled:   false,
+			attrValue: "false",
+		},
+		{
+			name: "true enables cleanup",
+			attrs: map[string][]byte{
+				s3_constants.ExtAutoRemoveEmptyFolders: []byte("true"),
+			},
+			enabled:   true,
+			attrValue: "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enabled, attrValue := autoRemoveEmptyFoldersEnabled(tt.attrs)
+			if enabled != tt.enabled {
+				t.Fatalf("expected enabled=%v, got %v", tt.enabled, enabled)
+			}
+			if attrValue != tt.attrValue {
+				t.Fatalf("expected attrValue=%q, got %q", tt.attrValue, attrValue)
+			}
+		})
+	}
+}
+
 func TestEmptyFolderCleaner_ownsFolder(t *testing.T) {
 	// Create a LockRing with multiple servers
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
@@ -610,9 +704,6 @@ func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testin
 			deleted = append(deleted, string(path))
 			return nil
 		},
-		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
-			return map[string][]byte{s3_constants.ExtS3ImplicitDir: []byte("true")}, nil
-		},
 	}
 
 	cleaner := &EmptyFolderCleaner{
@@ -644,7 +735,7 @@ func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testin
 	}
 }
 
-func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeSkips(t *testing.T) {
+func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
 	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
@@ -657,8 +748,11 @@ func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeSkips(t *test
 			deleted = append(deleted, string(path))
 			return nil
 		},
-		attrsFn: func(_ util.FullPath) (map[string][]byte, error) {
-			return map[string][]byte{}, nil
+		attrsFn: func(path util.FullPath) (map[string][]byte, error) {
+			if string(path) == "/buckets/test" {
+				return map[string][]byte{s3_constants.ExtAutoRemoveEmptyFolders: []byte("false")}, nil
+			}
+			return nil, nil
 		},
 	}
 

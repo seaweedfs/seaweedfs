@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -303,13 +302,8 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
-		// level > 3 corresponds to a path depth greater than "/buckets/<bucket_name>",
-		// ensuring we only mark subdirectories within a bucket as implicit.
 		if isUnderBuckets && level > 3 {
-			dirEntry.Extended = map[string][]byte{
-				s3_constants.ExtS3ImplicitDir: []byte("true"),
-			}
-			glog.InfofCtx(ctx, "ensureParentDirectoryEntry: implicit directory created %s", dirPath)
+			glog.InfofCtx(ctx, "ensureParentDirectoryEntry: auto-created parent directory %s", dirPath)
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)

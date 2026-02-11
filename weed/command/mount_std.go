@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc/reflection"
@@ -59,6 +61,63 @@ func runMount(cmd *Command, args []string) bool {
 	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
+func ensureBucketAutoRemoveEmptyFoldersDisabled(ctx context.Context, filerClient filer_pb.FilerClient, mountRoot, bucketRootPath string) error {
+	bucketPath, isBucketRootMount := bucketPathForMountRoot(mountRoot, bucketRootPath)
+	if !isBucketRootMount {
+		return nil
+	}
+
+	entry, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		return fmt.Errorf("bucket %s not found", bucketPath)
+	}
+
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAutoRemoveEmptyFolders])), "false") {
+		return nil
+	}
+
+	entry.Extended[s3_constants.ExtAutoRemoveEmptyFolders] = []byte("false")
+
+	bucketFullPath := util.FullPath(bucketPath)
+	parent, _ := bucketFullPath.DirAndName()
+	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+			Directory: parent,
+			Entry:     entry,
+		})
+	}); err != nil {
+		return err
+	}
+
+	glog.Infof("RunMount: set bucket %s %s=false", bucketPath, s3_constants.ExtAutoRemoveEmptyFolders)
+	return nil
+}
+
+func bucketPathForMountRoot(mountRoot, bucketRootPath string) (string, bool) {
+	cleanPath := path.Clean("/" + strings.TrimPrefix(mountRoot, "/"))
+	cleanBucketRoot := path.Clean("/" + strings.TrimPrefix(bucketRootPath, "/"))
+	if cleanBucketRoot == "/" {
+		return "", false
+	}
+	prefix := cleanBucketRoot + "/"
+	if !strings.HasPrefix(cleanPath, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(cleanPath, prefix)
+
+	bucketParts := strings.Split(rest, "/")
+	if len(bucketParts) != 1 || bucketParts[0] == "" {
+		return "", false
+	}
+	return cleanBucketRoot + "/" + bucketParts[0], true
+}
+
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// basic checks
@@ -73,6 +132,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
+	var bucketRootPath string
 	var err error
 	for i := 0; i < 10; i++ {
 		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -81,6 +141,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 				return fmt.Errorf("get filer grpc address %v configuration: %w", filerAddresses, err)
 			}
 			cipher = resp.Cipher
+			bucketRootPath = resp.DirBuckets
 			return nil
 		})
 		if err != nil {
@@ -92,6 +153,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
 		return true
+	}
+	if bucketRootPath == "" {
+		bucketRootPath = "/buckets"
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
@@ -285,6 +349,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	mountRootParent, mountDir := mountRootPath.DirAndName()
 	if err = filer_pb.Mkdir(context.Background(), seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
 		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
+		return false
+	}
+	if err := ensureBucketAutoRemoveEmptyFoldersDisabled(context.Background(), seaweedFileSystem, mountRoot, bucketRootPath); err != nil {
+		fmt.Printf("failed to set bucket auto-remove-empty-folders policy for %s: %v\n", mountRoot, err)
 		return false
 	}
 
