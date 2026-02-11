@@ -139,6 +139,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			fullDirPath = fullDirPath + "/" + dirName
 		}
 
+		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
+			bucket, object, objectContentType, r.ContentLength)
 		if err := s3a.mkdir(
 			fullDirPath, entryName,
 			func(entry *filer_pb.Entry) {
@@ -148,8 +150,6 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				if r.ContentLength > 0 {
 					entry.Content, _ = io.ReadAll(r.Body)
 				}
-				// Explicitly PUT-created directory markers stay explicit.
-				// Only auto-created parent directories are tagged as implicit.
 				entry.Attributes.Mime = objectContentType
 
 				// Set object owner for directory objects (same as regular objects)

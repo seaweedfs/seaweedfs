@@ -309,6 +309,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			dirEntry.Extended = map[string][]byte{
 				s3_constants.ExtS3ImplicitDir: []byte("true"),
 			}
+			glog.InfofCtx(ctx, "ensureParentDirectoryEntry: implicit directory created %s", dirPath)
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
