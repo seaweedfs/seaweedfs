@@ -467,11 +467,6 @@ func extractSourceIP(r *http.Request) string {
 		return ""
 	}
 
-	// Accept plain IP addresses without requiring host:port format.
-	if ip := net.ParseIP(remoteAddr); ip != nil {
-		return ip.String()
-	}
-
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err == nil {
 		if ip := net.ParseIP(host); ip != nil {
@@ -480,9 +475,12 @@ func extractSourceIP(r *http.Request) string {
 		return host
 	}
 
-	// Handle bracketed IPv6 addresses that may not include a port.
-	unbracketed := strings.Trim(remoteAddr, "[]")
-	if ip := net.ParseIP(unbracketed); ip != nil {
+	// Not in host:port or could be bracketed IPv6
+	if len(remoteAddr) > 1 && remoteAddr[0] == '[' && remoteAddr[len(remoteAddr)-1] == ']' {
+		if ip := net.ParseIP(remoteAddr[1 : len(remoteAddr)-1]); ip != nil {
+			return ip.String()
+		}
+	} else if ip := net.ParseIP(remoteAddr); ip != nil {
 		return ip.String()
 	}
 
