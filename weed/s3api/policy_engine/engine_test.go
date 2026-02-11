@@ -499,7 +499,7 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 			header: map[string][]string{
 				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
 			},
-			remoteAddr: "192.0.2.5:12345",
+			remoteAddr: "192.168.1.100:12345",
 			expectedIP: "2001:db8::8",
 		},
 		{
