@@ -445,36 +445,13 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 
 // isPrivateIP returns true if the given IP is considered a "trusted proxy"
 // address, such as loopback, link-local, or RFC1918 private ranges.
+// isPrivateIP returns true if the given IP is considered a "trusted proxy"
+// address, such as loopback, link-local, or private ranges.
 func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-
-	// Standard helpers for obvious local addresses.
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return true
-	}
-
-	// Check IPv4 RFC1918 private address space.
-	ip4 := ip.To4()
-	if ip4 == nil {
-		// For now, only treat IPv4 private ranges as trusted proxies.
-		return false
-	}
-
-	switch {
-	// 10.0.0.0/8
-	case ip4[0] == 10:
-		return true
-	// 172.16.0.0/12: 172.16.0.0 - 172.31.255.255
-	case ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31:
-		return true
-	// 192.168.0.0/16
-	case ip4[0] == 192 && ip4[1] == 168:
-		return true
-	}
-
-	return false
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate()
 }
 
 func extractSourceIP(r *http.Request) string {
@@ -507,11 +484,36 @@ func extractSourceIP(r *http.Request) string {
 	// a trusted proxy (e.g., private/loopback address).
 	if isPrivateIP(remoteIP) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			for _, candidate := range strings.Split(xff, ",") {
-				candidate = strings.TrimSpace(candidate)
+			// Iterate right-to-left to find the first non-trusted (public) IP
+			entries := strings.Split(xff, ",")
+			for i := len(entries) - 1; i >= 0; i-- {
+				candidate := strings.TrimSpace(entries[i])
 				if candidate == "" {
 					continue
 				}
+
+				ip := net.ParseIP(candidate)
+				if ip == nil {
+					continue
+				}
+
+				// If the IP is trusted/private, we treat it as another proxy in the chain and continue
+				if isPrivateIP(ip) {
+					continue
+				}
+
+				// Found a public/non-trusted IP, return it as the client IP
+				return ip.String()
+			}
+
+			// If we exhausted the list (all were private/trusted) or found no valid IPs,
+			// fallback related logic could go here.
+			// For now, if all are private, we continue to check X-Real-Ip or return RemoteIP?
+			// The prompt implies we should prefer the extracted IP.
+			// If all in XFF are private, likely the original client IS private (internal network).
+			// The best guess for "original client" in a fully trusted chain is the left-most valid IP.
+			for _, candidate := range entries {
+				candidate = strings.TrimSpace(candidate)
 				if ip := net.ParseIP(candidate); ip != nil {
 					return ip.String()
 				}

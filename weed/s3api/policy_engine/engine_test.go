@@ -466,12 +466,12 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 		expectedIP string
 	}{
 		{
-			name: "uses first valid X-Forwarded-For entry",
+			name: "uses right-most public X-Forwarded-For entry",
 			header: map[string][]string{
 				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "203.0.113.10",
+			expectedIP: "198.51.100.5",
 		},
 		{
 			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
@@ -500,7 +500,15 @@ func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
 			},
 			remoteAddr: "192.168.1.100:12345",
-			expectedIP: "2001:db8::8",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name: "ignores spoofed IP when real client is public",
+			header: map[string][]string{
+				"X-Forwarded-For": {"8.8.8.8, 203.0.113.10, 10.0.0.1"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "203.0.113.10",
 		},
 		{
 			name:       "handles bracketed IPv6 remote address",
