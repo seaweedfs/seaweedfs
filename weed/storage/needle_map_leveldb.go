@@ -132,7 +132,6 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 }
 
 func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
-func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
 	if m.ldbTimeout > 0 {
 		if m.ldbTimeout > 0 {
 			if err := m.ensureLdbLoaded(); err != nil {
