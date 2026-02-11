@@ -2,7 +2,6 @@ package storage
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,7 +11,7 @@ import (
 )
 
 func TestLevelDbNeedleMap_Concurrency(t *testing.T) {
-	dir, err := ioutil.TempDir("", "test_leveldb_concurrency")
+	dir, err := os.MkdirTemp("", "test_leveldb_concurrency")
 	if err != nil {
 		t.Fatalf("temp dir: %v", err)
 	}
