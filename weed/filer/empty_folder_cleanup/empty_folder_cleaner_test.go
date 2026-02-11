@@ -542,7 +542,7 @@ func TestEmptyFolderCleaner_cacheEviction_skipsEntriesInQueue(t *testing.T) {
 	// Add a stale cache entry
 	cleaner.folderCounts[folder] = &folderState{roughCount: 0, lastCheck: oldTime}
 	// Also add to cleanup queue
-	cleaner.cleanupQueue.Add(folder, time.Now())
+	cleaner.cleanupQueue.Add(folder, "item", time.Now())
 
 	// Run eviction
 	cleaner.evictStaleCacheEntries()
@@ -588,7 +588,7 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 
 	// Verify time-sorted order by popping
 	for i, expected := range folders {
-		folder, ok := cleaner.cleanupQueue.Pop()
+		folder, _, ok := cleaner.cleanupQueue.Pop()
 		if !ok || folder != expected {
 			t.Errorf("expected folder %s at index %d, got %s", expected, i, folder)
 		}
@@ -630,9 +630,9 @@ func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testin
 	}
 
 	now := time.Now()
-	cleaner.cleanupQueue.Add("/buckets/test/folder1", now)
-	cleaner.cleanupQueue.Add("/buckets/test/folder2", now.Add(time.Millisecond))
-	cleaner.cleanupQueue.Add("/buckets/test/folder3", now.Add(2*time.Millisecond))
+	cleaner.cleanupQueue.Add("/buckets/test/folder1", "i1", now)
+	cleaner.cleanupQueue.Add("/buckets/test/folder2", "i2", now.Add(time.Millisecond))
+	cleaner.cleanupQueue.Add("/buckets/test/folder3", "i3", now.Add(2*time.Millisecond))
 
 	cleaner.processCleanupQueue()
 
@@ -677,7 +677,7 @@ func TestEmptyFolderCleaner_executeCleanup_missingImplicitAttributeSkips(t *test
 	}
 
 	folder := "/buckets/test/folder"
-	cleaner.executeCleanup(folder)
+	cleaner.executeCleanup(folder, "triggered_item")
 
 	if len(deleted) != 0 {
 		t.Fatalf("expected folder %s to be skipped, got deletions %v", folder, deleted)

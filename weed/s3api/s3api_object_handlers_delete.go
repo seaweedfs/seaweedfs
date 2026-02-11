@@ -22,7 +22,7 @@ const (
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
+	glog.Infof("DeleteObjectHandler %s %s", bucket, object)
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return

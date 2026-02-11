@@ -162,8 +162,8 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 	}
 
 	// Add to cleanup queue with event time (handles out-of-order events)
-	if efc.cleanupQueue.Add(directory, eventTime) {
-		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
+	if efc.cleanupQueue.Add(directory, entryName, eventTime) {
+		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup (triggered by %s)", directory, entryName)
 	}
 }
 
@@ -232,30 +232,30 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 		}
 
 		// Pop the oldest item
-		folder, ok := efc.cleanupQueue.Pop()
+		folder, triggeredBy, ok := efc.cleanupQueue.Pop()
 		if !ok {
 			break
 		}
 
 		// Execute cleanup for this folder
-		efc.executeCleanup(folder)
+		efc.executeCleanup(folder, triggeredBy)
 	}
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
-func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
+func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string) {
 	efc.mu.Lock()
 
 	// Quick check: if we have cached count and it's > 0, skip
 	if state, exists := efc.folderCounts[folder]; exists {
 		if state.roughCount > 0 {
-			glog.V(3).Infof("EmptyFolderCleaner: skipping %s, cached count=%d", folder, state.roughCount)
+			glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), cached count=%d", folder, triggeredBy, state.roughCount)
 			efc.mu.Unlock()
 			return
 		}
 		// If there was an add after our delete, skip
 		if !state.lastAddTime.IsZero() && state.lastAddTime.After(state.lastDelTime) {
-			glog.V(3).Infof("EmptyFolderCleaner: skipping %s, add happened after delete", folder)
+			glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), add happened after delete", folder, triggeredBy)
 			efc.mu.Unlock()
 			return
 		}
@@ -264,7 +264,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 
 	// Re-check ownership (topology might have changed)
 	if !efc.ownsFolder(folder) {
-		glog.V(3).Infof("EmptyFolderCleaner: no longer owner of %s, skipping", folder)
+		glog.V(3).Infof("EmptyFolderCleaner: no longer owner of %s (triggered by %s), skipping", folder, triggeredBy)
 		return
 	}
 
@@ -319,7 +319,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	}
 
 	if !isImplicit {
-		glog.Infof("EmptyFolderCleaner: folder %s is not marked as implicit (source=%s attr=%s), skipping", folder, implicitSource, implicitAttr)
+		glog.Infof("EmptyFolderCleaner: folder %s (triggered by %s) is not marked as implicit (source=%s attr=%s), skipping", folder, triggeredBy, implicitSource, implicitAttr)
 		return
 	}
 
@@ -340,14 +340,14 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	efc.mu.Unlock()
 
 	if count > 0 {
-		glog.V(3).Infof("EmptyFolderCleaner: folder %s has %d items, not empty", folder, count)
+		glog.Infof("EmptyFolderCleaner: folder %s (triggered by %s) has %d items, not empty", folder, triggeredBy, count)
 		return
 	}
 
 	// Delete the empty folder
-	glog.V(2).Infof("EmptyFolderCleaner: deleting empty folder %s", folder)
+	glog.Infof("EmptyFolderCleaner: deleting empty folder %s (triggered by %s)", folder, triggeredBy)
 	if err := efc.deleteFolder(ctx, folder); err != nil {
-		glog.V(2).Infof("EmptyFolderCleaner: failed to delete empty folder %s: %v", folder, err)
+		glog.V(2).Infof("EmptyFolderCleaner: failed to delete empty folder %s (triggered by %s): %v", folder, triggeredBy, err)
 		return
 	}
 
