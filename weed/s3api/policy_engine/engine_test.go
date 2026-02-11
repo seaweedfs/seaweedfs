@@ -458,6 +458,61 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 	}
 }
 
+func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		header     map[string][]string
+		remoteAddr string
+		expectedIP string
+	}{
+		{
+			name: "uses first valid X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "203.0.113.10",
+		},
+		{
+			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip"},
+				"X-Real-Ip":       {"198.51.100.7"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name:       "uses RemoteAddr ip when no forwarding headers",
+			header:     map[string][]string{},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "192.168.1.100",
+		},
+		{
+			name:       "keeps unix socket marker when RemoteAddr is not an ip",
+			header:     map[string][]string{},
+			remoteAddr: "@",
+			expectedIP: "@",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &http.Request{
+				Method:     "GET",
+				URL:        &url.URL{Path: "/"},
+				Header:     tt.header,
+				RemoteAddr: tt.remoteAddr,
+			}
+
+			values := ExtractConditionValuesFromRequest(req)
+			if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != tt.expectedIP {
+				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
+			}
+		})
+	}
+}
+
 func TestPolicyEvaluationWithConditions(t *testing.T) {
 	engine := NewPolicyEngine()
 

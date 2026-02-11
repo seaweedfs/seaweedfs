@@ -381,15 +381,7 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	// Extract IP address without port for proper IP matching
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// Log a warning if splitting fails
-		glog.Warningf("Failed to parse IP address from RemoteAddr %q: %v", r.RemoteAddr, err)
-		// If splitting fails, use the original RemoteAddr (might be just IP without port)
-		host = r.RemoteAddr
-	}
-	values["aws:SourceIp"] = []string{host}
+	values["aws:SourceIp"] = []string{extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -443,6 +435,59 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	}
 
 	return values
+}
+
+// extractSourceIP returns the best-effort client IP address for condition evaluation.
+// Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
+func extractSourceIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		for _, candidate := range strings.Split(xff, ",") {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" {
+				continue
+			}
+			if ip := net.ParseIP(candidate); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+
+	if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
+		if ip := net.ParseIP(xRealIP); ip != nil {
+			return ip.String()
+		}
+	}
+
+	remoteAddr := strings.TrimSpace(r.RemoteAddr)
+	if remoteAddr == "" {
+		return ""
+	}
+
+	// Accept plain IP addresses without requiring host:port format.
+	if ip := net.ParseIP(remoteAddr); ip != nil {
+		return ip.String()
+	}
+
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		if ip := net.ParseIP(host); ip != nil {
+			return ip.String()
+		}
+		return host
+	}
+
+	// Handle bracketed IPv6 addresses that may not include a port.
+	unbracketed := strings.Trim(remoteAddr, "[]")
+	if ip := net.ParseIP(unbracketed); ip != nil {
+		return ip.String()
+	}
+
+	// Fall back to the original address (e.g. unix socket marker "@").
+	return remoteAddr
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
