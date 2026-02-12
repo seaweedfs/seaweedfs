@@ -203,6 +203,46 @@ func TestJWTAuthRejectsExpiredTokens(t *testing.T) {
 	}
 }
 
+func TestJWTAuthViaQueryParamAndCookie(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(54)
+	const needleID = uint64(445566)
+	const cookie = uint32(0x31415926)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	payload := []byte("jwt-query-cookie-content")
+	client := framework.NewHTTPClient()
+
+	writeToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	writeReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(writeToken), payload)
+	writeResp := framework.DoRequest(t, client, writeReq)
+	_ = framework.ReadAllAndClose(t, writeResp)
+	if writeResp.StatusCode != http.StatusCreated {
+		t.Fatalf("query-jwt write expected 201, got %d", writeResp.StatusCode)
+	}
+
+	readToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, fid)
+	readReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	readReq.AddCookie(&http.Cookie{Name: "AT", Value: string(readToken)})
+	readResp := framework.DoRequest(t, client, readReq)
+	readBody := framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("cookie-jwt read expected 200, got %d", readResp.StatusCode)
+	}
+	if string(readBody) != string(payload) {
+		t.Fatalf("cookie-jwt read body mismatch: got %q want %q", string(readBody), string(payload))
+	}
+}
+
 func mustGenExpiredToken(t testing.TB, key []byte, fid string) string {
 	t.Helper()
 	claims := security.SeaweedFileIdClaims{
