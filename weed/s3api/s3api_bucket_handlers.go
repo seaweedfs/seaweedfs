@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -832,15 +833,22 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	writeSuccessResponseXML(w, r, response)
 }
 
-// resolveLifecycleDefaultsFromFilerConf returns replication for use when adding a lifecycle TTL rule.
-// S3 does not set DataCenter/Rack/DataNode so placement is not pinned to a specific DC/rack
-// (requests can hit any filer in the pool). Precedence: parent path rule first, then filer global.
-func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigReplication, bucketsPath, bucket string) (replication string) {
+// resolveLifecycleDefaultsFromFilerConf returns replication and volumeGrowthCount for use when adding a lifecycle TTL rule.
+// S3 does not set DataCenter/Rack/DataNode so placement is not pinned to a specific DC/rack.
+// Precedence: parent path rule first, then filer global. If volumeGrowthCount is 0 but replication is set,
+// use replication's copy count so the rule is valid (volumeGrowthCount must be divisible by copy count).
+func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigReplication, bucketsPath, bucket string) (replication string, volumeGrowthCount uint32) {
 	bucketPath := fmt.Sprintf("%s/%s/", bucketsPath, bucket)
 	parentRule := fc.MatchStorageRule(bucketPath)
 	replication = parentRule.Replication
 	if replication == "" {
 		replication = filerConfigReplication
+	}
+	volumeGrowthCount = parentRule.VolumeGrowthCount
+	if volumeGrowthCount == 0 && replication != "" {
+		if rp, err := super_block.NewReplicaPlacementFromString(replication); err == nil {
+			volumeGrowthCount = uint32(rp.GetCopyCount())
+		}
 	}
 	return
 }
@@ -883,7 +891,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	}); filerErr != nil {
 		glog.V(2).Infof("PutBucketLifecycleConfigurationHandler: could not get filer config: %v", filerErr)
 	}
-	defaultReplication := resolveLifecycleDefaultsFromFilerConf(fc, filerConfigReplication, s3a.option.BucketsPath, bucket)
+	defaultReplication, defaultVolumeGrowthCount := resolveLifecycleDefaultsFromFilerConf(fc, filerConfigReplication, s3a.option.BucketsPath, bucket)
 
 	collectionName := s3a.getCollectionName(bucket)
 	collectionTtls := fc.GetCollectionTtls(collectionName)
@@ -909,10 +917,11 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		}
 		locationPrefix := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix)
 		locConf := &filer_pb.FilerConf_PathConf{
-			LocationPrefix: locationPrefix,
-			Collection:     collectionName,
-			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
-			Replication:    defaultReplication,
+			LocationPrefix:    locationPrefix,
+			Collection:        collectionName,
+			Ttl:               fmt.Sprintf("%dd", rule.Expiration.Days),
+			Replication:       defaultReplication,
+			VolumeGrowthCount: defaultVolumeGrowthCount,
 			// DataCenter/Rack/DataNode intentionally not set: S3 is not tied to a specific DC/rack,
 			// requests can hit any filer; setting them would pin placement unnecessarily.
 		}

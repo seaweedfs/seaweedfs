@@ -18,8 +18,9 @@ func TestResolveLifecycleDefaultsFromFilerConf(t *testing.T) {
 			LocationPrefix: "/buckets/",
 			Replication:    "001",
 		})
-		repl := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
+		repl, vgc := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
 		assert.Equal(t, "001", repl, "parent path rule must override filer global config")
+		assert.Equal(t, uint32(2), vgc, "volumeGrowthCount derived from replication 001 copy count (SameRackCount=1 -> 2 copies)")
 	})
 
 	t.Run("falls_back_to_filer_config_when_parent_rule_replication_empty", func(t *testing.T) {
@@ -28,20 +29,35 @@ func TestResolveLifecycleDefaultsFromFilerConf(t *testing.T) {
 			LocationPrefix: "/buckets/",
 			Replication:    "", // no replication on parent
 		})
-		repl := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
+		repl, vgc := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
 		assert.Equal(t, "010", repl, "replication should come from filer config when parent rule has none")
+		assert.Equal(t, uint32(2), vgc, "volumeGrowthCount derived from replication 010 copy count")
 	})
 
 	t.Run("parent_rule_empty_when_no_matching_prefix_uses_filer_config", func(t *testing.T) {
 		fc := filer.NewFilerConf()
 		// no rules; parent path /buckets/mybucket/ matches nothing
-		repl := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
+		repl, vgc := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
 		assert.Equal(t, "010", repl, "when no path rule, use filer config replication")
+		assert.Equal(t, uint32(2), vgc, "volumeGrowthCount derived from replication 010")
 	})
 
 	t.Run("all_empty_when_no_parent_rule_and_no_filer_config", func(t *testing.T) {
 		fc := filer.NewFilerConf()
-		repl := resolveLifecycleDefaultsFromFilerConf(fc, "", "/buckets", "mybucket")
+		repl, vgc := resolveLifecycleDefaultsFromFilerConf(fc, "", "/buckets", "mybucket")
 		assert.Empty(t, repl)
+		assert.Equal(t, uint32(0), vgc)
+	})
+
+	t.Run("parent_rule_volume_growth_count_used_when_set", func(t *testing.T) {
+		fc := filer.NewFilerConf()
+		fc.SetLocationConf(&filer_pb.FilerConf_PathConf{
+			LocationPrefix:    "/buckets/",
+			Replication:       "010",
+			VolumeGrowthCount: 4,
+		})
+		repl, vgc := resolveLifecycleDefaultsFromFilerConf(fc, "010", "/buckets", "mybucket")
+		assert.Equal(t, "010", repl)
+		assert.Equal(t, uint32(4), vgc, "parent VolumeGrowthCount must be used when set")
 	})
 }
