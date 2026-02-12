@@ -153,4 +153,48 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		// Confirm it routed to STS
 		assert.Equal(t, http.StatusServiceUnavailable, rr.Code, "Fixed behavior: Should return 503 from STS handler (service not ready)")
 	})
+
+	// Test Case 3: STS Action in Body with SigV4-style Authorization (Real-world scenario)
+	// This test validates that requests with AWS SigV4 Authorization headers and POST body
+	// parameters are correctly routed to the STS handler.
+	t.Run("ActionInBodyWithSigV4Style", func(t *testing.T) {
+		form := url.Values{}
+		form.Add("Action", "AssumeRole")
+		form.Add("RoleArn", "arn:aws:iam::123:role/test")
+		form.Add("RoleSessionName", "session")
+
+		bodyContent := form.Encode()
+		req := httptest.NewRequest("POST", "/", strings.NewReader(bodyContent))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		// Set AWS SigV4-style Authorization header
+		// This simulates a real SigV4-signed request without needing perfect signature
+		// The key is to validate that UnifiedPostHandler correctly routes based on Action
+		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=test/20260212/us-east-1/sts/aws4_request, SignedHeaders=content-type;host;x-amz-date, Signature=dummy")
+		req.Header.Set("x-amz-date", "20260212T000000Z")
+
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		// With SigV4-style Authorization header, the request should:
+		// 1. Be recognized as authenticated (not anonymous)
+		// 2. Be routed to UnifiedPostHandler
+		// 3. UnifiedPostHandler should parse Action=AssumeRole from body
+		// 4. Route to STS handler (which returns 503 because stsService is nil)
+		//    OR return 403 if signature validation fails (which is acceptable)
+
+		// The key validation is that it should NOT return 501 (IAM handler's "Not Implemented")
+		// This confirms the routing fix works for SigV4-signed requests with POST body params
+
+		if rr.Code != http.StatusServiceUnavailable && rr.Code != http.StatusForbidden {
+			t.Logf("Unexpected status code: %d", rr.Code)
+			t.Logf("Response body: %s", rr.Body.String())
+		}
+
+		// Accept either 503 (routed to STS, service unavailable) or 403 (signature failed)
+		// Both indicate correct routing to STS handler, not IAM handler
+		assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not return 501 (IAM handler)")
+		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusForbidden}, rr.Code,
+			"Should return 503 (STS unavailable) or 403 (auth failed), confirming STS routing")
+	})
 }
