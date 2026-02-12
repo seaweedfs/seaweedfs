@@ -88,6 +88,7 @@ func TestJWTAuthRejectsFidMismatch(t *testing.T) {
 	const cookie = uint32(0x10203040)
 	const otherNeedleID = uint64(223345)
 	const otherCookie = uint32(0x50607080)
+	const wrongCookie = uint32(0x10203041)
 
 	framework.AllocateVolume(t, grpcClient, volumeID, "")
 	fid := framework.NewFileID(volumeID, needleID, cookie)
@@ -102,6 +103,16 @@ func TestJWTAuthRejectsFidMismatch(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, mismatchedWriteResp)
 	if mismatchedWriteResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("write with mismatched fid token expected 401, got %d", mismatchedWriteResp.StatusCode)
+	}
+
+	wrongCookieFid := framework.NewFileID(volumeID, needleID, wrongCookie)
+	writeTokenWrongCookie := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, wrongCookieFid)
+	wrongCookieWrite := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	wrongCookieWrite.Header.Set("Authorization", "Bearer "+string(writeTokenWrongCookie))
+	wrongCookieWriteResp := framework.DoRequest(t, client, wrongCookieWrite)
+	_ = framework.ReadAllAndClose(t, wrongCookieWriteResp)
+	if wrongCookieWriteResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("write with wrong-cookie fid token expected 401, got %d", wrongCookieWriteResp.StatusCode)
 	}
 
 	writeTokenForFid := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
@@ -120,6 +131,15 @@ func TestJWTAuthRejectsFidMismatch(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, mismatchedReadResp)
 	if mismatchedReadResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("read with mismatched fid token expected 401, got %d", mismatchedReadResp.StatusCode)
+	}
+
+	readTokenWrongCookie := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, wrongCookieFid)
+	wrongCookieReadReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	wrongCookieReadReq.Header.Set("Authorization", "Bearer "+string(readTokenWrongCookie))
+	wrongCookieReadResp := framework.DoRequest(t, client, wrongCookieReadReq)
+	_ = framework.ReadAllAndClose(t, wrongCookieReadResp)
+	if wrongCookieReadResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("read with wrong-cookie fid token expected 401, got %d", wrongCookieReadResp.StatusCode)
 	}
 }
 
