@@ -532,3 +532,17 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Tail/EC/tiering/query/scrub and positive-path copy/tail flows still pending.
 - Commit: `b13642838`
+
+- Date: 2026-02-12
+- Change: Added gRPC scrub and query integration coverage for supported/unsupported modes and invalid/missing fid paths.
+- APIs covered: `ScrubVolume`, `ScrubEcVolume`, `Query`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Query success path and broader scrub mode matrix remain pending.
+- Commit: `a2ab4cde8`
+
+- Date: 2026-02-12
+- Change: Added gRPC tail integration coverage for sender heartbeat/EOF behavior and sender/receiver missing-volume errors.
+- APIs covered: `VolumeTailSender`, `VolumeTailReceiver`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Tail success replication path and large-needle chunking remain pending.
+- Commit: `fd582ba58`
