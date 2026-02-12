@@ -637,3 +637,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Oversized multi-range sum behavior and deeper range-edge normalization remain.
 - Commit: `39c68c679`
+
+- Date: 2026-02-12
+- Change: Added query no-match parity coverage to lock current stream semantics.
+- APIs covered: `Query` JSON filter no-match path (returns one empty stripe, then EOF).
+- Profiles covered: P1.
+- Gaps introduced/remaining: CSV parsing behavior beyond current no-output branch still pending.
+- Commit: `39895cb84`
