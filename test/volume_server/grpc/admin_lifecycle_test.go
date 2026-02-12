@@ -2,6 +2,7 @@ package volume_server_grpc_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,45 @@ func TestVolumeAdminLifecycleRPCs(t *testing.T) {
 	}
 	if st, ok := status.FromError(err); !ok || st.Code() == codes.OK {
 		t.Fatalf("VolumeStatus error should be a non-OK grpc status, got: %v", err)
+	}
+}
+
+func TestVolumeDeleteOnlyEmptyVariants(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(13)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 66001, 0x11223344)
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("volume-delete-only-empty"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{VolumeId: volumeID, OnlyEmpty: true})
+	if err == nil || !strings.Contains(err.Error(), "volume not empty") {
+		t.Fatalf("VolumeDelete only_empty=true expected volume-not-empty error, got: %v", err)
+	}
+
+	_, err = grpcClient.VolumeDelete(ctx, &volume_server_pb.VolumeDeleteRequest{VolumeId: volumeID, OnlyEmpty: false})
+	if err != nil {
+		t.Fatalf("VolumeDelete only_empty=false failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
+	if err == nil {
+		t.Fatalf("VolumeStatus should fail after non-empty delete with only_empty=false")
 	}
 }
 
