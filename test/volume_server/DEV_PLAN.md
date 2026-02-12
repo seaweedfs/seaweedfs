@@ -497,3 +497,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Remaining gRPC method families still pending.
 - Commit: `7a8aed127`
+
+- Date: 2026-02-12
+- Change: Added gRPC integration tests for needle status, configure validation branch, ping volume-target branch, and leave/health interaction.
+- APIs covered: `VolumeNeedleStatus`, `VolumeConfigure` (invalid replication response path), `Ping` (`volumeServer` target), `VolumeServerLeave`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Still pending large RPC groups (vacuum/copy/tail/ec/tiering/query/scrub).
+- Commit: `59a571a10`
