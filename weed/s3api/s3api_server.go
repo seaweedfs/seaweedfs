@@ -1,11 +1,14 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -693,25 +696,28 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 				return false
 			}
 
-			// IMPORTANT: Do NOT call r.ParseForm() here!
-			// ParseForm() consumes the request body, which breaks AWS Signature V4 verification
-			// for IAM requests. The signature must be calculated on the original body.
-			// Instead, check only the query string for the Action parameter.
-
-			// For IAM requests, the Action is typically in the POST body, not query string
-			// So we match all authenticated POST / requests and let AuthIam validate them
-			// This is safe because:
-			// 1. STS actions are excluded (handled by separate STS routes)
-			// 2. S3 operations don't POST to / (they use /<bucket> or /<bucket>/<key>)
-			// 3. IAM operations all POST to /
-
-			// Only exclude STS actions which might be in query string
+			// Exclude STS actions from IAM routing. Check query string first.
 			action := r.URL.Query().Get("Action")
 			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
 				return false
 			}
 
-			// Match all other authenticated POST / requests (IAM operations)
+			// Also check the POST body for STS actions — boto3 sends Action
+			// in the form-encoded body by default. We read and restore the
+			// body so downstream SigV4 verification is unaffected.
+			if action == "" && r.Body != nil && r.ContentLength != 0 {
+				bodyBytes, err := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				if err == nil {
+					if vals, err := url.ParseQuery(string(bodyBytes)); err == nil {
+						action = vals.Get("Action")
+						if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
+							return false
+						}
+					}
+				}
+			}
+
 			return true
 		}
 

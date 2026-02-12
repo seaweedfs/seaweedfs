@@ -102,6 +102,34 @@ func TestRouting_AuthenticatedIAM(t *testing.T) {
 	assert.Contains(t, []int{http.StatusBadRequest, http.StatusForbidden}, rr.Code, "Should route to IAM handler (400/403 due to invalid signature)")
 }
 
+// TestRouting_AuthenticatedSTSWithBodyParams verifies that an authenticated STS request
+// with Action in the POST body (boto3 default) routes to the STS handler, not IAM.
+func TestRouting_AuthenticatedSTSWithBodyParams(t *testing.T) {
+	router := mux.NewRouter()
+	s3a := setupRoutingTestServer(t)
+	s3a.registerRouter(router)
+
+	// Create authenticated request with STS Action in POST body (boto3 default behavior)
+	data := url.Values{}
+	data.Set("Action", "AssumeRole")
+	data.Set("Version", "2011-06-15")
+	data.Set("RoleArn", "arn:aws:iam::123:role/test")
+	data.Set("RoleSessionName", "test-session")
+
+	req, _ := http.NewRequest("POST", "/", strings.NewReader(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIA.../...")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	// STS handler with uninitialized backend returns 503.
+	// IAM handler with malformed credentials returns 400.
+	// Assert 503 to confirm routing to STS, not IAM.
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code,
+		"Authenticated STS AssumeRole with Action in POST body should route to STS handler (503), not IAM (400)")
+}
+
 // TestRouting_IAMMatcherLogic verifies the iamMatcher correctly distinguishes auth types
 func TestRouting_IAMMatcherLogic(t *testing.T) {
 	tests := []struct {

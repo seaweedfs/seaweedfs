@@ -5,11 +5,11 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
-	"crypto/rand"
-	"encoding/base64"
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -93,9 +93,28 @@ func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *
 // HandleSTSRequest is the main entry point for STS requests
 // It routes requests based on the Action parameter
 func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
+	// Buffer the body before ParseForm so it can be restored for SigV4 verification.
+	// ParseForm consumes the body, but verifyV4Signature (called by handleAssumeRole)
+	// needs to hash the original body.
+	var bodyBytes []byte
+	if r.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue, err)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
 	if err := r.ParseForm(); err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue, err)
 		return
+	}
+
+	// Restore the body so SigV4 verification can hash it.
+	if bodyBytes != nil {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
 
 	// Validate API version
@@ -488,24 +507,17 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
-	// Generate temporary credentials (cryptographically secure)
-	// AccessKeyId: ASIA + 16 chars hex
-	// SecretAccessKey: 40 chars base64
-	randBytes := make([]byte, 30) // Sufficient for both
-	if _, err := rand.Read(randBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	// Generate temporary credentials deterministically from the session ID.
+	// During signature verification, ToSessionInfo() regenerates credentials
+	// from the JWT claims using the same CredentialGenerator, so both sides
+	// must produce identical access keys and secret keys.
+	credGenerator := sts.NewCredentialGenerator()
+	tempCreds, err := credGenerator.GenerateTemporaryCredentials(sessionId, expiration)
+	if err != nil {
+		return STSCredentials{}, nil, fmt.Errorf("failed to generate temporary credentials: %w", err)
 	}
-
-	// Generate AccessKeyId (ASIA + 16 upper-hex chars)
-	// We use 8 bytes (16 hex chars)
-	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
-
-	// Generate SecretAccessKey: 30 random bytes, base64-encoded to a 40-character string
-	secretBytes := make([]byte, 30)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
-	}
-	secretAccessKey := base64.StdEncoding.EncodeToString(secretBytes)
+	accessKeyId := tempCreds.AccessKeyId
+	secretAccessKey := tempCreds.SecretAccessKey
 
 	// Get account ID from STS config or use default
 	accountId := defaultAccountId
