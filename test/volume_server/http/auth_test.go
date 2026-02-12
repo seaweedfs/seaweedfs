@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
+	"time"
 
+	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -151,4 +153,68 @@ func newUploadRequest(t testing.TB, url string, payload []byte) *http.Request {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	return req
+}
+
+func TestJWTAuthRejectsExpiredTokens(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(53)
+	const needleID = uint64(334455)
+	const cookie = uint32(0x22334455)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	payload := []byte("expired-token-content")
+	client := framework.NewHTTPClient()
+
+	expiredWriteToken := mustGenExpiredToken(t, []byte(profile.JWTSigningKey), fid)
+	writeReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	writeReq.Header.Set("Authorization", "Bearer "+expiredWriteToken)
+	writeResp := framework.DoRequest(t, client, writeReq)
+	_ = framework.ReadAllAndClose(t, writeResp)
+	if writeResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired write token expected 401, got %d", writeResp.StatusCode)
+	}
+
+	// Seed data with a valid token so read auth path can be exercised against existing content.
+	validWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	validWriteReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	validWriteReq.Header.Set("Authorization", "Bearer "+string(validWriteToken))
+	validWriteResp := framework.DoRequest(t, client, validWriteReq)
+	_ = framework.ReadAllAndClose(t, validWriteResp)
+	if validWriteResp.StatusCode != http.StatusCreated {
+		t.Fatalf("valid write expected 201, got %d", validWriteResp.StatusCode)
+	}
+
+	expiredReadToken := mustGenExpiredToken(t, []byte(profile.JWTReadKey), fid)
+	readReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	readReq.Header.Set("Authorization", "Bearer "+expiredReadToken)
+	readResp := framework.DoRequest(t, client, readReq)
+	_ = framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired read token expected 401, got %d", readResp.StatusCode)
+	}
+}
+
+func mustGenExpiredToken(t testing.TB, key []byte, fid string) string {
+	t.Helper()
+	claims := security.SeaweedFileIdClaims{
+		Fid: fid,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-1 * time.Minute)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("sign expired token: %v", err)
+	}
+	return signed
 }
