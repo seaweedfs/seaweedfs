@@ -588,3 +588,38 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Tier upload/download success flows with an actual remote backend and replica fanout behavior remain.
 - Commit: `855c84f31`
+
+- Date: 2026-02-12
+- Change: Expanded copy/receive stream coverage with incremental-copy data/no-data branches and receive-file protocol violation handling.
+- APIs covered: `VolumeIncrementalCopy` (stream data + EOF no-data), `CopyFile` (ignore missing source + `stop_offset=0`), `ReceiveFile` (content-before-info and unknown message type response errors).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Full `VolumeCopy` happy path with a real source volume node remains.
+- Commit: `1e99407e1`
+
+- Date: 2026-02-12
+- Change: Added additional copy/receive branches for compaction mismatch and regular-volume receive-file success with byte-for-byte verification via `CopyFile`.
+- APIs covered: `CopyFile` (compaction revision mismatch), `ReceiveFile` (successful regular volume write path).
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC receive-file success path and cleanup failure branches remain.
+- Commit: `4c710463e`
+
+- Date: 2026-02-12
+- Change: Added HTTP read-path variants and conditional request coverage.
+- APIs covered: `GET /{vid}/{fid}`, `GET /{vid}/{fid}/{filename}`, malformed `/{vid}/{fid}` parse error path, `If-Modified-Since` (`304`) behavior.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Proxy/redirect read mode matrix and image/chunk-manifest transformation branches remain.
+- Commit: `1f64ebe1d`
+
+- Date: 2026-02-12
+- Change: Added HTTP passthrough header and static resource coverage.
+- APIs covered: query-based `response-*` header passthrough, `dl=true` content-disposition attachment handling, `/favicon.ico`, `/seaweedfsstatic/seaweed50x50.png`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Additional static resource variants and multi-range response formatting checks remain.
+- Commit: `f1ad1ec50`
+
+- Date: 2026-02-12
+- Change: Added gRPC ping branch coverage for unreachable filer target.
+- APIs covered: `Ping` (`target_type=filer` unreachable target path).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Successful ping path for filer/master targets in multi-service integration setup remains.
+- Commit: `c6ace0331`
