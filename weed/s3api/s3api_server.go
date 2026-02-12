@@ -458,11 +458,13 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Store identity in context
+		// Always set identity in context when non-nil to ensure downstream handlers have access
+		ctx := r.Context()
 		if identity.Name != "" {
-			ctx := SetIdentityNameInContext(r.Context(), identity.Name)
-			ctx = SetIdentityInContext(ctx, identity)
-			r = r.WithContext(ctx)
+			ctx = SetIdentityNameInContext(ctx, identity.Name)
 		}
+		ctx = SetIdentityInContext(ctx, identity)
+		r = r.WithContext(ctx)
 
 		targetUserName := r.Form.Get("UserName")
 
