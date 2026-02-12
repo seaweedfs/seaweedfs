@@ -73,6 +73,56 @@ func TestJWTAuthForWriteAndRead(t *testing.T) {
 	}
 }
 
+func TestJWTAuthRejectsFidMismatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(52)
+	const needleID = uint64(223344)
+	const cookie = uint32(0x10203040)
+	const otherNeedleID = uint64(223345)
+	const otherCookie = uint32(0x50607080)
+
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	otherFid := framework.NewFileID(volumeID, otherNeedleID, otherCookie)
+	payload := []byte("jwt-fid-mismatch-content")
+	client := framework.NewHTTPClient()
+
+	writeTokenForOtherFid := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, otherFid)
+	mismatchedWrite := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	mismatchedWrite.Header.Set("Authorization", "Bearer "+string(writeTokenForOtherFid))
+	mismatchedWriteResp := framework.DoRequest(t, client, mismatchedWrite)
+	_ = framework.ReadAllAndClose(t, mismatchedWriteResp)
+	if mismatchedWriteResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("write with mismatched fid token expected 401, got %d", mismatchedWriteResp.StatusCode)
+	}
+
+	writeTokenForFid := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	validWrite := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	validWrite.Header.Set("Authorization", "Bearer "+string(writeTokenForFid))
+	validWriteResp := framework.DoRequest(t, client, validWrite)
+	_ = framework.ReadAllAndClose(t, validWriteResp)
+	if validWriteResp.StatusCode != http.StatusCreated {
+		t.Fatalf("authorized write expected 201, got %d", validWriteResp.StatusCode)
+	}
+
+	readTokenForOtherFid := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, otherFid)
+	mismatchedReadReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	mismatchedReadReq.Header.Set("Authorization", "Bearer "+string(readTokenForOtherFid))
+	mismatchedReadResp := framework.DoRequest(t, client, mismatchedReadReq)
+	_ = framework.ReadAllAndClose(t, mismatchedReadResp)
+	if mismatchedReadResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("read with mismatched fid token expected 401, got %d", mismatchedReadResp.StatusCode)
+	}
+}
+
 func newUploadRequest(t testing.TB, url string, payload []byte) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
