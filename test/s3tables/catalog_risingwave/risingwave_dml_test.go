@@ -73,9 +73,7 @@ WITH (
 
 		t.Log(">>> Inserting into RisingWave table...")
 		runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob');", rwTableName))
-		runRisingWaveSQL(t, env.postgresSidecar, "FLUSH;") // Attempt to force flush if supported, otherwise sleep
-
-		time.Sleep(15 * time.Second) // Wait for sink to flush
+		runRisingWaveSQL(t, env.postgresSidecar, "FLUSH;")
 
 		// Verify with Source
 		sourceName := "test_source_insert_" + randomString(6)
@@ -110,9 +108,6 @@ CREATE SOURCE %s WITH (
 		// We need a table with PK for upsert to work effectively in RW logic,
 		// effectively maps to Iceberg v2 table.
 		createIcebergTable(t, env, tableBucket, "default", tableName)
-		// Note: createIcebergTable creates default schema (id, name).
-		// RW needs to know PK to do upsert sink?
-		// Actually RW Upsert Sink requires a PK on the RW side.
 
 		rwTableName := "rw_upsert_" + randomString(6)
 		runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("CREATE TABLE %s (id int PRIMARY KEY, name varchar);", rwTableName))
@@ -146,14 +141,12 @@ WITH (
 		t.Log(">>> Inserting initial data...")
 		runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("INSERT INTO %s VALUES (1, 'Charlie'), (2, 'Dave');", rwTableName))
 		runRisingWaveSQL(t, env.postgresSidecar, "FLUSH;")
-		time.Sleep(15 * time.Second)
 
 		// Update 1, Delete 2
 		t.Log(">>> Updating and Deleting data...")
 		runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("UPDATE %s SET name = 'Charles' WHERE id = 1;", rwTableName))
 		runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("DELETE FROM %s WHERE id = 2;", rwTableName))
 		runRisingWaveSQL(t, env.postgresSidecar, "FLUSH;")
-		time.Sleep(15 * time.Second)
 
 		// Verify with Source
 		sourceName := "test_source_upsert_" + randomString(6)
@@ -180,13 +173,13 @@ CREATE SOURCE %s WITH (
 
 		t.Log(">>> Selecting from source to verify UPSERT...")
 		// Should see (1, 'Charles') and NOT (2, 'Dave')
-		// We wait and verify.
 		verifyQuery(t, env, sourceName, "1 | Charles")
-		verifyQueryAbsence(t, env, sourceName, "2 | Dave", "2 | b")
+		verifyQueryAbsence(t, env, sourceName, "2 | Dave")
 	})
 }
 
 func verifyQuery(t *testing.T, env *TestEnvironment, sourceName string, expectedSubstrings ...string) {
+	t.Helper()
 	var output string
 	for i := 0; i < 15; i++ {
 		output = runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("SELECT * FROM %s ORDER BY id;", sourceName))
@@ -206,10 +199,21 @@ func verifyQuery(t *testing.T, env *TestEnvironment, sourceName string, expected
 }
 
 func verifyQueryAbsence(t *testing.T, env *TestEnvironment, sourceName string, unexpectedSubstrings ...string) {
-	output := runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("SELECT * FROM %s ORDER BY id;", sourceName))
-	for _, s := range unexpectedSubstrings {
-		if strings.Contains(output, s) {
-			t.Fatalf("Found unexpected data '%s' in output:\n%s", s, output)
+	t.Helper()
+	var output string
+	for i := 0; i < 15; i++ {
+		output = runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("SELECT * FROM %s ORDER BY id;", sourceName))
+		noneFound := true
+		for _, s := range unexpectedSubstrings {
+			if strings.Contains(output, s) {
+				noneFound = false
+				break
+			}
 		}
+		if noneFound {
+			return
+		}
+		time.Sleep(2 * time.Second)
 	}
+	t.Fatalf("Found unexpected data %v in output:\n%s", unexpectedSubstrings, output)
 }
