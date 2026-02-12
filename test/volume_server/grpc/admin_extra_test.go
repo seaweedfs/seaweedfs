@@ -96,6 +96,59 @@ func TestVolumeConfigureInvalidReplication(t *testing.T) {
 	}
 }
 
+func TestVolumeConfigureSuccessAndMissingRollbackPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(24)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	successResp, err := grpcClient.VolumeConfigure(ctx, &volume_server_pb.VolumeConfigureRequest{
+		VolumeId:    volumeID,
+		Replication: "000",
+	})
+	if err != nil {
+		t.Fatalf("VolumeConfigure success path returned grpc error: %v", err)
+	}
+	if successResp.GetError() != "" {
+		t.Fatalf("VolumeConfigure success path expected empty response error, got: %q", successResp.GetError())
+	}
+
+	statusResp, err := grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeStatus after successful configure failed: %v", err)
+	}
+	if statusResp.GetIsReadOnly() {
+		t.Fatalf("VolumeStatus after configure expected writable volume")
+	}
+
+	missingResp, err := grpcClient.VolumeConfigure(ctx, &volume_server_pb.VolumeConfigureRequest{
+		VolumeId:    99024,
+		Replication: "000",
+	})
+	if err != nil {
+		t.Fatalf("VolumeConfigure missing-volume branch should return response error, got grpc error: %v", err)
+	}
+	if missingResp.GetError() == "" {
+		t.Fatalf("VolumeConfigure missing-volume expected non-empty response error")
+	}
+	lower := strings.ToLower(missingResp.GetError())
+	if !strings.Contains(lower, "not found on disk") {
+		t.Fatalf("VolumeConfigure missing-volume error should mention not found on disk, got: %q", missingResp.GetError())
+	}
+	if !strings.Contains(lower, "failed to restore mount") {
+		t.Fatalf("VolumeConfigure missing-volume error should include remount rollback failure, got: %q", missingResp.GetError())
+	}
+}
+
 func TestPingVolumeTargetAndLeaveAffectsHealthz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
