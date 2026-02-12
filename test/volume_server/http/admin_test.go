@@ -95,6 +95,43 @@ func TestOptionsMethodsByPort(t *testing.T) {
 	}
 }
 
+func TestOptionsWithOriginIncludesCorsHeaders(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	client := framework.NewHTTPClient()
+
+	adminReq := mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/")
+	adminReq.Header.Set("Origin", "https://example.com")
+	adminResp := framework.DoRequest(t, client, adminReq)
+	_ = framework.ReadAllAndClose(t, adminResp)
+	if adminResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin OPTIONS expected 200, got %d", adminResp.StatusCode)
+	}
+	if adminResp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("admin OPTIONS expected Access-Control-Allow-Origin=*, got %q", adminResp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if adminResp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("admin OPTIONS expected Access-Control-Allow-Credentials=true, got %q", adminResp.Header.Get("Access-Control-Allow-Credentials"))
+	}
+
+	publicReq := mustNewRequest(t, http.MethodOptions, cluster.VolumePublicURL()+"/")
+	publicReq.Header.Set("Origin", "https://example.com")
+	publicResp := framework.DoRequest(t, client, publicReq)
+	_ = framework.ReadAllAndClose(t, publicResp)
+	if publicResp.StatusCode != http.StatusOK {
+		t.Fatalf("public OPTIONS expected 200, got %d", publicResp.StatusCode)
+	}
+	if publicResp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("public OPTIONS expected Access-Control-Allow-Origin=*, got %q", publicResp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if publicResp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("public OPTIONS expected Access-Control-Allow-Credentials=true, got %q", publicResp.Header.Get("Access-Control-Allow-Credentials"))
+	}
+}
+
 func mustNewRequest(t testing.TB, method, url string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
