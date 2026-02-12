@@ -700,3 +700,10 @@ Update this section during implementation:
 - Profiles covered: P3.
 - Gaps introduced/remaining: none in current JWT token source precedence matrix.
 - Commit: `4ea552973`
+
+- Date: 2026-02-12
+- Change: Added gRPC state update validation coverage for optimistic versioning and nil-state requests.
+- APIs covered: `SetState` stale-version mismatch error path and nil-state no-op path.
+- Profiles covered: P1.
+- Gaps introduced/remaining: persistent state save failure branch remains environment-dependent.
+- Commit: `34ff97996`
