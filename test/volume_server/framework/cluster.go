@@ -414,6 +414,11 @@ func (c *Cluster) VolumeGRPCAddress() string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.volumeGrpcPort))
 }
 
+// VolumeServerAddress returns SeaweedFS server address format: ip:httpPort.grpcPort
+func (c *Cluster) VolumeServerAddress() string {
+	return fmt.Sprintf("%s.%d", c.VolumeAdminAddress(), c.volumeGrpcPort)
+}
+
 func (c *Cluster) MasterURL() string {
 	return "http://" + c.MasterAddress()
 }
