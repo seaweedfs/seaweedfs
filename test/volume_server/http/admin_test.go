@@ -132,6 +132,21 @@ func TestOptionsWithOriginIncludesCorsHeaders(t *testing.T) {
 	}
 }
 
+func TestUiIndexNotExposedWhenJwtSigningEnabled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartSingleVolumeCluster(t, matrix.P3())
+	client := framework.NewHTTPClient()
+
+	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
+	body := framework.ReadAllAndClose(t, resp)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected /ui/index.html to be gated by auth under JWT profile (401), got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
 func mustNewRequest(t testing.TB, method, url string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
