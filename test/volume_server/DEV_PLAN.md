@@ -644,3 +644,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: CSV parsing behavior beyond current no-output branch still pending.
 - Commit: `39895cb84`
+
+- Date: 2026-02-12
+- Change: Added HTTP upload throttling integration coverage with deterministic timeout and replicate-bypass behavior.
+- APIs covered: upload limit timeout path (`429`) and `type=replicate` bypass branch under concurrent upload pressure.
+- Profiles covered: P8 (with short inflight timeout in test profile).
+- Gaps introduced/remaining: download throttling wait/proxy branches remain.
+- Commit: `464d0b2b6`
