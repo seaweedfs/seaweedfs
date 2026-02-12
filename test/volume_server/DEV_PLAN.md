@@ -623,3 +623,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Successful ping path for filer/master targets in multi-service integration setup remains.
 - Commit: `c6ace0331`
+
+- Date: 2026-02-12
+- Change: Added initial erasure-coding RPC integration coverage for maintenance-gate, missing-volume, invalid-disk, and no-op behaviors.
+- APIs covered: `VolumeEcShardsGenerate`, `VolumeEcShardsRebuild`, `VolumeEcShardsCopy`, `VolumeEcShardsDelete`, `VolumeEcShardsMount`, `VolumeEcShardsUnmount`, `VolumeEcShardRead`, `VolumeEcBlobDelete`, `VolumeEcShardsToVolume`, `VolumeEcShardsInfo`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Positive EC data-path flows (generate/copy/mount/read/delete/to-volume/info with actual shard files) still require EC fixture setup.
+- Commit: `c7592d118`
