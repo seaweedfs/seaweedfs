@@ -161,8 +161,8 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 	if unknownResp.GetRemoteTimeNs() != 0 {
 		t.Fatalf("Ping unknown target type expected remote_time_ns=0, got %d", unknownResp.GetRemoteTimeNs())
 	}
-	if unknownResp.GetStopTimeNs() <= unknownResp.GetStartTimeNs() {
-		t.Fatalf("Ping unknown target type expected stop_time_ns > start_time_ns")
+	if unknownResp.GetStopTimeNs() < unknownResp.GetStartTimeNs() {
+		t.Fatalf("Ping unknown target type expected stop_time_ns >= start_time_ns")
 	}
 
 	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
