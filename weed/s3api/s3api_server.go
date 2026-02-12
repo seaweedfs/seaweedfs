@@ -424,6 +424,71 @@ func (s3a *S3ApiServer) handleCORSOriginValidation(w http.ResponseWriter, r *htt
 	return true
 }
 
+// UnifiedPostHandler handles authenticated POST requests to the root path
+// It inspects the Action parameter to dispatch to either STS or IAM handlers
+func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Request) {
+	// 1. Authenticate (preserves body)
+	identity, errCode := s3a.iam.AuthSignatureOnly(r)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	// 2. Parse Form to get Action
+	if err := r.ParseForm(); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	// 3. Dispatch
+	action := r.Form.Get("Action")
+	if strings.HasPrefix(action, "AssumeRole") {
+		// STS
+		if s3a.stsHandlers == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
+			return
+		}
+		s3a.stsHandlers.HandleSTSRequest(w, r)
+	} else {
+		// IAM
+		// IAM API requests must be authenticated - reject nil identity
+		if identity == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+
+		// Store identity in context
+		// Always set identity in context when non-nil to ensure downstream handlers have access
+		ctx := r.Context()
+		if identity.Name != "" {
+			ctx = SetIdentityNameInContext(ctx, identity.Name)
+		}
+		ctx = SetIdentityInContext(ctx, identity)
+		r = r.WithContext(ctx)
+
+		targetUserName := r.Form.Get("UserName")
+
+		// Check permissions based on action type
+		isSelfServiceAction := iamRequiresAdminForOthers(action)
+		isActingOnSelf := targetUserName == "" || targetUserName == identity.Name
+
+		// Permission check is required for all actions except for self-service actions
+		// performed on the user's own identity.
+		if !(isSelfServiceAction && isActingOnSelf) {
+			if !identity.isAdmin() {
+				if s3a.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
+					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+					return
+				}
+			}
+		}
+
+		// Call Limit middleware + DoActions
+		handler, _ := s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)
+		handler.ServeHTTP(w, r)
+	}
+}
+
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
@@ -685,38 +750,31 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// POST / (without specific query parameters)
 	// Uses AuthIam for granular permission checking
 	if s3a.embeddedIam != nil {
-		// 2. Authenticated IAM requests
+
+		// 2. Authenticated IAM/STS Post requests
 		// Only match if the request appears to be authenticated (AWS Signature)
-		// AND is not an STS request (which should be handled by STS handlers)
+		// We use a UnifiedPostHandler to dispatch based on Action (STS vs IAM)
 		iamMatcher := func(r *http.Request, rm *mux.RouteMatch) bool {
 			if getRequestAuthType(r) == authTypeAnonymous {
 				return false
 			}
 
-			// IMPORTANT: Do NOT call r.ParseForm() here!
-			// ParseForm() consumes the request body, which breaks AWS Signature V4 verification
-			// for IAM requests. The signature must be calculated on the original body.
-			// Instead, check only the query string for the Action parameter.
+			// IMPORTANT: We do NOT parse the body here.
+			// UnifiedPostHandler will handle authentication and body parsing.
+			// We only filter out requests that are explicitly targeted at STS via Query params
+			// to avoid double-handling, although UnifiedPostHandler would handle them correctly anyway.
 
-			// For IAM requests, the Action is typically in the POST body, not query string
-			// So we match all authenticated POST / requests and let AuthIam validate them
-			// This is safe because:
-			// 1. STS actions are excluded (handled by separate STS routes)
-			// 2. S3 operations don't POST to / (they use /<bucket> or /<bucket>/<key>)
-			// 3. IAM operations all POST to /
-
-			// Only exclude STS actions which might be in query string
+			// Action in Query String is handled by explicit STS routes above
 			action := r.URL.Query().Get("Action")
 			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
 				return false
 			}
 
-			// Match all other authenticated POST / requests (IAM operations)
 			return true
 		}
 
 		apiRouter.Methods(http.MethodPost).Path("/").MatcherFunc(iamMatcher).
-			HandlerFunc(track(s3a.embeddedIam.AuthIam(s3a.cb.Limit(s3a.embeddedIam.DoActions, ACTION_WRITE)), "IAM"))
+			HandlerFunc(track(s3a.UnifiedPostHandler, "IAM-Unified"))
 
 		glog.V(1).Infof("Embedded IAM API enabled on S3 port")
 	}
