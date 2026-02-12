@@ -39,6 +39,18 @@ func TestUploadReadRangeHeadDeleteRoundTrip(t *testing.T) {
 	if string(getBody) != string(data) {
 		t.Fatalf("get body mismatch: got %q want %q", string(getBody), string(data))
 	}
+	etag := getResp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected ETag header from GET response")
+	}
+
+	notModifiedReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/"+fid)
+	notModifiedReq.Header.Set("If-None-Match", etag)
+	notModifiedResp := framework.DoRequest(t, client, notModifiedReq)
+	_ = framework.ReadAllAndClose(t, notModifiedResp)
+	if notModifiedResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("if-none-match expected 304, got %d", notModifiedResp.StatusCode)
+	}
 
 	rangeReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/"+fid)
 	rangeReq.Header.Set("Range", "bytes=0-4")
@@ -49,6 +61,14 @@ func TestUploadReadRangeHeadDeleteRoundTrip(t *testing.T) {
 	}
 	if got, want := string(rangeBody), "hello"; got != want {
 		t.Fatalf("range body mismatch: got %q want %q", got, want)
+	}
+
+	invalidRangeReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/"+fid)
+	invalidRangeReq.Header.Set("Range", "bytes=9999-10000")
+	invalidRangeResp := framework.DoRequest(t, client, invalidRangeReq)
+	_ = framework.ReadAllAndClose(t, invalidRangeResp)
+	if invalidRangeResp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("invalid range expected 416, got %d", invalidRangeResp.StatusCode)
 	}
 
 	headResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodHead, cluster.VolumeAdminURL()+"/"+fid))
