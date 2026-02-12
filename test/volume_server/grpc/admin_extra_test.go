@@ -138,3 +138,41 @@ func TestPingVolumeTargetAndLeaveAffectsHealthz(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	unknownResp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
+		TargetType: "unknown-type",
+		Target:     "127.0.0.1:12345",
+	})
+	if err != nil {
+		t.Fatalf("Ping unknown target type should not return grpc error, got: %v", err)
+	}
+	if unknownResp.GetRemoteTimeNs() != 0 {
+		t.Fatalf("Ping unknown target type expected remote_time_ns=0, got %d", unknownResp.GetRemoteTimeNs())
+	}
+	if unknownResp.GetStopTimeNs() <= unknownResp.GetStartTimeNs() {
+		t.Fatalf("Ping unknown target type expected stop_time_ns > start_time_ns")
+	}
+
+	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
+		TargetType: cluster.MasterType,
+		Target:     "127.0.0.1:1",
+	})
+	if err == nil {
+		t.Fatalf("Ping master target should fail when target is unreachable")
+	}
+	if !strings.Contains(err.Error(), "ping master") {
+		t.Fatalf("Ping master unreachable error mismatch: %v", err)
+	}
+}
