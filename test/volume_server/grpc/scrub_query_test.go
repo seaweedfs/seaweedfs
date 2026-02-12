@@ -74,6 +74,32 @@ func TestScrubEcVolumeMissingVolume(t *testing.T) {
 	}
 }
 
+func TestScrubEcVolumeAutoSelectNoEcVolumes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := grpcClient.ScrubEcVolume(ctx, &volume_server_pb.ScrubEcVolumeRequest{
+		Mode: volume_server_pb.VolumeScrubMode_INDEX,
+	})
+	if err != nil {
+		t.Fatalf("ScrubEcVolume auto-select failed: %v", err)
+	}
+	if resp.GetTotalVolumes() != 0 {
+		t.Fatalf("ScrubEcVolume auto-select expected total_volumes=0 without EC data, got %d", resp.GetTotalVolumes())
+	}
+	if len(resp.GetBrokenVolumeIds()) != 0 {
+		t.Fatalf("ScrubEcVolume auto-select expected no broken volumes, got %v", resp.GetBrokenVolumeIds())
+	}
+}
+
 func TestQueryInvalidAndMissingFileIDPaths(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
