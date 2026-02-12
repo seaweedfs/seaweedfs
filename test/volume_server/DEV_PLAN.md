@@ -742,3 +742,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: `VolumeConfigure` rollback/mount-failure branches still need dedicated fault-path coverage.
 - Commit: `bc1faec8e`
+
+- Date: 2026-02-12
+- Change: Added mixed gRPC `BatchDelete` result-matrix coverage including early-stop behavior on cookie mismatch.
+- APIs covered: per-entry status matrix in one request (`400` invalid fid, `202` accepted delete, `404` missing fid) and early break semantics when cookie mismatch occurs before later entries.
+- Profiles covered: P1.
+- Gaps introduced/remaining: chunk-manifest rejection (`406`) and EC batch-delete success path still require dedicated fixtures.
+- Commit: `450f63ac4`
