@@ -31,7 +31,7 @@ func TestRisingWaveIcebergCatalog(t *testing.T) {
 	t.Log(">>> RisingWave started.")
 
 	// Create Iceberg namespace
-	createIcebergNamespace(t, env, tableBucket, "default")
+	createIcebergNamespace(t, env, "default")
 
 	// Create a catalog in RisingWave that points to SeaweedFS Iceberg REST API
 	icebergUri := env.dockerIcebergEndpoint()

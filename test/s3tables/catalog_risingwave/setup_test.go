@@ -67,7 +67,9 @@ type TestEnvironment struct {
 	accessKey           string
 	secretKey           string
 	risingwaveContainer string
+	postgresSidecar     string
 	masterProcess       *exec.Cmd
+	logFile             *os.File
 }
 
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
@@ -133,6 +135,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create log file: %v", err)
 	}
+	env.logFile = logFile
 
 	// Start SeaweedFS using weed mini (all-in-one including Iceberg REST)
 	env.masterProcess = exec.Command(
@@ -177,9 +180,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 func mustFreePort(t *testing.T, name string) int {
 	t.Helper()
 	// Listen on port 0 to let the OS choose an available ephemeral port.
-	// We try multiple times to find a port < 50000 because weed mini adds 10000 for gRPC port,
+	// We try multiple times to find a port < 55000 because weed mini adds 10000 for gRPC port,
 	// and if the port is > 55535, the gRPC port (port+10000) will be > 65535, which is invalid.
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("failed to find a free port for %s: %v", name, err)
@@ -187,12 +190,12 @@ func mustFreePort(t *testing.T, name string) int {
 		port := listener.Addr().(*net.TCPAddr).Port
 		listener.Close()
 
-		if port < 50000 {
+		if port < 55000 {
 			return port
 		}
 		// Try again
 	}
-	t.Fatalf("failed to find a free port < 50000 for %s after 100 attempts", name)
+	t.Fatalf("failed to find a free port < 55000 for %s after 1000 attempts", name)
 	return 0
 }
 
@@ -231,12 +234,25 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 		t.Fatalf("failed to start RisingWave container: %v\n%s", err, string(output))
 	}
 
+	// Start a sidecar postgres container for running psql commands
+	sidecarName := "seaweed-risingwave-sidecar-" + randomString(8)
+	env.postgresSidecar = sidecarName
+	sidecarCmd := exec.Command("docker", "run", "-d", "--rm",
+		"--name", sidecarName,
+		"--network", fmt.Sprintf("container:%s", containerName),
+		"postgres:16-alpine",
+		"sleep", "infinity",
+	)
+	if output, err := sidecarCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to start postgres sidecar: %v\n%s", err, string(output))
+	}
+
 	// Wait for RisingWave port to be open on host
 	if !waitForPort(env.risingwavePort, 120*time.Second) {
 		t.Fatalf("timed out waiting for RisingWave port %d to be open", env.risingwavePort)
 	}
 
-	// Wait for RisingWave to be truly ready via psql in a dedicated postgres client container.
+	// Wait for RisingWave to be truly ready via psql in the sidecar.
 	if !env.waitForRisingWave(120 * time.Second) {
 		t.Fatalf("timed out waiting for RisingWave to be ready via psql")
 	}
@@ -246,7 +262,7 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	env.t.Logf(">>> Waiting for RisingWave to be ready (timeout %v)...\n", timeout)
 	for time.Now().Before(deadline) {
-		if output, err := runPostgresClientSQL(env.risingwaveContainer, "SELECT 1;"); err == nil {
+		if output, err := runPostgresClientSQL(env.postgresSidecar, "SELECT 1;"); err == nil {
 			env.t.Logf(">>> RisingWave is ready.\n")
 			return true
 		} else {
@@ -258,9 +274,8 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 }
 
 func runPostgresClientSQL(containerName, sql string) ([]byte, error) {
-	cmd := exec.Command("docker", "run", "--rm",
-		"--network", fmt.Sprintf("container:%s", containerName),
-		"postgres:16-alpine",
+	cmd := exec.Command("docker", "exec",
+		containerName,
 		"psql",
 		"-h", "127.0.0.1",
 		"-p", "4566",
@@ -287,6 +302,10 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		_ = exec.Command("docker", "rm", "-f", env.risingwaveContainer).Run()
 	}
 
+	if env.postgresSidecar != "" {
+		_ = exec.Command("docker", "rm", "-f", env.postgresSidecar).Run()
+	}
+
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		_ = env.masterProcess.Process.Kill()
 		_ = env.masterProcess.Wait()
@@ -302,6 +321,11 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 			env.t.Logf(">>> Filer Contents:\n")
 			listFilerContents(t, env, "/")
 		}
+
+		if env.logFile != nil {
+			env.logFile.Close()
+		}
+
 		_ = os.RemoveAll(env.seaweedfsDataDir)
 	}
 }
@@ -391,17 +415,17 @@ func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, paylo
 	return resp.StatusCode, string(respBody), nil
 }
 
-func createIcebergNamespace(t *testing.T, env *TestEnvironment, bucketName, namespace string) {
+func createIcebergNamespace(t *testing.T, env *TestEnvironment, namespace string) {
 	t.Helper()
 
 	status, raw, err := doIcebergSignedJSONRequest(env, "POST", "/v1/namespaces", map[string]any{
 		"namespace": []string{namespace},
 	})
 	if err != nil {
-		t.Fatalf("failed to create Iceberg namespace %s in bucket %s: %v", namespace, bucketName, err)
+		t.Fatalf("failed to create Iceberg namespace %s: %v", namespace, err)
 	}
 	if status != 200 && status != 409 {
-		t.Fatalf("failed to create Iceberg namespace %s in bucket %s: status %d body: %s", namespace, bucketName, status, raw)
+		t.Fatalf("failed to create Iceberg namespace %s: status %d body: %s", namespace, status, raw)
 	}
 }
 
