@@ -581,3 +581,10 @@ Update this section during implementation:
 - Profiles covered: P1, P2, P3.
 - Gaps introduced/remaining: Remaining HTTP proxy/redirect/throttling and transformation branches still pending.
 - Commit: `2de39c548`, `9998d19dd`, `ea5d8b7b3`
+
+- Date: 2026-02-12
+- Change: Expanded tier/remote gRPC variation coverage with invalid remote config and missing destination backend branches.
+- APIs covered: `FetchAndWriteNeedle` (invalid `RemoteConf`), `VolumeTierMoveDatToRemote` (destination backend not found).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Tier upload/download success flows with an actual remote backend and replica fanout behavior remain.
+- Commit: `855c84f31`
