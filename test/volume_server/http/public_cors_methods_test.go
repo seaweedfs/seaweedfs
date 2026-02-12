@@ -1,0 +1,128 @@
+package volume_server_http_test
+
+import (
+	"bytes"
+	"net/http"
+	"testing"
+
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
+	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+)
+
+func TestPublicPortReadOnlyMethodBehavior(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(81)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, 123321, 0x01020304)
+	originalData := []byte("public-port-original")
+	replacementData := []byte("public-port-replacement")
+	client := framework.NewHTTPClient()
+
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, originalData)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("admin upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	publicReadResp := framework.ReadBytes(t, client, clusterHarness.VolumePublicURL(), fid)
+	publicReadBody := framework.ReadAllAndClose(t, publicReadResp)
+	if publicReadResp.StatusCode != http.StatusOK {
+		t.Fatalf("public GET expected 200, got %d", publicReadResp.StatusCode)
+	}
+	if string(publicReadBody) != string(originalData) {
+		t.Fatalf("public GET body mismatch: got %q want %q", string(publicReadBody), string(originalData))
+	}
+
+	publicPostReq := newUploadRequest(t, clusterHarness.VolumePublicURL()+"/"+fid, replacementData)
+	publicPostResp := framework.DoRequest(t, client, publicPostReq)
+	_ = framework.ReadAllAndClose(t, publicPostResp)
+	if publicPostResp.StatusCode != http.StatusOK {
+		t.Fatalf("public POST expected passthrough 200, got %d", publicPostResp.StatusCode)
+	}
+
+	publicDeleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, clusterHarness.VolumePublicURL()+"/"+fid))
+	_ = framework.ReadAllAndClose(t, publicDeleteResp)
+	if publicDeleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("public DELETE expected passthrough 200, got %d", publicDeleteResp.StatusCode)
+	}
+
+	adminReadResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), fid)
+	adminReadBody := framework.ReadAllAndClose(t, adminReadResp)
+	if adminReadResp.StatusCode != http.StatusOK {
+		t.Fatalf("admin GET after public POST/DELETE expected 200, got %d", adminReadResp.StatusCode)
+	}
+	if string(adminReadBody) != string(originalData) {
+		t.Fatalf("public port should not mutate data: got %q want %q", string(adminReadBody), string(originalData))
+	}
+}
+
+func TestCorsAndUnsupportedMethodBehavior(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(82)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, 789789, 0x0A0B0C0D)
+	client := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("cors-check"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("admin upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	adminOriginReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	adminOriginReq.Header.Set("Origin", "https://example.com")
+	adminOriginResp := framework.DoRequest(t, client, adminOriginReq)
+	_ = framework.ReadAllAndClose(t, adminOriginResp)
+	if adminOriginResp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("admin GET origin header mismatch: %q", adminOriginResp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if adminOriginResp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("admin GET credentials header mismatch: %q", adminOriginResp.Header.Get("Access-Control-Allow-Credentials"))
+	}
+
+	publicOriginReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumePublicURL()+"/"+fid)
+	publicOriginReq.Header.Set("Origin", "https://example.com")
+	publicOriginResp := framework.DoRequest(t, client, publicOriginReq)
+	_ = framework.ReadAllAndClose(t, publicOriginResp)
+	if publicOriginResp.Header.Get("Access-Control-Allow-Origin") != "*" {
+		t.Fatalf("public GET origin header mismatch: %q", publicOriginResp.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if publicOriginResp.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("public GET credentials header mismatch: %q", publicOriginResp.Header.Get("Access-Control-Allow-Credentials"))
+	}
+
+	adminPatchReq, err := http.NewRequest(http.MethodPatch, clusterHarness.VolumeAdminURL()+"/"+fid, bytes.NewReader([]byte("patch")))
+	if err != nil {
+		t.Fatalf("create admin PATCH request: %v", err)
+	}
+	adminPatchResp := framework.DoRequest(t, client, adminPatchReq)
+	_ = framework.ReadAllAndClose(t, adminPatchResp)
+	if adminPatchResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("admin PATCH expected 400, got %d", adminPatchResp.StatusCode)
+	}
+
+	publicPatchReq, err := http.NewRequest(http.MethodPatch, clusterHarness.VolumePublicURL()+"/"+fid, bytes.NewReader([]byte("patch")))
+	if err != nil {
+		t.Fatalf("create public PATCH request: %v", err)
+	}
+	publicPatchResp := framework.DoRequest(t, client, publicPatchReq)
+	_ = framework.ReadAllAndClose(t, publicPatchResp)
+	if publicPatchResp.StatusCode != http.StatusOK {
+		t.Fatalf("public PATCH expected passthrough 200, got %d", publicPatchResp.StatusCode)
+	}
+}
