@@ -1,0 +1,140 @@
+package volume_server_grpc_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
+	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+)
+
+func TestVolumeSyncStatusAndReadVolumeFileStatus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(41)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	syncResp, err := grpcClient.VolumeSyncStatus(ctx, &volume_server_pb.VolumeSyncStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeSyncStatus failed: %v", err)
+	}
+	if syncResp.GetVolumeId() != volumeID {
+		t.Fatalf("VolumeSyncStatus volume id mismatch: got %d want %d", syncResp.GetVolumeId(), volumeID)
+	}
+
+	statusResp, err := grpcClient.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("ReadVolumeFileStatus failed: %v", err)
+	}
+	if statusResp.GetVolumeId() != volumeID {
+		t.Fatalf("ReadVolumeFileStatus volume id mismatch: got %d want %d", statusResp.GetVolumeId(), volumeID)
+	}
+	if statusResp.GetVersion() == 0 {
+		t.Fatalf("ReadVolumeFileStatus expected non-zero version")
+	}
+}
+
+func TestCopyAndStreamMethodsMissingVolumePaths(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeSyncStatus(ctx, &volume_server_pb.VolumeSyncStatusRequest{VolumeId: 98761})
+	if err == nil {
+		t.Fatalf("VolumeSyncStatus should fail for missing volume")
+	}
+
+	incrementalStream, err := grpcClient.VolumeIncrementalCopy(ctx, &volume_server_pb.VolumeIncrementalCopyRequest{VolumeId: 98762, SinceNs: 0})
+	if err == nil {
+		_, err = incrementalStream.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not found volume") {
+		t.Fatalf("VolumeIncrementalCopy missing-volume error mismatch: %v", err)
+	}
+
+	readAllStream, err := grpcClient.ReadAllNeedles(ctx, &volume_server_pb.ReadAllNeedlesRequest{VolumeIds: []uint32{98763}})
+	if err == nil {
+		_, err = readAllStream.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not found volume") {
+		t.Fatalf("ReadAllNeedles missing-volume error mismatch: %v", err)
+	}
+
+	copyFileStream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{VolumeId: 98764, Ext: ".dat", StopOffset: 1})
+	if err == nil {
+		_, err = copyFileStream.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not found volume") {
+		t.Fatalf("CopyFile missing-volume error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: 98765})
+	if err == nil || !strings.Contains(err.Error(), "not found volume") {
+		t.Fatalf("ReadVolumeFileStatus missing-volume error mismatch: %v", err)
+	}
+}
+
+func TestVolumeCopyAndReceiveFileMaintenanceRejection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
+		State: &volume_server_pb.VolumeServerState{Maintenance: true, Version: stateResp.GetState().GetVersion()},
+	})
+	if err != nil {
+		t.Fatalf("SetState maintenance=true failed: %v", err)
+	}
+
+	copyStream, err := grpcClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{VolumeId: 1, SourceDataNode: "127.0.0.1:1234"})
+	if err == nil {
+		_, err = copyStream.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
+		t.Fatalf("VolumeCopy maintenance error mismatch: %v", err)
+	}
+
+	receiveClient, err := grpcClient.ReceiveFile(ctx)
+	if err != nil {
+		t.Fatalf("ReceiveFile client creation failed: %v", err)
+	}
+	_ = receiveClient.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{VolumeId: 1, Ext: ".dat"},
+		},
+	})
+	_, err = receiveClient.CloseAndRecv()
+	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
+		t.Fatalf("ReceiveFile maintenance error mismatch: %v", err)
+	}
+}
