@@ -630,3 +630,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Positive EC data-path flows (generate/copy/mount/read/delete/to-volume/info with actual shard files) still require EC fixture setup.
 - Commit: `c7592d118`
+
+- Date: 2026-02-12
+- Change: Added HTTP multi-range response coverage for multipart `206` behavior.
+- APIs covered: `GET /{fid}` with multi-range header (`Range: bytes=0-1,4-5`) and multipart response validation.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Oversized multi-range sum behavior and deeper range-edge normalization remain.
+- Commit: `39c68c679`
