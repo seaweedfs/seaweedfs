@@ -18,17 +18,17 @@ func TestRisingWaveIcebergCatalog(t *testing.T) {
 		t.Skip("Docker not available, skipping RisingWave integration test")
 	}
 
-	fmt.Printf(">>> Starting SeaweedFS...\n")
+	t.Log(">>> Starting SeaweedFS...")
 	env.StartSeaweedFS(t)
-	fmt.Printf(">>> SeaweedFS started.\n")
+	t.Log(">>> SeaweedFS started.")
 
 	tableBucket := "iceberg-tables"
-	fmt.Printf(">>> Creating table bucket: %s\n", tableBucket)
+	t.Logf(">>> Creating table bucket: %s", tableBucket)
 	createTableBucket(t, env, tableBucket)
 
-	fmt.Printf(">>> Starting RisingWave...\n")
+	t.Log(">>> Starting RisingWave...")
 	env.StartRisingWave(t)
-	fmt.Printf(">>> RisingWave started.\n")
+	t.Log(">>> RisingWave started.")
 
 	// Create Iceberg namespace
 	createIcebergNamespace(t, env, tableBucket, "default")
@@ -60,7 +60,7 @@ CREATE SOURCE %s WITH (
     catalog.rest.signing_name = 's3'
 );`, sourceName, icebergUri, tableName, tableBucket, s3Endpoint, env.accessKey, env.secretKey)
 
-	fmt.Printf(">>> Creating source %s...\n", sourceName)
+	t.Logf(">>> Creating source %s...", sourceName)
 	runRisingWaveSQL(t, env.risingwaveContainer, createSourceSql)
 
 	showSourcesOutput := runRisingWaveSQL(t, env.risingwaveContainer, "SHOW SOURCES;")
@@ -75,5 +75,5 @@ CREATE SOURCE %s WITH (
 
 	runRisingWaveSQL(t, env.risingwaveContainer, fmt.Sprintf("SELECT * FROM %s LIMIT 0;", sourceName))
 
-	fmt.Printf(">>> RisingWave Iceberg Catalog test passed!\n")
+	t.Log(">>> RisingWave Iceberg Catalog test passed!")
 }

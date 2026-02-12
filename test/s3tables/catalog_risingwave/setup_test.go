@@ -1,23 +1,26 @@
 package catalog_risingwave
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
 )
 
@@ -173,17 +176,23 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 func mustFreePort(t *testing.T, name string) int {
 	t.Helper()
-
-	for i := 0; i < 200; i++ {
-		port := 20000 + rand.Intn(30000)
-		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	// Listen on port 0 to let the OS choose an available ephemeral port.
+	// We try multiple times to find a port < 50000 because weed mini adds 10000 for gRPC port,
+	// and if the port is > 55535, the gRPC port (port+10000) will be > 65535, which is invalid.
+	for i := 0; i < 100; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			continue
+			t.Fatalf("failed to find a free port for %s: %v", name, err)
 		}
+		port := listener.Addr().(*net.TCPAddr).Port
 		listener.Close()
-		return port
+
+		if port < 50000 {
+			return port
+		}
+		// Try again
 	}
-	t.Fatalf("failed to get free port for %s", name)
+	t.Fatalf("failed to find a free port < 50000 for %s after 100 attempts", name)
 	return 0
 }
 
@@ -235,13 +244,13 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 
 func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
-	fmt.Printf(">>> Waiting for RisingWave to be ready (timeout %v)...\n", timeout)
+	env.t.Logf(">>> Waiting for RisingWave to be ready (timeout %v)...\n", timeout)
 	for time.Now().Before(deadline) {
 		if output, err := runPostgresClientSQL(env.risingwaveContainer, "SELECT 1;"); err == nil {
-			fmt.Printf(">>> RisingWave is ready.\n")
+			env.t.Logf(">>> RisingWave is ready.\n")
 			return true
 		} else {
-			fmt.Printf(">>> RisingWave not ready yet: %v (Output: %s)\n", err, string(output))
+			env.t.Logf(">>> RisingWave not ready yet: %v (Output: %s)\n", err, string(output))
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -267,6 +276,14 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 	t.Helper()
 
 	if env.risingwaveContainer != "" {
+		if t.Failed() {
+			logs, err := exec.Command("docker", "logs", env.risingwaveContainer).CombinedOutput()
+			if err == nil {
+				env.t.Logf(">>> RisingWave Logs:\n%s\n", string(logs))
+			} else {
+				env.t.Logf(">>> Failed to get RisingWave logs: %v\n", err)
+			}
+		}
 		_ = exec.Command("docker", "rm", "-f", env.risingwaveContainer).Run()
 	}
 
@@ -280,9 +297,9 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		if t.Failed() {
 			logPath := filepath.Join(env.seaweedfsDataDir, "seaweedfs.log")
 			if content, err := os.ReadFile(logPath); err == nil {
-				fmt.Printf(">>> SeaweedFS Logs:\n%s\n", string(content))
+				env.t.Logf(">>> SeaweedFS Logs:\n%s\n", string(content))
 			}
-			fmt.Printf(">>> Filer Contents:\n")
+			env.t.Logf(">>> Filer Contents:\n")
 			listFilerContents(t, env, "/")
 		}
 		_ = os.RemoveAll(env.seaweedfsDataDir)
@@ -315,69 +332,63 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	}
 }
 
-func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {
-	t.Helper()
-
-	cfg := aws.Config{
-		Region:       "us-east-1",
-		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(env.accessKey, env.secretKey, "")),
-		BaseEndpoint: aws.String(env.hostS3Endpoint()),
-	}
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.UsePathStyle = true
-	})
-
-	_, err := client.CreateBucket(context.Background(), &s3.CreateBucketInput{
-		Bucket: aws.String(bucketName),
-	})
-	if err != nil {
-		t.Fatalf("failed to create object bucket %s: %v", bucketName, err)
-	}
-}
-
 func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, payload any) (int, string, error) {
 	url := env.hostIcebergEndpoint() + path
 
-	args := []string{
-		"-sS",
-		"-w", "\n%{http_code}",
-		"-X", method,
-		"--aws-sigv4", "aws:amz:us-east-1:s3",
-		"--user", fmt.Sprintf("%s:%s", env.accessKey, env.secretKey),
-	}
-
+	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return 0, "", err
 		}
-		args = append(args,
-			"-H", "Content-Type: application/json",
-			"-d", string(data),
-		)
+		body = bytes.NewReader(data)
 	}
-	args = append(args, url)
 
-	cmd := exec.Command("curl", args...)
-	output, err := cmd.CombinedOutput()
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
-		return 0, string(output), fmt.Errorf("curl request failed: %w", err)
+		return 0, "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	rawOutput := strings.TrimSpace(string(output))
-	separator := strings.LastIndex(rawOutput, "\n")
-	if separator == -1 {
-		return 0, rawOutput, fmt.Errorf("failed to parse curl output: %s", rawOutput)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
-	statusCode, err := strconv.Atoi(strings.TrimSpace(rawOutput[separator+1:]))
+	// Sign the request
+	credsProvider := credentials.NewStaticCredentialsProvider(env.accessKey, env.secretKey, "")
+	creds, err := credsProvider.Retrieve(context.Background())
 	if err != nil {
-		return 0, rawOutput, fmt.Errorf("failed to parse curl status code: %w", err)
+		return 0, "", fmt.Errorf("failed to retrieve credentials: %w", err)
+	}
+	signer := v4.NewSigner()
+
+	// Calculate payload hash
+	var payloadHash string
+	if payload != nil {
+		data, _ := json.Marshal(payload)
+		hash := sha256.Sum256(data)
+		payloadHash = hex.EncodeToString(hash[:])
+	} else {
+		hash := sha256.Sum256([]byte(""))
+		payloadHash = hex.EncodeToString(hash[:])
 	}
 
-	responseBody := strings.TrimSpace(rawOutput[:separator])
-	return statusCode, responseBody, nil
+	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "s3", "us-east-1", time.Now()); err != nil {
+		return 0, "", fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return resp.StatusCode, string(respBody), nil
 }
 
 func createIcebergNamespace(t *testing.T, env *TestEnvironment, bucketName, namespace string) {
@@ -426,9 +437,9 @@ func listFilerContents(t *testing.T, env *TestEnvironment, path string) {
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("fs.ls -R %s\nexit\n", path))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf(">>> Warning: failed to list filer contents: %v\nOutput: %s\n", err, string(output))
+		env.t.Logf(">>> Warning: failed to list filer contents: %v\nOutput: %s\n", err, string(output))
 	} else {
-		fmt.Printf("%s\n", string(output))
+		env.t.Logf("%s\n", string(output))
 	}
 }
 
