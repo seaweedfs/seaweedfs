@@ -2,6 +2,7 @@ package sts
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -255,6 +256,28 @@ func NewSTSService() *STSService {
 	return &STSService{
 		providers:        make(map[string]providers.IdentityProvider),
 		issuerToProvider: make(map[string]providers.IdentityProvider),
+	}
+}
+
+// DefaultSTSConfig returns a default STS configuration with sensible defaults
+// This ensures the STS service can be initialized even when no explicit configuration is provided
+func DefaultSTSConfig() *STSConfig {
+	// Generate a secure random signing key
+	signingKey := make([]byte, 32) // 256 bits
+	if _, err := rand.Read(signingKey); err != nil {
+		// Fallback to a warning message if random generation fails
+		// This should never happen in practice, but we handle it defensively
+		glog.Warningf("Failed to generate random signing key, using deterministic fallback: %v", err)
+		signingKey = []byte("default-signing-key-change-in-production-environments")
+	}
+
+	return &STSConfig{
+		TokenDuration:    FlexibleDuration{Duration: 1 * time.Hour},  // 1 hour default
+		MaxSessionLength: FlexibleDuration{Duration: 12 * time.Hour}, // 12 hours max
+		Issuer:           "seaweedfs-sts",
+		SigningKey:       signingKey,
+		AccountId:        "111122223333", // Default AWS account ID
+		Providers:        nil,            // No providers by default
 	}
 }
 

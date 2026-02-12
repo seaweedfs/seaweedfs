@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -103,7 +104,15 @@ func (m *IAMManager) Initialize(config *IAMConfig, filerAddressProvider func() s
 
 	// Initialize STS service
 	m.stsService = sts.NewSTSService()
-	if err := m.stsService.Initialize(config.STS); err != nil {
+
+	// Use default config if none provided
+	stsConfig := config.STS
+	if stsConfig == nil {
+		glog.V(1).Infof("No STS configuration provided, using defaults")
+		stsConfig = sts.DefaultSTSConfig()
+	}
+
+	if err := m.stsService.Initialize(stsConfig); err != nil {
 		return fmt.Errorf("failed to initialize STS service: %w", err)
 	}
 
