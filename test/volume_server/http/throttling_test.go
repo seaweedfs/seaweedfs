@@ -134,3 +134,50 @@ func TestUploadLimitTimeoutAndReplicateBypass(t *testing.T) {
 		t.Fatalf("timed out waiting for blocked upload to finish")
 	}
 }
+
+func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(99)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	largePayload := make([]byte, 12*1024*1024) // over 1MB P8 download limit
+	for i := range largePayload {
+		largePayload[i] = byte(i % 251)
+	}
+	downloadFID := framework.NewFileID(volumeID, 880101, 0x10203040)
+	uploadResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), downloadFID, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	firstResp, err := (&http.Client{}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+downloadFID))
+	if err != nil {
+		t.Fatalf("first GET failed: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		_ = framework.ReadAllAndClose(t, firstResp)
+		t.Fatalf("first GET expected 200, got %d", firstResp.StatusCode)
+	}
+	defer firstResp.Body.Close()
+
+	// Keep first response body unread so server write path stays in-flight.
+	time.Sleep(300 * time.Millisecond)
+
+	secondClient := &http.Client{Timeout: 10 * time.Second}
+	secondResp, err := secondClient.Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+downloadFID))
+	if err != nil {
+		t.Fatalf("second GET failed: %v", err)
+	}
+	_ = framework.ReadAllAndClose(t, secondResp)
+	if secondResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second GET expected 429 while first download holds limit, got %d", secondResp.StatusCode)
+	}
+}
