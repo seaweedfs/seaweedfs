@@ -339,6 +339,69 @@ func TestJWTTokenSourcePrecedenceHeaderOverCookie(t *testing.T) {
 	}
 }
 
+func TestJWTTokenSourcePrecedenceQueryOverCookie(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(57)
+	const needleID = uint64(778899)
+	const cookie = uint32(0x88776655)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	otherFID := framework.NewFileID(volumeID, needleID+1, cookie+1)
+	payload := []byte("jwt-precedence-query-cookie")
+	client := framework.NewHTTPClient()
+
+	validWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	invalidQueryWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, otherFID)
+	writeReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(invalidQueryWriteToken), payload)
+	writeReq.AddCookie(&http.Cookie{Name: "AT", Value: string(validWriteToken)})
+	writeResp := framework.DoRequest(t, client, writeReq)
+	_ = framework.ReadAllAndClose(t, writeResp)
+	if writeResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query token should take precedence over cookie token for write, expected 401 got %d", writeResp.StatusCode)
+	}
+
+	// Seed data with valid write token so read precedence can be exercised.
+	seedWriteReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	seedWriteReq.Header.Set("Authorization", "Bearer "+string(validWriteToken))
+	seedWriteResp := framework.DoRequest(t, client, seedWriteReq)
+	_ = framework.ReadAllAndClose(t, seedWriteResp)
+	if seedWriteResp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed write expected 201, got %d", seedWriteResp.StatusCode)
+	}
+
+	validReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, fid)
+	invalidQueryReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, otherFID)
+	readReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(invalidQueryReadToken))
+	readReq.AddCookie(&http.Cookie{Name: "AT", Value: string(validReadToken)})
+	readResp := framework.DoRequest(t, client, readReq)
+	_ = framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query token should take precedence over cookie token for read, expected 401 got %d", readResp.StatusCode)
+	}
+
+	// Validate positive path: valid query token should succeed even if cookie token is invalid.
+	validQueryReadReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(validReadToken))
+	invalidCookieReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, otherFID)
+	validQueryReadReq.AddCookie(&http.Cookie{Name: "AT", Value: string(invalidCookieReadToken)})
+	validQueryReadResp := framework.DoRequest(t, client, validQueryReadReq)
+	validQueryReadBody := framework.ReadAllAndClose(t, validQueryReadResp)
+	if validQueryReadResp.StatusCode != http.StatusOK {
+		t.Fatalf("valid query token should succeed over invalid cookie token, expected 200 got %d", validQueryReadResp.StatusCode)
+	}
+	if string(validQueryReadBody) != string(payload) {
+		t.Fatalf("query-over-cookie read body mismatch: got %q want %q", string(validQueryReadBody), string(payload))
+	}
+}
+
 func mustGenExpiredToken(t testing.TB, key []byte, fid string) string {
 	t.Helper()
 	claims := security.SeaweedFileIdClaims{
