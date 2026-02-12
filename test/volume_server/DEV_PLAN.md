@@ -691,5 +691,12 @@ Update this section during implementation:
 - Change: Added JWT token-source precedence coverage when both header and cookie tokens are present.
 - APIs covered: header-token precedence over cookie-token for write/read auth checks.
 - Profiles covered: P3.
-- Gaps introduced/remaining: explicit query-vs-cookie precedence combination remains.
+- Gaps introduced/remaining: JWT transport precedence matrix for query/header/cookie is now covered for tested combinations.
 - Commit: `3fcaf845c`
+
+- Date: 2026-02-12
+- Change: Added JWT token-source precedence coverage when both query and cookie tokens are present.
+- APIs covered: query-token precedence over cookie-token for write/read auth checks, including positive path when query is valid and cookie is invalid.
+- Profiles covered: P3.
+- Gaps introduced/remaining: none in current JWT token source precedence matrix.
+- Commit: `4ea552973`
