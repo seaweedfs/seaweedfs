@@ -837,7 +837,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 // S3 does not set DataCenter/Rack/DataNode so placement is not pinned to a specific DC/rack.
 // Precedence: parent path rule first, then filer global. If volumeGrowthCount is 0 but replication is set,
 // use replication's copy count so the rule is valid (volumeGrowthCount must be divisible by copy count).
-func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigReplication, bucketsPath, bucket string) (replication string, volumeGrowthCount uint32) {
+func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigReplication, bucketsPath, bucket string) (replication string, volumeGrowthCount uint32, err error) {
 	bucketPath := fmt.Sprintf("%s/%s/", bucketsPath, bucket)
 	parentRule := fc.MatchStorageRule(bucketPath)
 	replication = parentRule.Replication
@@ -846,7 +846,9 @@ func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigRepli
 	}
 	volumeGrowthCount = parentRule.VolumeGrowthCount
 	if volumeGrowthCount == 0 && replication != "" {
-		if rp, err := super_block.NewReplicaPlacementFromString(replication); err == nil {
+		var rp *super_block.ReplicaPlacement
+		rp, err = super_block.NewReplicaPlacementFromString(replication)
+		if err == nil {
 			volumeGrowthCount = uint32(rp.GetCopyCount())
 		}
 	}
@@ -891,7 +893,10 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	}); filerErr != nil {
 		glog.V(2).Infof("PutBucketLifecycleConfigurationHandler: could not get filer config: %v", filerErr)
 	}
-	defaultReplication, defaultVolumeGrowthCount := resolveLifecycleDefaultsFromFilerConf(fc, filerConfigReplication, s3a.option.BucketsPath, bucket)
+	defaultReplication, defaultVolumeGrowthCount, err := resolveLifecycleDefaultsFromFilerConf(fc, filerConfigReplication, s3a.option.BucketsPath, bucket)
+	if err != nil {
+		glog.Warningf("PutBucketLifecycleConfigurationHandler bucket %s: invalid replication %q: %v", bucket, defaultReplication, err)
+	}
 
 	collectionName := s3a.getCollectionName(bucket)
 	collectionTtls := fc.GetCollectionTtls(collectionName)
