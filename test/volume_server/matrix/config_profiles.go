@@ -1,5 +1,7 @@
 package matrix
 
+import "time"
+
 // Profile describes one runtime test matrix configuration.
 type Profile struct {
 	Name string
@@ -14,6 +16,8 @@ type Profile struct {
 
 	ConcurrentUploadLimitMB   int
 	ConcurrentDownloadLimitMB int
+	InflightUploadTimeout     time.Duration
+	InflightDownloadTimeout   time.Duration
 
 	ReplicatedLayout bool
 	HasErasureCoding bool
@@ -53,5 +57,7 @@ func P8() Profile {
 	p.Name = "P8"
 	p.ConcurrentUploadLimitMB = 1
 	p.ConcurrentDownloadLimitMB = 1
+	p.InflightUploadTimeout = 2 * time.Second
+	p.InflightDownloadTimeout = 2 * time.Second
 	return p
 }

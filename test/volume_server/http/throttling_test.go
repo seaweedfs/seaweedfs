@@ -1,0 +1,136 @@
+package volume_server_http_test
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
+	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+)
+
+type pausableReader struct {
+	remaining  int64
+	pauseAfter int64
+	paused     bool
+	unblock    <-chan struct{}
+}
+
+func (r *pausableReader) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if !r.paused && r.pauseAfter > 0 {
+		n := int64(len(p))
+		if n > r.pauseAfter {
+			n = r.pauseAfter
+		}
+		for i := int64(0); i < n; i++ {
+			p[i] = 'a'
+		}
+		r.remaining -= n
+		r.pauseAfter -= n
+		if r.pauseAfter == 0 {
+			r.paused = true
+		}
+		return int(n), nil
+	}
+	if r.paused {
+		<-r.unblock
+		r.paused = false
+	}
+	n := int64(len(p))
+	if n > r.remaining {
+		n = r.remaining
+	}
+	for i := int64(0); i < n; i++ {
+		p[i] = 'b'
+	}
+	r.remaining -= n
+	return int(n), nil
+}
+
+func TestUploadLimitTimeoutAndReplicateBypass(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(98)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	const blockedUploadSize = 2 * 1024 * 1024 // over 1MB P8 upload limit
+
+	unblockFirstUpload := make(chan struct{})
+	firstUploadDone := make(chan error, 1)
+	firstFID := framework.NewFileID(volumeID, 880001, 0x1A2B3C4D)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+firstFID, &pausableReader{
+			remaining:  blockedUploadSize,
+			pauseAfter: 1,
+			unblock:    unblockFirstUpload,
+		})
+		if err != nil {
+			firstUploadDone <- err
+			return
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = blockedUploadSize
+
+		resp, err := (&http.Client{}).Do(req)
+		if resp != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		firstUploadDone <- err
+	}()
+
+	// Give the first upload time to pass limit checks and block in body processing.
+	time.Sleep(300 * time.Millisecond)
+
+	replicateFID := framework.NewFileID(volumeID, 880002, 0x5E6F7A8B)
+	replicateReq, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+replicateFID+"?type=replicate", bytes.NewReader([]byte("replicate")))
+	if err != nil {
+		t.Fatalf("create replicate request: %v", err)
+	}
+	replicateReq.Header.Set("Content-Type", "application/octet-stream")
+	replicateReq.ContentLength = int64(len("replicate"))
+	replicateResp, err := framework.NewHTTPClient().Do(replicateReq)
+	if err != nil {
+		t.Fatalf("replicate request failed: %v", err)
+	}
+	_ = framework.ReadAllAndClose(t, replicateResp)
+	if replicateResp.StatusCode != http.StatusCreated {
+		t.Fatalf("replicate request expected 201 bypassing limit, got %d", replicateResp.StatusCode)
+	}
+
+	normalFID := framework.NewFileID(volumeID, 880003, 0x9C0D1E2F)
+	normalReq, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+normalFID, bytes.NewReader([]byte("normal")))
+	if err != nil {
+		t.Fatalf("create normal request: %v", err)
+	}
+	normalReq.Header.Set("Content-Type", "application/octet-stream")
+	normalReq.ContentLength = int64(len("normal"))
+
+	timeoutClient := &http.Client{Timeout: 10 * time.Second}
+	normalResp, err := timeoutClient.Do(normalReq)
+	if err != nil {
+		t.Fatalf("normal upload request failed: %v", err)
+	}
+	_ = framework.ReadAllAndClose(t, normalResp)
+	if normalResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("normal upload expected 429 while limit blocked, got %d", normalResp.StatusCode)
+	}
+
+	close(unblockFirstUpload)
+	select {
+	case <-firstUploadDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for blocked upload to finish")
+	}
+}

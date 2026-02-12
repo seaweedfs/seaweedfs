@@ -200,6 +200,12 @@ func (c *Cluster) startVolume(dataDir string) error {
 		"-concurrentUploadLimitMB=" + strconv.Itoa(c.profile.ConcurrentUploadLimitMB),
 		"-concurrentDownloadLimitMB=" + strconv.Itoa(c.profile.ConcurrentDownloadLimitMB),
 	}
+	if c.profile.InflightUploadTimeout > 0 {
+		args = append(args, "-inflightUploadDataTimeout="+c.profile.InflightUploadTimeout.String())
+	}
+	if c.profile.InflightDownloadTimeout > 0 {
+		args = append(args, "-inflightDownloadDataTimeout="+c.profile.InflightDownloadTimeout.String())
+	}
 
 	c.volumeCmd = exec.Command(c.weedBinary, args...)
 	c.volumeCmd.Dir = c.baseDir
