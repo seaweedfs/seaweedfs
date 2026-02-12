@@ -658,3 +658,10 @@ Update this section during implementation:
 - Profiles covered: P8 (short inflight download timeout).
 - Gaps introduced/remaining: download replica proxy fallback branch (`proxied=true`/replica redirect) remains.
 - Commit: `a929e6ddc`
+
+- Date: 2026-02-12
+- Change: Expanded JWT auth mismatch variations for same-needle wrong-cookie tokens.
+- APIs covered: write/read JWT rejection when token fid differs only by cookie from requested fid.
+- Profiles covered: P3.
+- Gaps introduced/remaining: token expiry boundary behavior remains untested.
+- Commit: `61fe52398`
