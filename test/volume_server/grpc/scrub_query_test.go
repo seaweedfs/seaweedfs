@@ -277,3 +277,59 @@ func TestQueryJsonSuccessAndCsvNoOutput(t *testing.T) {
 		t.Fatalf("Query csv expected EOF with no rows, got: %v", err)
 	}
 }
+
+func TestQueryJsonNoMatchReturnsEmptyStripe(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(65)
+	const needleID = uint64(777002)
+	const cookie = uint32(0xABABCDCD)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	jsonLines := []byte("{\"score\":1}\n{\"score\":2}\n")
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, jsonLines)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != 201 {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	queryStream, err := grpcClient.Query(ctx, &volume_server_pb.QueryRequest{
+		FromFileIds: []string{fid},
+		Selections:  []string{"score"},
+		Filter: &volume_server_pb.QueryRequest_Filter{
+			Field:   "score",
+			Operand: ">",
+			Value:   "100",
+		},
+		InputSerialization: &volume_server_pb.QueryRequest_InputSerialization{
+			JsonInput: &volume_server_pb.QueryRequest_InputSerialization_JSONInput{Type: "LINES"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query json no-match start failed: %v", err)
+	}
+
+	firstStripe, err := queryStream.Recv()
+	if err != nil {
+		t.Fatalf("Query json no-match recv failed: %v", err)
+	}
+	if len(firstStripe.GetRecords()) != 0 {
+		t.Fatalf("Query json no-match expected empty records stripe, got: %q", string(firstStripe.GetRecords()))
+	}
+
+	_, err = queryStream.Recv()
+	if err != io.EOF {
+		t.Fatalf("Query json no-match expected EOF after first empty stripe, got: %v", err)
+	}
+}
