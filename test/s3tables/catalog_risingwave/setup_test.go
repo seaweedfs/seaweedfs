@@ -3,8 +3,6 @@ package catalog_risingwave
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -179,23 +177,30 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 func mustFreePort(t *testing.T, name string) int {
 	t.Helper()
-	// Listen on port 0 to let the OS choose an available ephemeral port.
-	// We try multiple times to find a port < 55000 because weed mini adds 10000 for gRPC port,
-	// and if the port is > 55535, the gRPC port (port+10000) will be > 65535, which is invalid.
-	for i := 0; i < 1000; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("failed to find a free port for %s: %v", name, err)
-		}
-		port := listener.Addr().(*net.TCPAddr).Port
-		listener.Close()
+	minPort := 10000
+	maxPort := 55000 // Ensure port+10000 < 65535
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-		if port < 55000 {
-			return port
+	for i := 0; i < 1000; i++ {
+		port := minPort + r.Intn(maxPort-minPort)
+
+		// Check http port
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue
 		}
-		// Try again
+		ln.Close()
+
+		// Check grpc port (weed mini uses port+10000)
+		ln2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+10000))
+		if err != nil {
+			continue
+		}
+		ln2.Close()
+
+		return port
 	}
-	t.Fatalf("failed to find a free port < 55000 for %s after 1000 attempts", name)
+	t.Fatalf("failed to find a free port < %d for %s after 1000 attempts", maxPort, name)
 	return 0
 }
 
@@ -274,7 +279,10 @@ func (env *TestEnvironment) waitForRisingWave(timeout time.Duration) bool {
 }
 
 func runPostgresClientSQL(containerName, sql string) ([]byte, error) {
-	cmd := exec.Command("docker", "exec",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "exec",
 		containerName,
 		"psql",
 		"-h", "127.0.0.1",
@@ -306,6 +314,15 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		_ = exec.Command("docker", "rm", "-f", env.postgresSidecar).Run()
 	}
 
+	if env.seaweedfsDataDir != "" && t.Failed() {
+		logPath := filepath.Join(env.seaweedfsDataDir, "seaweedfs.log")
+		if content, err := os.ReadFile(logPath); err == nil {
+			env.t.Logf(">>> SeaweedFS Logs:\n%s\n", string(content))
+		}
+		env.t.Logf(">>> Filer Contents:\n")
+		listFilerContents(t, env, "/")
+	}
+
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		_ = env.masterProcess.Process.Kill()
 		_ = env.masterProcess.Wait()
@@ -313,19 +330,9 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 	clearMiniProcess(env.masterProcess)
 
 	if env.seaweedfsDataDir != "" {
-		if t.Failed() {
-			logPath := filepath.Join(env.seaweedfsDataDir, "seaweedfs.log")
-			if content, err := os.ReadFile(logPath); err == nil {
-				env.t.Logf(">>> SeaweedFS Logs:\n%s\n", string(content))
-			}
-			env.t.Logf(">>> Filer Contents:\n")
-			listFilerContents(t, env, "/")
-		}
-
 		if env.logFile != nil {
 			env.logFile.Close()
 		}
-
 		_ = os.RemoveAll(env.seaweedfsDataDir)
 	}
 }
@@ -360,12 +367,19 @@ func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, paylo
 	url := env.hostIcebergEndpoint() + path
 
 	var body io.Reader
+	var payloadHash string
+
 	if payload != nil {
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return 0, "", err
 		}
 		body = bytes.NewReader(data)
+		// hash := sha256.Sum256(data)
+		// payloadHash = hex.EncodeToString(hash[:])
+		payloadHash = "UNSIGNED-PAYLOAD"
+	} else {
+		payloadHash = "UNSIGNED-PAYLOAD"
 	}
 
 	req, err := http.NewRequest(method, url, body)
@@ -376,6 +390,7 @@ func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, paylo
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 
 	// Sign the request
 	credsProvider := credentials.NewStaticCredentialsProvider(env.accessKey, env.secretKey, "")
@@ -385,18 +400,7 @@ func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, paylo
 	}
 	signer := v4.NewSigner()
 
-	// Calculate payload hash
-	var payloadHash string
-	if payload != nil {
-		data, _ := json.Marshal(payload)
-		hash := sha256.Sum256(data)
-		payloadHash = hex.EncodeToString(hash[:])
-	} else {
-		hash := sha256.Sum256([]byte(""))
-		payloadHash = hex.EncodeToString(hash[:])
-	}
-
-	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "s3", "us-east-1", time.Now()); err != nil {
+	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "iceberg", "us-east-1", time.Now()); err != nil {
 		return 0, "", fmt.Errorf("failed to sign request: %w", err)
 	}
 

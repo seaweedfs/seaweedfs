@@ -61,19 +61,19 @@ CREATE SOURCE %s WITH (
 );`, sourceName, icebergUri, tableName, tableBucket, s3Endpoint, env.accessKey, env.secretKey)
 
 	t.Logf(">>> Creating source %s...", sourceName)
-	runRisingWaveSQL(t, env.risingwaveContainer, createSourceSql)
+	runRisingWaveSQL(t, env.postgresSidecar, createSourceSql)
 
-	showSourcesOutput := runRisingWaveSQL(t, env.risingwaveContainer, "SHOW SOURCES;")
+	showSourcesOutput := runRisingWaveSQL(t, env.postgresSidecar, "SHOW SOURCES;")
 	if !strings.Contains(showSourcesOutput, sourceName) {
 		t.Fatalf("Expected source %s in SHOW SOURCES output:\n%s", sourceName, showSourcesOutput)
 	}
 
-	describeOutput := runRisingWaveSQL(t, env.risingwaveContainer, fmt.Sprintf("DESCRIBE %s;", sourceName))
+	describeOutput := runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("DESCRIBE %s;", sourceName))
 	if !strings.Contains(describeOutput, "id") || !strings.Contains(describeOutput, "name") {
 		t.Fatalf("Expected id/name columns in DESCRIBE output:\n%s", describeOutput)
 	}
 
-	runRisingWaveSQL(t, env.risingwaveContainer, fmt.Sprintf("SELECT * FROM %s LIMIT 0;", sourceName))
+	runRisingWaveSQL(t, env.postgresSidecar, fmt.Sprintf("SELECT * FROM %s LIMIT 0;", sourceName))
 
 	t.Log(">>> RisingWave Iceberg Catalog test passed!")
 }
