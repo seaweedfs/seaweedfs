@@ -31,7 +31,10 @@ func TestStateAndStatusRPCs(t *testing.T) {
 	}
 
 	setResp, err := client.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{Maintenance: true},
+		State: &volume_server_pb.VolumeServerState{
+			Maintenance: true,
+			Version:     initialState.GetState().GetVersion(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("SetState(maintenance=true) failed: %v", err)
@@ -41,7 +44,10 @@ func TestStateAndStatusRPCs(t *testing.T) {
 	}
 
 	setResp, err = client.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{Maintenance: false},
+		State: &volume_server_pb.VolumeServerState{
+			Maintenance: false,
+			Version:     setResp.GetState().GetVersion(),
+		},
 	})
 	if err != nil {
 		t.Fatalf("SetState(maintenance=false) failed: %v", err)
