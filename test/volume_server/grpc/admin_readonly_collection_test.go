@@ -56,6 +56,38 @@ func TestVolumeMarkReadonlyAndWritableLifecycle(t *testing.T) {
 	}
 }
 
+func TestVolumeMarkReadonlyPersistTrue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(74)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
+		VolumeId: volumeID,
+		Persist:  true,
+	})
+	if err != nil {
+		t.Fatalf("VolumeMarkReadonly persist=true failed: %v", err)
+	}
+
+	statusResp, err := grpcClient.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeStatus after persist readonly failed: %v", err)
+	}
+	if !statusResp.GetIsReadOnly() {
+		t.Fatalf("VolumeStatus expected readonly=true after persist readonly")
+	}
+}
+
 func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
