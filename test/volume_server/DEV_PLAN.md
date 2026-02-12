@@ -411,11 +411,11 @@ For each RPC below: cover baseline success, validation/argument errors, state pr
 ## Phased Implementation Plan (Tracking)
 
 ### Phase 0: Harness and scaffolding
-- [ ] Create `framework/` cluster bootstrap and teardown
-- [ ] Add profile-based environment builder (P1..P8)
-- [ ] Add common assertion helpers (HTTP and gRPC)
-- [ ] Add `README.md` with run instructions
-- [ ] Add `Makefile` targets (`test-volume-server`, profile filters)
+- [x] Create `framework/` cluster bootstrap and teardown
+- [x] Add profile-based environment builder (P1..P8)
+- [x] Add common assertion helpers (HTTP and gRPC)
+- [x] Add `README.md` with run instructions
+- [x] Add `Makefile` targets (`test-volume-server`, profile filters)
 
 ### Phase 1: HTTP parity suites
 - [ ] Admin/status/health/UI/static
@@ -423,7 +423,7 @@ For each RPC below: cover baseline success, validation/argument errors, state pr
 - [ ] Write/delete/auth/throttling/public-port behavior
 
 ### Phase 2: gRPC parity suites (core)
-- [ ] Admin/lifecycle/state/ping
+- [x] Admin/lifecycle/state/ping
 - [ ] Vacuum + batch + data rw
 - [ ] Copy/sync/tail
 
@@ -456,10 +456,30 @@ Use one commit per logical change set. Suggested sequence:
 ## Progress Log
 Update this section during implementation:
 
-- Date:
-- Change:
-- APIs covered:
-- Profiles covered:
-- Gaps introduced/remaining:
-- Commit:
+- Date: 2026-02-12
+- Change: Added initial dev plan and project scaffold.
+- APIs covered: Planning only.
+- Profiles covered: Planning only.
+- Gaps introduced/remaining: Implementation not started yet.
+- Commit: `21c10a9ec`
 
+- Date: 2026-02-12
+- Change: Added integration harness, profile matrix, and auto-build support for missing `weed` binary. Master now starts with `-peers=none` and low `-volumeSizeLimitMB`.
+- APIs covered: Harness only.
+- Profiles covered: P1, P2, P3, P8 definitions in place.
+- Gaps introduced/remaining: Full API case matrix still pending.
+- Commit: `5e9c437e0`, `1be296139`
+
+- Date: 2026-02-12
+- Change: Added HTTP integration coverage for admin endpoints, method options, and upload/read/range/head/delete roundtrip.
+- APIs covered: `/status`, `/healthz`, `/ui/index.html`, `OPTIONS /`, `POST/GET/HEAD/DELETE /{fid}`.
+- Profiles covered: P1, P2.
+- Gaps introduced/remaining: Remaining HTTP branch variants (JWT/proxy/redirect/throttling/etc.) still pending.
+- Commit: `038e9161e`, `1df1e3812`
+
+- Date: 2026-02-12
+- Change: Added gRPC integration coverage for state/status/ping and admin lifecycle/maintenance checks.
+- APIs covered: `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `AllocateVolume`, `VolumeStatus`, `VolumeMount`, `VolumeUnmount`, `VolumeDelete`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Remaining gRPC methods and advanced branches still pending.
+- Commit: `9a9b8c500`, `3c562a64c`
