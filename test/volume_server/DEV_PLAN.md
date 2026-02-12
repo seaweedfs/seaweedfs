@@ -518,3 +518,17 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Positive-path blob/meta and stream/copy/tail/EC/tiering/query/scrub families remain.
 - Commit: `f83ad41b5`
+
+- Date: 2026-02-12
+- Change: Added HTTP JWT integration coverage for missing/invalid/valid token behavior across write and read paths.
+- APIs covered: HTTP `POST /{fid}` and `GET /{fid}` auth paths with read/write signing keys.
+- Profiles covered: P3.
+- Gaps introduced/remaining: Remaining HTTP proxy/redirect/throttling branches still pending.
+- Commit: `def509acb`
+
+- Date: 2026-02-12
+- Change: Added gRPC sync/copy family tests for success and missing-volume or maintenance-mode stream error paths.
+- APIs covered: `VolumeSyncStatus`, `VolumeIncrementalCopy`, `ReadAllNeedles`, `ReadVolumeFileStatus`, `CopyFile`, `VolumeCopy`, `ReceiveFile`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Tail/EC/tiering/query/scrub and positive-path copy/tail flows still pending.
+- Commit: `b13642838`
