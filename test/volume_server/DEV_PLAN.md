@@ -546,3 +546,38 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Tail success replication path and large-needle chunking remain pending.
 - Commit: `fd582ba58`
+
+- Date: 2026-02-12
+- Change: Expanded gRPC admin/lifecycle coverage with readonly/writable transitions, collection delete behavior, non-empty delete `only_empty` branch, and ping unknown/unreachable target variants.
+- APIs covered: `VolumeMarkReadonly`, `VolumeMarkWritable`, `DeleteCollection`, `VolumeDelete` (`only_empty=true/false`), `Ping` (unknown and unreachable master target).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Notify-master failure paths for readonly/writable and additional admin error branches still pending.
+- Commit: `2e6d577f7`, `a3a2da791`, `9f887f25c`, `724bbe2d9`
+
+- Date: 2026-02-12
+- Change: Added gRPC positive-path data coverage for blob/meta read/write roundtrip and stream-all-needles payload validation.
+- APIs covered: `ReadNeedleBlob`, `ReadNeedleMeta`, `WriteNeedleBlob`, `ReadAllNeedles`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Additional blob/meta offset/size corruption branches remain.
+- Commit: `21e94d1d2`
+
+- Date: 2026-02-12
+- Change: Expanded gRPC scrub/query coverage for auto-select volume behavior, local/full scrub detail branches, JSON query success filtering, CSV no-output behavior, and EC auto-select empty result.
+- APIs covered: `ScrubVolume` (`INDEX`, `LOCAL`, `FULL`, auto-select), `ScrubEcVolume` (missing-volume + auto-select empty), `Query` (JSON success + CSV no-output + invalid paths).
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC scrub full/local positive paths need EC fixture setup.
+- Commit: `8cdf3589a`, `12150a9a2`
+
+- Date: 2026-02-12
+- Change: Added gRPC tiering/remote early-branch error coverage.
+- APIs covered: `FetchAndWriteNeedle` (maintenance + missing volume), `VolumeTierMoveDatToRemote` (missing volume, collection mismatch, maintenance), `VolumeTierMoveDatFromRemote` (missing volume, collection mismatch, already-local path).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Tier upload/download success flows with real remote backend remain.
+- Commit: `51e6fa749`
+
+- Date: 2026-02-12
+- Change: Expanded HTTP behavior coverage for split public port semantics, CORS on origin requests, unsupported-method parity, unchanged-write `204`, delete edge branches, and JWT fid-mismatch auth rejection.
+- APIs covered: public/admin method divergence (`GET/HEAD/POST/DELETE/PATCH`), CORS headers, write unchanged response path, delete cookie-mismatch/missing-needle paths, JWT fid mismatch for write/read.
+- Profiles covered: P1, P2, P3.
+- Gaps introduced/remaining: Remaining HTTP proxy/redirect/throttling and transformation branches still pending.
+- Commit: `2de39c548`, `9998d19dd`, `ea5d8b7b3`
