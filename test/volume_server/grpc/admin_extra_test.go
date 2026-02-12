@@ -175,4 +175,15 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 	if !strings.Contains(err.Error(), "ping master") {
 		t.Fatalf("Ping master unreachable error mismatch: %v", err)
 	}
+
+	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
+		TargetType: cluster.FilerType,
+		Target:     "127.0.0.1:1",
+	})
+	if err == nil {
+		t.Fatalf("Ping filer target should fail when target is unreachable")
+	}
+	if !strings.Contains(err.Error(), "ping filer") {
+		t.Fatalf("Ping filer unreachable error mismatch: %v", err)
+	}
 }
