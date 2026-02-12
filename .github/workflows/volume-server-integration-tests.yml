@@ -1,0 +1,83 @@
+name: "Volume Server Integration Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'test/volume_server/**'
+      - 'weed/server/**'
+      - 'weed/storage/**'
+      - 'weed/pb/volume_server.proto'
+      - 'weed/pb/volume_server_pb/**'
+      - '.github/workflows/volume-server-integration-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'test/volume_server/**'
+      - 'weed/server/**'
+      - 'weed/storage/**'
+      - 'weed/pb/volume_server.proto'
+      - 'weed/pb/volume_server_pb/**'
+      - '.github/workflows/volume-server-integration-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/volume-server-integration-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24'
+  TEST_TIMEOUT: '30m'
+
+jobs:
+  volume-server-integration-tests:
+    name: Volume Server Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build SeaweedFS binary
+        run: |
+          cd weed
+          go build -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Run volume server integration tests
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+        run: |
+          echo "Running volume server integration tests..."
+          go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/...
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/volume-server-it-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_volume_server_it_*" -print -exec cp -r {} /tmp/volume-server-it-logs/ \; || true
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: volume-server-integration-test-logs
+          path: /tmp/volume-server-it-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## Volume Server Integration Test Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/..." >> "$GITHUB_STEP_SUMMARY"
