@@ -832,6 +832,19 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	writeSuccessResponseXML(w, r, response)
 }
 
+// resolveLifecycleDefaultsFromFilerConf returns replication for use when adding a lifecycle TTL rule.
+// S3 does not set DataCenter/Rack/DataNode so placement is not pinned to a specific DC/rack
+// (requests can hit any filer in the pool). Precedence: parent path rule first, then filer global.
+func resolveLifecycleDefaultsFromFilerConf(fc *filer.FilerConf, filerConfigReplication, bucketsPath, bucket string) (replication string) {
+	bucketPath := fmt.Sprintf("%s/%s/", bucketsPath, bucket)
+	parentRule := fc.MatchStorageRule(bucketPath)
+	replication = parentRule.Replication
+	if replication == "" {
+		replication = filerConfigReplication
+	}
+	return
+}
+
 // PutBucketLifecycleConfigurationHandler Put Bucket Lifecycle configuration
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
@@ -857,6 +870,21 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+
+	// Resolve replication so lifecycle rules do not create filer.conf entries with empty replication.
+	var filerConfigReplication string
+	if filerErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(r.Context(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		filerConfigReplication = resp.GetReplication()
+		return nil
+	}); filerErr != nil {
+		glog.V(2).Infof("PutBucketLifecycleConfigurationHandler: could not get filer config: %v", filerErr)
+	}
+	defaultReplication := resolveLifecycleDefaultsFromFilerConf(fc, filerConfigReplication, s3a.option.BucketsPath, bucket)
+
 	collectionName := s3a.getCollectionName(bucket)
 	collectionTtls := fc.GetCollectionTtls(collectionName)
 	changed := false
@@ -884,6 +912,9 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			LocationPrefix: locationPrefix,
 			Collection:     collectionName,
 			Ttl:            fmt.Sprintf("%dd", rule.Expiration.Days),
+			Replication:    defaultReplication,
+			// DataCenter/Rack/DataNode intentionally not set: S3 is not tied to a specific DC/rack,
+			// requests can hit any filer; setting them would pin placement unnecessarily.
 		}
 		if ttl, ok := collectionTtls[locConf.LocationPrefix]; ok && ttl == locConf.Ttl {
 			continue
