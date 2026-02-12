@@ -400,7 +400,7 @@ func doIcebergSignedJSONRequest(env *TestEnvironment, method, path string, paylo
 	}
 	signer := v4.NewSigner()
 
-	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "iceberg", "us-east-1", time.Now()); err != nil {
+	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "s3", "us-east-1", time.Now()); err != nil {
 		return 0, "", fmt.Errorf("failed to sign request: %w", err)
 	}
 
