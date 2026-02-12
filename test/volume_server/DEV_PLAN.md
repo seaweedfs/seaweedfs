@@ -756,3 +756,10 @@ Update this section during implementation:
 - Profiles covered: P3.
 - Gaps introduced/remaining: explicit `access.ui=true` override scenario remains untested.
 - Commit: `9c10ccb38`
+
+- Date: 2026-02-12
+- Change: Expanded split-port unsupported HTTP method matrix with non-standard verb coverage.
+- APIs covered: admin/public parity for `PROPFIND` (`400` on admin, passthrough `200` on public) with post-call data-integrity verification.
+- Profiles covered: P2.
+- Gaps introduced/remaining: remaining unsupported-verb breadth now primarily around less common methods (e.g., `CONNECT`) and proxy-specific edge semantics.
+- Commit: `1d7afd11e`
