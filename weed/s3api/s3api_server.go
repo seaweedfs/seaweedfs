@@ -440,7 +440,15 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 	// Save the body first so we can restore it for STS handler signature verification
 	var bodyBytes []byte
 	if r.Body != nil {
-		bodyBytes, _ = io.ReadAll(r.Body)
+		// Limit body size to prevent DoS attacks
+		r.Body = http.MaxBytesReader(w, r.Body, iamRequestBodyLimit)
+		var err error
+		bodyBytes, err = io.ReadAll(r.Body)
+		if err != nil {
+			glog.Errorf("failed to read request body: %v", err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			return
+		}
 		r.Body.Close()
 		// Restore body for ParseForm
 		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
