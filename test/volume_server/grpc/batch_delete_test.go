@@ -2,6 +2,7 @@ package volume_server_grpc_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -51,5 +52,68 @@ func TestBatchDeleteInvalidFidAndMaintenanceMode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "maintenance mode") {
 		t.Fatalf("expected maintenance mode error, got: %v", err)
+	}
+}
+
+func TestBatchDeleteCookieMismatchAndSkipCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(31)
+	const needleID = uint64(900001)
+	const correctCookie = uint32(0x1122AABB)
+	const wrongCookie = uint32(0x1122AABC)
+	framework.AllocateVolume(t, client, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, correctCookie)
+	uploadResp := framework.UploadBytes(t, httpClient, cluster.VolumeAdminURL(), fid, []byte("batch-delete-cookie-check"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	wrongCookieFid := framework.NewFileID(volumeID, needleID, wrongCookie)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	mismatchResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
+		FileIds:         []string{wrongCookieFid},
+		SkipCookieCheck: false,
+	})
+	if err != nil {
+		t.Fatalf("BatchDelete with cookie check failed: %v", err)
+	}
+	if len(mismatchResp.GetResults()) != 1 {
+		t.Fatalf("BatchDelete cookie mismatch expected 1 result, got %d", len(mismatchResp.GetResults()))
+	}
+	if mismatchResp.GetResults()[0].GetStatus() != http.StatusBadRequest {
+		t.Fatalf("BatchDelete cookie mismatch expected status 400, got %d", mismatchResp.GetResults()[0].GetStatus())
+	}
+
+	skipCheckResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
+		FileIds:         []string{wrongCookieFid},
+		SkipCookieCheck: true,
+	})
+	if err != nil {
+		t.Fatalf("BatchDelete skip cookie check failed: %v", err)
+	}
+	if len(skipCheckResp.GetResults()) != 1 {
+		t.Fatalf("BatchDelete skip check expected 1 result, got %d", len(skipCheckResp.GetResults()))
+	}
+	if skipCheckResp.GetResults()[0].GetStatus() != http.StatusAccepted {
+		t.Fatalf("BatchDelete skip check expected status 202, got %d", skipCheckResp.GetResults()[0].GetStatus())
+	}
+
+	readAfterDelete := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, readAfterDelete)
+	if readAfterDelete.StatusCode != http.StatusNotFound {
+		t.Fatalf("read after skip-check batch delete expected 404, got %d", readAfterDelete.StatusCode)
 	}
 }
