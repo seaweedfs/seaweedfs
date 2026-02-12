@@ -117,3 +117,98 @@ func TestBatchDeleteCookieMismatchAndSkipCheck(t *testing.T) {
 		t.Fatalf("read after skip-check batch delete expected 404, got %d", readAfterDelete.StatusCode)
 	}
 }
+
+func TestBatchDeleteMixedStatusesAndMismatchStopsProcessing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(32)
+	framework.AllocateVolume(t, client, volumeID, "")
+
+	const needleA = uint64(910001)
+	const needleB = uint64(910002)
+	const needleC = uint64(910003)
+	const cookieA = uint32(0x11111111)
+	const cookieB = uint32(0x22222222)
+	const cookieC = uint32(0x33333333)
+
+	httpClient := framework.NewHTTPClient()
+	fidA := framework.NewFileID(volumeID, needleA, cookieA)
+	fidB := framework.NewFileID(volumeID, needleB, cookieB)
+	fidC := framework.NewFileID(volumeID, needleC, cookieC)
+
+	for _, tc := range []struct {
+		fid  string
+		body string
+	}{
+		{fid: fidA, body: "batch-delete-mixed-a"},
+		{fid: fidB, body: "batch-delete-mixed-b"},
+		{fid: fidC, body: "batch-delete-mixed-c"},
+	} {
+		uploadResp := framework.UploadBytes(t, httpClient, cluster.VolumeAdminURL(), tc.fid, []byte(tc.body))
+		_ = framework.ReadAllAndClose(t, uploadResp)
+		if uploadResp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload %s expected 201, got %d", tc.fid, uploadResp.StatusCode)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	missingFid := framework.NewFileID(volumeID, 919999, 0x44444444)
+	mixedResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
+		FileIds: []string{"bad-fid", fidA, missingFid},
+	})
+	if err != nil {
+		t.Fatalf("BatchDelete mixed status request failed: %v", err)
+	}
+	if len(mixedResp.GetResults()) != 3 {
+		t.Fatalf("BatchDelete mixed status expected 3 results, got %d", len(mixedResp.GetResults()))
+	}
+	if mixedResp.GetResults()[0].GetStatus() != http.StatusBadRequest {
+		t.Fatalf("BatchDelete mixed result[0] expected 400, got %d", mixedResp.GetResults()[0].GetStatus())
+	}
+	if mixedResp.GetResults()[1].GetStatus() != http.StatusAccepted {
+		t.Fatalf("BatchDelete mixed result[1] expected 202, got %d", mixedResp.GetResults()[1].GetStatus())
+	}
+	if mixedResp.GetResults()[2].GetStatus() != http.StatusNotFound {
+		t.Fatalf("BatchDelete mixed result[2] expected 404, got %d", mixedResp.GetResults()[2].GetStatus())
+	}
+
+	readDeletedA := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidA)
+	_ = framework.ReadAllAndClose(t, readDeletedA)
+	if readDeletedA.StatusCode != http.StatusNotFound {
+		t.Fatalf("fidA should be deleted after batch delete, got status %d", readDeletedA.StatusCode)
+	}
+
+	wrongCookieB := framework.NewFileID(volumeID, needleB, cookieB+1)
+	stopResp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{
+		FileIds: []string{wrongCookieB, fidC},
+	})
+	if err != nil {
+		t.Fatalf("BatchDelete mismatch-stop request failed: %v", err)
+	}
+	if len(stopResp.GetResults()) != 1 {
+		t.Fatalf("BatchDelete mismatch-stop expected 1 result due early break, got %d", len(stopResp.GetResults()))
+	}
+	if stopResp.GetResults()[0].GetStatus() != http.StatusBadRequest {
+		t.Fatalf("BatchDelete mismatch-stop expected 400, got %d", stopResp.GetResults()[0].GetStatus())
+	}
+
+	readB := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidB)
+	_ = framework.ReadAllAndClose(t, readB)
+	if readB.StatusCode != http.StatusOK {
+		t.Fatalf("fidB should remain after cookie mismatch path, got %d", readB.StatusCode)
+	}
+
+	readC := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidC)
+	_ = framework.ReadAllAndClose(t, readC)
+	if readC.StatusCode != http.StatusOK {
+		t.Fatalf("fidC should remain when batch processing stops on mismatch, got %d", readC.StatusCode)
+	}
+}
