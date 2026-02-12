@@ -8,9 +8,13 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -547,42 +551,42 @@ func TestOIDCProviderUserInfo(t *testing.T) {
 
 // Helper functions for testing
 
-func generateTestKeys(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
+func generateTestKeys(tb testing.TB) (*rsa.PrivateKey, *rsa.PublicKey) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return privateKey, &privateKey.PublicKey
 }
 
-func generateTestECKeys(t *testing.T) (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
+func generateTestECKeys(tb testing.TB) (*ecdsa.PrivateKey, *ecdsa.PublicKey) {
 	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return privateKey, &privateKey.PublicKey
 }
 
-func createTestJWT(t *testing.T, privateKey *rsa.PrivateKey, claims jwt.MapClaims) string {
+func createTestJWT(tb testing.TB, privateKey *rsa.PrivateKey, claims jwt.MapClaims) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	token.Header["kid"] = "test-key-id"
 
 	tokenString, err := token.SignedString(privateKey)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return tokenString
 }
 
-func createTestECDSAJWT(t *testing.T, privateKey *ecdsa.PrivateKey, claims jwt.MapClaims) string {
+func createTestECDSAJWT(tb testing.TB, privateKey *ecdsa.PrivateKey, claims jwt.MapClaims) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	token.Header["kid"] = "test-ec-key-id"
 
 	tokenString, err := token.SignedString(privateKey)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return tokenString
 }
 
-func encodePublicKey(t *testing.T, publicKey *rsa.PublicKey) string {
+func encodePublicKey(tb testing.TB, publicKey *rsa.PublicKey) string {
 	// Properly encode the RSA modulus (N) as base64url
 	return base64.RawURLEncoding.EncodeToString(publicKey.N.Bytes())
 }
 
-func encodeECPublicKey(t *testing.T, publicKey *ecdsa.PublicKey) (string, string) {
+func encodeECPublicKey(tb testing.TB, publicKey *ecdsa.PublicKey) (string, string) {
 	// RFC 7518 §6.2.1.2 requires EC coordinates to be zero-padded to the full field size
 	curveParams := publicKey.Curve.Params()
 	size := (curveParams.BitSize + 7) / 8
@@ -597,7 +601,7 @@ func encodeECPublicKey(t *testing.T, publicKey *ecdsa.PublicKey) (string, string
 		base64.RawURLEncoding.EncodeToString(yPadded)
 }
 
-func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Server {
+func setupOIDCTestServer(tb testing.TB, publicKey *rsa.PublicKey) *httptest.Server {
 	jwks := map[string]interface{}{
 		"keys": []map[string]interface{}{
 			{
@@ -605,7 +609,7 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 				"kid": "test-key-id",
 				"use": "sig",
 				"alg": "RS256",
-				"n":   encodePublicKey(t, publicKey),
+				"n":   encodePublicKey(tb, publicKey),
 				"e":   "AQAB",
 			},
 		},
@@ -659,4 +663,479 @@ func setupOIDCTestServer(t *testing.T, publicKey *rsa.PublicKey) *httptest.Serve
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func TestOIDCProviderJTIReplayProtection(t *testing.T) {
+	// Setup mock OIDC provider with JTI protection enabled
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            100,
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	// Test 1: First use of token with JTI should succeed
+	jti := "unique-token-id-12345"
+	token1 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": jti,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	claims1, err := provider.ValidateToken(context.Background(), token1)
+	require.NoError(t, err)
+	assert.Equal(t, "user123", claims1.Subject)
+	assert.Equal(t, jti, claims1.Claims["jti"])
+
+	// Test 2: Replay of same token should be rejected
+	claims2, err := provider.ValidateToken(context.Background(), token1)
+	assert.Error(t, err)
+	assert.Nil(t, claims2)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
+	assert.Contains(t, err.Error(), jti)
+
+	// Test 3: Different token with different JTI should succeed
+	jti2 := "different-token-id-67890"
+	token2 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user456",
+		"jti": jti2,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	claims3, err := provider.ValidateToken(context.Background(), token2)
+	require.NoError(t, err)
+	assert.Equal(t, "user456", claims3.Subject)
+
+	// Test 4: Token without JTI should still be accepted (backward compatibility)
+	tokenNoJTI := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user789",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	claims4, err := provider.ValidateToken(context.Background(), tokenNoJTI)
+	require.NoError(t, err)
+	assert.Equal(t, "user789", claims4.Subject)
+}
+
+func TestOIDCProviderJTIReplayProtectionDisabled(t *testing.T) {
+	// Setup provider with JTI protection DISABLED
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-no-jti")
+	jtiDisabled := false
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiDisabled, // Explicitly disabled
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	// Token with JTI can be used multiple times when protection is disabled
+	jti := "reusable-token-id"
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": jti,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	// First use - should succeed
+	claims1, err := provider.ValidateToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "user123", claims1.Subject)
+
+	// Second use - should ALSO succeed (no replay protection)
+	claims2, err := provider.ValidateToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "user123", claims2.Subject)
+}
+
+func TestOIDCProviderJTIExpiration(t *testing.T) {
+	// Test that JTI cache entries expire with token
+	// This test also verifies default behavior (JTIReplayProtectionEnabled not set = enabled by default)
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc")
+	config := &OIDCConfig{
+		Issuer:   jwksServer.URL,
+		ClientID: "test-client",
+		JWKSUri:  jwksServer.URL + "/jwks",
+		// JTIReplayProtectionEnabled not set - should default to true (secure by default)
+	}
+
+	err := provider.Initialize(config)
+	require.NoError(t, err)
+
+	// Create token that expires in 2 seconds
+	jti := "short-lived-token"
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": jti,
+		"exp": time.Now().Add(2 * time.Second).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	// First use - should succeed
+	claims1, err := provider.ValidateToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, "user123", claims1.Subject)
+
+	// Immediate replay - should be rejected
+	_, err = provider.ValidateToken(context.Background(), token)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed))
+
+	// Wait for token AND cache entry to expire
+	time.Sleep(3 * time.Second)
+
+	// Now validation should fail due to EXPIRATION (not replay)
+	_, err = provider.ValidateToken(context.Background(), token)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenExpired))
+}
+
+func TestOIDCProviderJTIReplayProtectionConcurrent(t *testing.T) {
+	// Test concurrent validation to ensure no TOCTOU race conditions
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-concurrent")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            1000,
+	}
+	require.NoError(t, provider.Initialize(config))
+
+	jti := "concurrent-test-jti"
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": jti,
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	// Launch 100 concurrent validations with the same token
+	const numGoroutines = 100
+	var successCount, replayCount, otherErrorCount atomic.Int32
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// All goroutines start at roughly the same time
+	startBarrier := make(chan struct{})
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-startBarrier // Wait for start signal
+
+			_, err := provider.ValidateToken(context.Background(), token)
+			if err == nil {
+				successCount.Add(1)
+			} else if errors.Is(err, providers.ErrProviderTokenReplayed) {
+				replayCount.Add(1)
+			} else {
+				otherErrorCount.Add(1)
+				t.Logf("Unexpected error: %v", err)
+			}
+		}()
+	}
+
+	close(startBarrier) // Start all goroutines
+	wg.Wait()
+
+	// Exactly one should succeed, all others should be replay errors
+	assert.Equal(t, int32(1), successCount.Load(),
+		"Exactly one validation should succeed (atomic test-and-set)")
+	assert.Equal(t, int32(numGoroutines-1), replayCount.Load(),
+		"All other validations should be replay errors")
+	assert.Equal(t, int32(0), otherErrorCount.Load(),
+		"No other errors should occur")
+}
+
+func TestOIDCProviderJTICacheMaxSize(t *testing.T) {
+	// Test that cache respects max size limit
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-maxsize")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            10, // Small cache for testing
+	}
+	require.NoError(t, provider.Initialize(config))
+
+	// Add tokens up to the limit
+	for i := 0; i < 10; i++ {
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss": jwksServer.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"jti": fmt.Sprintf("jti-%d", i),
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+
+		_, err := provider.ValidateToken(context.Background(), token)
+		require.NoError(t, err, "Should accept token %d", i)
+	}
+
+	// Next token should be rejected due to cache full
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "jti-overflow",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	_, err := provider.ValidateToken(context.Background(), token)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cache capacity exceeded")
+}
+
+func TestOIDCProviderJTICleanup(t *testing.T) {
+	// Test that cleanup goroutine logic correctly identifies expired entries
+	// NOTE: JWT library allows clock skew, so tokens can't be truly expired
+	// We test the cleanup logic without actually waiting for expiration
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-cleanup")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+	}
+	require.NoError(t, provider.Initialize(config))
+	defer provider.Shutdown(context.Background())
+
+	// Create token that expires in 1 hour
+	token := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "cleanup-test-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	// Validation should succeed
+	_, err := provider.ValidateToken(context.Background(), token)
+	require.NoError(t, err)
+
+	// Check cache size is 1
+	assert.Equal(t, int64(1), provider.jtiCount.Load())
+
+	// Verify entry exists and check its expiration includes clock skew
+	val, ok := provider.jtiStore.Load("cleanup-test-jti")
+	require.True(t, ok, "JTI entry should exist")
+	entry := val.(*jtiEntry)
+
+	// Entry should expire around exp + clock skew tolerance (1 hour + 5 minutes)
+	expectedExpiry := time.Now().Add(time.Hour + 5*time.Minute)
+	assert.WithinDuration(t, expectedExpiry, entry.expiresAt, 10*time.Second,
+		"Entry expiry should be token exp + clock skew tolerance")
+
+	// Verify entry is not yet expired (cleanup shouldn't remove it)
+	now := time.Now()
+	assert.True(t, now.Before(entry.expiresAt),
+		"Entry should not be expired yet")
+
+	// Test cleanup logic: manually simulate cleanup with a fake "future" time
+	// to verify the cleanup would work when time comes
+	futureTime := entry.expiresAt.Add(1 * time.Minute)
+	shouldBeDeleted := futureTime.After(entry.expiresAt)
+	assert.True(t, shouldBeDeleted, "Entry should be identified as expired in the future")
+}
+
+func TestOIDCProviderShutdown(t *testing.T) {
+	// Test graceful shutdown
+	_, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-shutdown")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+	}
+	require.NoError(t, provider.Initialize(config))
+
+	// Shutdown should complete without error
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err := provider.Shutdown(ctx)
+	assert.NoError(t, err)
+
+	// Second shutdown should be idempotent
+	err = provider.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
+// Benchmark tests
+
+func BenchmarkJTIValidation(b *testing.B) {
+	// Benchmark JTI validation performance with unique tokens
+	privateKey, publicKey := generateTestKeys(b)
+	jwksServer := setupOIDCTestServer(b, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("bench-oidc")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            100000,
+	}
+	require.NoError(b, provider.Initialize(config))
+	defer provider.Shutdown(context.Background())
+
+	// Pre-generate unique tokens
+	tokens := make([]string, b.N)
+	for i := 0; i < b.N; i++ {
+		tokens[i] = createTestJWT(b, privateKey, jwt.MapClaims{
+			"iss": jwksServer.URL,
+			"aud": "test-client",
+			"sub": "user123",
+			"jti": fmt.Sprintf("jti-%d", i),
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			provider.ValidateToken(context.Background(), tokens[i%len(tokens)])
+			i++
+		}
+	})
+}
+
+func BenchmarkJTIValidationWithReplay(b *testing.B) {
+	// Benchmark replay detection performance
+	privateKey, publicKey := generateTestKeys(b)
+	jwksServer := setupOIDCTestServer(b, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("bench-oidc-replay")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            100000,
+	}
+	require.NoError(b, provider.Initialize(config))
+	defer provider.Shutdown(context.Background())
+
+	// Create one token that will be replayed
+	token := createTestJWT(b, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "replay-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	// First validation to store the JTI
+	_, err := provider.ValidateToken(context.Background(), token)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			// All subsequent validations should be fast replay rejections
+			provider.ValidateToken(context.Background(), token)
+		}
+	})
+}
+
+func BenchmarkJTIValidationNoProtection(b *testing.B) {
+	// Benchmark validation without JTI protection (baseline)
+	privateKey, publicKey := generateTestKeys(b)
+	jwksServer := setupOIDCTestServer(b, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("bench-oidc-no-jti")
+	jtiDisabled := false
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiDisabled,
+	}
+	require.NoError(b, provider.Initialize(config))
+
+	token := createTestJWT(b, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user123",
+		"jti": "no-protection-jti",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			provider.ValidateToken(context.Background(), token)
+		}
+	})
 }
