@@ -161,3 +161,47 @@ func TestUnsupportedMethodTraceParity(t *testing.T) {
 		t.Fatalf("public TRACE expected passthrough 200, got %d", publicTraceResp.StatusCode)
 	}
 }
+
+func TestUnsupportedMethodPropfindParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(84)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, 124000, 0x02020202)
+	client := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("propfind-method-check"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	adminReq := mustNewRequest(t, "PROPFIND", clusterHarness.VolumeAdminURL()+"/"+fid)
+	adminResp := framework.DoRequest(t, client, adminReq)
+	_ = framework.ReadAllAndClose(t, adminResp)
+	if adminResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("admin PROPFIND expected 400, got %d", adminResp.StatusCode)
+	}
+
+	publicReq := mustNewRequest(t, "PROPFIND", clusterHarness.VolumePublicURL()+"/"+fid)
+	publicResp := framework.DoRequest(t, client, publicReq)
+	_ = framework.ReadAllAndClose(t, publicResp)
+	if publicResp.StatusCode != http.StatusOK {
+		t.Fatalf("public PROPFIND expected passthrough 200, got %d", publicResp.StatusCode)
+	}
+
+	verifyResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), fid)
+	verifyBody := framework.ReadAllAndClose(t, verifyResp)
+	if verifyResp.StatusCode != http.StatusOK {
+		t.Fatalf("verify GET expected 200, got %d", verifyResp.StatusCode)
+	}
+	if string(verifyBody) != "propfind-method-check" {
+		t.Fatalf("PROPFIND should not mutate data, got %q", string(verifyBody))
+	}
+}
