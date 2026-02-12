@@ -483,3 +483,17 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Remaining gRPC methods and advanced branches still pending.
 - Commit: `9a9b8c500`, `3c562a64c`
+
+- Date: 2026-02-12
+- Change: Added HTTP cache/range branch tests.
+- APIs covered: `GET /{fid}` with `If-None-Match` (`304`) and invalid `Range` (`416`).
+- Profiles covered: P1.
+- Gaps introduced/remaining: Remaining HTTP auth/proxy/redirect/throttling branches pending.
+- Commit: `317346b51`
+
+- Date: 2026-02-12
+- Change: Added gRPC `BatchDelete` integration checks for invalid fid mapping and maintenance-mode rejection.
+- APIs covered: `BatchDelete`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Remaining gRPC method families still pending.
+- Commit: `7a8aed127`
