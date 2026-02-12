@@ -665,3 +665,10 @@ Update this section during implementation:
 - Profiles covered: P3.
 - Gaps introduced/remaining: token expiry boundary behavior remains untested.
 - Commit: `61fe52398`
+
+- Date: 2026-02-12
+- Change: Added JWT expired-token rejection coverage for both write and read auth paths.
+- APIs covered: write/read auth rejection when token signature is valid but `exp` is in the past.
+- Profiles covered: P3.
+- Gaps introduced/remaining: additional JWT transport variants (query/cookie token sources) remain.
+- Commit: `6e808623f`
