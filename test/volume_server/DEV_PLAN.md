@@ -672,3 +672,10 @@ Update this section during implementation:
 - Profiles covered: P3.
 - Gaps introduced/remaining: additional JWT transport variants (query/cookie token sources) remain.
 - Commit: `6e808623f`
+
+- Date: 2026-02-12
+- Change: Added JWT token transport coverage via query parameter and HTTP-only cookie.
+- APIs covered: write auth using `?jwt=` token and read auth using `AT` cookie token.
+- Profiles covered: P3.
+- Gaps introduced/remaining: JWT precedence rules when multiple token sources are present remain.
+- Commit: `ccefdfe8d`
