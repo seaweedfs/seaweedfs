@@ -511,3 +511,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Copy/sync/tail, EC, tiering, query, scrub, and many HTTP matrix branches still pending.
 - Commit: `0f7cc53dd`
+
+- Date: 2026-02-12
+- Change: Added gRPC data read/write error-path coverage for missing-volume and maintenance-mode branches.
+- APIs covered: `ReadNeedleBlob`, `ReadNeedleMeta`, `WriteNeedleBlob`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Positive-path blob/meta and stream/copy/tail/EC/tiering/query/scrub families remain.
+- Commit: `f83ad41b5`
