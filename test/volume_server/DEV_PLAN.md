@@ -651,3 +651,10 @@ Update this section during implementation:
 - Profiles covered: P8 (with short inflight timeout in test profile).
 - Gaps introduced/remaining: download throttling wait/proxy branches remain.
 - Commit: `464d0b2b6`
+
+- Date: 2026-02-12
+- Change: Added HTTP download throttling timeout coverage under concurrent large-read pressure.
+- APIs covered: download limit timeout path (`429`) when another large response keeps in-flight download data above limit.
+- Profiles covered: P8 (short inflight download timeout).
+- Gaps introduced/remaining: download replica proxy fallback branch (`proxied=true`/replica redirect) remains.
+- Commit: `a929e6ddc`
