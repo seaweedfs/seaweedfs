@@ -126,3 +126,38 @@ func TestCorsAndUnsupportedMethodBehavior(t *testing.T) {
 		t.Fatalf("public PATCH expected passthrough 200, got %d", publicPatchResp.StatusCode)
 	}
 }
+
+func TestUnsupportedMethodTraceParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(83)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, 123999, 0x01010101)
+	client := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("trace-method-check"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	adminTraceReq := mustNewRequest(t, http.MethodTrace, clusterHarness.VolumeAdminURL()+"/"+fid)
+	adminTraceResp := framework.DoRequest(t, client, adminTraceReq)
+	_ = framework.ReadAllAndClose(t, adminTraceResp)
+	if adminTraceResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("admin TRACE expected 400, got %d", adminTraceResp.StatusCode)
+	}
+
+	publicTraceReq := mustNewRequest(t, http.MethodTrace, clusterHarness.VolumePublicURL()+"/"+fid)
+	publicTraceResp := framework.DoRequest(t, client, publicTraceReq)
+	_ = framework.ReadAllAndClose(t, publicTraceResp)
+	if publicTraceResp.StatusCode != http.StatusOK {
+		t.Fatalf("public TRACE expected passthrough 200, got %d", publicTraceResp.StatusCode)
+	}
+}
