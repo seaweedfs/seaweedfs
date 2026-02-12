@@ -132,6 +132,35 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 	}
 }
 
+func TestCopyFileCompactionRevisionMismatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(94)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Ext:                ".idx",
+		CompactionRevision: 1, // fresh volume starts at revision 0
+		StopOffset:         1,
+	})
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "is compacted") {
+		t.Fatalf("CopyFile compaction mismatch error mismatch: %v", err)
+	}
+}
+
 func TestReceiveFileProtocolViolationResponses(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -176,5 +205,91 @@ func TestReceiveFileProtocolViolationResponses(t *testing.T) {
 	}
 	if !strings.Contains(unknownTypeResp.GetError(), "unknown message type") {
 		t.Fatalf("ReceiveFile unknown-type response mismatch: %+v", unknownTypeResp)
+	}
+}
+
+func TestReceiveFileSuccessForRegularVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(95)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	payloadA := []byte("receive-file-chunk-a:")
+	payloadB := []byte("receive-file-chunk-b")
+	expected := append(append([]byte{}, payloadA...), payloadB...)
+
+	receiveStream, err := grpcClient.ReceiveFile(ctx)
+	if err != nil {
+		t.Fatalf("ReceiveFile stream create failed: %v", err)
+	}
+
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{
+				VolumeId:   volumeID,
+				Ext:        ".tmprecv",
+				Collection: "",
+				IsEcVolume: false,
+				FileSize:   uint64(len(expected)),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send info failed: %v", err)
+	}
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_FileContent{FileContent: payloadA},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send payloadA failed: %v", err)
+	}
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_FileContent{FileContent: payloadB},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send payloadB failed: %v", err)
+	}
+
+	resp, err := receiveStream.CloseAndRecv()
+	if err != nil {
+		t.Fatalf("ReceiveFile close failed: %v", err)
+	}
+	if resp.GetError() != "" {
+		t.Fatalf("ReceiveFile unexpected error response: %+v", resp)
+	}
+	if resp.GetBytesWritten() != uint64(len(expected)) {
+		t.Fatalf("ReceiveFile bytes_written mismatch: got %d want %d", resp.GetBytesWritten(), len(expected))
+	}
+
+	copyStream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Ext:                ".tmprecv",
+		CompactionRevision: math.MaxUint32,
+		StopOffset:         uint64(len(expected)),
+	})
+	if err != nil {
+		t.Fatalf("CopyFile for received data start failed: %v", err)
+	}
+
+	var copied []byte
+	for {
+		msg, recvErr := copyStream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("CopyFile for received data recv failed: %v", recvErr)
+		}
+		copied = append(copied, msg.GetFileContent()...)
+	}
+
+	if string(copied) != string(expected) {
+		t.Fatalf("received file data mismatch: got %q want %q", string(copied), string(expected))
 	}
 }
