@@ -714,3 +714,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: notify-master failure branches remain untested.
 - Commit: `c37e6cd95`
+
+- Date: 2026-02-12
+- Change: Added CORS header validation on `OPTIONS` requests with `Origin` for admin and public ports.
+- APIs covered: `OPTIONS /` CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials`) for split-port profile.
+- Profiles covered: P2.
+- Gaps introduced/remaining: unsupported-method parity for non-`PATCH` verbs remains.
+- Commit: `ca08af7ba`
