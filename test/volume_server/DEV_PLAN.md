@@ -749,3 +749,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: chunk-manifest rejection (`406`) and EC batch-delete success path still require dedicated fixtures.
 - Commit: `450f63ac4`
+
+- Date: 2026-02-12
+- Change: Added secured-UI HTTP behavior coverage under JWT-enabled profile.
+- APIs covered: `/ui/index.html` route behavior when admin UI is not exposed due signing key; verified fallback auth-gated response path (`401`).
+- Profiles covered: P3.
+- Gaps introduced/remaining: explicit `access.ui=true` override scenario remains untested.
+- Commit: `9c10ccb38`
