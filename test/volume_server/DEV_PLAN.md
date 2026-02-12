@@ -728,3 +728,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: broader unsupported verb matrix remains.
 - Commit: `b03ddf855`
+
+- Date: 2026-02-12
+- Change: Added gRPC batch-delete cookie-check variation coverage.
+- APIs covered: `BatchDelete` mismatch-cookie rejection path (`skip_cookie_check=false`) and skip-cookie-check acceptance/deletion path (`skip_cookie_check=true`).
+- Profiles covered: P1.
+- Gaps introduced/remaining: batch-delete malformed entry combinations are partially covered; mixed per-entry status permutations can be expanded.
+- Commit: `87d75e786`
