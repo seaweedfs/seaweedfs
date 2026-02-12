@@ -735,3 +735,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: batch-delete malformed entry combinations are partially covered; mixed per-entry status permutations can be expanded.
 - Commit: `87d75e786`
+
+- Date: 2026-02-12
+- Change: Expanded gRPC admin lifecycle variants for allocate/mount/unmount/delete edge cases.
+- APIs covered: duplicate `AllocateVolume` rejection, missing-volume `VolumeMount` error, idempotent `VolumeUnmount` behavior for missing/already-unmounted volumes, and `VolumeDelete` maintenance-mode rejection.
+- Profiles covered: P1.
+- Gaps introduced/remaining: `VolumeConfigure` rollback/mount-failure branches still need dedicated fault-path coverage.
+- Commit: `bc1faec8e`
