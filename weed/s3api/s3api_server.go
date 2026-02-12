@@ -1,9 +1,11 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -435,9 +437,23 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// 2. Parse Form to get Action
+	// Save the body first so we can restore it for STS handler signature verification
+	var bodyBytes []byte
+	if r.Body != nil {
+		bodyBytes, _ = io.ReadAll(r.Body)
+		r.Body.Close()
+		// Restore body for ParseForm
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
+
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
+	}
+
+	// Restore body again for downstream handlers (STS needs it for signature verification)
+	if bodyBytes != nil {
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	}
 
 	// 3. Dispatch
