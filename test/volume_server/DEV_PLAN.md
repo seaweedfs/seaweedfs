@@ -504,3 +504,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: Still pending large RPC groups (vacuum/copy/tail/ec/tiering/query/scrub).
 - Commit: `59a571a10`
+
+- Date: 2026-02-12
+- Change: Added gRPC vacuum integration coverage for success/missing-volume and maintenance-mode rejection branches.
+- APIs covered: `VacuumVolumeCheck`, `VacuumVolumeCompact`, `VacuumVolumeCommit`, `VacuumVolumeCleanup`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: Copy/sync/tail, EC, tiering, query, scrub, and many HTTP matrix branches still pending.
+- Commit: `0f7cc53dd`
