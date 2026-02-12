@@ -707,3 +707,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: persistent state save failure branch remains environment-dependent.
 - Commit: `34ff97996`
+
+- Date: 2026-02-12
+- Change: Added readonly lifecycle variation for persisted readonly flag path.
+- APIs covered: `VolumeMarkReadonly` success path with `persist=true`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: notify-master failure branches remain untested.
+- Commit: `c37e6cd95`
