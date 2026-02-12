@@ -25,7 +25,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -459,13 +458,13 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Store identity in context
-		if identity != nil && identity.Name != "" {
-			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
-			ctx = s3_constants.SetIdentityInContext(ctx, identity)
+		if identity.Name != "" {
+			ctx := SetIdentityNameInContext(r.Context(), identity.Name)
+			ctx = SetIdentityInContext(ctx, identity)
 			r = r.WithContext(ctx)
 		}
 
-		targetUserName := r.PostForm.Get("UserName")
+		targetUserName := r.Form.Get("UserName")
 
 		// Check permissions based on action type
 		if iamRequiresAdminForOthers(action) {
