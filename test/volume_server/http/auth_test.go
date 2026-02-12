@@ -293,6 +293,52 @@ func TestJWTTokenSourcePrecedenceQueryOverHeader(t *testing.T) {
 	}
 }
 
+func TestJWTTokenSourcePrecedenceHeaderOverCookie(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(56)
+	const needleID = uint64(667788)
+	const cookie = uint32(0x11229988)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	otherFID := framework.NewFileID(volumeID, needleID+1, cookie+1)
+	payload := []byte("jwt-precedence-header-cookie")
+	client := framework.NewHTTPClient()
+
+	validWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	invalidCookieWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, otherFID)
+	writeReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	writeReq.Header.Set("Authorization", "Bearer "+string(validWriteToken))
+	writeReq.AddCookie(&http.Cookie{Name: "AT", Value: string(invalidCookieWriteToken)})
+	writeResp := framework.DoRequest(t, client, writeReq)
+	_ = framework.ReadAllAndClose(t, writeResp)
+	if writeResp.StatusCode != http.StatusCreated {
+		t.Fatalf("header token should take precedence over cookie token for write, expected 201 got %d", writeResp.StatusCode)
+	}
+
+	validReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, fid)
+	invalidCookieReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, otherFID)
+	readReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	readReq.Header.Set("Authorization", "Bearer "+string(validReadToken))
+	readReq.AddCookie(&http.Cookie{Name: "AT", Value: string(invalidCookieReadToken)})
+	readResp := framework.DoRequest(t, client, readReq)
+	readBody := framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("header token should take precedence over cookie token for read, expected 200 got %d", readResp.StatusCode)
+	}
+	if string(readBody) != string(payload) {
+		t.Fatalf("header-over-cookie read body mismatch: got %q want %q", string(readBody), string(payload))
+	}
+}
+
 func mustGenExpiredToken(t testing.TB, key []byte, fid string) string {
 	t.Helper()
 	claims := security.SeaweedFileIdClaims{
