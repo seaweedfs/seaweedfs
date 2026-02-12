@@ -719,5 +719,12 @@ Update this section during implementation:
 - Change: Added CORS header validation on `OPTIONS` requests with `Origin` for admin and public ports.
 - APIs covered: `OPTIONS /` CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Credentials`) for split-port profile.
 - Profiles covered: P2.
-- Gaps introduced/remaining: unsupported-method parity for non-`PATCH` verbs remains.
+- Gaps introduced/remaining: unsupported-method parity for additional verbs beyond `PATCH`/`TRACE` remains.
 - Commit: `ca08af7ba`
+
+- Date: 2026-02-12
+- Change: Added unsupported-method parity coverage for `TRACE` on admin/public split ports.
+- APIs covered: admin `TRACE` error (`400`) vs public `TRACE` passthrough (`200`) behavior.
+- Profiles covered: P2.
+- Gaps introduced/remaining: broader unsupported verb matrix remains.
+- Commit: `b03ddf855`
