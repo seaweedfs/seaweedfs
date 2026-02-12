@@ -351,25 +351,8 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 			}
 
 			// Adjust nextMarker for CommonPrefixes to include trailing slash (AWS S3 compliance)
-			if cursor.isTruncated && lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
-				// For CommonPrefixes, NextMarker should include the trailing slash
-				if requestDir != "" {
-					if prefix != "" {
-						nextMarker = requestDir + "/" + prefix + "/" + lastCommonPrefixName + "/"
-					} else {
-						nextMarker = requestDir + "/" + lastCommonPrefixName + "/"
-					}
-				} else {
-					nextMarker = lastCommonPrefixName + "/"
-				}
-			} else if cursor.isTruncated {
-				if requestDir != "" {
-					if prefix != "" {
-						nextMarker = requestDir + "/" + prefix + "/" + nextMarker
-					} else {
-						nextMarker = requestDir + "/" + nextMarker
-					}
-				}
+			if cursor.isTruncated {
+				nextMarker = buildTruncatedNextMarker(requestDir, prefix, nextMarker, lastEntryWasCommonPrefix, lastCommonPrefixName)
 			}
 
 			if cursor.isTruncated {
@@ -478,6 +461,28 @@ func toParentAndDescendants(dirAndName string) (dir, name string) {
 		name = dirAndName
 	}
 	return
+}
+
+func buildTruncatedNextMarker(requestDir, prefix, nextMarker string, lastEntryWasCommonPrefix bool, lastCommonPrefixName string) string {
+	if lastEntryWasCommonPrefix && lastCommonPrefixName != "" {
+		// For CommonPrefixes, NextMarker should include the trailing slash
+		if requestDir != "" {
+			if prefix != "" {
+				return requestDir + "/" + prefix + "/" + lastCommonPrefixName + "/"
+			}
+			return requestDir + "/" + lastCommonPrefixName + "/"
+		}
+		if prefix != "" {
+			return prefix + "/" + lastCommonPrefixName + "/"
+		}
+		return lastCommonPrefixName + "/"
+	}
+
+	if requestDir != "" {
+		return requestDir + "/" + nextMarker
+	}
+
+	return nextMarker
 }
 
 func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, dir, prefix string, cursor *ListingCursor, marker, delimiter string, inclusiveStartFrom bool, bucket string, eachEntryFn func(dir string, entry *filer_pb.Entry)) (nextMarker string, err error) {

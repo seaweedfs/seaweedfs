@@ -339,14 +339,3 @@ func (ev *EcVolume) WalkIndex(processNeedleFn func(key types.NeedleId, offset ty
 	}
 	return idx.WalkIndexFile(ev.ecxFile, 0, processNeedleFn)
 }
-
-func (ev *EcVolume) CheckIndex() (int64, []error) {
-	if ev.ecxFile == nil {
-		return 0, []error{fmt.Errorf("no ECX file associated with EC volume %v", ev.VolumeId)}
-	}
-	if ev.ecxFileSize == 0 {
-		return 0, []error{fmt.Errorf("zero-size ECX file for EC volume %v", ev.VolumeId)}
-	}
-
-	return idx.CheckIndexFile(ev.ecxFile, ev.ecxFileSize, ev.Version)
-}

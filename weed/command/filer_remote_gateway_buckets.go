@@ -390,11 +390,10 @@ func (option *RemoteGatewayOptions) detectBucketInfo(actualDir string) (bucket u
 }
 
 func extractBucketPath(bucketsDir, dir string) (util.FullPath, bool) {
-	if !strings.HasPrefix(dir, bucketsDir+"/") {
-		return "", false
+	if bucketPath, ok := util.ExtractBucketPath(bucketsDir, dir, false); ok {
+		return util.FullPath(bucketPath), true
 	}
-	parts := strings.SplitN(dir[len(bucketsDir)+1:], "/", 2)
-	return util.FullPath(bucketsDir).Child(parts[0]), true
+	return "", false
 }
 
 func (option *RemoteGatewayOptions) collectRemoteStorageConf() (err error) {

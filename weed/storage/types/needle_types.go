@@ -14,6 +14,10 @@ type Offset struct {
 
 type Size int32
 
+func (s Size) IsTombstone() bool {
+	return s == TombstoneFileSize
+}
+
 // IsDeleted checks if the needle entry has been marked as deleted (tombstoned).
 // Use this when checking if an entry should exist in the needle map.
 // Returns true for negative sizes or TombstoneFileSize.

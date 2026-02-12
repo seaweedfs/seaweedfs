@@ -300,7 +300,6 @@ populate-spark: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 			--conf "spark.sql.catalog.iceberg.s3.region=$(AWS_REGION)" \
 			--conf "spark.sql.catalog.iceberg.rest.sigv4-enabled=true" \
 			--conf "spark.sql.catalog.iceberg.rest.signing-name=s3tables" \
-			--conf "spark.sql.catalog.iceberg.rest.signing-region=$(AWS_REGION)" \
 			--conf "spark.sql.catalog.spark_catalog=org.apache.iceberg.spark.SparkCatalog" \
 			--conf "spark.sql.catalog.spark_catalog.type=rest" \
 			--conf "spark.sql.catalog.spark_catalog.uri=$(CATALOG_ENDPOINT_DOCKER)" \
@@ -314,7 +313,6 @@ populate-spark: ensure-table-bucket ensure-work-dir ## Populate sample data via 
 			--conf "spark.sql.catalog.spark_catalog.s3.region=$(AWS_REGION)" \
 			--conf "spark.sql.catalog.spark_catalog.rest.sigv4-enabled=true" \
 			--conf "spark.sql.catalog.spark_catalog.rest.signing-name=s3tables" \
-			--conf "spark.sql.catalog.spark_catalog.rest.signing-region=$(AWS_REGION)" \
 			-f /work/spark_seed.sql'
 
 populate: populate-trino populate-spark ## Populate sample data through Trino and Spark

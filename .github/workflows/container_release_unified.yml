@@ -4,10 +4,34 @@ on:
   push:
     tags:
       - '*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Variant to build manually'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - normal
+          - large_disk
+          - full
+          - large_disk_full
+          - rocksdb
+      release_tag:
+        description: 'Release tag to publish (e.g. 3.93)'
+        required: true
+        default: ''
+      rocksdb_version:
+        description: 'RocksDB git tag to use when variant=rocksdb'
+        required: false
+        default: 'v10.10.1'
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
 
 # Limit concurrent builds to avoid rate limits
 concurrency:
@@ -59,9 +83,11 @@ jobs:
             
     steps:
       - name: Checkout
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: actions/checkout@v6
         
       - name: Free Disk Space
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           echo "Available disk space before cleanup:"
           df -h
@@ -75,13 +101,14 @@ jobs:
           df -h
           
       - name: Docker meta
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         id: docker_meta
         uses: docker/metadata-action@v5
         with:
           images: |
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
-          tags: type=ref,event=tag,suffix=${{ matrix.tag_suffix }}
+          tags: type=raw,value=${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           flavor: latest=false
           labels: |
             org.opencontainers.image.title=seaweedfs
@@ -89,10 +116,11 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
             
       - name: Set up QEMU
-        if: contains(matrix.platforms, 'arm')
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && contains(matrix.platforms, 'arm')
         uses: docker/setup-qemu-action@v3
         
       - name: Create BuildKit config
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           cat > /tmp/buildkitd.toml <<EOF
           [registry."docker.io"]
@@ -100,19 +128,20 @@ jobs:
           EOF
           
       - name: Set up Docker Buildx
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: docker/setup-buildx-action@v3
         with:
           buildkitd-config: /tmp/buildkitd.toml
           
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: Login to GHCR
-        if: github.event_name != 'pull_request'
+        if: (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant) && github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -120,6 +149,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
           
       - name: Build and push ${{ matrix.variant }}
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: docker/build-push-action@v6
         env:
           DOCKER_BUILDKIT: 1
@@ -130,7 +160,7 @@ jobs:
           platforms: ${{ matrix.platforms }}
           # Push to GHCR to avoid Docker Hub rate limits on pulls
           tags: |
-            ghcr.io/chrislusf/seaweedfs:${{ github.ref_name }}${{ matrix.tag_suffix }}
+            ghcr.io/chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
@@ -138,9 +168,10 @@ jobs:
             ${{ matrix.build_args }}
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.sha }}
+            ${{ matrix.variant == 'rocksdb' && format('ROCKSDB_VERSION={0}', github.event.inputs.rocksdb_version || 'v10.10.1') || '' }}
             
       - name: Clean up build artifacts
-        if: always()
+        if: always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant)
         run: |
           sudo docker system prune -f
           sudo rm -rf /tmp/go-build*
@@ -166,12 +197,14 @@ jobs:
             
     steps:
       - name: Login to Docker Hub
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           
       - name: Login to GHCR
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -179,6 +212,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN }}
           
       - name: Install crane
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           cd $(mktemp -d)
           curl -sL "https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz" | tar xz
@@ -186,6 +220,7 @@ jobs:
           crane version
           
       - name: Copy ${{ matrix.variant }} from GHCR to Docker Hub
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         run: |
           # Function to retry with exponential backoff
           retry_with_backoff() {
@@ -218,14 +253,15 @@ jobs:
           # This is much more efficient than pulling/pushing individual arch images
           echo "Copying ${{ matrix.variant }} from GHCR to Docker Hub..."
           retry_with_backoff crane copy \
-            ghcr.io/chrislusf/seaweedfs:${{ github.ref_name }}${{ matrix.tag_suffix }} \
-            chrislusf/seaweedfs:${{ github.ref_name }}${{ matrix.tag_suffix }}
+            ghcr.io/chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }} \
+            chrislusf/seaweedfs:${{ env.RELEASE_TAG }}${{ matrix.tag_suffix }}
           
           echo "✓ Successfully copied ${{ matrix.variant }} to Docker Hub"
 
   helm-release:
     runs-on: ubuntu-latest
     needs: [copy-to-dockerhub]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       pages: write
@@ -239,7 +275,3 @@ jobs:
           target_dir: helm
           branch: gh-pages
           helm_version: "3.18.4"
-
-
-
-

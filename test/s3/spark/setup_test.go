@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +54,8 @@ type TestEnvironment struct {
 	dockerAvailable  bool
 	weedBinary       string
 	seaweedfsDataDir string
+	weedLogPath      string
+	weedLogFile      *os.File
 	masterPort       int
 	filerPort        int
 	s3Port           int
@@ -113,6 +116,15 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.config", iamConfigPath,
 		"-dir", env.seaweedfsDataDir,
 	)
+	weedLogPath := filepath.Join(env.seaweedfsDataDir, "weed-mini.log")
+	weedLogFile, err := os.Create(weedLogPath)
+	if err != nil {
+		t.Fatalf("failed to create weed log file: %v", err)
+	}
+	env.weedLogPath = weedLogPath
+	env.weedLogFile = weedLogFile
+	env.masterProcess.Stdout = weedLogFile
+	env.masterProcess.Stderr = weedLogFile
 	env.masterProcess.Env = append(os.Environ(),
 		"AWS_ACCESS_KEY_ID="+env.accessKey,
 		"AWS_SECRET_ACCESS_KEY="+env.secretKey,
@@ -160,12 +172,30 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T) {
 	env.sparkContainer = container
 }
 
-func (env *TestEnvironment) Cleanup() {
+func (env *TestEnvironment) Cleanup(t *testing.T) {
 	if env.masterProcess != nil && env.masterProcess.Process != nil {
 		_ = env.masterProcess.Process.Kill()
 		_ = env.masterProcess.Wait()
 	}
 	clearMiniProcess(env.masterProcess)
+	if env.weedLogFile != nil {
+		_ = env.weedLogFile.Close()
+	}
+
+	if t.Failed() && os.Getenv("CI") != "" && env.weedLogPath != "" {
+		logData, err := os.ReadFile(env.weedLogPath)
+		if err != nil {
+			t.Logf("failed to read weed mini log file %s: %v", env.weedLogPath, err)
+		} else {
+			// Print the tail to keep CI output manageable while preserving failure context.
+			const maxTailBytes = 64 * 1024
+			start := 0
+			if len(logData) > maxTailBytes {
+				start = len(logData) - maxTailBytes
+			}
+			t.Logf("weed mini logs (tail, %d bytes):\n%s", len(logData)-start, string(logData[start:]))
+		}
+	}
 
 	if env.sparkContainer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

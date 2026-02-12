@@ -129,6 +129,17 @@ func newUploader(httpClient HTTPClient) *Uploader {
 // UploadWithRetry will retry both assigning volume request and uploading content
 // The option parameter does not need to specify UploadUrl and Jwt, which will come from assigning volume.
 func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.AssignVolumeRequest, uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (fileId string, uploadResult *UploadResult, err error, data []byte) {
+	bytesReader, ok := reader.(*util.BytesReader)
+	if ok {
+		data = bytesReader.Bytes
+	} else {
+		data, err = io.ReadAll(reader)
+		if err != nil {
+			err = fmt.Errorf("read input: %w", err)
+			return
+		}
+	}
+
 	doUploadFunc := func() error {
 
 		var host string
@@ -158,7 +169,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 		uploadOption.Jwt = auth
 
 		var uploadErr error
-		uploadResult, uploadErr, data = uploader.doUpload(context.Background(), reader, uploadOption)
+		uploadResult, uploadErr = uploader.retriedUploadData(context.Background(), data, uploadOption)
 		return uploadErr
 	}
 	if uploadOption.RetryForever {

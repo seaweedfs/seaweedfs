@@ -147,6 +147,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		Namespace:      req.Namespace,
 		CreatedAt:      now,
 		OwnerAccountID: bucketMetadata.OwnerAccountID,
+		Properties:     req.Properties,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -177,6 +178,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 	resp := &CreateNamespaceResponse{
 		Namespace:      req.Namespace,
 		TableBucketARN: req.TableBucketARN,
+		Properties:     req.Properties,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -265,6 +267,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		Namespace:      metadata.Namespace,
 		CreatedAt:      metadata.CreatedAt,
 		OwnerAccountID: metadata.OwnerAccountID,
+		Properties:     metadata.Properties,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
