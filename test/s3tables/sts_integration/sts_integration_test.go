@@ -3,8 +3,6 @@ package sts_integration
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,17 +78,23 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		}
 	}
 
+	if !testutil.HasDocker() {
+		t.Skip("Docker not available, skipping integration test")
+	}
+
+	// Create a unique temporary directory for this test run
 	dataDir, err := os.MkdirTemp("", "seaweed-sts-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
+	// The Cleanup method will remove this directory, so no need for defer here.
 
 	bindIP := testutil.FindBindIP()
 
-	masterPort, masterGrpcPort := mustFreePortPair(t, "Master")
-	volumePort, volumeGrpcPort := mustFreePortPair(t, "Volume")
-	filerPort, filerGrpcPort := mustFreePortPair(t, "Filer")
-	s3Port, s3GrpcPort := mustFreePortPair(t, "S3")
+	masterPort, masterGrpcPort := testutil.MustFreePortPair(t, "Master")
+	volumePort, volumeGrpcPort := testutil.MustFreePortPair(t, "Volume")
+	filerPort, filerGrpcPort := testutil.MustFreePortPair(t, "Filer")
+	s3Port, s3GrpcPort := testutil.MustFreePortPair(t, "S3") // Changed to use testutil.MustFreePortPair
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
@@ -105,7 +109,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		filerGrpcPort:   filerGrpcPort,
 		volumePort:      volumePort,
 		volumeGrpcPort:  volumeGrpcPort,
-		dockerAvailable: hasDocker(),
+		dockerAvailable: testutil.HasDocker(),
 		accessKey:       "admin", // Matching default in testutil.WriteIAMConfig
 		secretKey:       "admin",
 	}
@@ -152,10 +156,15 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 	env.weedProcess = cmd
 
-	// Wait for S3 service
-	s3URL := fmt.Sprintf("http://%s:%d", env.bindIP, env.s3Port)
-	if !waitForService(s3URL, 30*time.Second) {
-		t.Fatalf("S3 service did not become ready at %s", s3URL)
+	// Wait for S3 API to be ready
+	if !testutil.WaitForService(fmt.Sprintf("http://localhost:%d/status", env.s3Port), 30*time.Second) {
+		t.Fatalf("S3 API failed to become ready")
+	}
+}
+
+func (env *TestEnvironment) Start(t *testing.T) {
+	if !testutil.HasDocker() {
+		t.Skip("Docker not available")
 	}
 }
 
@@ -269,52 +278,3 @@ except Exception as e:
 }
 
 // Helpers copied from trino_catalog_test.go
-
-func hasDocker() bool {
-	cmd := exec.Command("docker", "version")
-	return cmd.Run() == nil
-}
-
-func mustFreePortPair(t *testing.T, name string) (int, int) {
-	httpPort, grpcPort, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	return httpPort, grpcPort
-}
-
-func findAvailablePortPair() (int, int, error) {
-	httpPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	grpcPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	return httpPort, grpcPort, nil
-}
-
-func getFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
-}
-
-func waitForService(url string, timeout time.Duration) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err != nil {
-			time.Sleep(500 * time.Millisecond)
-			continue
-		}
-		resp.Body.Close()
-		return true
-	}
-	return false
-}

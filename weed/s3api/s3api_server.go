@@ -467,21 +467,12 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 		targetUserName := r.Form.Get("UserName")
 
 		// Check permissions based on action type
-		if iamRequiresAdminForOthers(action) {
-			// Self-service action: allow if operating on own resources or no target specified
-			if targetUserName == "" || targetUserName == identity.Name {
-				// Self-service: allowed
-			} else {
-				// Operating on another user: require admin or permission
-				if !identity.isAdmin() {
-					if s3a.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
-						s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-						return
-					}
-				}
-			}
-		} else {
-			// All other IAM actions require admin or permission
+		isSelfServiceAction := iamRequiresAdminForOthers(action)
+		isActingOnSelf := targetUserName == "" || targetUserName == identity.Name
+
+		// Permission check is required for all actions except for self-service actions
+		// performed on the user's own identity.
+		if !(isSelfServiceAction && isActingOnSelf) {
 			if !identity.isAdmin() {
 				if s3a.iam.VerifyActionPermission(r, identity, Action("iam:"+action), "arn:aws:iam:::*", "") != s3err.ErrNone {
 					s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
