@@ -243,6 +243,56 @@ func TestJWTAuthViaQueryParamAndCookie(t *testing.T) {
 	}
 }
 
+func TestJWTTokenSourcePrecedenceQueryOverHeader(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(55)
+	const needleID = uint64(556677)
+	const cookie = uint32(0x99887766)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	otherFID := framework.NewFileID(volumeID, needleID+1, cookie+1)
+	payload := []byte("jwt-precedence-content")
+	client := framework.NewHTTPClient()
+
+	validWriteToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, fid)
+	invalidWriteQueryToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTSigningKey)), 60, otherFID)
+	writeReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(invalidWriteQueryToken), payload)
+	writeReq.Header.Set("Authorization", "Bearer "+string(validWriteToken))
+	writeResp := framework.DoRequest(t, client, writeReq)
+	_ = framework.ReadAllAndClose(t, writeResp)
+	if writeResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query token should take precedence over header token for write, expected 401 got %d", writeResp.StatusCode)
+	}
+
+	// Seed data with valid write token, then exercise read precedence.
+	seedWriteReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, payload)
+	seedWriteReq.Header.Set("Authorization", "Bearer "+string(validWriteToken))
+	seedWriteResp := framework.DoRequest(t, client, seedWriteReq)
+	_ = framework.ReadAllAndClose(t, seedWriteResp)
+	if seedWriteResp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed write expected 201, got %d", seedWriteResp.StatusCode)
+	}
+
+	validReadToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, fid)
+	invalidReadQueryToken := security.GenJwtForVolumeServer(security.SigningKey([]byte(profile.JWTReadKey)), 60, otherFID)
+	readReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid+"?jwt="+string(invalidReadQueryToken))
+	readReq.Header.Set("Authorization", "Bearer "+string(validReadToken))
+	readResp := framework.DoRequest(t, client, readReq)
+	_ = framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query token should take precedence over header token for read, expected 401 got %d", readResp.StatusCode)
+	}
+}
+
 func mustGenExpiredToken(t testing.TB, key []byte, fid string) string {
 	t.Helper()
 	claims := security.SeaweedFileIdClaims{
