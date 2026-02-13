@@ -3,6 +3,7 @@ package volume_server_http_test
 import (
 	"bytes"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
@@ -247,5 +248,40 @@ func TestUnsupportedMethodConnectParity(t *testing.T) {
 	}
 	if string(verifyBody) != "connect-method-check" {
 		t.Fatalf("CONNECT should not mutate data, got %q", string(verifyBody))
+	}
+}
+
+func TestPublicPortHeadReadParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(86)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, 124002, 0x04040404)
+	payload := []byte("public-head-parity-content")
+	client := framework.NewHTTPClient()
+
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	headResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodHead, clusterHarness.VolumePublicURL()+"/"+fid))
+	headBody := framework.ReadAllAndClose(t, headResp)
+	if headResp.StatusCode != http.StatusOK {
+		t.Fatalf("public HEAD expected 200, got %d", headResp.StatusCode)
+	}
+	if got := headResp.Header.Get("Content-Length"); got != strconv.Itoa(len(payload)) {
+		t.Fatalf("public HEAD content-length mismatch: got %q want %d", got, len(payload))
+	}
+	if len(headBody) != 0 {
+		t.Fatalf("public HEAD body should be empty, got %d bytes", len(headBody))
 	}
 }
