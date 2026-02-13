@@ -924,3 +924,10 @@ Update this section during implementation:
 - Profiles covered: P1-derived profile with `ReadMode=redirect` using dual volume servers.
 - Gaps introduced/remaining: redirect branch currently preserves only `collection`; broader query propagation is intentionally untested for parity with current behavior.
 - Commit: `ad287b392`
+
+- Date: 2026-02-12
+- Change: Tightened HTTP admin endpoint header parity checks.
+- APIs covered: `/status` and `/healthz` now assert `Server` header format (`SeaweedFS Volume ...`) in addition to status and payload checks.
+- Profiles covered: P1.
+- Gaps introduced/remaining: none for baseline admin header checks.
+- Commit: `cad34314b`
