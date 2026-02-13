@@ -927,7 +927,7 @@ func (iam *IdentityAccessManagement) IsStaticIdentity(identityName string) bool 
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
-	fmt.Printf("DEBUG: lookupByAccessKey called for %s\n", accessKey)
+
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 
@@ -1272,7 +1272,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 // the specific IAM action (e.g., self-service vs admin operations).
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
-	fmt.Printf("DEBUG: AuthSignatureOnly called for %s %s\n", r.Method, r.URL.Path)
+
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var authType string
