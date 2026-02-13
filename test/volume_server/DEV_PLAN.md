@@ -861,3 +861,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: unsupported-method parity now covers `PATCH`, `TRACE`, `PROPFIND`, and `CONNECT`; additional uncommon verbs can still be sampled as needed.
 - Commit: `2a893d10d`
+
+- Date: 2026-02-12
+- Change: Added explicit CORS `Access-Control-Allow-Headers` assertions for `OPTIONS`.
+- APIs covered: admin/public `OPTIONS` now verify `Access-Control-Allow-Headers: *` in addition to allowed-method matrices.
+- Profiles covered: P2.
+- Gaps introduced/remaining: CORS method/header semantics are now covered for baseline split-port flows.
+- Commit: `6fcb9fa9c`
