@@ -118,7 +118,7 @@ func (t *Topology) IsLeader() bool {
 			return true
 		}
 		if leader, err := t.Leader(); err == nil {
-			if pb.ServerAddress(t.RaftServer.Name()) == leader {
+			if pb.ServerAddress(t.RaftServer.Name()).Equals(leader) {
 				return true
 			}
 		}
@@ -175,6 +175,9 @@ func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 		func() (l pb.ServerAddress, err error) {
 			l, err = t.MaybeLeader()
 			if err == nil && l == "" {
+				if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
+					return pb.ServerAddress(t.RaftServer.Name()), nil
+				}
 				err = leaderNotSelected
 			}
 			return l, err
