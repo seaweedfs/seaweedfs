@@ -46,7 +46,7 @@ const (
 	maxDurationSeconds = int64(43200) // 12 hours
 
 	// Default account ID for federated users
-	defaultAccountId = "111122223333"
+	defaultAccountId = "000000000000"
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
