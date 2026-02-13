@@ -777,3 +777,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: EC-backed positive/error status permutations still require dedicated EC fixture state.
 - Commit: `bf0c609a7`
+
+- Date: 2026-02-12
+- Change: Added HTTP deleted-needle read recovery coverage.
+- APIs covered: `GET` with `readDeleted=true` returning deleted needle content, alongside normal post-delete `404` behavior.
+- Profiles covered: P1.
+- Gaps introduced/remaining: proxy/redirect interactions with `readDeleted` remain unverified.
+- Commit: `2ed9434cf`
