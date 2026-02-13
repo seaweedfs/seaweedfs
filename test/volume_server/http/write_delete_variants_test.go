@@ -65,3 +65,54 @@ func TestWriteUnchangedAndDeleteEdgeVariants(t *testing.T) {
 		t.Fatalf("delete missing needle expected size=0, got %d", payloadMap["size"])
 	}
 }
+
+func TestDeleteTimestampOverrideKeepsReadDeletedLastModifiedParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(88)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 999002, 0xABCD1234)
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("delete-ts-override"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	beforeDeleteResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, beforeDeleteResp)
+	if beforeDeleteResp.StatusCode != http.StatusOK {
+		t.Fatalf("pre-delete read expected 200, got %d", beforeDeleteResp.StatusCode)
+	}
+	lastModifiedBeforeDelete := beforeDeleteResp.Header.Get("Last-Modified")
+	if lastModifiedBeforeDelete == "" {
+		t.Fatalf("expected Last-Modified before delete")
+	}
+
+	deleteReq := mustNewRequest(t, http.MethodDelete, clusterHarness.VolumeAdminURL()+"/"+fid+"?ts=1700000000")
+	deleteResp := framework.DoRequest(t, client, deleteReq)
+	_ = framework.ReadAllAndClose(t, deleteResp)
+	if deleteResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete with ts override expected 202, got %d", deleteResp.StatusCode)
+	}
+
+	readDeletedResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid+"?readDeleted=true"))
+	_ = framework.ReadAllAndClose(t, readDeletedResp)
+	if readDeletedResp.StatusCode != http.StatusOK {
+		t.Fatalf("readDeleted after ts override expected 200, got %d", readDeletedResp.StatusCode)
+	}
+	lastModified := readDeletedResp.Header.Get("Last-Modified")
+	if lastModified == "" {
+		t.Fatalf("expected Last-Modified header on readDeleted response")
+	}
+	if lastModified != lastModifiedBeforeDelete {
+		t.Fatalf("expected readDeleted Last-Modified parity with pre-delete header, got %q want %q", lastModified, lastModifiedBeforeDelete)
+	}
+}
