@@ -1078,3 +1078,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: write/delete failure-injection and request-cancel (`499`) paths remain pending due transport/fault observability constraints.
 - Commit: `e17604c57`
+
+- Date: 2026-02-13
+- Change: Added dual-node gRPC tail receiver success-path coverage.
+- APIs covered: `VolumeTailReceiver` end-to-end replication from source server stream into destination volume, with post-tail HTTP payload parity verification.
+- Profiles covered: P4-derived dual-volume topology.
+- Gaps introduced/remaining: sender large-needle chunking specifics and transport-interruption branches remain pending.
+- Commit: `3989bc6e5`
