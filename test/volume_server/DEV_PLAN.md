@@ -889,3 +889,10 @@ Update this section during implementation:
 - Profiles covered: custom P1-derived profiles with `ReadMode` overrides.
 - Gaps introduced/remaining: explicit proxied-loop edge behavior remains pending dedicated setup.
 - Commit: `0164a383d`
+
+- Date: 2026-02-12
+- Change: Added filer-enabled harness and positive gRPC `Ping` coverage for filer targets.
+- APIs covered: `Ping` success path for `target_type=filer` with non-zero remote timestamp and valid timing envelope.
+- Profiles covered: P1 (single volume + filer auxiliary process).
+- Gaps introduced/remaining: no additional ping target-type gaps remain in current harness scope.
+- Commits: `5f09d86a8`, `2fc1dde3f`
