@@ -134,6 +134,112 @@ func TestReadModeLocalMissingLocalVolumeReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestReadDeletedProxyModeOnMissingLocalVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P1()
+	profile.ReadMode = "proxy"
+	clusterHarness := framework.StartDualVolumeCluster(t, profile)
+
+	conn0, grpc0 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer conn0.Close()
+
+	const volumeID = uint32(104)
+	framework.AllocateVolume(t, grpc0, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 120004, 0x0102CAFE)
+	payload := []byte("proxy-readDeleted-missing-local-content")
+
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	deleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, clusterHarness.VolumeAdminURL(0)+"/"+fid))
+	_ = framework.ReadAllAndClose(t, deleteResp)
+	if deleteResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete expected 202, got %d", deleteResp.StatusCode)
+	}
+
+	readURL := clusterHarness.VolumeAdminURL(1) + "/" + fid + "?readDeleted=true"
+	var proxiedBody []byte
+	if !waitForHTTPStatus(t, client, readURL, http.StatusOK, 10*time.Second, func(resp *http.Response) {
+		proxiedBody = framework.ReadAllAndClose(t, resp)
+	}) {
+		t.Fatalf("proxy readDeleted path did not return 200 from non-owning volume server within deadline")
+	}
+	if string(proxiedBody) != string(payload) {
+		t.Fatalf("proxy readDeleted body mismatch: got %q want %q", string(proxiedBody), string(payload))
+	}
+}
+
+func TestReadDeletedRedirectModeDropsQueryParameterParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P1()
+	profile.ReadMode = "redirect"
+	clusterHarness := framework.StartDualVolumeCluster(t, profile)
+
+	conn0, grpc0 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer conn0.Close()
+
+	const volumeID = uint32(105)
+	framework.AllocateVolume(t, grpc0, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 120005, 0x0102FACE)
+	payload := []byte("redirect-readDeleted-query-drop-parity")
+
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	deleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, clusterHarness.VolumeAdminURL(0)+"/"+fid))
+	_ = framework.ReadAllAndClose(t, deleteResp)
+	if deleteResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete expected 202, got %d", deleteResp.StatusCode)
+	}
+
+	noRedirectClient := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	redirectURL := clusterHarness.VolumeAdminURL(1) + "/" + fid + "?readDeleted=true"
+	var location string
+	if !waitForHTTPStatus(t, noRedirectClient, redirectURL, http.StatusMovedPermanently, 10*time.Second, func(resp *http.Response) {
+		location = resp.Header.Get("Location")
+		_ = framework.ReadAllAndClose(t, resp)
+	}) {
+		t.Fatalf("redirect readDeleted path did not return 301 from non-owning volume server within deadline")
+	}
+	if location == "" {
+		t.Fatalf("redirect readDeleted response missing Location header")
+	}
+	if !strings.Contains(location, "proxied=true") {
+		t.Fatalf("redirect readDeleted Location should include proxied=true, got %q", location)
+	}
+	if strings.Contains(location, "readDeleted=true") {
+		t.Fatalf("redirect readDeleted Location should reflect current query-drop behavior, got %q", location)
+	}
+
+	followResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, location))
+	_ = framework.ReadAllAndClose(t, followResp)
+	if followResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("redirect-follow without readDeleted query expected 404 for deleted needle, got %d", followResp.StatusCode)
+	}
+}
+
 func waitForHTTPStatus(t testing.TB, client *http.Client, url string, expectedStatus int, timeout time.Duration, onMatch func(resp *http.Response)) bool {
 	t.Helper()
 
