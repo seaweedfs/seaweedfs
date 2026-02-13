@@ -67,6 +67,15 @@ func TestStateAndStatusRPCs(t *testing.T) {
 	if len(statusResp.GetDiskStatuses()) == 0 {
 		t.Fatalf("VolumeServerStatus returned no disk statuses")
 	}
+	if statusResp.GetState() == nil {
+		t.Fatalf("VolumeServerStatus returned nil state")
+	}
+	if statusResp.GetMemoryStatus() == nil {
+		t.Fatalf("VolumeServerStatus returned nil memory status")
+	}
+	if statusResp.GetMemoryStatus().GetGoroutines() <= 0 {
+		t.Fatalf("VolumeServerStatus memory status should report goroutines, got %d", statusResp.GetMemoryStatus().GetGoroutines())
+	}
 
 	pingResp, err := client.Ping(ctx, &volume_server_pb.PingRequest{})
 	if err != nil {
