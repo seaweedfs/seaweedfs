@@ -240,6 +240,67 @@ func TestReadDeletedRedirectModeDropsQueryParameterParity(t *testing.T) {
 	}
 }
 
+func TestReadModeRedirectPreservesCollectionQuery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P1()
+	profile.ReadMode = "redirect"
+	clusterHarness := framework.StartDualVolumeCluster(t, profile)
+
+	conn0, grpc0 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer conn0.Close()
+
+	const volumeID = uint32(109)
+	const collection = "redirect-collection"
+	framework.AllocateVolume(t, grpc0, volumeID, collection)
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 120006, 0x0102F00D)
+	payload := []byte("redirect-collection-preserve-content")
+
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(0), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	noRedirectClient := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	redirectURL := clusterHarness.VolumeAdminURL(1) + "/" + fid + "?collection=" + collection
+	var location string
+	if !waitForHTTPStatus(t, noRedirectClient, redirectURL, http.StatusMovedPermanently, 10*time.Second, func(resp *http.Response) {
+		location = resp.Header.Get("Location")
+		_ = framework.ReadAllAndClose(t, resp)
+	}) {
+		t.Fatalf("redirect collection path did not return 301 from non-owning volume server within deadline")
+	}
+	if location == "" {
+		t.Fatalf("redirect collection response missing Location header")
+	}
+	if !strings.Contains(location, "proxied=true") {
+		t.Fatalf("redirect collection Location should include proxied=true, got %q", location)
+	}
+	if !strings.Contains(location, "collection="+collection) {
+		t.Fatalf("redirect collection Location should preserve collection query, got %q", location)
+	}
+
+	followResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, location))
+	followBody := framework.ReadAllAndClose(t, followResp)
+	if followResp.StatusCode != http.StatusOK {
+		t.Fatalf("redirect-follow expected 200, got %d", followResp.StatusCode)
+	}
+	if string(followBody) != string(payload) {
+		t.Fatalf("redirect-follow body mismatch: got %q want %q", string(followBody), string(payload))
+	}
+}
+
 func waitForHTTPStatus(t testing.TB, client *http.Client, url string, expectedStatus int, timeout time.Duration, onMatch func(resp *http.Response)) bool {
 	t.Helper()
 
