@@ -251,6 +251,58 @@ func TestPolicyEnforcement(t *testing.T) {
 	}
 }
 
+// TestSessionPolicyBoundary verifies that inline session policies restrict permissions.
+func TestSessionPolicyBoundary(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	stsService := iamManager.GetSTSService()
+	require.NotNil(t, stsService)
+
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::test-bucket/allowed/*"]}]}`
+
+	sessionId, err := sts.GenerateSessionId()
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(time.Hour)
+	principal := "arn:aws:sts::000000000000:assumed-role/S3ReadOnlyRole/policy-session"
+
+	claims := sts.NewSTSSessionClaims(sessionId, stsService.Config.Issuer, expiresAt).
+		WithSessionName("policy-session").
+		WithRoleInfo("arn:aws:iam::role/S3ReadOnlyRole", principal, principal).
+		WithSessionPolicy(sessionPolicy)
+
+	sessionToken, err := stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/allowed/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow GetObject within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/other/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny GetObject outside allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:ListBucket",
+		Resource:     "arn:aws:s3:::test-bucket",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny ListBucket when not explicitly allowed")
+}
+
 // TestSessionExpiration tests session expiration and cleanup
 func TestSessionExpiration(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)

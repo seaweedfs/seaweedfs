@@ -237,6 +237,9 @@ type SessionInfo struct {
 	// Policies are the policies associated with this session
 	Policies []string `json:"policies"`
 
+	// SessionPolicy is the inline session policy JSON (optional)
+	SessionPolicy string `json:"sessionPolicy,omitempty"`
+
 	// RequestContext contains additional request context for policy evaluation
 	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
 

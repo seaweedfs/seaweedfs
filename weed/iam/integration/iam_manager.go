@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
@@ -312,8 +313,10 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	// Validate session token if present (skip for OIDC tokens which are already validated,
 	// and skip for empty tokens which represent static access keys)
+	var sessionInfo *sts.SessionInfo
 	if request.SessionToken != "" && !isOIDCToken(request.SessionToken) {
-		_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
+		var err error
+		sessionInfo, err = m.stsService.ValidateSessionToken(ctx, request.SessionToken)
 		if err != nil {
 			return false, fmt.Errorf("invalid session: %w", err)
 		}
@@ -364,58 +367,58 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		}
 	}
 
-	// If explicit policy names are provided (e.g. from user identity), evaluate them directly
-	if len(request.PolicyNames) > 0 {
-		policies := request.PolicyNames
-		if bucketPolicyName != "" {
-			// Enforce an upper bound on the number of policies to avoid excessive allocations
-			if len(policies) >= maxPoliciesForEvaluation {
-				return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
-			}
-			// Create a new slice to avoid modifying the request and append the bucket policy
-			copied := make([]string, len(policies))
-			copy(copied, policies)
-			policies = append(copied, bucketPolicyName)
+	policies := request.PolicyNames
+	if len(policies) == 0 {
+		// Extract role name from principal ARN
+		roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
+		if roleName == "" {
+			return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
 		}
 
-		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
+		// Get role definition
+		roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 		if err != nil {
-			return false, fmt.Errorf("policy evaluation failed: %w", err)
+			return false, fmt.Errorf("role not found: %s", roleName)
 		}
-		return result.Effect == policy.EffectAllow, nil
+
+		policies = roleDef.AttachedPolicies
 	}
 
-	// Extract role name from principal ARN
-	roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
-	if roleName == "" {
-		return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
-	}
-
-	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-	if err != nil {
-		return false, fmt.Errorf("role not found: %s", roleName)
-	}
-
-	// Evaluate policies attached to the role
-	policies := roleDef.AttachedPolicies
 	if bucketPolicyName != "" {
 		// Enforce an upper bound on the number of policies to avoid excessive allocations
 		if len(policies) >= maxPoliciesForEvaluation {
 			return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
 		}
-		// Create a new slice to avoid modifying the role definition and append the bucket policy
+		// Create a new slice to avoid modifying the original and append the bucket policy
 		copied := make([]string, len(policies))
 		copy(copied, policies)
 		policies = append(copied, bucketPolicyName)
 	}
 
-	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
+	baseResult, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
 	if err != nil {
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}
+	baseAllowed := baseResult.Effect == policy.EffectAllow
 
-	return result.Effect == policy.EffectAllow, nil
+	if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
+		var sessionPolicy policy.PolicyDocument
+		if err := json.Unmarshal([]byte(sessionInfo.SessionPolicy), &sessionPolicy); err != nil {
+			return false, fmt.Errorf("invalid session policy: %w", err)
+		}
+		if err := policy.ValidatePolicyDocument(&sessionPolicy); err != nil {
+			return false, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionResult, err := m.policyEngine.EvaluatePolicyDocument(ctx, evalCtx, "session-policy", &sessionPolicy, policy.EffectDeny)
+		if err != nil {
+			return false, fmt.Errorf("session policy evaluation failed: %w", err)
+		}
+		if sessionResult.Effect != policy.EffectAllow {
+			return false, nil
+		}
+	}
+
+	return baseAllowed, nil
 }
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
@@ -643,7 +646,28 @@ func isOIDCToken(token string) bool {
 	}
 
 	// JWT tokens typically start with "eyJ" (base64 encoded JSON starting with "{")
-	return strings.HasPrefix(token, "eyJ")
+	if !strings.HasPrefix(token, "eyJ") {
+		return false
+	}
+
+	parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return true
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return true
+	}
+
+	if typ, ok := claims["typ"].(string); ok && typ == sts.TokenTypeSession {
+		return false
+	}
+	if typ, ok := claims[sts.JWTClaimTokenType].(string); ok && typ == sts.TokenTypeSession {
+		return false
+	}
+
+	return true
 }
 
 // TrustPolicyValidator interface implementation
