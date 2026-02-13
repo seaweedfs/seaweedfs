@@ -57,6 +57,44 @@ func TestVolumeNeedleStatusForUploadedFile(t *testing.T) {
 	}
 }
 
+func TestVolumeNeedleStatusMissingVolumeAndNeedle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(25)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: 99925,
+		NeedleId: 1,
+	})
+	if err == nil {
+		t.Fatalf("VolumeNeedleStatus should fail for missing volume")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "volume not found") {
+		t.Fatalf("VolumeNeedleStatus missing-volume error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: volumeID,
+		NeedleId: 123456789,
+	})
+	if err == nil {
+		t.Fatalf("VolumeNeedleStatus should fail for missing needle")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+		t.Fatalf("VolumeNeedleStatus missing-needle error mismatch: %v", err)
+	}
+}
+
 func mustNewRequest(t testing.TB, method, url string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
