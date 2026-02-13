@@ -328,6 +328,141 @@ jobs:
           path: test/s3tables/catalog_risingwave/test-output.log
           retention-days: 3
 
+  sts-integration-tests:
+    name: STS Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-pull Python image
+        run: docker pull python:3
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run STS Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/sts_integration
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting STS Integration Tests ==="
+          
+          # Run STS integration tests
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "STS integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/sts_integration
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+          
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: sts-integration-test-logs
+          path: test/s3tables/sts_integration/test-output.log
+          retention-days: 3
+
+  lakekeeper-integration-tests:
+    name: Lakekeeper Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Pre-pull Python image
+        run: docker pull python:3
+        
+      - name: Pre-pull LocalStack image (if needed)
+        run: docker pull localstack/localstack:latest || true
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Lakekeeper Integration Tests
+        timeout-minutes: 25
+        working-directory: test/s3tables/lakekeeper
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Lakekeeper Integration Tests ==="
+          
+          # Run Lakekeeper integration tests
+          go test -v -timeout 20m . 2>&1 | tee test-output.log || {
+            echo "Lakekeeper integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/lakekeeper
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+          
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: lakekeeper-integration-test-logs
+          path: test/s3tables/lakekeeper/test-output.log
+          retention-days: 3
+
   s3-tables-build-verification:
     name: S3 Tables Build Verification
     runs-on: ubuntu-22.04

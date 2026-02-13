@@ -100,6 +100,9 @@ type Account struct {
 	Id string
 }
 
+// Default account ID for all automated SeaweedFS accounts and fallback
+const defaultAccountID = "000000000000"
+
 // Predefined Accounts
 var (
 	// AccountAdmin is used as the default account for IAM-Credentials access without Account configured
@@ -809,7 +812,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
-	iam.accessKeyIdent = accessKeyIdent
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1010,11 +1012,11 @@ func generatePrincipalArn(identityName string) string {
 	// Handle special cases
 	switch identityName {
 	case AccountAnonymous.Id:
-		return "arn:aws:iam::user/anonymous"
+		return "*" // Use universal wildcard for anonymous allowed by bucket policy
 	case AccountAdmin.Id:
-		return "arn:aws:iam::user/admin"
+		return fmt.Sprintf("arn:aws:iam::%s:user/admin", defaultAccountID)
 	default:
-		return fmt.Sprintf("arn:aws:iam::user/%s", identityName)
+		return fmt.Sprintf("arn:aws:iam::%s:user/%s", defaultAccountID, identityName)
 	}
 }
 
@@ -1271,6 +1273,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 // the specific IAM action (e.g., self-service vs admin operations).
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
+
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var authType string
@@ -1405,7 +1408,12 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 		return "*" // Anonymous
 	}
 
-	// Check if this is the anonymous user identity (authenticated as anonymous)
+	// Priority 1: Use principal ARN if explicitly set (from STS JWT or IAM user)
+	if identity.PrincipalArn != "" {
+		return identity.PrincipalArn
+	}
+
+	// Priority 2: Check if this is the anonymous user identity (authenticated as anonymous)
 	// S3 policies expect Principal: "*" for anonymous access
 	if identity.Name == s3_constants.AccountAnonymousId ||
 		(identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {
@@ -1414,9 +1422,9 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
-	accountId := identity.Account.Id
-	if accountId == "" {
-		accountId = "000000000000" // Default account ID
+	accountID := defaultAccountID // Default account ID
+	if identity.Account != nil && identity.Account.Id != "" {
+		accountID = identity.Account.Id
 	}
 
 	userName := identity.Name
@@ -1424,7 +1432,7 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 		userName = "unknown"
 	}
 
-	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, userName)
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, userName)
 }
 
 // GetCredentialManager returns the credential manager instance
@@ -1434,7 +1442,6 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
-	glog.V(1).Infof("IAM: reloading configuration from credential manager")
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
 
 	s3ApiConfiguration, err := iam.credentialManager.LoadConfiguration(context.Background())
