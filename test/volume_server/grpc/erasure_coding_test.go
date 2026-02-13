@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func TestEcMaintenanceModeRejections(t *testing.T) {
@@ -255,5 +256,106 @@ func TestEcGenerateMountInfoUnmountLifecycle(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("VolumeEcShardsInfo after unmount expected not-found error, got: %v", err)
+	}
+}
+
+func TestEcShardReadAndBlobDeleteLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(116)
+	const fileKey = uint64(990002)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, fileKey, 0x2233CCDD)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-shard-read-delete-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount failed: %v", err)
+	}
+
+	readStream, err := grpcClient.VolumeEcShardRead(ctx, &volume_server_pb.VolumeEcShardReadRequest{
+		VolumeId: volumeID,
+		ShardId:  0,
+		Offset:   0,
+		Size:     1,
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardRead start failed: %v", err)
+	}
+	firstChunk, err := readStream.Recv()
+	if err != nil {
+		t.Fatalf("VolumeEcShardRead recv failed: %v", err)
+	}
+	if len(firstChunk.GetData()) == 0 {
+		t.Fatalf("VolumeEcShardRead expected non-empty data chunk before deletion")
+	}
+
+	_, err = grpcClient.VolumeEcBlobDelete(ctx, &volume_server_pb.VolumeEcBlobDeleteRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		FileKey:    fileKey,
+		Version:    uint32(needle.GetCurrentVersion()),
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcBlobDelete first delete failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcBlobDelete(ctx, &volume_server_pb.VolumeEcBlobDeleteRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		FileKey:    fileKey,
+		Version:    uint32(needle.GetCurrentVersion()),
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcBlobDelete second delete should be idempotent success, got: %v", err)
+	}
+
+	deletedStream, err := grpcClient.VolumeEcShardRead(ctx, &volume_server_pb.VolumeEcShardReadRequest{
+		VolumeId: volumeID,
+		ShardId:  0,
+		FileKey:  fileKey,
+		Offset:   0,
+		Size:     1,
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardRead deleted-check start failed: %v", err)
+	}
+	deletedMsg, err := deletedStream.Recv()
+	if err != nil {
+		t.Fatalf("VolumeEcShardRead deleted-check recv failed: %v", err)
+	}
+	if !deletedMsg.GetIsDeleted() {
+		t.Fatalf("VolumeEcShardRead expected IsDeleted=true after blob delete")
+	}
+	_, err = deletedStream.Recv()
+	if err != io.EOF {
+		t.Fatalf("VolumeEcShardRead deleted-check expected EOF after deleted marker, got: %v", err)
 	}
 }
