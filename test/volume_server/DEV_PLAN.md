@@ -973,3 +973,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: internal read-failure (`500`) branch remains fault-injection dependent.
 - Commit: `8fc192827`
+
+- Date: 2026-02-12
+- Change: Added throttling timeout-recovery coverage to validate in-flight counter release behavior.
+- APIs covered: upload/download timeout (`429`) scenarios followed by successful recovery requests after pressure release.
+- Profiles covered: P8.
+- Gaps introduced/remaining: explicit cancellation (`499`) path remains pending due client-side transport observability limits.
+- Commit: `3214972fa`
