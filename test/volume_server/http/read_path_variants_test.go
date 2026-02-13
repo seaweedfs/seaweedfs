@@ -94,3 +94,42 @@ func TestMalformedVidFidPathReturnsBadRequest(t *testing.T) {
 		t.Fatalf("malformed /{vid}/{fid} expected 400, got %d", resp.StatusCode)
 	}
 }
+
+func TestReadWrongCookieReturnsNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(95)
+	const needleID = uint64(771235)
+	const cookie = uint32(0xBEEFCACF)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("read-cookie-mismatch-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	wrongCookieFid := framework.NewFileID(volumeID, needleID, cookie+1)
+	getResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), wrongCookieFid)
+	_ = framework.ReadAllAndClose(t, getResp)
+	if getResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET with wrong cookie expected 404, got %d", getResp.StatusCode)
+	}
+
+	headResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+wrongCookieFid))
+	headBody := framework.ReadAllAndClose(t, headResp)
+	if headResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("HEAD with wrong cookie expected 404, got %d", headResp.StatusCode)
+	}
+	if len(headBody) != 0 {
+		t.Fatalf("HEAD wrong-cookie response body should be empty, got %d bytes", len(headBody))
+	}
+}
