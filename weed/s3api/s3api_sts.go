@@ -44,9 +44,6 @@ const (
 const (
 	minDurationSeconds = int64(900)   // 15 minutes
 	maxDurationSeconds = int64(43200) // 12 hours
-
-	// Default account ID for federated users
-	defaultAccountId = "111122223333"
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
@@ -86,6 +83,13 @@ func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *
 		stsService: stsService,
 		iam:        iam,
 	}
+}
+
+func (h *STSHandlers) getAccountID() string {
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
+		return h.stsService.Config.AccountId
+	}
+	return defaultAccountID
 }
 
 // HandleSTSRequest is the main entry point for STS requests
@@ -287,7 +291,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, identity.PrincipalArn, durationSeconds, nil)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, nil)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -396,14 +400,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
 		ldapUsername, identity.Groups)
 
-	// Verify that the identity is allowed to assume the role
-	// We create a temporary identity to represent the LDAP user for permission checking
-	// The checking logic will verify if the role's trust policy allows this principal
-	// Use configured account ID or default to "111122223333" for federated users
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
+	accountID := h.getAccountID()
 
 	ldapUserIdentity := &Identity{
 		Name: identity.UserID,
@@ -412,7 +409,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			EmailAddress: identity.Email,
 			Id:           identity.UserID,
 		},
-		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, identity.UserID),
+		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.UserID),
 	}
 
 	// Verify that the identity is allowed to assume the role by checking the Trust Policy
@@ -428,7 +425,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, ldapUserIdentity.PrincipalArn, durationSeconds, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -447,7 +444,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalArn string,
+func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	durationSeconds *int64, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration
@@ -470,10 +467,17 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		roleName = roleArn // Fallback to full ARN if extraction fails
 	}
 
+	accountID := h.getAccountID()
+
+	// Construct AssumedRoleUser ARN - this will be used as the principal for the vended token
+	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountID, roleName, roleSessionName)
+
 	// Create session claims with role information
+	// SECURITY: Use the assumedRoleArn as the principal in the token.
+	// This ensures that subsequent requests using this token are correctly identified as the assumed role.
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
-		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), principalArn)
+		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
 
 	// Apply custom claims if provided (e.g., LDAP identity)
 	if modifyClaims != nil {
@@ -495,12 +499,6 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 	accessKeyId := stsCredsDet.AccessKeyId
 	secretAccessKey := stsCredsDet.SecretAccessKey
 
-	// Get account ID from STS config or use default
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
-
 	stsCreds := STSCredentials{
 		AccessKeyId:     accessKeyId,
 		SecretAccessKey: secretAccessKey,
@@ -510,7 +508,7 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 
 	assumedUser := &AssumedRoleUser{
 		AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-		Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
+		Arn:           assumedRoleArn,
 	}
 
 	return stsCreds, assumedUser, nil
