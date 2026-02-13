@@ -133,3 +133,59 @@ func TestReadWrongCookieReturnsNotFound(t *testing.T) {
 		t.Fatalf("HEAD wrong-cookie response body should be empty, got %d bytes", len(headBody))
 	}
 }
+
+func TestConditionalHeaderPrecedenceAndInvalidIfModifiedSince(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(99)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 772002, 0x2B3C4D5E)
+	payload := []byte("conditional-precedence-content")
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	baselineResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, baselineResp)
+	if baselineResp.StatusCode != http.StatusOK {
+		t.Fatalf("baseline read expected 200, got %d", baselineResp.StatusCode)
+	}
+	lastModified := baselineResp.Header.Get("Last-Modified")
+	if lastModified == "" {
+		t.Fatalf("baseline read expected Last-Modified header")
+	}
+
+	precedenceReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	precedenceReq.Header.Set("If-Modified-Since", lastModified)
+	precedenceReq.Header.Set("If-None-Match", "\"definitely-different-etag\"")
+	precedenceResp := framework.DoRequest(t, client, precedenceReq)
+	precedenceBody := framework.ReadAllAndClose(t, precedenceResp)
+	if precedenceResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("conditional precedence expected 304, got %d", precedenceResp.StatusCode)
+	}
+	if len(precedenceBody) != 0 {
+		t.Fatalf("conditional precedence expected empty body, got %d bytes", len(precedenceBody))
+	}
+
+	invalidIMSReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	invalidIMSReq.Header.Set("If-Modified-Since", "not-a-valid-http-date")
+	invalidIMSReq.Header.Set("If-None-Match", "\"definitely-different-etag\"")
+	invalidIMSResp := framework.DoRequest(t, client, invalidIMSReq)
+	invalidIMSBody := framework.ReadAllAndClose(t, invalidIMSResp)
+	if invalidIMSResp.StatusCode != http.StatusOK {
+		t.Fatalf("invalid If-Modified-Since with mismatched etag expected 200, got %d", invalidIMSResp.StatusCode)
+	}
+	if string(invalidIMSBody) != string(payload) {
+		t.Fatalf("invalid If-Modified-Since fallback body mismatch: got %q want %q", string(invalidIMSBody), string(payload))
+	}
+}
