@@ -931,3 +931,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: none for baseline admin header checks.
 - Commit: `cad34314b`
+
+- Date: 2026-02-12
+- Change: Expanded admin middleware parity checks for request-id propagation.
+- APIs covered: `/healthz` now explicitly verifies request-id echo behavior via `x-amz-request-id` response header.
+- Profiles covered: P1.
+- Gaps introduced/remaining: none for request-id propagation on covered admin endpoints.
+- Commit: `e0268a5b7`
