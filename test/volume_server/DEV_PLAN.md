@@ -910,3 +910,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: cancellation (`499`) path remains pending due client-transport observability constraints.
 - Commit: `2cd9a9c6f`
+
+- Date: 2026-02-12
+- Change: Added gRPC `VolumeServerLeave` idempotence coverage.
+- APIs covered: repeated `VolumeServerLeave` calls (already-stopped heartbeat path) with persistent `healthz=503` verification.
+- Profiles covered: P1.
+- Gaps introduced/remaining: none for leave semantics in current harness.
+- Commit: `0fd666916`
