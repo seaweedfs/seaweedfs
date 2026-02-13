@@ -89,6 +89,7 @@ func TestSTSSessionClaimsToSessionInfoPreservesAllFields(t *testing.T) {
 	expiresAt := time.Now().Add(2 * time.Hour)
 
 	policies := []string{"policy1", "policy2"}
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::bucket/*"]}]}`
 	requestContext := map[string]interface{}{
 		"sourceIp":  "192.168.1.1",
 		"userAgent": "test-agent",
@@ -99,6 +100,7 @@ func TestSTSSessionClaimsToSessionInfoPreservesAllFields(t *testing.T) {
 		WithRoleInfo("role-arn", "assumed-role", "principal").
 		WithIdentityProvider("provider", "external-id", "issuer").
 		WithPolicies(policies).
+		WithSessionPolicy(sessionPolicy).
 		WithRequestContext(requestContext).
 		WithMaxDuration(2 * time.Hour)
 
@@ -114,6 +116,7 @@ func TestSTSSessionClaimsToSessionInfoPreservesAllFields(t *testing.T) {
 	assert.Equal(t, "external-id", sessionInfo.ExternalUserId)
 	assert.Equal(t, "issuer", sessionInfo.ProviderIssuer)
 	assert.Equal(t, policies, sessionInfo.Policies)
+	assert.Equal(t, sessionPolicy, sessionInfo.SessionPolicy)
 	assert.Equal(t, requestContext, sessionInfo.RequestContext)
 	assert.WithinDuration(t, expiresAt, sessionInfo.ExpiresAt, 1*time.Second)
 }

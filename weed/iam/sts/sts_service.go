@@ -161,6 +161,9 @@ type AssumeRoleWithCredentialsRequest struct {
 
 	// DurationSeconds is the duration of the role session (optional)
 	DurationSeconds *int64 `json:"DurationSeconds,omitempty"`
+
+	// Policy is an optional session policy (optional)
+	Policy *string `json:"Policy,omitempty"`
 }
 
 // AssumeRoleResponse represents the response from assume role operations
@@ -236,6 +239,9 @@ type SessionInfo struct {
 
 	// Policies are the policies associated with this session
 	Policies []string `json:"policies"`
+
+	// SessionPolicy is the inline session policy JSON (optional)
+	SessionPolicy string `json:"sessionPolicy,omitempty"`
 
 	// RequestContext contains additional request context for policy evaluation
 	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
@@ -418,9 +424,13 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
-	// Check for unsupported session policy
+	sessionPolicy := ""
 	if request.Policy != nil {
-		return nil, fmt.Errorf("session policies are not currently supported - Policy parameter must be omitted")
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
 	}
 
 	// 1. Validate the web identity token with appropriate provider
@@ -485,6 +495,9 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
 		WithMaxDuration(sessionDuration).
 		WithRequestContext(requestContext)
+	if sessionPolicy != "" {
+		sessionClaims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
@@ -515,6 +528,15 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	// Validate request parameters
 	if err := s.validateAssumeRoleWithCredentialsRequest(request); err != nil {
 		return nil, fmt.Errorf("invalid request: %w", err)
+	}
+
+	sessionPolicy := ""
+	if request.Policy != nil {
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
 	}
 
 	// 1. Get the specified provider
@@ -565,6 +587,9 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
 		WithMaxDuration(sessionDuration)
+	if sessionPolicy != "" {
+		sessionClaims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)

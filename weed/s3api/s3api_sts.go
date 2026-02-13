@@ -165,12 +165,25 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
+	var sessionPolicyPtr *string
+	if sessionPolicyJSON != "" {
+		sessionPolicyPtr = &sessionPolicyJSON
+	}
+
 	// Build request for STS service
 	request := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          roleArn,
 		WebIdentityToken: webIdentityToken,
 		RoleSessionName:  roleSessionName,
 		DurationSeconds:  durationSeconds,
+		Policy:           sessionPolicyPtr,
 	}
 
 	// Call STS service
@@ -216,6 +229,8 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 
 // handleAssumeRole handles the AssumeRole API action
 // This requires AWS Signature V4 authentication
+// Inline session policies (Policy parameter) are supported for AssumeRole,
+// AssumeRoleWithWebIdentity, and AssumeRoleWithLDAPIdentity.
 func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters from form
 	roleArn := r.FormValue("RoleArn")
@@ -290,8 +305,16 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse optional inline session policy for downscoping
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, nil)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, nil)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -420,12 +443,19 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
 	// Generate common STS components with LDAP-specific claims
 	modifyClaims := func(claims *sts.STSSessionClaims) {
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -445,7 +475,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 
 // prepareSTSCredentials extracts common shared logic for credential generation
 func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
-	durationSeconds *int64, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
+	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration
 	duration := time.Hour // Default 1 hour
@@ -478,6 +508,10 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
 		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+
+	if sessionPolicy != "" {
+		claims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Apply custom claims if provided (e.g., LDAP identity)
 	if modifyClaims != nil {
@@ -582,13 +616,14 @@ type LDAPIdentityResult struct {
 type STSErrorCode string
 
 const (
-	STSErrAccessDenied          STSErrorCode = "AccessDenied"
-	STSErrExpiredToken          STSErrorCode = "ExpiredTokenException"
-	STSErrInvalidAction         STSErrorCode = "InvalidAction"
-	STSErrInvalidParameterValue STSErrorCode = "InvalidParameterValue"
-	STSErrMissingParameter      STSErrorCode = "MissingParameter"
-	STSErrSTSNotReady           STSErrorCode = "ServiceUnavailable"
-	STSErrInternalError         STSErrorCode = "InternalError"
+	STSErrAccessDenied            STSErrorCode = "AccessDenied"
+	STSErrExpiredToken            STSErrorCode = "ExpiredTokenException"
+	STSErrInvalidAction           STSErrorCode = "InvalidAction"
+	STSErrInvalidParameterValue   STSErrorCode = "InvalidParameterValue"
+	STSErrMalformedPolicyDocument STSErrorCode = "MalformedPolicyDocument"
+	STSErrMissingParameter        STSErrorCode = "MissingParameter"
+	STSErrSTSNotReady             STSErrorCode = "ServiceUnavailable"
+	STSErrInternalError           STSErrorCode = "InternalError"
 )
 
 // stsErrorResponses maps error codes to HTTP status and messages
@@ -596,13 +631,14 @@ var stsErrorResponses = map[STSErrorCode]struct {
 	HTTPStatusCode int
 	Message        string
 }{
-	STSErrAccessDenied:          {http.StatusForbidden, "Access Denied"},
-	STSErrExpiredToken:          {http.StatusBadRequest, "Token has expired"},
-	STSErrInvalidAction:         {http.StatusBadRequest, "Invalid action"},
-	STSErrInvalidParameterValue: {http.StatusBadRequest, "Invalid parameter value"},
-	STSErrMissingParameter:      {http.StatusBadRequest, "Missing required parameter"},
-	STSErrSTSNotReady:           {http.StatusServiceUnavailable, "STS service not ready"},
-	STSErrInternalError:         {http.StatusInternalServerError, "Internal error"},
+	STSErrAccessDenied:            {http.StatusForbidden, "Access Denied"},
+	STSErrExpiredToken:            {http.StatusBadRequest, "Token has expired"},
+	STSErrInvalidAction:           {http.StatusBadRequest, "Invalid action"},
+	STSErrInvalidParameterValue:   {http.StatusBadRequest, "Invalid parameter value"},
+	STSErrMalformedPolicyDocument: {http.StatusBadRequest, "Malformed policy document"},
+	STSErrMissingParameter:        {http.StatusBadRequest, "Missing required parameter"},
+	STSErrSTSNotReady:             {http.StatusServiceUnavailable, "STS service not ready"},
+	STSErrInternalError:           {http.StatusInternalServerError, "Internal error"},
 }
 
 // STSErrorResponse is the XML error response format

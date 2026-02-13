@@ -189,6 +189,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
+			if iam.credentialManager != nil {
+				iamManager.SetUserStore(iam.credentialManager)
+			}
 			glog.V(1).Infof("IAM Manager loaded, creating integration")
 			// Create S3 IAM integration with the loaded IAM manager
 			// filerAddress not actually used, just for backward compatibility
