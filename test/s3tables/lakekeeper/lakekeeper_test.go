@@ -184,6 +184,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.iam.config", iamConfigPath,
 		"-s3.iam.readOnly=false",
 		"-ip", env.bindIP,
+		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
 	)
 	cmd.Dir = env.dataDir
