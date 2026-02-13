@@ -117,7 +117,7 @@ func (t *Topology) IsLeader() bool {
 		if t.RaftServer.State() == raft.Leader {
 			return true
 		}
-		if leader, err := t.Leader(); err == nil {
+		if leader, err := t.MaybeLeader(); err == nil {
 			if pb.ServerAddress(t.RaftServer.Name()).Equals(leader) {
 				return true
 			}
