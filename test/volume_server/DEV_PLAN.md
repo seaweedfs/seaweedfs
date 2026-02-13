@@ -819,3 +819,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: heartbeat-disabled and stopping-state transitions are still exercised indirectly rather than in a dedicated status-payload transition test.
 - Commit: `374411418`
+
+- Date: 2026-02-12
+- Change: Added gRPC `BatchDelete` chunk-manifest rejection coverage.
+- APIs covered: `BatchDelete` result status/error path for chunk-manifest needles (`406`, `ChunkManifest` message) and non-deletion parity after rejection.
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC-backed `BatchDelete` positive path still pending dedicated EC fixture setup.
+- Commit: `326be22a9`
