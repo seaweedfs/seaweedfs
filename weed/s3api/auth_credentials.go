@@ -927,7 +927,6 @@ func (iam *IdentityAccessManagement) IsStaticIdentity(identityName string) bool 
 }
 
 func (iam *IdentityAccessManagement) lookupByAccessKey(accessKey string) (identity *Identity, cred *Credential, found bool) {
-
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 
