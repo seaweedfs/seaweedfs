@@ -994,3 +994,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: EC copy/rebuild/to-volume multi-node success permutations remain for broader matrix completeness.
 - Commit: `1f405f52d`
+
+- Date: 2026-02-13
+- Change: Added EC rebuild and `ShardsToVolume` branch coverage for missing-shard and no-live-entry conditions.
+- APIs covered: `VolumeEcShardsRebuild` (missing-shard regenerate path), `VolumeEcShardsToVolume` (missing data shard error and no-live-entries `FailedPrecondition` path).
+- Profiles covered: P1.
+- Gaps introduced/remaining: `VolumeEcShardsToVolume` full success conversion path and EC copy/rebuild multi-node permutations remain pending.
+- Commit: `e8c449c16`
