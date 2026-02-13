@@ -553,3 +553,64 @@ func TestEcShardsToVolumeMissingShardAndNoLiveEntries(t *testing.T) {
 		}
 	})
 }
+
+func TestEcShardsToVolumeSuccessRoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(120)
+	const needleID = uint64(990006)
+	const cookie = uint32(0x66771122)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	payload := []byte("ec-shards-to-volume-success-roundtrip-content")
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount data shards failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsToVolume(ctx, &volume_server_pb.VolumeEcShardsToVolumeRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsToVolume success path failed: %v", err)
+	}
+
+	readResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid)
+	readBody := framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("post-conversion read expected 200, got %d", readResp.StatusCode)
+	}
+	if string(readBody) != string(payload) {
+		t.Fatalf("post-conversion payload mismatch: got %q want %q", string(readBody), string(payload))
+	}
+}
