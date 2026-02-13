@@ -221,6 +221,69 @@ func TestUploadLimitWaitThenProceed(t *testing.T) {
 	}
 }
 
+func TestUploadLimitTimeoutThenRecovery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(113)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	const blockedUploadSize = 2 * 1024 * 1024
+
+	unblockFirstUpload := make(chan struct{})
+	firstUploadDone := make(chan error, 1)
+	firstFID := framework.NewFileID(volumeID, 880801, 0x7A2B3C4D)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+firstFID, &pausableReader{
+			remaining:  blockedUploadSize,
+			pauseAfter: 1,
+			unblock:    unblockFirstUpload,
+		})
+		if err != nil {
+			firstUploadDone <- err
+			return
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = blockedUploadSize
+		resp, err := (&http.Client{}).Do(req)
+		if resp != nil {
+			_ = framework.ReadAllAndClose(t, resp)
+		}
+		firstUploadDone <- err
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+
+	timeoutFID := framework.NewFileID(volumeID, 880802, 0x7A2B3C4E)
+	timeoutResp := framework.UploadBytes(t, &http.Client{Timeout: 10 * time.Second}, clusterHarness.VolumeAdminURL(), timeoutFID, []byte("should-timeout"))
+	_ = framework.ReadAllAndClose(t, timeoutResp)
+	if timeoutResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second upload under blocked pressure expected 429, got %d", timeoutResp.StatusCode)
+	}
+
+	close(unblockFirstUpload)
+	select {
+	case firstErr := <-firstUploadDone:
+		if firstErr != nil {
+			t.Fatalf("first blocked upload failed: %v", firstErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for first upload completion")
+	}
+
+	recoveryFID := framework.NewFileID(volumeID, 880803, 0x7A2B3C4F)
+	recoveryResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), recoveryFID, []byte("recovered-upload"))
+	_ = framework.ReadAllAndClose(t, recoveryResp)
+	if recoveryResp.StatusCode != http.StatusCreated {
+		t.Fatalf("recovery upload expected 201, got %d", recoveryResp.StatusCode)
+	}
+}
+
 func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -327,6 +390,58 @@ func TestDownloadLimitWaitThenProceedWithoutReplica(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for second GET completion")
+	}
+}
+
+func TestDownloadLimitTimeoutThenRecovery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(114)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	largePayload := make([]byte, 12*1024*1024)
+	for i := range largePayload {
+		largePayload[i] = byte(i % 251)
+	}
+	fid := framework.NewFileID(volumeID, 880901, 0x708090A0)
+	uploadResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), fid, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	firstResp, err := (&http.Client{}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid))
+	if err != nil {
+		t.Fatalf("first GET failed: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		_ = framework.ReadAllAndClose(t, firstResp)
+		t.Fatalf("first GET expected 200, got %d", firstResp.StatusCode)
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	timeoutResp := framework.ReadBytes(t, &http.Client{Timeout: 10 * time.Second}, clusterHarness.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, timeoutResp)
+	if timeoutResp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second GET under blocked pressure expected 429, got %d", timeoutResp.StatusCode)
+	}
+
+	_ = firstResp.Body.Close()
+
+	recoveryResp := framework.ReadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), fid)
+	recoveryBody := framework.ReadAllAndClose(t, recoveryResp)
+	if recoveryResp.StatusCode != http.StatusOK {
+		t.Fatalf("recovery GET expected 200, got %d", recoveryResp.StatusCode)
+	}
+	if len(recoveryBody) != len(largePayload) {
+		t.Fatalf("recovery GET body size mismatch: got %d want %d", len(recoveryBody), len(largePayload))
 	}
 }
 
