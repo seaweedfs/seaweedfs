@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -86,5 +87,53 @@ func TestVolumeTailReceiverMissingVolume(t *testing.T) {
 	_, err := grpcClient.VolumeTailReceiver(ctx, &volume_server_pb.VolumeTailReceiverRequest{VolumeId: 88888, SourceVolumeServer: clusterHarness.VolumeServerAddress(), SinceNs: 0, IdleTimeoutSeconds: 1})
 	if err == nil || !strings.Contains(err.Error(), "receiver not found volume") {
 		t.Fatalf("VolumeTailReceiver missing-volume error mismatch: %v", err)
+	}
+}
+
+func TestVolumeTailReceiverReplicatesSourceUpdates(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartDualVolumeCluster(t, matrix.P1())
+	sourceConn, sourceClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer sourceConn.Close()
+	destConn, destClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(1))
+	defer destConn.Close()
+
+	const volumeID = uint32(72)
+	framework.AllocateVolume(t, sourceClient, volumeID, "")
+	framework.AllocateVolume(t, destClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 880003, 0x3456789A)
+	payload := []byte("tail-receiver-replicates-source-updates")
+
+	sourceUploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(0), fid, payload)
+	_ = framework.ReadAllAndClose(t, sourceUploadResp)
+	if sourceUploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("source upload expected 201, got %d", sourceUploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := destClient.VolumeTailReceiver(ctx, &volume_server_pb.VolumeTailReceiverRequest{
+		VolumeId:           volumeID,
+		SourceVolumeServer: clusterHarness.VolumeAdminAddress(0) + "." + strings.Split(clusterHarness.VolumeGRPCAddress(0), ":")[1],
+		SinceNs:            0,
+		IdleTimeoutSeconds: 1,
+	})
+	if err != nil {
+		t.Fatalf("VolumeTailReceiver success path failed: %v", err)
+	}
+
+	destReadResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(1), fid)
+	destReadBody := framework.ReadAllAndClose(t, destReadResp)
+	if destReadResp.StatusCode != http.StatusOK {
+		t.Fatalf("destination read after tail receive expected 200, got %d", destReadResp.StatusCode)
+	}
+	if string(destReadBody) != string(payload) {
+		t.Fatalf("destination tail-received payload mismatch: got %q want %q", string(destReadBody), string(payload))
 	}
 }
