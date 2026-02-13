@@ -882,3 +882,10 @@ Update this section during implementation:
 - Profiles covered: P8-derived profile (`readMode=proxy`) with dual volume servers.
 - Gaps introduced/remaining: cancellation branch (`499`) for download-limit waiting remains pending.
 - Commit: `316cfb7a3`
+
+- Date: 2026-02-12
+- Change: Expanded missing-local deleted-read parity across proxy and redirect modes.
+- APIs covered: `readDeleted=true` behavior from non-owning servers in `readMode=proxy` (forwarded success) and `readMode=redirect` (redirect query-drop parity leading to `404` on follow).
+- Profiles covered: custom P1-derived profiles with `ReadMode` overrides.
+- Gaps introduced/remaining: explicit proxied-loop edge behavior remains pending dedicated setup.
+- Commit: `0164a383d`
