@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 // maxPoliciesForEvaluation defines an upper bound on the number of policies that
@@ -24,6 +25,7 @@ type IAMManager struct {
 	stsService           *sts.STSService
 	policyEngine         *policy.PolicyEngine
 	roleStore            RoleStore
+	userStore            UserStore
 	filerAddressProvider func() string // Function to get current filer address
 	initialized          bool
 }
@@ -47,6 +49,11 @@ type RoleStoreConfig struct {
 
 	// StoreConfig contains store-specific configuration
 	StoreConfig map[string]interface{} `json:"storeConfig,omitempty"`
+}
+
+// UserStore defines the interface for retrieving IAM user policy attachments.
+type UserStore interface {
+	GetUser(ctx context.Context, username string) (*iam_pb.Identity, error)
 }
 
 // RoleDefinition defines a role with its trust policy and attached policies
@@ -91,6 +98,11 @@ type ActionRequest struct {
 // NewIAMManager creates a new IAM manager
 func NewIAMManager() *IAMManager {
 	return &IAMManager{}
+}
+
+// SetUserStore assigns the user store used to resolve IAM user policy attachments.
+func (m *IAMManager) SetUserStore(store UserStore) {
+	m.userStore = store
 }
 
 // Initialize initializes the IAM manager with all components
@@ -352,6 +364,9 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 		evalCtx.RequestContext["aws:username"] = awsUsername
 		evalCtx.RequestContext["aws:userid"] = arnInfo.RoleName
+	} else if userName := utils.ExtractUserNameFromPrincipal(request.Principal); userName != "" {
+		evalCtx.RequestContext["aws:username"] = userName
+		evalCtx.RequestContext["aws:userid"] = userName
 	}
 	if arnInfo.AccountID != "" {
 		evalCtx.RequestContext["aws:PrincipalAccount"] = arnInfo.AccountID
@@ -372,16 +387,24 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		// Extract role name from principal ARN
 		roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
 		if roleName == "" {
-			return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
-		}
+			userName := utils.ExtractUserNameFromPrincipal(request.Principal)
+			if userName == "" || m.userStore == nil {
+				return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+			}
+			user, err := m.userStore.GetUser(ctx, userName)
+			if err != nil || user == nil {
+				return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+			}
+			policies = user.GetPolicyNames()
+		} else {
+			// Get role definition
+			roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+			if err != nil {
+				return false, fmt.Errorf("role not found: %s", roleName)
+			}
 
-		// Get role definition
-		roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-		if err != nil {
-			return false, fmt.Errorf("role not found: %s", roleName)
+			policies = roleDef.AttachedPolicies
 		}
-
-		policies = roleDef.AttachedPolicies
 	}
 
 	if bucketPolicyName != "" {
@@ -658,12 +681,12 @@ func isOIDCToken(token string) bool {
 
 	parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
 	if err != nil {
-		return true
+		return false
 	}
 
 	claims, ok := parsed.Claims.(jwt.MapClaims)
 	if !ok {
-		return true
+		return false
 	}
 
 	if typ, ok := claims["typ"].(string); ok && typ == sts.TokenTypeSession {
