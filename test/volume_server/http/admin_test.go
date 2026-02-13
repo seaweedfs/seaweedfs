@@ -31,6 +31,9 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if statusResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected /status code 200, got %d, body: %s", statusResp.StatusCode, string(statusBody))
 	}
+	if got := statusResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
+		t.Fatalf("expected /status Server header to contain SeaweedFS Volume, got %q", got)
+	}
 	if got := statusResp.Header.Get(request_id.AmzRequestIDHeader); got != "test-request-id-1" {
 		t.Fatalf("expected echoed request id, got %q", got)
 	}
@@ -49,6 +52,9 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, healthResp)
 	if healthResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected /healthz code 200, got %d", healthResp.StatusCode)
+	}
+	if got := healthResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
+		t.Fatalf("expected /healthz Server header to contain SeaweedFS Volume, got %q", got)
 	}
 
 	uiResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
