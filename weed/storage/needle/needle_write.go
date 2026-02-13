@@ -45,6 +45,48 @@ func (n *Needle) Append(w backend.BackendStorageFile, version Version) (offset u
 	return offset, size, actualSize, err
 }
 
+// AppendGetBytes is like Append but also returns a copy of the raw serialized bytes
+// that were written to disk. This enables RDMA replication to send the exact .dat bytes
+// to a remote volume without re-serialization.
+func (n *Needle) AppendGetBytes(w backend.BackendStorageFile, version Version) (offset uint64, size Size, actualSize int64, rawBytes []byte, err error) {
+	end, _, e := w.GetStat()
+	if e != nil {
+		err = fmt.Errorf("Cannot Read Current Volume Position: %w", e)
+		return
+	}
+	offset = uint64(end)
+	if offset >= MaxPossibleVolumeSize && len(n.Data) != 0 {
+		err = fmt.Errorf("Volume Size %d Exceeded %d", offset, MaxPossibleVolumeSize)
+		return
+	}
+	bytesBuffer := buffer_pool.SyncPoolGetBuffer()
+	defer func() {
+		if err != nil {
+			if te := w.Truncate(end); te != nil {
+				// handle error or log
+			}
+		}
+		buffer_pool.SyncPoolPutBuffer(bytesBuffer)
+	}()
+
+	size, actualSize, err = writeNeedleByVersion(version, n, offset, bytesBuffer)
+	if err != nil {
+		return
+	}
+
+	// Copy serialized bytes before they are written to disk and the buffer is returned to pool
+	src := bytesBuffer.Bytes()
+	rawBytes = make([]byte, len(src))
+	copy(rawBytes, src)
+
+	_, err = w.WriteAt(src, int64(offset))
+	if err != nil {
+		err = fmt.Errorf("failed to write %d bytes to %s at offset %d: %w", actualSize, w.Name(), offset, err)
+	}
+
+	return offset, size, actualSize, rawBytes, err
+}
+
 func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, appendAtNs uint64, version Version) (offset uint64, err error) {
 
 	if end, _, e := w.GetStat(); e == nil {

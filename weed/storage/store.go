@@ -78,6 +78,7 @@ type Store struct {
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan master_pb.VolumeEcShardInformationMessage
 	isStopping          bool
+	SraTransport        *SraTransport // outbound RDMA replication transport (nil = HTTP-only)
 }
 
 func (s *Store) String() (str string) {
@@ -576,6 +577,19 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 	glog.V(0).Infoln("volume", i, "not found!")
 	err = fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 	return
+}
+
+// WriteVolumeNeedleBlob appends raw needle bytes to a volume's .dat file and updates
+// the needle map. Used by the UDS Store opcode for RDMA replication where the sender
+// provides already-serialized needle bytes.
+func (s *Store) WriteVolumeNeedleBlob(i needle.VolumeId, needleId NeedleId, needleBlob []byte, size Size) error {
+	if v := s.findVolume(i); v != nil {
+		if v.IsReadOnly() {
+			return fmt.Errorf("volume %d is read only", i)
+		}
+		return v.WriteNeedleBlob(needleId, needleBlob, size)
+	}
+	return fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {

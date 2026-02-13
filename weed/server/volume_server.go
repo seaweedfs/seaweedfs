@@ -159,8 +159,16 @@ func (vs *VolumeServer) LoadNewVolumes() {
 	vs.store.LoadNewVolumes()
 }
 
+// SetSraTransport configures the outbound RDMA replication transport on the volume store.
+func (vs *VolumeServer) SetSraTransport(t *storage.SraTransport) {
+	vs.store.SraTransport = t
+}
+
 func (vs *VolumeServer) Shutdown() {
 	glog.V(0).Infoln("Shutting down volume server...")
+	if vs.store.SraTransport != nil {
+		vs.store.SraTransport.Close()
+	}
 	vs.store.Close()
 	glog.V(0).Infoln("Shut down successfully!")
 }

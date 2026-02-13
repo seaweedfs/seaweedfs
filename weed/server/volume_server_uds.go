@@ -11,13 +11,28 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 // UDS protocol constants
 const (
-	UdsRequestSize      = 24  // fid(16) + version(4) + flags(4)
+	UdsRequestSize      = 24  // opcode(1) + pad(3) + request_id(4) + fid(16)
 	UdsResponseSize     = 32  // status(1) + pad(3) + volume_id(4) + offset(8) + length(8) + dat_path_len(2) + reserved(6)
 	UdsMaxDatPathLen    = 256 // max .dat file path length
+
+	// Store request: opcode(1) + pad(3) + request_id(4) + volume_id(4) + needle_version(1) + pad(3) + raw_bytes_len(4) = 20 bytes header
+	UdsStoreHeaderSize  = 20
+	// Store response: status(1) + pad(3) + request_id(4) = 8 bytes
+	UdsStoreResponseSize = 8
+
+	// Maximum raw needle size for Store (256 MB)
+	UdsMaxRawBytesLen = 256 * 1024 * 1024
+)
+
+// UDS opcodes
+const (
+	UdsOpcodeLocate uint8 = 0x01
+	UdsOpcodeStore  uint8 = 0x02
 )
 
 // UDS status codes
@@ -55,6 +70,28 @@ type LocateResponse struct {
 	DatPathLen uint16  // length of .dat file path (follows the 32-byte header)
 	_          [6]byte // reserved
 	DatPath    string  // variable-length .dat file path (not in wire header)
+}
+
+// StoreRequest represents a UDS store request for volume replication.
+// Wire format:
+//
+//	opcode(1) + pad(3) + request_id(4) + volume_id(4) +
+//	needle_version(1) + pad(3) + raw_bytes_len(4) = 20 bytes header
+//	+ raw_bytes(variable)
+type StoreRequest struct {
+	Opcode        uint8
+	RequestId     uint32
+	VolumeId      uint32
+	NeedleVersion uint8
+	RawBytesLen   uint32
+	RawBytes      []byte
+}
+
+// StoreResponse represents a UDS store response.
+// Wire format: status(1) + pad(3) + request_id(4) = 8 bytes
+type StoreResponse struct {
+	Status    uint8
+	RequestId uint32
 }
 
 // NewUdsServer creates a new UDS server for the volume server
@@ -126,12 +163,16 @@ func (u *UdsServer) acceptLoop() {
 func (u *UdsServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	reqBuf := make([]byte, UdsRequestSize)
-	respBuf := make([]byte, UdsResponseSize)
+	// Common prefix: opcode(1) + pad(3) + request_id(4) = 8 bytes
+	commonBuf := make([]byte, 8)
+	locateRestBuf := make([]byte, UdsRequestSize-8) // remaining 16 bytes for Locate
+	locateRespBuf := make([]byte, UdsResponseSize)
+	storeRestBuf := make([]byte, UdsStoreHeaderSize-8) // remaining 12 bytes for Store header
+	storeRespBuf := make([]byte, UdsStoreResponseSize)
 
 	for {
-		// Read request
-		_, err := io.ReadFull(conn, reqBuf)
+		// Read common prefix (8 bytes)
+		_, err := io.ReadFull(conn, commonBuf)
 		if err != nil {
 			if err != io.EOF {
 				glog.V(2).Infof("UDS read error: %v", err)
@@ -139,41 +180,101 @@ func (u *UdsServer) handleConnection(conn net.Conn) {
 			return
 		}
 
-		// Parse request (matches sra-common::uds_proto::LocateRequest repr(C))
-		// opcode(1) + pad(3) + request_id(4) + fid(16) = 24 bytes
-		var req LocateRequest
-		req.Opcode = reqBuf[0]
-		req.RequestId = binary.LittleEndian.Uint32(reqBuf[4:8])
-		copy(req.Fid[:], reqBuf[8:24])
+		opcode := commonBuf[0]
+		requestId := binary.LittleEndian.Uint32(commonBuf[4:8])
 
-		// Handle request
-		resp := u.handleLocate(&req)
-
-		// Serialize response header (32 bytes)
-		respBuf[0] = resp.Status
-		respBuf[1] = 0
-		respBuf[2] = 0
-		respBuf[3] = 0
-		binary.LittleEndian.PutUint32(respBuf[4:8], resp.VolumeId)
-		binary.LittleEndian.PutUint64(respBuf[8:16], resp.Offset)
-		binary.LittleEndian.PutUint64(respBuf[16:24], resp.Length)
-		binary.LittleEndian.PutUint16(respBuf[24:26], resp.DatPathLen)
-		// reserved bytes 26-32 are zero
-
-		// Write fixed header
-		if _, err := conn.Write(respBuf); err != nil {
-			glog.V(2).Infof("UDS write error: %v", err)
-			return
-		}
-
-		// Write variable-length .dat path if present
-		if resp.DatPathLen > 0 {
-			if _, err := conn.Write([]byte(resp.DatPath)); err != nil {
-				glog.V(2).Infof("UDS write dat path error: %v", err)
+		switch opcode {
+		case UdsOpcodeLocate:
+			// Read remaining 16 bytes (fid)
+			if _, err := io.ReadFull(conn, locateRestBuf); err != nil {
+				glog.V(2).Infof("UDS read locate body: %v", err)
 				return
 			}
+
+			var req LocateRequest
+			req.Opcode = opcode
+			req.RequestId = requestId
+			copy(req.Fid[:], locateRestBuf)
+
+			resp := u.handleLocate(&req)
+
+			// Serialize Locate response (32 bytes)
+			locateRespBuf[0] = resp.Status
+			locateRespBuf[1] = 0
+			locateRespBuf[2] = 0
+			locateRespBuf[3] = 0
+			binary.LittleEndian.PutUint32(locateRespBuf[4:8], resp.VolumeId)
+			binary.LittleEndian.PutUint64(locateRespBuf[8:16], resp.Offset)
+			binary.LittleEndian.PutUint64(locateRespBuf[16:24], resp.Length)
+			binary.LittleEndian.PutUint16(locateRespBuf[24:26], resp.DatPathLen)
+			// reserved bytes 26-32 are zero
+			for i := 26; i < 32; i++ {
+				locateRespBuf[i] = 0
+			}
+
+			if _, err := conn.Write(locateRespBuf); err != nil {
+				glog.V(2).Infof("UDS write error: %v", err)
+				return
+			}
+			if resp.DatPathLen > 0 {
+				if _, err := conn.Write([]byte(resp.DatPath)); err != nil {
+					glog.V(2).Infof("UDS write dat path error: %v", err)
+					return
+				}
+			}
+
+		case UdsOpcodeStore:
+			// Read remaining 12 bytes of Store header
+			if _, err := io.ReadFull(conn, storeRestBuf); err != nil {
+				glog.V(2).Infof("UDS read store header: %v", err)
+				return
+			}
+
+			req := StoreRequest{
+				Opcode:        opcode,
+				RequestId:     requestId,
+				VolumeId:      binary.LittleEndian.Uint32(storeRestBuf[0:4]),
+				NeedleVersion: storeRestBuf[4],
+				RawBytesLen:   binary.LittleEndian.Uint32(storeRestBuf[8:12]),
+			}
+
+			// Validate raw_bytes_len
+			if req.RawBytesLen == 0 || req.RawBytesLen > UdsMaxRawBytesLen {
+				glog.V(2).Infof("UDS: invalid raw_bytes_len %d", req.RawBytesLen)
+				u.writeStoreResponse(conn, storeRespBuf, requestId, UdsStatusError)
+				return
+			}
+
+			// Read raw needle bytes
+			req.RawBytes = make([]byte, req.RawBytesLen)
+			if _, err := io.ReadFull(conn, req.RawBytes); err != nil {
+				glog.V(2).Infof("UDS read store payload: %v", err)
+				return
+			}
+
+			resp := u.handleStore(&req)
+			if err := u.writeStoreResponse(conn, storeRespBuf, resp.RequestId, resp.Status); err != nil {
+				return
+			}
+
+		default:
+			glog.V(0).Infof("UDS: unknown opcode 0x%02x from connection", opcode)
+			return
 		}
 	}
+}
+
+func (u *UdsServer) writeStoreResponse(conn net.Conn, buf []byte, requestId uint32, status uint8) error {
+	buf[0] = status
+	buf[1] = 0
+	buf[2] = 0
+	buf[3] = 0
+	binary.LittleEndian.PutUint32(buf[4:8], requestId)
+	if _, err := conn.Write(buf); err != nil {
+		glog.V(2).Infof("UDS write store response error: %v", err)
+		return err
+	}
+	return nil
 }
 
 func (u *UdsServer) handleLocate(req *LocateRequest) *LocateResponse {
@@ -253,5 +354,38 @@ func (u *UdsServer) handleLocate(req *LocateRequest) *LocateResponse {
 	}
 
 	glog.V(3).Infof("UDS: located %s -> vol=%d offset=%d size=%d dat=%s", fid, volumeId, resp.Offset, resp.Length, datPath)
+	return resp
+}
+
+func (u *UdsServer) handleStore(req *StoreRequest) *StoreResponse {
+	resp := &StoreResponse{RequestId: req.RequestId}
+
+	if u.vs == nil {
+		resp.Status = UdsStatusError
+		return resp
+	}
+
+	// Validate raw bytes contain at least a needle header (Cookie + NeedleId + Size = 16 bytes)
+	if len(req.RawBytes) < types.NeedleHeaderSize {
+		glog.V(2).Infof("UDS store: raw_bytes too short (%d < %d)", len(req.RawBytes), types.NeedleHeaderSize)
+		resp.Status = UdsStatusError
+		return resp
+	}
+
+	// Parse needle header to extract needle ID and size
+	var n needle.Needle
+	n.ParseNeedleHeader(req.RawBytes[:types.NeedleHeaderSize])
+
+	vid := needle.VolumeId(req.VolumeId)
+
+	// Use the store's WriteNeedleBlob to append raw bytes and update the needle map
+	if err := u.vs.store.WriteVolumeNeedleBlob(vid, n.Id, req.RawBytes, n.Size); err != nil {
+		glog.V(2).Infof("UDS store: write failed for vol=%d needle=%v: %v", req.VolumeId, n.Id, err)
+		resp.Status = UdsStatusError
+		return resp
+	}
+
+	glog.V(3).Infof("UDS: stored vol=%d needle=%v size=%d raw_len=%d", req.VolumeId, n.Id, n.Size, len(req.RawBytes))
+	resp.Status = UdsStatusOk
 	return resp
 }

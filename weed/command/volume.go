@@ -75,6 +75,7 @@ type VolumeServerOptions struct {
 	debug                       *bool
 	debugPort                   *int
 	udsListen                   *string // UDS socket path for RDMA sidecar integration
+	udsTransport                *string // UDS socket path for outbound RDMA replication
 }
 
 func init() {
@@ -116,6 +117,7 @@ func init() {
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
 	v.udsListen = cmdVolume.Flag.String("uds.listen", "", "Unix domain socket path for RDMA sidecar locate API (e.g., /tmp/sra-volume.sock)")
+	v.udsTransport = cmdVolume.Flag.String("uds.transport", "", "Unix domain socket path for outbound RDMA replication (e.g., /tmp/sra-transport.sock)")
 }
 
 var cmdVolume = &Command{
@@ -300,6 +302,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			glog.Fatalf("failed to start UDS server: %v", err)
 		}
 		udsServer.Start()
+	}
+
+	// set up outbound RDMA replication transport
+	if *v.udsTransport != "" {
+		volumeServer.SetSraTransport(storage.NewSraTransport(*v.udsTransport))
 	}
 
 	// starting public http server
