@@ -35,35 +35,35 @@ func TestServerAddresses_ToAddressMapOrSrv_shouldHandleIPPortList(t *testing.T) 
 	}
 }
 
-func TestIPv6ServerAddress(t *testing.T) {
-	host := "2001:db8::1"
-	port := 8080
-	grpcPort := 18080
-	sa := NewServerAddress(host, port, grpcPort)
-
-	expectedHttp := "[2001:db8::1]:8080"
-	if httpAddr := sa.ToHttpAddress(); httpAddr != expectedHttp {
-		t.Errorf("ToHttpAddress() = %s, want %s", httpAddr, expectedHttp)
+func TestIPv6ServerAddressFormatting(t *testing.T) {
+	testCases := []struct {
+		name         string
+		sa           ServerAddress
+		expectedHttp string
+		expectedGrpc string
+	}{
+		{
+			name:         "unbracketed IPv6",
+			sa:           NewServerAddress("2001:db8::1", 8080, 18080),
+			expectedHttp: "[2001:db8::1]:8080",
+			expectedGrpc: "[2001:db8::1]:18080",
+		},
+		{
+			name:         "bracketed IPv6",
+			sa:           NewServerAddressWithGrpcPort("[2001:db8::1]:8080", 18080),
+			expectedHttp: "[2001:db8::1]:8080",
+			expectedGrpc: "[2001:db8::1]:18080",
+		},
 	}
 
-	expectedGrpc := "[2001:db8::1]:18080"
-	if grpcAddr := sa.ToGrpcAddress(); grpcAddr != expectedGrpc {
-		t.Errorf("ToGrpcAddress() = %s, want %s", grpcAddr, expectedGrpc)
-	}
-}
-
-func TestIPv6ServerAddressWithBrackets(t *testing.T) {
-	host := "[2001:db8::1]"
-	grpcPort := 18080
-	sa := NewServerAddressWithGrpcPort(host+":8080", grpcPort)
-
-	expectedHttp := "[2001:db8::1]:8080"
-	if httpAddr := sa.ToHttpAddress(); httpAddr != expectedHttp {
-		t.Errorf("ToHttpAddress() = %s, want %s", httpAddr, expectedHttp)
-	}
-
-	expectedGrpc := "[2001:db8::1]:18080"
-	if grpcAddr := sa.ToGrpcAddress(); grpcAddr != expectedGrpc {
-		t.Errorf("ToGrpcAddress() = %s, want %s", grpcAddr, expectedGrpc)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if httpAddr := tc.sa.ToHttpAddress(); httpAddr != tc.expectedHttp {
+				t.Errorf("%s: ToHttpAddress() = %s, want %s", tc.name, httpAddr, tc.expectedHttp)
+			}
+			if grpcAddr := tc.sa.ToGrpcAddress(); grpcAddr != tc.expectedGrpc {
+				t.Errorf("%s: ToGrpcAddress() = %s, want %s", tc.name, grpcAddr, tc.expectedGrpc)
+			}
+		})
 	}
 }
