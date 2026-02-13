@@ -388,12 +388,15 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
 		if roleName == "" {
 			userName := utils.ExtractUserNameFromPrincipal(request.Principal)
-			if userName == "" || m.userStore == nil {
+			if userName == "" {
 				return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+			}
+			if m.userStore == nil {
+				return false, fmt.Errorf("user store unavailable for principal: %s", request.Principal)
 			}
 			user, err := m.userStore.GetUser(ctx, userName)
 			if err != nil || user == nil {
-				return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+				return false, fmt.Errorf("user not found for principal: %s (user=%s)", request.Principal, userName)
 			}
 			policies = user.GetPolicyNames()
 		} else {
