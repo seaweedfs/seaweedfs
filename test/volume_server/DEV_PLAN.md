@@ -763,3 +763,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: remaining unsupported-verb breadth now primarily around less common methods (e.g., `CONNECT`) and proxy-specific edge semantics.
 - Commit: `1d7afd11e`
+
+- Date: 2026-02-12
+- Change: Expanded gRPC `VolumeConfigure` coverage for both success and configure-failure rollback reporting.
+- APIs covered: valid replication success path and missing-volume configure failure path with remount-restore failure detail propagation.
+- Profiles covered: P1.
+- Gaps introduced/remaining: explicit unmount-failure and mount-failure branches via injected I/O faults are still pending.
+- Commit: `287a60197`
