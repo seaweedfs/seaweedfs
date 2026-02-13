@@ -1099,3 +1099,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: transport-interruption and deep fault-injection branches remain pending.
 - Commit: `4ef666791`
+
+- Date: 2026-02-13
+- Change: Added dual-node EC shard copy success coverage.
+- APIs covered: `VolumeEcShardsCopy` positive path from source peer (including `copy_ecx_file`/`copy_vif_file`) with copied artifact verification via EC `CopyFile` on destination.
+- Profiles covered: P4-derived dual-volume topology.
+- Gaps introduced/remaining: EC rebuild/copy distributed failure injection permutations remain pending.
+- Commit: `c9f6710c2`
