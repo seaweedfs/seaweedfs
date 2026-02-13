@@ -840,3 +840,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: positive filer-target ping path still requires a filer fixture in the integration harness.
 - Commit: `fa5cad6dc`
+
+- Date: 2026-02-12
+- Change: Expanded HTTP conditional-header parity for `HEAD`.
+- APIs covered: `HEAD` with `If-None-Match` now verifies `304` behavior and empty-body semantics.
+- Profiles covered: P1.
+- Gaps introduced/remaining: explicit `HEAD` + `If-Modified-Since` parity remains expandable.
+- Commit: `9984f2ec4`
