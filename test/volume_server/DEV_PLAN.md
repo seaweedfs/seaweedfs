@@ -938,3 +938,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: none for request-id propagation on covered admin endpoints.
 - Commit: `e0268a5b7`
+
+- Date: 2026-02-12
+- Change: Added over-limit invalid-vid branch coverage in download throttling proxy path.
+- APIs covered: `checkDownloadLimit` -> `tryProxyToReplica` invalid volume-id parse path now explicitly verified as `400` under over-limit pressure.
+- Profiles covered: P8.
+- Gaps introduced/remaining: cancellation (`499`) branch remains pending due client-side transport observability limits.
+- Commit: `b4984b335`
