@@ -868,3 +868,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: CORS method/header semantics are now covered for baseline split-port flows.
 - Commit: `6fcb9fa9c`
+
+- Date: 2026-02-12
+- Change: Added dual-volume integration harness and read-mode matrix tests for missing-local volume behavior.
+- APIs covered: HTTP read path when volume is missing locally across `readMode=proxy` (forward success), `readMode=redirect` (`301` + `proxied=true`), and `readMode=local` (`404`).
+- Profiles covered: custom P1-derived profiles with `ReadMode` overrides.
+- Gaps introduced/remaining: throttling-specific proxy fallback (`checkDownloadLimit` replica path) is still pending targeted pressure setup.
+- Commits: `74b04a3f8`, `70ce0c8b8`
