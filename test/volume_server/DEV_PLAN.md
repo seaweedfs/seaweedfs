@@ -798,3 +798,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: low-level corrupted-size and backend I/O fault branches still require fault-injection hooks.
 - Commit: `33ed77ad6`
+
+- Date: 2026-02-12
+- Change: Added mixed-volume `ReadAllNeedles` stream abort coverage.
+- APIs covered: stream progression from an existing volume followed by missing-volume abort error in the same request.
+- Profiles covered: P1.
+- Gaps introduced/remaining: multi-volume happy-path ordering/volume-boundary assertions can be expanded further.
+- Commit: `7799b28b1`
