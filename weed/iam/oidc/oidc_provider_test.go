@@ -995,6 +995,75 @@ func TestOIDCProviderJTICleanup(t *testing.T) {
 	assert.True(t, shouldBeDeleted, "Entry should be identified as expired in the future")
 }
 
+func TestOIDCProviderReinitialization(t *testing.T) {
+	// Test that re-initialization properly cancels the old cleanup goroutine
+	// to prevent goroutine leaks
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-reinit")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+	}
+
+	// First initialization
+	require.NoError(t, provider.Initialize(config))
+	require.NotNil(t, provider.jtiCleanupCancel, "First cleanup cancel should be set")
+
+	// Create and validate a token to ensure JTI protection is working
+	token1 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user1",
+		"jti": "token-1",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err := provider.ValidateToken(context.Background(), token1)
+	require.NoError(t, err, "First token should validate successfully")
+
+	// Second initialization should not cause errors
+	require.NoError(t, provider.Initialize(config))
+	require.NotNil(t, provider.jtiCleanupCancel, "Second cleanup cancel should be set")
+
+	// JTI cache should be reset after re-initialization
+	// So the same token should be accepted again (new cache)
+	_, err = provider.ValidateToken(context.Background(), token1)
+	require.NoError(t, err, "Token should validate after re-initialization (new cache)")
+
+	// Third initialization to ensure it works multiple times
+	require.NoError(t, provider.Initialize(config))
+	require.NotNil(t, provider.jtiCleanupCancel, "Third cleanup cancel should be set")
+
+	// Verify JTI replay protection still works after re-initialization
+	token2 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user2",
+		"jti": "token-2",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err = provider.ValidateToken(context.Background(), token2)
+	require.NoError(t, err, "New token should validate")
+
+	// Replay should still be detected
+	_, err = provider.ValidateToken(context.Background(), token2)
+	assert.Error(t, err, "Replay should be detected")
+	assert.True(t, errors.Is(err, providers.ErrProviderTokenReplayed), "Should be a replay error")
+
+	// Final cleanup
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = provider.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
 func TestOIDCProviderShutdown(t *testing.T) {
 	// Test graceful shutdown
 	_, publicKey := generateTestKeys(t)

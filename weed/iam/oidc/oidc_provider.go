@@ -186,6 +186,13 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 	}
 
 	if jtiEnabled {
+		// Cancel any existing cleanup goroutine before re-initializing
+		if p.jtiCleanupCancel != nil {
+			glog.V(3).Infof("OIDC provider %q: Stopping existing JTI cleanup goroutine", p.name)
+			p.jtiCleanupCancel()
+			p.jtiCleanupCancel = nil
+		}
+
 		p.jtiMaxSize = int64(oidcConfig.JTICacheMaxSize)
 		if p.jtiMaxSize <= 0 {
 			p.jtiMaxSize = defaultJTICacheSize
