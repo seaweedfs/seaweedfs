@@ -72,12 +72,15 @@ func TestUploadReadRangeHeadDeleteRoundTrip(t *testing.T) {
 	}
 
 	headResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodHead, cluster.VolumeAdminURL()+"/"+fid))
-	_ = framework.ReadAllAndClose(t, headResp)
+	headBody := framework.ReadAllAndClose(t, headResp)
 	if headResp.StatusCode != http.StatusOK {
 		t.Fatalf("head status: expected 200, got %d", headResp.StatusCode)
 	}
 	if got := headResp.Header.Get("Content-Length"); got != strconv.Itoa(len(data)) {
 		t.Fatalf("head content-length mismatch: got %q want %d", got, len(data))
+	}
+	if len(headBody) != 0 {
+		t.Fatalf("head body should be empty, got %d bytes", len(headBody))
 	}
 
 	deleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, cluster.VolumeAdminURL()+"/"+fid))
