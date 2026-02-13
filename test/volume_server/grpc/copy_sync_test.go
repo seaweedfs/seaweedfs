@@ -202,3 +202,83 @@ func TestVolumeCopySuccessFromPeerAndMountsDestination(t *testing.T) {
 		t.Fatalf("destination copied payload mismatch: got %q want %q", string(destReadBody), string(payload))
 	}
 }
+
+func TestVolumeCopyOverwritesExistingDestinationVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartDualVolumeCluster(t, matrix.P1())
+	sourceConn, sourceClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer sourceConn.Close()
+	destConn, destClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(1))
+	defer destConn.Close()
+
+	const volumeID = uint32(43)
+	framework.AllocateVolume(t, sourceClient, volumeID, "")
+	framework.AllocateVolume(t, destClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 880002, 0x23456789)
+	sourcePayload := []byte("volume-copy-overwrite-source")
+	destPayload := []byte("volume-copy-overwrite-destination-old")
+
+	sourceUploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(0), fid, sourcePayload)
+	_ = framework.ReadAllAndClose(t, sourceUploadResp)
+	if sourceUploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload to source expected 201, got %d", sourceUploadResp.StatusCode)
+	}
+
+	destUploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(1), fid, destPayload)
+	_ = framework.ReadAllAndClose(t, destUploadResp)
+	if destUploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload to destination expected 201, got %d", destUploadResp.StatusCode)
+	}
+
+	destReadBeforeResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(1), fid)
+	destReadBeforeBody := framework.ReadAllAndClose(t, destReadBeforeResp)
+	if destReadBeforeResp.StatusCode != http.StatusOK {
+		t.Fatalf("destination pre-copy read expected 200, got %d", destReadBeforeResp.StatusCode)
+	}
+	if string(destReadBeforeBody) != string(destPayload) {
+		t.Fatalf("destination pre-copy payload mismatch: got %q want %q", string(destReadBeforeBody), string(destPayload))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	copyStream, err := destClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
+		VolumeId:       volumeID,
+		Collection:     "",
+		SourceDataNode: clusterHarness.VolumeAdminAddress(0) + "." + strings.Split(clusterHarness.VolumeGRPCAddress(0), ":")[1],
+	})
+	if err != nil {
+		t.Fatalf("VolumeCopy overwrite start failed: %v", err)
+	}
+
+	sawFinalAppendTimestamp := false
+	for {
+		msg, recvErr := copyStream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("VolumeCopy overwrite recv failed: %v", recvErr)
+		}
+		if msg.GetLastAppendAtNs() > 0 {
+			sawFinalAppendTimestamp = true
+		}
+	}
+	if !sawFinalAppendTimestamp {
+		t.Fatalf("VolumeCopy overwrite expected final response with last_append_at_ns")
+	}
+
+	destReadAfterResp := framework.ReadBytes(t, httpClient, clusterHarness.VolumeAdminURL(1), fid)
+	destReadAfterBody := framework.ReadAllAndClose(t, destReadAfterResp)
+	if destReadAfterResp.StatusCode != http.StatusOK {
+		t.Fatalf("destination post-copy read expected 200, got %d", destReadAfterResp.StatusCode)
+	}
+	if string(destReadAfterBody) != string(sourcePayload) {
+		t.Fatalf("destination post-copy payload mismatch: got %q want %q", string(destReadAfterBody), string(sourcePayload))
+	}
+}
