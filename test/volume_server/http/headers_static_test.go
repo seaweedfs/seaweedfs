@@ -79,3 +79,24 @@ func TestStaticAssetEndpoints(t *testing.T) {
 		t.Fatalf("/seaweedfsstatic/seaweed50x50.png expected 200, got %d", staticResp.StatusCode)
 	}
 }
+
+func TestStaticAssetEndpointsOnPublicPort(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	client := framework.NewHTTPClient()
+
+	faviconResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, clusterHarness.VolumePublicURL()+"/favicon.ico"))
+	_ = framework.ReadAllAndClose(t, faviconResp)
+	if faviconResp.StatusCode != http.StatusOK {
+		t.Fatalf("public /favicon.ico expected 200, got %d", faviconResp.StatusCode)
+	}
+
+	staticResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, clusterHarness.VolumePublicURL()+"/seaweedfsstatic/seaweed50x50.png"))
+	_ = framework.ReadAllAndClose(t, staticResp)
+	if staticResp.StatusCode != http.StatusOK {
+		t.Fatalf("public /seaweedfsstatic/seaweed50x50.png expected 200, got %d", staticResp.StatusCode)
+	}
+}
