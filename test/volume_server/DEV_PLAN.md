@@ -1113,3 +1113,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: chunk-manifest delete failure-injection branch remains pending.
 - Commit: `c6df98a02`
+
+- Date: 2026-02-13
+- Change: Added HTTP chunk-manifest delete failure-path coverage.
+- APIs covered: chunk-manifest child-delete error branch (`500`) and non-deletion parity of manifest metadata after failed delete.
+- Profiles covered: P1.
+- Gaps introduced/remaining: request-cancel (`499`) and deep transport-interruption branches remain pending.
+- Commit: `38a1f4f4f`
