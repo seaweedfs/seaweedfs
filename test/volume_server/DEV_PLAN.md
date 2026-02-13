@@ -1043,3 +1043,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: file-size limit rejection and replicated-write failure branches remain pending for write-path breadth.
 - Commit: `046390e54`
+
+- Date: 2026-02-13
+- Change: Added HTTP conditional-header precedence coverage.
+- APIs covered: `GET` with combined `If-Modified-Since` + mismatched `If-None-Match` (`304` by current precedence), plus invalid `If-Modified-Since` fallback behavior (`200` body path).
+- Profiles covered: P1.
+- Gaps introduced/remaining: range-sum oversized-request behavior and image transform/chunk-manifest read branches remain pending.
+- Commit: `31d59f0b8`
