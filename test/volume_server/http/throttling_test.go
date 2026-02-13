@@ -425,3 +425,46 @@ func TestDownloadLimitDisabledAllowsConcurrentDownloads(t *testing.T) {
 		t.Fatalf("second GET body size mismatch: got %d want %d", len(secondBody), len(largePayload))
 	}
 }
+
+func TestDownloadLimitInvalidVidWhileOverLimitReturnsBadRequest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(110)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	largePayload := make([]byte, 12*1024*1024)
+	for i := range largePayload {
+		largePayload[i] = byte(i % 251)
+	}
+	fid := framework.NewFileID(volumeID, 880501, 0x50607080)
+	uploadResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), fid, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	firstResp, err := (&http.Client{}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid))
+	if err != nil {
+		t.Fatalf("first GET failed: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		_ = framework.ReadAllAndClose(t, firstResp)
+		t.Fatalf("first GET expected 200, got %d", firstResp.StatusCode)
+	}
+	defer firstResp.Body.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	invalidReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/not-a-vid,1234567890ab")
+	invalidResp := framework.DoRequest(t, framework.NewHTTPClient(), invalidReq)
+	_ = framework.ReadAllAndClose(t, invalidResp)
+	if invalidResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid vid while over limit expected 400, got %d", invalidResp.StatusCode)
+	}
+}
