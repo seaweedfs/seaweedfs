@@ -854,3 +854,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: deeper conditional-header combinations (`If-None-Match` + `If-Modified-Since` precedence) remain expandable.
 - Commit: `e87563a3c`
+
+- Date: 2026-02-12
+- Change: Expanded split-port unsupported-method matrix with `CONNECT` parity coverage.
+- APIs covered: admin/public behavior for `CONNECT` (`400` on admin, passthrough `200` on public) with post-call data-integrity verification.
+- Profiles covered: P2.
+- Gaps introduced/remaining: unsupported-method parity now covers `PATCH`, `TRACE`, `PROPFIND`, and `CONNECT`; additional uncommon verbs can still be sampled as needed.
+- Commit: `2a893d10d`
