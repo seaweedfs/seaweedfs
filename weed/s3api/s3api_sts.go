@@ -5,8 +5,6 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -488,24 +486,14 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
-	// Generate temporary credentials (cryptographically secure)
-	// AccessKeyId: ASIA + 16 chars hex
-	// SecretAccessKey: 40 chars base64
-	randBytes := make([]byte, 30) // Sufficient for both
-	if _, err := rand.Read(randBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	// Generate temporary credentials (deterministic based on sessionId)
+	stsCredGen := sts.NewCredentialGenerator()
+	stsCredsDet, err := stsCredGen.GenerateTemporaryCredentials(sessionId, expiration)
+	if err != nil {
+		return STSCredentials{}, nil, fmt.Errorf("failed to generate temporary credentials: %w", err)
 	}
-
-	// Generate AccessKeyId (ASIA + 16 upper-hex chars)
-	// We use 8 bytes (16 hex chars)
-	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
-
-	// Generate SecretAccessKey: 30 random bytes, base64-encoded to a 40-character string
-	secretBytes := make([]byte, 30)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
-	}
-	secretAccessKey := base64.StdEncoding.EncodeToString(secretBytes)
+	accessKeyId := stsCredsDet.AccessKeyId
+	secretAccessKey := stsCredsDet.SecretAccessKey
 
 	// Get account ID from STS config or use default
 	accountId := defaultAccountId
