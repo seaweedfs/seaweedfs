@@ -903,3 +903,10 @@ Update this section during implementation:
 - Profiles covered: P8-derived profile (`readMode=proxy`) with dual volume servers.
 - Gaps introduced/remaining: explicit cancellation (`499`) branch for wait loops remains difficult to assert over HTTP transport semantics.
 - Commit: `6d532eddc`
+
+- Date: 2026-02-12
+- Change: Added explicit no-limit throttling coverage for baseline profile.
+- APIs covered: upload/download limit-disabled branches (`concurrent*Limit=0`) under concurrent pressure, verifying requests proceed (`200`/`201`) without throttling.
+- Profiles covered: P1.
+- Gaps introduced/remaining: cancellation (`499`) path remains pending due client-transport observability constraints.
+- Commit: `2cd9a9c6f`
