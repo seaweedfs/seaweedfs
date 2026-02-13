@@ -137,7 +137,7 @@ func backupFromLocation(volumeServer pb.ServerAddress, grpcDialOption grpc.DialO
 
 	// Handle compaction if needed
 	if v.SuperBlock.CompactionRevision < uint16(stats.CompactRevision) {
-		if err = v.Compact2(0, 0, nil); err != nil {
+		if err = v.CompactByIndex(nil); err != nil {
 			v.Close()
 			return fmt.Errorf("compacting volume: %w", err), false
 		}
