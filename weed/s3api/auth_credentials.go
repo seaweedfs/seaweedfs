@@ -100,6 +100,9 @@ type Account struct {
 	Id string
 }
 
+// Default account ID for all automated SeaweedFS accounts and fallback
+const defaultAccountID = "000000000000"
+
 // Predefined Accounts
 var (
 	// AccountAdmin is used as the default account for IAM-Credentials access without Account configured
@@ -1011,9 +1014,9 @@ func generatePrincipalArn(identityName string) string {
 	case AccountAnonymous.Id:
 		return "*" // Use universal wildcard for anonymous allowed by bucket policy
 	case AccountAdmin.Id:
-		return "arn:aws:iam::000000000000:user/admin"
+		return fmt.Sprintf("arn:aws:iam::%s:user/admin", defaultAccountID)
 	default:
-		return fmt.Sprintf("arn:aws:iam::000000000000:user/%s", identityName)
+		return fmt.Sprintf("arn:aws:iam::%s:user/%s", defaultAccountID, identityName)
 	}
 }
 
@@ -1419,7 +1422,7 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
-	accountID := "000000000000" // Default account ID
+	accountID := defaultAccountID // Default account ID
 	if identity.Account != nil && identity.Account.Id != "" {
 		accountID = identity.Account.Id
 	}

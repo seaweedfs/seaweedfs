@@ -44,9 +44,6 @@ const (
 const (
 	minDurationSeconds = int64(900)   // 15 minutes
 	maxDurationSeconds = int64(43200) // 12 hours
-
-	// Default account ID for federated users
-	defaultAccountId = "000000000000"
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
@@ -92,7 +89,7 @@ func (h *STSHandlers) getAccountID() string {
 	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
 		return h.stsService.Config.AccountId
 	}
-	return defaultAccountId
+	return defaultAccountID
 }
 
 // HandleSTSRequest is the main entry point for STS requests

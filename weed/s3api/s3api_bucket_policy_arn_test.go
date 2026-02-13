@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -108,7 +109,7 @@ func TestBuildPrincipalARN(t *testing.T) {
 					Id: "",
 				},
 			},
-			expected: "arn:aws:iam::000000000000:user/test-user",
+			expected: fmt.Sprintf("arn:aws:iam::%s:user/test-user", defaultAccountID),
 		},
 		{
 			name: "identity without name",
