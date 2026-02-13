@@ -1057,3 +1057,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: image resize/crop and chunk-manifest read branches remain pending.
 - Commit: `612e5f61c`
+
+- Date: 2026-02-13
+- Change: Added HTTP image transformation integration coverage.
+- APIs covered: read-path image resize (`width`,`height`) and crop (`crop_*`) branches with decoded output-dimension assertions.
+- Profiles covered: P1.
+- Gaps introduced/remaining: chunk-manifest read/`cm=false` parity and compressed-content encoding matrix remain pending.
+- Commit: `d68803ecc`
