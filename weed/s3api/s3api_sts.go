@@ -5,18 +5,15 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -168,12 +165,25 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
+	var sessionPolicyPtr *string
+	if sessionPolicyJSON != "" {
+		sessionPolicyPtr = &sessionPolicyJSON
+	}
+
 	// Build request for STS service
 	request := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          roleArn,
 		WebIdentityToken: webIdentityToken,
 		RoleSessionName:  roleSessionName,
 		DurationSeconds:  durationSeconds,
+		Policy:           sessionPolicyPtr,
 	}
 
 	// Call STS service
@@ -219,9 +229,8 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 
 // handleAssumeRole handles the AssumeRole API action
 // This requires AWS Signature V4 authentication
-// NOTE: Session policy support (Policy parameter) is implemented for AssumeRole.
-// AssumeRoleWithWebIdentity and AssumeRoleWithLDAPIdentity do not currently support
-// inline session policies. This can be extended in future work if needed.
+// Inline session policies (Policy parameter) are supported for AssumeRole,
+// AssumeRoleWithWebIdentity, and AssumeRoleWithLDAPIdentity.
 func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters from form
 	roleArn := r.FormValue("RoleArn")
@@ -297,27 +306,11 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse optional inline session policy for downscoping
-	sessionPolicyJSON := ""
-	policyParam := strings.TrimSpace(r.FormValue("Policy"))
-	if policyParam != "" {
-		var policyDoc policy.PolicyDocument
-		if err := json.Unmarshal([]byte(policyParam), &policyDoc); err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
-				fmt.Errorf("invalid Policy JSON: %w", err))
-			return
-		}
-		if err := policy.ValidatePolicyDocument(&policyDoc); err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
-				fmt.Errorf("invalid Policy document: %w", err))
-			return
-		}
-		normalized, err := json.Marshal(&policyDoc)
-		if err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrInternalError,
-				fmt.Errorf("failed to normalize Policy document: %w", err))
-			return
-		}
-		sessionPolicyJSON = string(normalized)
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
 	}
 
 	// Generate common STS components
@@ -450,12 +443,19 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
 	// Generate common STS components with LDAP-specific claims
 	modifyClaims := func(claims *sts.STSSessionClaims) {
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, "", modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
