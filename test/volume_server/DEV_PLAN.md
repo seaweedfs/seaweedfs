@@ -1008,3 +1008,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: EC multi-node shard-copy/rebuild permutations and last-shard cleanup edge cases remain pending.
 - Commit: `6d223338a`
+
+- Date: 2026-02-13
+- Change: Added EC file-stream integration coverage for `ReceiveFile` and `CopyFile`.
+- APIs covered: `ReceiveFile` success with `is_ec_volume=true`, and `CopyFile` EC missing-source behavior with `ignore_source_file_not_found=true/false`.
+- Profiles covered: P1.
+- Gaps introduced/remaining: multi-node EC shard copy/rebuild permutations and last-shard cleanup edge assertions remain pending.
+- Commit: `a78290d56`
