@@ -1029,3 +1029,10 @@ Update this section during implementation:
 - Profiles covered: P4-derived dual-volume topology.
 - Gaps introduced/remaining: additional distributed copy branches (e.g., existing-destination overwrite and remote-dat variations) remain pending.
 - Commit: `7538653ad`
+
+- Date: 2026-02-13
+- Change: Added dual-node `VolumeCopy` overwrite coverage when destination volume already exists.
+- APIs covered: existing-destination delete-before-copy branch, with pre-copy destination payload assertion and post-copy source parity validation.
+- Profiles covered: P4-derived dual-volume topology.
+- Gaps introduced/remaining: remote-dat-file and no-space source-copy branches remain pending.
+- Commit: `2d49019e9`
