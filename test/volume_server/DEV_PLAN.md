@@ -1015,3 +1015,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: multi-node EC shard copy/rebuild permutations and last-shard cleanup edge assertions remain pending.
 - Commit: `a78290d56`
+
+- Date: 2026-02-13
+- Change: Added EC last-shard deletion cleanup coverage.
+- APIs covered: `VolumeEcShardsDelete` branch where deleting the final shard set removes EC index files (`.ecx` cleanup), validated via EC `CopyFile` pre/post behavior.
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC multi-node shard copy/rebuild permutations remain pending for broader distributed parity.
+- Commit: `e8ef35346`
