@@ -138,6 +138,89 @@ func TestUploadLimitTimeoutAndReplicateBypass(t *testing.T) {
 	}
 }
 
+func TestUploadLimitWaitThenProceed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(111)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	const blockedUploadSize = 2 * 1024 * 1024
+
+	unblockFirstUpload := make(chan struct{})
+	firstUploadDone := make(chan error, 1)
+	firstFID := framework.NewFileID(volumeID, 880601, 0x6A2B3C4D)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+firstFID, &pausableReader{
+			remaining:  blockedUploadSize,
+			pauseAfter: 1,
+			unblock:    unblockFirstUpload,
+		})
+		if err != nil {
+			firstUploadDone <- err
+			return
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = blockedUploadSize
+
+		resp, err := (&http.Client{}).Do(req)
+		if resp != nil {
+			_ = framework.ReadAllAndClose(t, resp)
+		}
+		firstUploadDone <- err
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+
+	type uploadResult struct {
+		resp *http.Response
+		err  error
+	}
+	secondUploadDone := make(chan uploadResult, 1)
+	secondFID := framework.NewFileID(volumeID, 880602, 0x6A2B3C4E)
+	go func() {
+		req, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+secondFID, bytes.NewReader([]byte("wait-then-proceed")))
+		if err != nil {
+			secondUploadDone <- uploadResult{err: err}
+			return
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = int64(len("wait-then-proceed"))
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		secondUploadDone <- uploadResult{resp: resp, err: err}
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	close(unblockFirstUpload)
+
+	select {
+	case firstErr := <-firstUploadDone:
+		if firstErr != nil {
+			t.Fatalf("first blocked upload failed: %v", firstErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for first upload completion")
+	}
+
+	select {
+	case result := <-secondUploadDone:
+		if result.err != nil {
+			t.Fatalf("second upload failed: %v", result.err)
+		}
+		_ = framework.ReadAllAndClose(t, result.resp)
+		if result.resp.StatusCode != http.StatusCreated {
+			t.Fatalf("second upload expected 201 after waiting for slot, got %d", result.resp.StatusCode)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for second upload completion")
+	}
+}
+
 func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -182,6 +265,68 @@ func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, secondResp)
 	if secondResp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("second GET expected 429 while first download holds limit, got %d", secondResp.StatusCode)
+	}
+}
+
+func TestDownloadLimitWaitThenProceedWithoutReplica(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P8())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(112)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	largePayload := make([]byte, 12*1024*1024)
+	for i := range largePayload {
+		largePayload[i] = byte(i % 251)
+	}
+	fid := framework.NewFileID(volumeID, 880701, 0x60708090)
+	uploadResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(), fid, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	firstResp, err := (&http.Client{}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid))
+	if err != nil {
+		t.Fatalf("first GET failed: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		_ = framework.ReadAllAndClose(t, firstResp)
+		t.Fatalf("first GET expected 200, got %d", firstResp.StatusCode)
+	}
+
+	type readResult struct {
+		resp *http.Response
+		err  error
+	}
+	secondReadDone := make(chan readResult, 1)
+	go func() {
+		resp, readErr := (&http.Client{Timeout: 10 * time.Second}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid))
+		secondReadDone <- readResult{resp: resp, err: readErr}
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	_ = firstResp.Body.Close()
+
+	select {
+	case result := <-secondReadDone:
+		if result.err != nil {
+			t.Fatalf("second GET failed: %v", result.err)
+		}
+		secondBody := framework.ReadAllAndClose(t, result.resp)
+		if result.resp.StatusCode != http.StatusOK {
+			t.Fatalf("second GET expected 200 after waiting for slot, got %d", result.resp.StatusCode)
+		}
+		if len(secondBody) != len(largePayload) {
+			t.Fatalf("second GET body size mismatch: got %d want %d", len(secondBody), len(largePayload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for second GET completion")
 	}
 }
 
