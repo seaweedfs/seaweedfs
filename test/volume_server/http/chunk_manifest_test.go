@@ -91,3 +91,80 @@ func TestChunkManifestExpansionAndBypass(t *testing.T) {
 		t.Fatalf("manifest bypass read payload mismatch: %+v", gotManifest)
 	}
 }
+
+func TestChunkManifestDeleteRemovesChildChunks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(104)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+
+	chunkFID := framework.NewFileID(volumeID, 772008, 0x8192A3B4)
+	chunkPayload := []byte("chunk-manifest-delete-content")
+	chunkUploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), chunkFID, chunkPayload)
+	_ = framework.ReadAllAndClose(t, chunkUploadResp)
+	if chunkUploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("chunk upload expected 201, got %d", chunkUploadResp.StatusCode)
+	}
+
+	manifest := &operation.ChunkManifest{
+		Name: "manifest-delete.bin",
+		Mime: "application/octet-stream",
+		Size: int64(len(chunkPayload)),
+		Chunks: []*operation.ChunkInfo{
+			{
+				Fid:    chunkFID,
+				Offset: 0,
+				Size:   int64(len(chunkPayload)),
+			},
+		},
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal chunk manifest: %v", err)
+	}
+
+	manifestFID := framework.NewFileID(volumeID, 772009, 0x92A3B4C5)
+	manifestUploadReq, err := http.NewRequest(http.MethodPost, clusterHarness.VolumeAdminURL()+"/"+manifestFID+"?cm=true", bytes.NewReader(manifestBytes))
+	if err != nil {
+		t.Fatalf("create manifest upload request: %v", err)
+	}
+	manifestUploadReq.Header.Set("Content-Type", "application/json")
+	manifestUploadResp := framework.DoRequest(t, client, manifestUploadReq)
+	_ = framework.ReadAllAndClose(t, manifestUploadResp)
+	if manifestUploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("manifest upload expected 201, got %d", manifestUploadResp.StatusCode)
+	}
+
+	deleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, clusterHarness.VolumeAdminURL()+"/"+manifestFID))
+	deleteBody := framework.ReadAllAndClose(t, deleteResp)
+	if deleteResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("manifest delete expected 202, got %d", deleteResp.StatusCode)
+	}
+	var deleteResult map[string]int64
+	if err = json.Unmarshal(deleteBody, &deleteResult); err != nil {
+		t.Fatalf("decode manifest delete response: %v body=%q", err, string(deleteBody))
+	}
+	if deleteResult["size"] != int64(len(chunkPayload)) {
+		t.Fatalf("manifest delete expected size=%d, got %d", len(chunkPayload), deleteResult["size"])
+	}
+
+	manifestReadAfterDelete := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), manifestFID)
+	_ = framework.ReadAllAndClose(t, manifestReadAfterDelete)
+	if manifestReadAfterDelete.StatusCode != http.StatusNotFound {
+		t.Fatalf("manifest read after delete expected 404, got %d", manifestReadAfterDelete.StatusCode)
+	}
+
+	chunkReadAfterDelete := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), chunkFID)
+	_ = framework.ReadAllAndClose(t, chunkReadAfterDelete)
+	if chunkReadAfterDelete.StatusCode != http.StatusNotFound {
+		t.Fatalf("chunk read after manifest delete expected 404, got %d", chunkReadAfterDelete.StatusCode)
+	}
+}
