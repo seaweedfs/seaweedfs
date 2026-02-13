@@ -33,9 +33,14 @@ env:
 
 jobs:
   volume-server-integration-tests:
-    name: Volume Server Integration Tests
+    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: [grpc, http]
+        shard: [1, 2, 3]
 
     steps:
       - name: Checkout code
@@ -57,8 +62,25 @@ jobs:
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
         run: |
-          echo "Running volume server integration tests..."
-          go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/...
+          if [ "${{ matrix.test-type }}" == "grpc" ]; then
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-H]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[I-S]"
+            else
+              TEST_PATTERN="^Test[T-Z]"
+            fi
+          else
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-G]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[H-R]"
+            else
+              TEST_PATTERN="^Test[S-Z]"
+            fi
+          fi
+          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }}, pattern: ${TEST_PATTERN})..."
+          go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
 
       - name: Collect logs on failure
         if: failure()
@@ -78,6 +100,23 @@ jobs:
       - name: Test summary
         if: always()
         run: |
-          echo "## Volume Server Integration Test Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Suite: test/volume_server" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/..." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.test-type }}" == "grpc" ]; then
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-H]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[I-S]"
+            else
+              TEST_PATTERN="^Test[T-Z]"
+            fi
+          else
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-G]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[H-R]"
+            else
+              TEST_PATTERN="^Test[S-Z]"
+            fi
+          fi
+          echo "## Volume Server Integration Test Summary (${{ matrix.test-type }} - Shard ${{ matrix.shard }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server/${{ matrix.test-type }} (Pattern: ${TEST_PATTERN})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
