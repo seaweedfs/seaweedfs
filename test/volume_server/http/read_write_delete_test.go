@@ -83,6 +83,17 @@ func TestUploadReadRangeHeadDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("head body should be empty, got %d bytes", len(headBody))
 	}
 
+	headNotModifiedReq := mustNewRequest(t, http.MethodHead, cluster.VolumeAdminURL()+"/"+fid)
+	headNotModifiedReq.Header.Set("If-None-Match", etag)
+	headNotModifiedResp := framework.DoRequest(t, client, headNotModifiedReq)
+	headNotModifiedBody := framework.ReadAllAndClose(t, headNotModifiedResp)
+	if headNotModifiedResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("head if-none-match expected 304, got %d", headNotModifiedResp.StatusCode)
+	}
+	if len(headNotModifiedBody) != 0 {
+		t.Fatalf("head if-none-match body should be empty, got %d bytes", len(headNotModifiedBody))
+	}
+
 	deleteResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodDelete, cluster.VolumeAdminURL()+"/"+fid))
 	_ = framework.ReadAllAndClose(t, deleteResp)
 	if deleteResp.StatusCode != http.StatusAccepted {
