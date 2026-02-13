@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -612,5 +613,77 @@ func TestEcShardsToVolumeSuccessRoundTrip(t *testing.T) {
 	}
 	if string(readBody) != string(payload) {
 		t.Fatalf("post-conversion payload mismatch: got %q want %q", string(readBody), string(payload))
+	}
+}
+
+func TestEcShardsDeleteLastShardRemovesEcx(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(121)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 990007, 0x77882233)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-delete-all-shards-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	// Verify .ecx is present before deleting all shards.
+	ecxBeforeDelete, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Collection:         "",
+		IsEcVolume:         true,
+		Ext:                ".ecx",
+		CompactionRevision: math.MaxUint32,
+		StopOffset:         1,
+	})
+	if err != nil {
+		t.Fatalf("CopyFile .ecx before shard deletion start failed: %v", err)
+	}
+	if _, err = ecxBeforeDelete.Recv(); err != nil {
+		t.Fatalf("CopyFile .ecx before shard deletion recv failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsDelete all shards failed: %v", err)
+	}
+
+	ecxAfterDelete, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Collection:         "",
+		IsEcVolume:         true,
+		Ext:                ".ecx",
+		CompactionRevision: math.MaxUint32,
+		StopOffset:         1,
+	})
+	if err == nil {
+		_, err = ecxAfterDelete.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not found ec volume id") {
+		t.Fatalf("CopyFile .ecx after deleting all shards should fail not-found, got: %v", err)
 	}
 }
