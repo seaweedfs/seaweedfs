@@ -952,3 +952,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: static asset baseline coverage is now present for both admin and public ports.
 - Commit: `e4c329811`
+
+- Date: 2026-02-12
+- Change: Added split public-port `HEAD` method parity coverage.
+- APIs covered: public-port `HEAD` read behavior (`200`, content-length parity, empty-body semantics) for existing files.
+- Profiles covered: P2.
+- Gaps introduced/remaining: none for baseline public-port `GET/HEAD/OPTIONS` method coverage.
+- Commit: `127c43b1a`
