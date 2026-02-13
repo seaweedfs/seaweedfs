@@ -1036,3 +1036,10 @@ Update this section during implementation:
 - Profiles covered: P4-derived dual-volume topology.
 - Gaps introduced/remaining: remote-dat-file and no-space source-copy branches remain pending.
 - Commit: `2d49019e9`
+
+- Date: 2026-02-13
+- Change: Added HTTP write error-path integration coverage.
+- APIs covered: `POST` invalid vid/fid parse rejections (`400`), malformed multipart form parse failure (`400`), and `Content-MD5` mismatch validation failure (`400`).
+- Profiles covered: P1.
+- Gaps introduced/remaining: file-size limit rejection and replicated-write failure branches remain pending for write-path breadth.
+- Commit: `046390e54`
