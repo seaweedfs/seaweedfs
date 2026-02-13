@@ -57,6 +57,82 @@ func TestVolumeNeedleStatusForUploadedFile(t *testing.T) {
 	}
 }
 
+func TestVolumeNeedleStatusViaEcShardsWhenNormalVolumeUnmounted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(26)
+	const needleID = uint64(778900)
+	const cookie = uint32(0xA1B2C3D5)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	payload := []byte("needle-status-ec-path-payload")
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload status: expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount data shards failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("VolumeUnmount failed: %v", err)
+	}
+
+	statusResp, err := grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: volumeID,
+		NeedleId: needleID,
+	})
+	if err != nil {
+		t.Fatalf("VolumeNeedleStatus via EC shards failed: %v", err)
+	}
+	if statusResp.GetNeedleId() != needleID {
+		t.Fatalf("needle id mismatch: got %d want %d", statusResp.GetNeedleId(), needleID)
+	}
+	if statusResp.GetCookie() != cookie {
+		t.Fatalf("cookie mismatch: got %d want %d", statusResp.GetCookie(), cookie)
+	}
+	if statusResp.GetSize() == 0 {
+		t.Fatalf("expected non-zero needle size from EC-backed needle status")
+	}
+
+	_, err = grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: volumeID,
+		NeedleId: needleID + 999999,
+	})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "not found") {
+		t.Fatalf("VolumeNeedleStatus via EC shards missing-needle error mismatch: %v", err)
+	}
+}
+
 func TestVolumeNeedleStatusMissingVolumeAndNeedle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
