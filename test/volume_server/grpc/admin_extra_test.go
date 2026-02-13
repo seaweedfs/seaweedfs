@@ -278,3 +278,30 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 		t.Fatalf("Ping filer unreachable error mismatch: %v", err)
 	}
 }
+
+func TestPingMasterTargetSuccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
+		TargetType: cluster.MasterType,
+		Target:     clusterHarness.MasterAddress(),
+	})
+	if err != nil {
+		t.Fatalf("Ping master target success path failed: %v", err)
+	}
+	if resp.GetRemoteTimeNs() == 0 {
+		t.Fatalf("Ping master target expected non-zero remote time")
+	}
+	if resp.GetStopTimeNs() < resp.GetStartTimeNs() {
+		t.Fatalf("Ping master target expected stop >= start, got start=%d stop=%d", resp.GetStartTimeNs(), resp.GetStopTimeNs())
+	}
+}
