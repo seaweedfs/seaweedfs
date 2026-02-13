@@ -80,6 +80,9 @@ func TestOptionsMethodsByPort(t *testing.T) {
 			t.Fatalf("admin allow methods missing %q, got %q", expected, adminAllowed)
 		}
 	}
+	if adminResp.Header.Get("Access-Control-Allow-Headers") != "*" {
+		t.Fatalf("admin allow headers expected '*', got %q", adminResp.Header.Get("Access-Control-Allow-Headers"))
+	}
 
 	publicResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodOptions, cluster.VolumePublicURL()+"/"))
 	_ = framework.ReadAllAndClose(t, publicResp)
@@ -92,6 +95,9 @@ func TestOptionsMethodsByPort(t *testing.T) {
 	}
 	if strings.Contains(publicAllowed, "POST") {
 		t.Fatalf("public allow methods should not include POST, got %q", publicAllowed)
+	}
+	if publicResp.Header.Get("Access-Control-Allow-Headers") != "*" {
+		t.Fatalf("public allow headers expected '*', got %q", publicResp.Header.Get("Access-Control-Allow-Headers"))
 	}
 }
 
