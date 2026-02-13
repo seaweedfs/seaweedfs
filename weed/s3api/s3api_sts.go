@@ -287,7 +287,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, identity.PrincipalArn, durationSeconds, nil)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, nil)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -428,7 +428,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, ldapUserIdentity.PrincipalArn, durationSeconds, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -447,7 +447,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalArn string,
+func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	durationSeconds *int64, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration

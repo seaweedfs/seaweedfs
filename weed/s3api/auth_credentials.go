@@ -1420,7 +1420,10 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
-	accountId := identity.Account.Id
+	accountId := ""
+	if identity.Account != nil {
+		accountId = identity.Account.Id
+	}
 	if accountId == "" {
 		accountId = "000000000000" // Default account ID
 	}
