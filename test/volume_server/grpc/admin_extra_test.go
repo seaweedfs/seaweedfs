@@ -230,6 +230,41 @@ func TestPingVolumeTargetAndLeaveAffectsHealthz(t *testing.T) {
 	}
 }
 
+func TestVolumeServerLeaveIsIdempotent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := grpcClient.VolumeServerLeave(ctx, &volume_server_pb.VolumeServerLeaveRequest{}); err != nil {
+		t.Fatalf("first VolumeServerLeave failed: %v", err)
+	}
+	if _, err := grpcClient.VolumeServerLeave(ctx, &volume_server_pb.VolumeServerLeaveRequest{}); err != nil {
+		t.Fatalf("second VolumeServerLeave should be idempotent success, got: %v", err)
+	}
+
+	client := framework.NewHTTPClient()
+	healthURL := clusterHarness.VolumeAdminURL() + "/healthz"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, healthURL))
+		_ = framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected healthz to stay 503 after repeated leave, got %d", resp.StatusCode)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
