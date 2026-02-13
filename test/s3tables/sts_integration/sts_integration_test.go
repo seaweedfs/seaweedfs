@@ -110,17 +110,70 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		volumePort:      volumePort,
 		volumeGrpcPort:  volumeGrpcPort,
 		dockerAvailable: testutil.HasDocker(),
-		accessKey:       "admin", // Matching default in testutil.WriteIAMConfig
-		secretKey:       "admin",
+		accessKey:       "admin",
+		secretKey:       "adminadmin",
 	}
 }
 
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
-	// Create IAM config file
-	iamConfigPath, err := testutil.WriteIAMConfig(env.dataDir, env.accessKey, env.secretKey)
-	if err != nil {
+	iamConfigPath := filepath.Join(env.dataDir, "iam.json")
+	// Note: signingKey must be base64 encoded for []byte JSON unmarshaling
+	iamConfig := fmt.Sprintf(`{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        { "accessKey": "%s", "secretKey": "%s" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ],
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz"
+  },
+  "policy": {
+    "defaultEffect": "Deny",
+    "storeType": "memory"
+  },
+  "policies": [
+    {
+      "name": "S3FullAccessPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3:*"],
+            "Resource": ["*"]
+          }
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "roleName": "TestRole",
+      "roleArn": "arn:aws:iam::role/TestRole",
+      "attachedPolicies": ["S3FullAccessPolicy"],
+      "trustPolicy": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": "*",
+            "Action": ["sts:AssumeRole"]
+          }
+        ]
+      }
+    }
+  ]
+}`, env.accessKey, env.secretKey)
+	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
 		t.Fatalf("Failed to create IAM config: %v", err)
 	}
 
@@ -143,6 +196,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.config", iamConfigPath,
+		"-s3.iam.config", iamConfigPath,
+		"-s3.iam.readOnly=false",
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
@@ -190,22 +245,37 @@ func runPythonSTSClient(t *testing.T, env *TestEnvironment) {
 import boto3
 import botocore.config
 from botocore.exceptions import ClientError
-import os
+import json
 import sys
+import time
 
-print("Starting STS test...")
+print("Starting STS inline session policy test...")
 
 endpoint_url = "http://host.docker.internal:%d"
 access_key = "%s"
 secret_key = "%s"
 region = "us-east-1"
 
-print(f"Connecting to {endpoint_url} with key {access_key}")
-
 try:
     config = botocore.config.Config(
         retries={'max_attempts': 0}
     )
+    admin_s3 = boto3.client(
+        's3',
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        region_name=region,
+        config=config
+    )
+
+    bucket = f"sts-inline-policy-{int(time.time() * 1000)}"
+    key = "allowed.txt"
+
+    print(f"Creating bucket {bucket} with admin credentials")
+    admin_s3.create_bucket(Bucket=bucket)
+    admin_s3.put_object(Bucket=bucket, Key=key, Body=b"ok")
+
     sts = boto3.client(
         'sts',
         endpoint_url=endpoint_url,
@@ -215,43 +285,73 @@ try:
         config=config
     )
 
-    role_arn = "arn:aws:iam::000000000000:role/test-role"
+    role_arn = "arn:aws:iam::role/TestRole"
     session_name = "test-session"
+    session_policy = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": ["s3:ListBucket"],
+                "Resource": [f"arn:aws:s3:::{bucket}"]
+            },
+            {
+                "Effect": "Allow",
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"]
+            }
+        ]
+    })
 
-    print(f"Calling AssumeRole on {role_arn}")
-    
-    # This call typically sends parameters in POST body by default in boto3
+    print(f"Calling AssumeRole on {role_arn} with inline session policy")
     response = sts.assume_role(
         RoleArn=role_arn,
-        RoleSessionName=session_name
+        RoleSessionName=session_name,
+        Policy=session_policy
     )
 
-    print("Success! Got credentials:")
-    print(response['Credentials'])
-    
-except ClientError as e:
-    # Print available keys for debugging if needed
-    # print(e.response.keys())
-    
-    response_meta = e.response.get('ResponseMetadata', {})
-    http_code = response_meta.get('HTTPStatusCode')
-    
-    error_data = e.response.get('Error', {})
-    error_code = error_data.get('Code', 'Unknown')
-    
-    print(f"Got error: {http_code} {error_code}")
-    
-    # We expect 503 ServiceUnavailable because stsHandlers is nil in weed mini
-    # This confirms the request was routed to STS handler logic (UnifiedPostHandler)
-    # instead of IAM handler (which would return 403 AccessDenied or 501 NotImplemented)
-    if http_code == 503:
-        print("SUCCESS: Got expected 503 Service Unavailable (STS not configured)")
-        sys.exit(0)
-        
-    print(f"FAILED: Unexpected error {e}")
-    sys.exit(1)
+    creds = response['Credentials']
+    vended_s3 = boto3.client(
+        's3',
+        endpoint_url=endpoint_url,
+        aws_access_key_id=creds['AccessKeyId'],
+        aws_secret_access_key=creds['SecretAccessKey'],
+        aws_session_token=creds['SessionToken'],
+        region_name=region,
+        config=config
+    )
+
+    print("Listing objects (allowed)")
+    list_resp = vended_s3.list_objects_v2(Bucket=bucket)
+    keys = [obj.get('Key') for obj in list_resp.get('Contents', [])]
+    if key not in keys:
+        print(f"FAILED: Expected to see {key} in list_objects_v2 results")
+        sys.exit(1)
+
+    print("Getting object (allowed)")
+    body = vended_s3.get_object(Bucket=bucket, Key=key)['Body'].read()
+    if body != b"ok":
+        print("FAILED: Unexpected object content")
+        sys.exit(1)
+
+    print("Putting object (expected to be denied)")
+    try:
+        vended_s3.put_object(Bucket=bucket, Key="denied.txt", Body=b"no")
+        print("FAILED: PutObject unexpectedly succeeded")
+        sys.exit(1)
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code != 'AccessDenied':
+            print(f"FAILED: Expected AccessDenied, got {error_code}")
+            sys.exit(1)
+        print("PutObject correctly denied by inline session policy")
+
+    print("SUCCESS: Inline session policy downscoping verified")
+    sys.exit(0)
 except Exception as e:
     print(f"FAILED: {e}")
+    if hasattr(e, 'response'):
+        print(f"Response: {e.response}")
     sys.exit(1)
 `, env.s3Port, env.accessKey, env.secretKey)
 
