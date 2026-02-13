@@ -826,3 +826,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: EC-backed `BatchDelete` positive path still pending dedicated EC fixture setup.
 - Commit: `326be22a9`
+
+- Date: 2026-02-12
+- Change: Added gRPC `Query` cookie-mismatch branch parity coverage.
+- APIs covered: `Query` behavior when fid id exists but cookie mismatches; verified current EOF/no-record stream outcome.
+- Profiles covered: P1.
+- Gaps introduced/remaining: CSV parsing behavior beyond current no-output path remains pending.
+- Commit: `2aaf0a339`
