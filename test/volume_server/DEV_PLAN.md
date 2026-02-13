@@ -784,3 +784,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: proxy/redirect interactions with `readDeleted` remain unverified.
 - Commit: `2ed9434cf`
+
+- Date: 2026-02-12
+- Change: Added HTTP delete `ts` query parity coverage for deleted-read metadata behavior.
+- APIs covered: `DELETE ?ts=` followed by `GET ?readDeleted=true`, asserting current Last-Modified parity with pre-delete reads.
+- Profiles covered: P1.
+- Gaps introduced/remaining: explicit externally visible timestamp override effects remain limited in current API responses.
+- Commit: `225b8e800`
