@@ -1106,3 +1106,10 @@ Update this section during implementation:
 - Profiles covered: P4-derived dual-volume topology.
 - Gaps introduced/remaining: EC rebuild/copy distributed failure injection permutations remain pending.
 - Commit: `c9f6710c2`
+
+- Date: 2026-02-13
+- Change: Added HTTP chunk-manifest delete cleanup coverage.
+- APIs covered: chunk-manifest delete success path with child-chunk deletion verification and expected delete response size parity.
+- Profiles covered: P1.
+- Gaps introduced/remaining: chunk-manifest delete failure-injection branch remains pending.
+- Commit: `c6df98a02`
