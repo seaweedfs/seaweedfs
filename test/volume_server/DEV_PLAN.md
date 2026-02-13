@@ -1092,3 +1092,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: sender/receiver transport interruption branches remain pending.
 - Commit: `514c05131`
+
+- Date: 2026-02-13
+- Change: Added EC-backed `VolumeNeedleStatus` integration coverage.
+- APIs covered: `VolumeNeedleStatus` EC execution path (normal volume unmounted + EC shards mounted), including missing-needle error behavior.
+- Profiles covered: P1.
+- Gaps introduced/remaining: transport-interruption and deep fault-injection branches remain pending.
+- Commit: `4ef666791`
