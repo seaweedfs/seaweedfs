@@ -67,6 +67,17 @@ func TestReadPathShapesAndIfModifiedSince(t *testing.T) {
 	if ifModifiedSinceResp.StatusCode != http.StatusNotModified {
 		t.Fatalf("If-Modified-Since expected 304, got %d", ifModifiedSinceResp.StatusCode)
 	}
+
+	headIfModifiedSinceReq := mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+fullFileID)
+	headIfModifiedSinceReq.Header.Set("If-Modified-Since", lastModified)
+	headIfModifiedSinceResp := framework.DoRequest(t, client, headIfModifiedSinceReq)
+	headIfModifiedSinceBody := framework.ReadAllAndClose(t, headIfModifiedSinceResp)
+	if headIfModifiedSinceResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("HEAD If-Modified-Since expected 304, got %d", headIfModifiedSinceResp.StatusCode)
+	}
+	if len(headIfModifiedSinceBody) != 0 {
+		t.Fatalf("HEAD If-Modified-Since expected empty body, got %d bytes", len(headIfModifiedSinceBody))
+	}
 }
 
 func TestMalformedVidFidPathReturnsBadRequest(t *testing.T) {
