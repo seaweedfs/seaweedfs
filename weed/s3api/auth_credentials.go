@@ -1010,11 +1010,11 @@ func generatePrincipalArn(identityName string) string {
 	// Handle special cases
 	switch identityName {
 	case AccountAnonymous.Id:
-		return "arn:aws:iam::user/anonymous"
+		return "*" // Use universal wildcard for anonymous allowed by bucket policy
 	case AccountAdmin.Id:
-		return "arn:aws:iam::user/admin"
+		return "arn:aws:iam::000000000000:user/admin"
 	default:
-		return fmt.Sprintf("arn:aws:iam::user/%s", identityName)
+		return fmt.Sprintf("arn:aws:iam::000000000000:user/%s", identityName)
 	}
 }
 
@@ -1406,7 +1406,12 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 		return "*" // Anonymous
 	}
 
-	// Check if this is the anonymous user identity (authenticated as anonymous)
+	// Priority 1: Use principal ARN if explicitly set (from STS JWT or IAM user)
+	if identity.PrincipalArn != "" {
+		return identity.PrincipalArn
+	}
+
+	// Priority 2: Check if this is the anonymous user identity (authenticated as anonymous)
 	// S3 policies expect Principal: "*" for anonymous access
 	if identity.Name == s3_constants.AccountAnonymousId ||
 		(identity.Account != nil && identity.Account.Id == s3_constants.AccountAnonymousId) {

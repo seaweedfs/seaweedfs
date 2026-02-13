@@ -63,6 +63,14 @@ func TestBuildPrincipalARN(t *testing.T) {
 			expected: "*",
 		},
 		{
+			name: "explicit principal ARN",
+			identity: &Identity{
+				Name:         "test-user",
+				PrincipalArn: "arn:aws:iam::123456789012:role/MyRole",
+			},
+			expected: "arn:aws:iam::123456789012:role/MyRole",
+		},
+		{
 			name: "anonymous user by name",
 			identity: &Identity{
 				Name: s3_constants.AccountAnonymousId,

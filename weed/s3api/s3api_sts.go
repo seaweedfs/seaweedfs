@@ -470,10 +470,21 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		roleName = roleArn // Fallback to full ARN if extraction fails
 	}
 
+	// Get account ID from STS config or use default
+	accountId := defaultAccountId
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
+		accountId = h.stsService.Config.AccountId
+	}
+
+	// Construct AssumedRoleUser ARN - this will be used as the principal for the vended token
+	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName)
+
 	// Create session claims with role information
+	// SECURITY: Use the assumedRoleArn as the principal in the token.
+	// This ensures that subsequent requests using this token are correctly identified as the assumed role.
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
-		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), principalArn)
+		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
 
 	// Apply custom claims if provided (e.g., LDAP identity)
 	if modifyClaims != nil {
@@ -495,12 +506,6 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 	accessKeyId := stsCredsDet.AccessKeyId
 	secretAccessKey := stsCredsDet.SecretAccessKey
 
-	// Get account ID from STS config or use default
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
-
 	stsCreds := STSCredentials{
 		AccessKeyId:     accessKeyId,
 		SecretAccessKey: secretAccessKey,
@@ -510,7 +515,7 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 
 	assumedUser := &AssumedRoleUser{
 		AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-		Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
+		Arn:           assumedRoleArn,
 	}
 
 	return stsCreds, assumedUser, nil
