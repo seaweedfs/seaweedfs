@@ -770,3 +770,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: explicit unmount-failure and mount-failure branches via injected I/O faults are still pending.
 - Commit: `287a60197`
+
+- Date: 2026-02-12
+- Change: Added `VolumeNeedleStatus` error-path coverage.
+- APIs covered: missing-volume error path and missing-needle error path on existing normal volumes.
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC-backed positive/error status permutations still require dedicated EC fixture state.
+- Commit: `bf0c609a7`
