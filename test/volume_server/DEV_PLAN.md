@@ -896,3 +896,10 @@ Update this section during implementation:
 - Profiles covered: P1 (single volume + filer auxiliary process).
 - Gaps introduced/remaining: no additional ping target-type gaps remain in current harness scope.
 - Commits: `5f09d86a8`, `2fc1dde3f`
+
+- Date: 2026-02-12
+- Change: Added download-limit proxied-loop guard coverage.
+- APIs covered: over-limit download path with `proxied=true` now verifies replica fallback is skipped and timeout returns `429`.
+- Profiles covered: P8-derived profile (`readMode=proxy`) with dual volume servers.
+- Gaps introduced/remaining: explicit cancellation (`499`) branch for wait loops remains difficult to assert over HTTP transport semantics.
+- Commit: `6d532eddc`
