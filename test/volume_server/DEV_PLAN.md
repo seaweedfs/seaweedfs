@@ -812,3 +812,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: additional conditional-header parity checks on `HEAD` can still be expanded.
 - Commit: `9499e5400`
+
+- Date: 2026-02-12
+- Change: Expanded `VolumeServerStatus` payload assertions.
+- APIs covered: `VolumeServerStatus` now validates presence of `State` and `MemoryStatus` (including non-zero goroutine count), in addition to version/disk payload checks.
+- Profiles covered: P1.
+- Gaps introduced/remaining: heartbeat-disabled and stopping-state transitions are still exercised indirectly rather than in a dedicated status-payload transition test.
+- Commit: `374411418`
