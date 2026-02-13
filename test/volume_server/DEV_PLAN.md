@@ -917,3 +917,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: none for leave semantics in current harness.
 - Commit: `0fd666916`
+
+- Date: 2026-02-12
+- Change: Expanded redirect read-mode query handling coverage for collection-aware redirects.
+- APIs covered: non-owning redirect path now verifies `collection` query parameter preservation in `Location` alongside `proxied=true`.
+- Profiles covered: P1-derived profile with `ReadMode=redirect` using dual volume servers.
+- Gaps introduced/remaining: redirect branch currently preserves only `collection`; broader query propagation is intentionally untested for parity with current behavior.
+- Commit: `ad287b392`
