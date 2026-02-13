@@ -33,6 +33,8 @@ type TestEnvironment struct {
 	secretKey       string
 }
 
+const testSTSIntegrationSigningKey = "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz" // gitleaks:allow - test-signing-key-for-sts-integration-tests
+
 func TestSTSIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -134,7 +136,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
     "tokenDuration": "1h",
     "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
-    "signingKey": "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz"
+    "signingKey": "%s"
   },
   "policy": {
     "defaultEffect": "Deny",
@@ -172,7 +174,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
       }
     }
   ]
-}`, env.accessKey, env.secretKey)
+}`, env.accessKey, env.secretKey, testSTSIntegrationSigningKey)
 	if err := os.WriteFile(iamConfigPath, []byte(iamConfig), 0644); err != nil {
 		t.Fatalf("Failed to create IAM config: %v", err)
 	}
@@ -197,7 +199,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.config", iamConfigPath,
 		"-s3.iam.config", iamConfigPath,
-		"-s3.iam.readOnly=false",
+		"-s3.iam.readOnly", "false",
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
@@ -352,6 +354,8 @@ except Exception as e:
     print(f"FAILED: {e}")
     if hasattr(e, 'response'):
         print(f"Response: {e.response}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 `, env.s3Port, env.accessKey, env.secretKey)
 
