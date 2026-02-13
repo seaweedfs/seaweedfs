@@ -79,7 +79,7 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(&bodyBuffer)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
 
 	if bodyBuffer.Len() == 0 {
 		return emptySHA256, nil

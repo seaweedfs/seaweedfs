@@ -1271,6 +1271,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 // the specific IAM action (e.g., self-service vs admin operations).
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
+
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var authType string
