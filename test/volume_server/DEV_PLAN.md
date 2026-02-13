@@ -805,3 +805,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: multi-volume happy-path ordering/volume-boundary assertions can be expanded further.
 - Commit: `7799b28b1`
+
+- Date: 2026-02-12
+- Change: Tightened HTTP `HEAD` parity assertions for read path.
+- APIs covered: `HEAD` behavior now verifies empty response body while retaining `Content-Length` parity expectations.
+- Profiles covered: P1.
+- Gaps introduced/remaining: additional conditional-header parity checks on `HEAD` can still be expanded.
+- Commit: `9499e5400`
