@@ -687,3 +687,67 @@ func TestEcShardsDeleteLastShardRemovesEcx(t *testing.T) {
 		t.Fatalf("CopyFile .ecx after deleting all shards should fail not-found, got: %v", err)
 	}
 }
+
+func TestEcShardsCopyFromPeerSuccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartDualVolumeCluster(t, matrix.P1())
+	sourceConn, sourceClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer sourceConn.Close()
+	destConn, destClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(1))
+	defer destConn.Close()
+
+	const volumeID = uint32(122)
+	framework.AllocateVolume(t, sourceClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 990008, 0x88993344)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(0), fid, []byte("ec-copy-from-peer-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("source upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := sourceClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("source VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	sourceDataNode := clusterHarness.VolumeAdminAddress(0) + "." + strings.Split(clusterHarness.VolumeGRPCAddress(0), ":")[1]
+	_, err = destClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       volumeID,
+		Collection:     "",
+		SourceDataNode: sourceDataNode,
+		ShardIds:       []uint32{0},
+		CopyEcxFile:    true,
+		CopyVifFile:    true,
+	})
+	if err != nil {
+		t.Fatalf("destination VolumeEcShardsCopy success path failed: %v", err)
+	}
+
+	for _, ext := range []string{".ec00", ".ecx", ".vif"} {
+		copyStream, copyErr := destClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+			VolumeId:           volumeID,
+			Collection:         "",
+			IsEcVolume:         true,
+			Ext:                ext,
+			CompactionRevision: math.MaxUint32,
+			StopOffset:         1,
+		})
+		if copyErr != nil {
+			t.Fatalf("destination CopyFile %s start failed: %v", ext, copyErr)
+		}
+		if _, copyErr = copyStream.Recv(); copyErr != nil {
+			t.Fatalf("destination CopyFile %s recv failed: %v", ext, copyErr)
+		}
+	}
+}
