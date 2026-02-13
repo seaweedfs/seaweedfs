@@ -1022,3 +1022,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: EC multi-node shard copy/rebuild permutations remain pending for broader distributed parity.
 - Commit: `e8ef35346`
+
+- Date: 2026-02-13
+- Change: Added dual-node `VolumeCopy` integration success coverage.
+- APIs covered: `VolumeCopy` full happy path (source status read, stream copy, destination mount) with post-copy HTTP read parity from destination node.
+- Profiles covered: P4-derived dual-volume topology.
+- Gaps introduced/remaining: additional distributed copy branches (e.g., existing-destination overwrite and remote-dat variations) remain pending.
+- Commit: `7538653ad`
