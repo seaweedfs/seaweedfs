@@ -2,6 +2,7 @@ package volume_server_http_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"testing"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 type pausableReader struct {
@@ -179,5 +182,77 @@ func TestDownloadLimitTimeoutReturnsTooManyRequests(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, secondResp)
 	if secondResp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("second GET expected 429 while first download holds limit, got %d", secondResp.StatusCode)
+	}
+}
+
+func TestDownloadLimitOverageProxiesToReplica(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P8()
+	profile.ReadMode = "proxy"
+	clusterHarness := framework.StartDualVolumeCluster(t, profile)
+
+	conn0, grpc0 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(0))
+	defer conn0.Close()
+	conn1, grpc1 := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress(1))
+	defer conn1.Close()
+
+	const volumeID = uint32(100)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req := &volume_server_pb.AllocateVolumeRequest{
+		VolumeId:    volumeID,
+		Replication: "001",
+		Version:     uint32(needle.GetCurrentVersion()),
+	}
+	if _, err := grpc0.AllocateVolume(ctx, req); err != nil {
+		t.Fatalf("allocate replicated volume on node0: %v", err)
+	}
+	if _, err := grpc1.AllocateVolume(ctx, req); err != nil {
+		t.Fatalf("allocate replicated volume on node1: %v", err)
+	}
+
+	largePayload := make([]byte, 12*1024*1024)
+	for i := range largePayload {
+		largePayload[i] = byte(i % 251)
+	}
+	fid := framework.NewFileID(volumeID, 880201, 0x0A0B0C0D)
+	uploadResp := framework.UploadBytes(t, framework.NewHTTPClient(), clusterHarness.VolumeAdminURL(0), fid, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("replicated large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	replicaReadURL := clusterHarness.VolumeAdminURL(1) + "/" + fid
+	if !waitForHTTPStatus(t, framework.NewHTTPClient(), replicaReadURL, http.StatusOK, 10*time.Second, func(resp *http.Response) {
+		_ = framework.ReadAllAndClose(t, resp)
+	}) {
+		t.Fatalf("replica did not become readable within deadline")
+	}
+
+	firstResp, err := (&http.Client{}).Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL(0)+"/"+fid))
+	if err != nil {
+		t.Fatalf("first GET failed: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		_ = framework.ReadAllAndClose(t, firstResp)
+		t.Fatalf("first GET expected 200, got %d", firstResp.StatusCode)
+	}
+	defer firstResp.Body.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	secondResp, err := framework.NewHTTPClient().Do(mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL(0)+"/"+fid))
+	if err != nil {
+		t.Fatalf("second GET failed: %v", err)
+	}
+	secondBody := framework.ReadAllAndClose(t, secondResp)
+	if secondResp.StatusCode != http.StatusOK {
+		t.Fatalf("second GET expected 200 via replica proxy fallback, got %d", secondResp.StatusCode)
+	}
+	if len(secondBody) != len(largePayload) {
+		t.Fatalf("second GET proxied body size mismatch: got %d want %d", len(secondBody), len(largePayload))
 	}
 }
