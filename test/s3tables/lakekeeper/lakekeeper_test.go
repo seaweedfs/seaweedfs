@@ -318,7 +318,11 @@ except Exception as e:
 
 	containerName := "seaweed-lakekeeper-client-" + fmt.Sprintf("%d", time.Now().UnixNano())
 
-	cmd := exec.Command("docker", "run", "--rm",
+	// Create a context with timeout for the docker run command
+	dockerCtx, dockerCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer dockerCancel()
+
+	cmd := exec.CommandContext(dockerCtx, "docker", "run", "--rm",
 		"--name", containerName,
 		"--add-host", "host.docker.internal:host-gateway",
 		"-v", fmt.Sprintf("%s:/work", env.dataDir),
@@ -328,6 +332,9 @@ except Exception as e:
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if dockerCtx.Err() == context.DeadlineExceeded {
+			t.Fatalf("Lakekeeper repro client timed out after 5 minutes\nOutput:\n%s", string(output))
+		}
 		t.Fatalf("Lakekeeper repro client failed: %v\nOutput:\n%s", err, string(output))
 	}
 	t.Logf("Lakekeeper repro client output:\n%s", string(output))
