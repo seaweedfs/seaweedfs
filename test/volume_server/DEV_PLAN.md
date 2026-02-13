@@ -875,3 +875,10 @@ Update this section during implementation:
 - Profiles covered: custom P1-derived profiles with `ReadMode` overrides.
 - Gaps introduced/remaining: throttling-specific proxy fallback (`checkDownloadLimit` replica path) is still pending targeted pressure setup.
 - Commits: `74b04a3f8`, `70ce0c8b8`
+
+- Date: 2026-02-12
+- Change: Added HTTP download-throttling replica fallback coverage under over-limit pressure.
+- APIs covered: `checkDownloadLimit` replica-proxy branch (`download over limit + replica available -> proxy fallback`) with replicated dual-node setup.
+- Profiles covered: P8-derived profile (`readMode=proxy`) with dual volume servers.
+- Gaps introduced/remaining: cancellation branch (`499`) for download-limit waiting remains pending.
+- Commit: `316cfb7a3`
