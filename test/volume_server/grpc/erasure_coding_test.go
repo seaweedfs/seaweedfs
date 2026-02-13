@@ -11,7 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestEcMaintenanceModeRejections(t *testing.T) {
@@ -358,4 +361,195 @@ func TestEcShardReadAndBlobDeleteLifecycle(t *testing.T) {
 	if err != io.EOF {
 		t.Fatalf("VolumeEcShardRead deleted-check expected EOF after deleted marker, got: %v", err)
 	}
+}
+
+func TestEcRebuildMissingShardLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(117)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 990003, 0x3344DDEE)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-rebuild-shard-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsDelete shard 0 failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err == nil {
+		t.Fatalf("VolumeEcShardsMount should fail when shard 0 has been deleted")
+	}
+
+	rebuildResp, err := grpcClient.VolumeEcShardsRebuild(ctx, &volume_server_pb.VolumeEcShardsRebuildRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsRebuild failed: %v", err)
+	}
+	if len(rebuildResp.GetRebuiltShardIds()) == 0 {
+		t.Fatalf("VolumeEcShardsRebuild expected rebuilt shard ids")
+	}
+	foundShard0 := false
+	for _, shardID := range rebuildResp.GetRebuiltShardIds() {
+		if shardID == 0 {
+			foundShard0 = true
+			break
+		}
+	}
+	if !foundShard0 {
+		t.Fatalf("VolumeEcShardsRebuild expected shard 0 to be rebuilt, got %v", rebuildResp.GetRebuiltShardIds())
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount shard 0 after rebuild failed: %v", err)
+	}
+}
+
+func TestEcShardsToVolumeMissingShardAndNoLiveEntries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	httpClient := framework.NewHTTPClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	t.Run("missing shard returns error", func(t *testing.T) {
+		const volumeID = uint32(118)
+		framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+		fid := framework.NewFileID(volumeID, 990004, 0x4455EEFF)
+		uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-to-volume-missing-shard-content"))
+		_ = framework.ReadAllAndClose(t, uploadResp)
+		if uploadResp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+		}
+
+		_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+		})
+		if err != nil {
+			t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+		}
+
+		_, err = grpcClient.VolumeEcShardsDelete(ctx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+			ShardIds:   []uint32{0},
+		})
+		if err != nil {
+			t.Fatalf("VolumeEcShardsDelete shard 0 failed: %v", err)
+		}
+
+		_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+			ShardIds:   []uint32{1},
+		})
+		if err != nil {
+			t.Fatalf("VolumeEcShardsMount shard 1 failed: %v", err)
+		}
+
+		_, err = grpcClient.VolumeEcShardsToVolume(ctx, &volume_server_pb.VolumeEcShardsToVolumeRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+		})
+		if err == nil || !strings.Contains(err.Error(), "missing shard 0") {
+			t.Fatalf("VolumeEcShardsToVolume missing-shard error mismatch: %v", err)
+		}
+	})
+
+	t.Run("no live entries returns failed precondition", func(t *testing.T) {
+		const volumeID = uint32(119)
+		const needleID = uint64(990005)
+		const cookie = uint32(0x5566FF11)
+		framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+		fid := framework.NewFileID(volumeID, needleID, cookie)
+		uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-no-live-entries-content"))
+		_ = framework.ReadAllAndClose(t, uploadResp)
+		if uploadResp.StatusCode != http.StatusCreated {
+			t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+		}
+
+		deleteResp := framework.DoRequest(t, httpClient, mustNewRequest(t, http.MethodDelete, clusterHarness.VolumeAdminURL()+"/"+fid))
+		_ = framework.ReadAllAndClose(t, deleteResp)
+		if deleteResp.StatusCode != http.StatusAccepted {
+			t.Fatalf("delete expected 202, got %d", deleteResp.StatusCode)
+		}
+
+		_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+		})
+		if err != nil {
+			t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+		}
+
+		_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+			ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+		})
+		if err != nil {
+			t.Fatalf("VolumeEcShardsMount data shards failed: %v", err)
+		}
+
+		_, err = grpcClient.VolumeEcShardsToVolume(ctx, &volume_server_pb.VolumeEcShardsToVolumeRequest{
+			VolumeId:   volumeID,
+			Collection: "",
+		})
+		if err == nil {
+			t.Fatalf("VolumeEcShardsToVolume expected failed-precondition error when no live entries")
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("VolumeEcShardsToVolume no-live-entries expected FailedPrecondition, got %v (%v)", status.Code(err), err)
+		}
+		if !strings.Contains(err.Error(), erasure_coding.EcNoLiveEntriesSubstring) {
+			t.Fatalf("VolumeEcShardsToVolume no-live-entries error should mention %q, got %v", erasure_coding.EcNoLiveEntriesSubstring, err)
+		}
+	})
 }
