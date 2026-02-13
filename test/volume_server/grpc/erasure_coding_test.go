@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -185,5 +186,74 @@ func TestEcMissingInvalidAndNoopPaths(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("VolumeEcShardsInfo missing-volume error mismatch: %v", err)
+	}
+}
+
+func TestEcGenerateMountInfoUnmountLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(115)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 990001, 0x1234ABCD)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-generate-lifecycle-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate success path failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount success path failed: %v", err)
+	}
+
+	infoResp, err := grpcClient.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsInfo after mount failed: %v", err)
+	}
+	if len(infoResp.GetEcShardInfos()) == 0 {
+		t.Fatalf("VolumeEcShardsInfo expected non-empty shard infos after mount")
+	}
+	if infoResp.GetVolumeSize() == 0 {
+		t.Fatalf("VolumeEcShardsInfo expected non-zero volume size after mount")
+	}
+
+	_, err = grpcClient.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+		VolumeId: volumeID,
+		ShardIds: []uint32{0},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsUnmount success path failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsInfo(ctx, &volume_server_pb.VolumeEcShardsInfoRequest{
+		VolumeId: volumeID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("VolumeEcShardsInfo after unmount expected not-found error, got: %v", err)
 	}
 }
