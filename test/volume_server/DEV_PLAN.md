@@ -1085,3 +1085,10 @@ Update this section during implementation:
 - Profiles covered: P4-derived dual-volume topology.
 - Gaps introduced/remaining: sender large-needle chunking specifics and transport-interruption branches remain pending.
 - Commit: `3989bc6e5`
+
+- Date: 2026-02-13
+- Change: Added gRPC tail sender large-needle chunking coverage.
+- APIs covered: `VolumeTailSender` stream chunk-splitting path for oversized needle bodies (multiple chunks with non-last and final `IsLastChunk=true` markers).
+- Profiles covered: P1.
+- Gaps introduced/remaining: sender/receiver transport interruption branches remain pending.
+- Commit: `514c05131`
