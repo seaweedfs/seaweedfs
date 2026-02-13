@@ -966,3 +966,10 @@ Update this section during implementation:
 - Profiles covered: P8.
 - Gaps introduced/remaining: explicit cancellation (`499`) path remains pending due client-side transport observability limits.
 - Commit: `f7b362a2a`
+
+- Date: 2026-02-12
+- Change: Added HTTP read cookie-mismatch parity coverage.
+- APIs covered: `GET` and `HEAD` wrong-cookie reads now explicitly verify `404` not-found semantics.
+- Profiles covered: P1.
+- Gaps introduced/remaining: internal read-failure (`500`) branch remains fault-injection dependent.
+- Commit: `8fc192827`
