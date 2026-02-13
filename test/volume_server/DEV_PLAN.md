@@ -945,3 +945,10 @@ Update this section during implementation:
 - Profiles covered: P8.
 - Gaps introduced/remaining: cancellation (`499`) branch remains pending due client-side transport observability limits.
 - Commit: `b4984b335`
+
+- Date: 2026-02-12
+- Change: Expanded static-resource coverage to split public-port topology.
+- APIs covered: public-port static endpoints (`/favicon.ico`, `/seaweedfsstatic/seaweed50x50.png`) under P2.
+- Profiles covered: P2.
+- Gaps introduced/remaining: static asset baseline coverage is now present for both admin and public ports.
+- Commit: `e4c329811`
