@@ -15,6 +15,10 @@ func NormalizeSessionPolicy(policyJSON string) (string, error) {
 	if trimmed == "" {
 		return "", nil
 	}
+	const maxSessionPolicySize = 2048
+	if len(trimmed) > maxSessionPolicySize {
+		return "", fmt.Errorf("session policy exceeds maximum size of %d characters", maxSessionPolicySize)
+	}
 
 	var policyDoc policy.PolicyDocument
 	if err := json.Unmarshal([]byte(trimmed), &policyDoc); err != nil {
