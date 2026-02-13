@@ -809,7 +809,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
-	iam.accessKeyIdent = accessKeyIdent
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1420,12 +1419,9 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 
 	// Build an AWS-compatible principal ARN
 	// Format: arn:aws:iam::account-id:user/user-name
-	accountId := ""
-	if identity.Account != nil {
-		accountId = identity.Account.Id
-	}
-	if accountId == "" {
-		accountId = "000000000000" // Default account ID
+	accountID := "000000000000" // Default account ID
+	if identity.Account != nil && identity.Account.Id != "" {
+		accountID = identity.Account.Id
 	}
 
 	userName := identity.Name
@@ -1433,7 +1429,7 @@ func buildPrincipalARN(identity *Identity, r *http.Request) string {
 		userName = "unknown"
 	}
 
-	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, userName)
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, userName)
 }
 
 // GetCredentialManager returns the credential manager instance

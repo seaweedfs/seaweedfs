@@ -88,6 +88,13 @@ func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *
 	}
 }
 
+func (h *STSHandlers) getAccountID() string {
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
+		return h.stsService.Config.AccountId
+	}
+	return defaultAccountId
+}
+
 // HandleSTSRequest is the main entry point for STS requests
 // It routes requests based on the Action parameter
 func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
@@ -396,14 +403,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
 		ldapUsername, identity.Groups)
 
-	// Verify that the identity is allowed to assume the role
-	// We create a temporary identity to represent the LDAP user for permission checking
-	// The checking logic will verify if the role's trust policy allows this principal
-	// Use configured account ID or default to "111122223333" for federated users
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
+	accountID := h.getAccountID()
 
 	ldapUserIdentity := &Identity{
 		Name: identity.UserID,
@@ -412,7 +412,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			EmailAddress: identity.Email,
 			Id:           identity.UserID,
 		},
-		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, identity.UserID),
+		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.UserID),
 	}
 
 	// Verify that the identity is allowed to assume the role by checking the Trust Policy
@@ -470,14 +470,10 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 		roleName = roleArn // Fallback to full ARN if extraction fails
 	}
 
-	// Get account ID from STS config or use default
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
+	accountID := h.getAccountID()
 
 	// Construct AssumedRoleUser ARN - this will be used as the principal for the vended token
-	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName)
+	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountID, roleName, roleSessionName)
 
 	// Create session claims with role information
 	// SECURITY: Use the assumedRoleArn as the principal in the token.
