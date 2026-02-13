@@ -99,9 +99,9 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
 			// index scrubs do not verify individual EC shards
-			files, serrs = v.CheckIndex()
+			files, serrs = v.ScrubIndex()
 		case volume_server_pb.VolumeScrubMode_LOCAL:
-			files, shardInfos, serrs = scrubEcVolumeLocal(ctx, v)
+			files, shardInfos, serrs = v.ScrubLocal()
 		case volume_server_pb.VolumeScrubMode_FULL:
 			files, shardInfos, serrs = scrubEcVolumeFull(ctx, v)
 		default:
@@ -127,10 +127,6 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		Details:          details,
 	}
 	return res, nil
-}
-
-func scrubEcVolumeLocal(ctx context.Context, v *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
-	return 0, nil, []error{fmt.Errorf("scrubEcVolumeLocal(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
 }
 
 func scrubEcVolumeFull(ctx context.Context, v *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {

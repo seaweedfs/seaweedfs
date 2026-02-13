@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"net/url"
@@ -15,7 +16,7 @@ import (
 
 const (
 	bucketNamePatternStr     = `[a-z0-9-]+`
-	tableNamespacePatternStr = `[a-z0-9_]+`
+	tableNamespacePatternStr = `[a-z0-9_.]+`
 	tableNamePatternStr      = `[a-z0-9_]+`
 )
 
@@ -54,7 +55,6 @@ func ParseBucketNameFromARN(arn string) (string, error) {
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
-	// Updated regex to align with namespace validation (single-segment)
 	matches := tableARNPattern.FindStringSubmatch(arn)
 	if len(matches) != 4 {
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
@@ -66,9 +66,7 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 		return "", "", "", fmt.Errorf("invalid bucket name in ARN: %v", err)
 	}
 
-	// Namespace is already constrained by the regex; validate it directly.
-	namespace = matches[2]
-	_, err = validateNamespace([]string{namespace})
+	namespace, err = validateNamespace([]string{matches[2]})
 	if err != nil {
 		return "", "", "", fmt.Errorf("invalid namespace in ARN: %v", err)
 	}
@@ -121,6 +119,33 @@ func GetTableLocationMappingPath(tableLocationBucket string) string {
 	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
 }
 
+// GetTableLocationMappingEntryPath returns the filer path for a table-specific mapping entry.
+// Each table gets its own entry so multiple tables can share the same external table-location bucket.
+func GetTableLocationMappingEntryPath(tableLocationBucket, tablePath string) string {
+	return path.Join(GetTableLocationMappingPath(tableLocationBucket), tableLocationMappingEntryName(tablePath))
+}
+
+func tableLocationMappingEntryName(tablePath string) string {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	sum := sha1.Sum([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+func tableBucketPathFromTablePath(tablePath string) (string, bool) {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	tablesPrefix := strings.TrimSuffix(TablesPath, "/") + "/"
+	if !strings.HasPrefix(normalized, tablesPrefix) {
+		return "", false
+	}
+
+	remaining := strings.TrimPrefix(normalized, tablesPrefix)
+	bucketName, _, _ := strings.Cut(remaining, "/")
+	if bucketName == "" {
+		return "", false
+	}
+	return path.Join(TablesPath, bucketName), true
+}
+
 // Metadata structures
 
 type tableBucketMetadata struct {
@@ -131,9 +156,10 @@ type tableBucketMetadata struct {
 
 // namespaceMetadata stores metadata for a namespace
 type namespaceMetadata struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 // tableMetadataInternal stores metadata for a table
@@ -326,35 +352,27 @@ func splitPath(p string) (dir, name string) {
 	return
 }
 
-// validateNamespace validates that the namespace provided is supported (single-level)
-func validateNamespace(namespace []string) (string, error) {
-	if len(namespace) == 0 {
-		return "", fmt.Errorf("namespace is required")
-	}
-	if len(namespace) > 1 {
-		return "", fmt.Errorf("multi-level namespaces are not supported")
-	}
-	name := namespace[0]
+func validateNamespacePart(name string) error {
 	if len(name) < 1 || len(name) > 255 {
-		return "", fmt.Errorf("namespace name must be between 1 and 255 characters")
+		return fmt.Errorf("namespace name must be between 1 and 255 characters")
 	}
 
 	// Prevent path traversal and multi-segment paths
 	if name == "." || name == ".." {
-		return "", fmt.Errorf("namespace name cannot be '.' or '..'")
+		return fmt.Errorf("namespace name cannot be '.' or '..'")
 	}
 	if strings.Contains(name, "/") {
-		return "", fmt.Errorf("namespace name cannot contain '/'")
+		return fmt.Errorf("namespace name cannot contain '/'")
 	}
 
 	// Must start and end with a letter or digit
 	start := name[0]
 	end := name[len(name)-1]
 	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
-		return "", fmt.Errorf("namespace name must start with a letter or digit")
+		return fmt.Errorf("namespace name must start with a letter or digit")
 	}
 	if !((end >= 'a' && end <= 'z') || (end >= '0' && end <= '9')) {
-		return "", fmt.Errorf("namespace name must end with a letter or digit")
+		return fmt.Errorf("namespace name must end with a letter or digit")
 	}
 
 	// Allowed characters: a-z, 0-9, _
@@ -362,20 +380,56 @@ func validateNamespace(namespace []string) (string, error) {
 		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
 			continue
 		}
-		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+		return fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
 	}
 
 	// Reserved prefix
 	if strings.HasPrefix(name, "aws") {
-		return "", fmt.Errorf("namespace name cannot start with reserved prefix 'aws'")
+		return fmt.Errorf("namespace name cannot start with reserved prefix 'aws'")
 	}
 
-	return name, nil
+	return nil
+}
+
+func normalizeNamespace(namespace []string) ([]string, error) {
+	if len(namespace) == 0 {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	parts := namespace
+	if len(namespace) == 1 {
+		parts = strings.Split(namespace[0], ".")
+	}
+
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if err := validateNamespacePart(part); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, part)
+	}
+	return normalized, nil
+}
+
+// validateNamespace validates namespace identifiers and returns an internal namespace key.
+// A single dotted namespace value is interpreted as multi-level namespace for compatibility
+// with path-style APIs, for example "analytics.daily" => ["analytics", "daily"].
+func validateNamespace(namespace []string) (string, error) {
+	parts, err := normalizeNamespace(namespace)
+	if err != nil {
+		return "", err
+	}
+	return flattenNamespace(parts), nil
 }
 
 // ValidateNamespace is a wrapper to validate namespace for other packages.
 func ValidateNamespace(namespace []string) (string, error) {
 	return validateNamespace(namespace)
+}
+
+// ParseNamespace parses a namespace string into namespace parts.
+func ParseNamespace(namespace string) ([]string, error) {
+	return normalizeNamespace([]string{namespace})
 }
 
 // validateTableName validates a table name
@@ -414,4 +468,15 @@ func flattenNamespace(namespace []string) string {
 		return ""
 	}
 	return strings.Join(namespace, ".")
+}
+
+func expandNamespace(namespace string) []string {
+	if namespace == "" {
+		return nil
+	}
+	parts, err := ParseNamespace(namespace)
+	if err != nil {
+		return []string{namespace}
+	}
+	return parts
 }

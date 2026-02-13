@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -63,6 +64,14 @@ func TestBuildPrincipalARN(t *testing.T) {
 			expected: "*",
 		},
 		{
+			name: "explicit principal ARN",
+			identity: &Identity{
+				Name:         "test-user",
+				PrincipalArn: "arn:aws:iam::123456789012:role/MyRole",
+			},
+			expected: "arn:aws:iam::123456789012:role/MyRole",
+		},
+		{
 			name: "anonymous user by name",
 			identity: &Identity{
 				Name: s3_constants.AccountAnonymousId,
@@ -100,7 +109,7 @@ func TestBuildPrincipalARN(t *testing.T) {
 					Id: "",
 				},
 			},
-			expected: "arn:aws:iam::000000000000:user/test-user",
+			expected: fmt.Sprintf("arn:aws:iam::%s:user/test-user", defaultAccountID),
 		},
 		{
 			name: "identity without name",

@@ -77,19 +77,22 @@ type DeleteTableBucketPolicyRequest struct {
 // Namespace types
 
 type Namespace struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type CreateNamespaceRequest struct {
-	TableBucketARN string   `json:"tableBucketARN"`
-	Namespace      []string `json:"namespace"`
+	TableBucketARN string            `json:"tableBucketARN"`
+	Namespace      []string          `json:"namespace"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type CreateNamespaceResponse struct {
-	Namespace      []string `json:"namespace"`
-	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string          `json:"namespace"`
+	TableBucketARN string            `json:"tableBucketARN"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type GetNamespaceRequest struct {
@@ -98,9 +101,10 @@ type GetNamespaceRequest struct {
 }
 
 type GetNamespaceResponse struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type ListNamespacesRequest struct {

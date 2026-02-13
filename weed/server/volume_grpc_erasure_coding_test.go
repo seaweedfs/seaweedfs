@@ -54,4 +54,3 @@ func TestCheckEcVolumeStatusCountOnlyDataShards(t *testing.T) {
 		t.Fatalf("expected shardCount=3, got %d", shardCount)
 	}
 }
-

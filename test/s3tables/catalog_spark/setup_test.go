@@ -326,7 +326,6 @@ spark = (SparkSession.builder
     .config("spark.sql.catalog.iceberg.rest.auth.type", "sigv4")
     .config("spark.sql.catalog.iceberg.rest.auth.sigv4.delegate-auth-type", "none")
     .config("spark.sql.catalog.iceberg.rest.sigv4-enabled", "true")
-    .config("spark.sql.catalog.iceberg.rest.signing-region", "us-west-2")
     .config("spark.sql.catalog.iceberg.rest.signing-name", "s3")
     .config("spark.sql.catalog.iceberg.rest.access-key-id", "test")
     .config("spark.sql.catalog.iceberg.rest.secret-access-key", "test")

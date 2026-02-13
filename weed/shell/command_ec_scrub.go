@@ -49,8 +49,7 @@ func (c *commandEcVolumeScrub) Do(args []string, commandEnv *CommandEnv, writer 
 	volScrubCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	nodesStr := volScrubCommand.String("node", "", "comma-separated list of volume server <host>:<port> (optional)")
 	volumeIDsStr := volScrubCommand.String("volumeId", "", "comma-separated EC volume IDs to process (optional)")
-	// TODO: switch default mode to LOCAL, once implemented.
-	mode := volScrubCommand.String("mode", "index", "scrubbing mode (index/local/full)")
+	mode := volScrubCommand.String("mode", "local", "scrubbing mode (index/local/full)")
 	maxParallelization := volScrubCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 
 	if err = volScrubCommand.Parse(args); err != nil {

@@ -408,7 +408,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
 		TableARN:         tableARN,
-		Namespace:        []string{metadata.Namespace},
+		Namespace:        expandNamespace(metadata.Namespace),
 		Format:           metadata.Format,
 		CreatedAt:        metadata.CreatedAt,
 		ModifiedAt:       metadata.ModifiedAt,
@@ -683,7 +683,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			tables = append(tables, TableSummary{
 				Name:       entry.Entry.Name,
 				TableARN:   tableARN,
-				Namespace:  []string{namespaceName},
+				Namespace:  expandNamespace(namespaceName),
 				CreatedAt:  metadata.CreatedAt,
 				ModifiedAt: metadata.ModifiedAt,
 			})
@@ -929,7 +929,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		if err := h.deleteTableLocationMapping(r.Context(), client, metadata.MetadataLocation); err != nil {
+		if err := h.deleteTableLocationMapping(r.Context(), client, metadata.MetadataLocation, tablePath); err != nil {
 			glog.V(1).Infof("failed to delete table location mapping for %s: %v", metadata.MetadataLocation, err)
 		}
 		return nil
@@ -1139,29 +1139,98 @@ func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client
 	if !ok {
 		return nil
 	}
+	tableBucketPath, ok := tableBucketPathFromTablePath(tablePath)
+	if !ok {
+		return fmt.Errorf("invalid table path for location mapping: %s", tablePath)
+	}
 
 	if err := h.ensureDirectory(ctx, client, GetTableLocationMappingDir()); err != nil {
 		return err
 	}
+	if err := h.ensureTableLocationMappingBucketDir(ctx, client, newTableLocationBucket); err != nil {
+		return err
+	}
 
-	// If the metadata location changed, delete the stale mapping for the old bucket
+	// If the metadata location changed, remove this table's stale mapping entry from the old bucket.
 	if oldMetadataLocation != "" && oldMetadataLocation != newMetadataLocation {
 		oldTableLocationBucket, ok := parseTableLocationBucket(oldMetadataLocation)
 		if ok && oldTableLocationBucket != newTableLocationBucket {
-			oldMappingPath := GetTableLocationMappingPath(oldTableLocationBucket)
-			if err := h.deleteEntryIfExists(ctx, client, oldMappingPath); err != nil {
+			if err := h.removeTableLocationMappingEntry(ctx, client, oldTableLocationBucket, tablePath); err != nil {
 				glog.V(1).Infof("failed to delete stale mapping for %s: %v", oldTableLocationBucket, err)
 			}
 		}
 	}
 
-	return h.upsertFile(ctx, client, GetTableLocationMappingPath(newTableLocationBucket), []byte(tablePath))
+	return h.upsertFile(ctx, client, GetTableLocationMappingEntryPath(newTableLocationBucket, tablePath), []byte(tableBucketPath))
 }
 
-func (h *S3TablesHandler) deleteTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, metadataLocation string) error {
+func (h *S3TablesHandler) deleteTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, metadataLocation, tablePath string) error {
 	tableLocationBucket, ok := parseTableLocationBucket(metadataLocation)
 	if !ok {
 		return nil
 	}
-	return h.deleteEntryIfExists(ctx, client, GetTableLocationMappingPath(tableLocationBucket))
+	return h.removeTableLocationMappingEntry(ctx, client, tableLocationBucket, tablePath)
+}
+
+func (h *S3TablesHandler) ensureTableLocationMappingBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
+	mappingDir := GetTableLocationMappingDir()
+	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: mappingDir,
+		Name:      tableLocationBucket,
+	})
+	if err == nil {
+		if resp != nil && resp.Entry != nil && resp.Entry.IsDirectory {
+			return nil
+		}
+		if removeErr := h.deleteEntryIfExists(ctx, client, bucketMappingPath); removeErr != nil && !errors.Is(removeErr, filer_pb.ErrNotFound) {
+			return removeErr
+		}
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+
+	return h.ensureDirectory(ctx, client, bucketMappingPath)
+}
+
+func (h *S3TablesHandler) removeTableLocationMappingEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket, tablePath string) error {
+	entryPath := GetTableLocationMappingEntryPath(tableLocationBucket, tablePath)
+	if err := h.deleteEntryIfExists(ctx, client, entryPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+	return h.removeTableLocationMappingBucketDirIfEmpty(ctx, client, tableLocationBucket)
+}
+
+func (h *S3TablesHandler) removeTableLocationMappingBucketDirIfEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
+	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
+
+	stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		Directory: bucketMappingPath,
+		Limit:     1,
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return recvErr
+		}
+		if resp != nil && resp.Entry != nil {
+			return nil
+		}
+	}
+
+	if err := h.deleteEntryIfExists(ctx, client, bucketMappingPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+	return nil
 }

@@ -132,15 +132,17 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 }
 
 func (m *LevelDbNeedleMap) Get(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
-	bytes := make([]byte, NeedleIdSize)
 	if m.ldbTimeout > 0 {
-		m.ldbAccessLock.RLock()
-		defer m.ldbAccessLock.RUnlock()
-		loadErr := reloadLdb(m)
-		if loadErr != nil {
+		if err := m.ensureLdbLoaded(); err != nil {
 			return nil, false
 		}
+		defer m.ldbAccessLock.RUnlock()
 	}
+	return m.getFromDb(key)
+}
+
+func (m *LevelDbNeedleMap) getFromDb(key NeedleId) (element *needle_map.NeedleValue, ok bool) {
+	bytes := make([]byte, NeedleIdSize)
 	NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 	data, err := m.db.Get(bytes, nil)
 	if err != nil || len(data) != OffsetSize+SizeSize {
@@ -155,14 +157,12 @@ func (m *LevelDbNeedleMap) Put(key NeedleId, offset Offset, size Size) error {
 	var oldSize Size
 	var watermark uint64
 	if m.ldbTimeout > 0 {
-		m.ldbAccessLock.RLock()
-		defer m.ldbAccessLock.RUnlock()
-		loadErr := reloadLdb(m)
-		if loadErr != nil {
-			return loadErr
+		if err := m.ensureLdbLoaded(); err != nil {
+			return err
 		}
+		defer m.ldbAccessLock.RUnlock()
 	}
-	if oldNeedle, ok := m.Get(key); ok {
+	if oldNeedle, ok := m.getFromDb(key); ok {
 		oldSize = oldNeedle.Size
 	}
 	m.logPut(key, oldSize, size)
@@ -222,14 +222,12 @@ func levelDbDelete(db *leveldb.DB, key NeedleId) error {
 func (m *LevelDbNeedleMap) Delete(key NeedleId, offset Offset) error {
 	var watermark uint64
 	if m.ldbTimeout > 0 {
-		m.ldbAccessLock.RLock()
-		defer m.ldbAccessLock.RUnlock()
-		loadErr := reloadLdb(m)
-		if loadErr != nil {
-			return loadErr
+		if err := m.ensureLdbLoaded(); err != nil {
+			return err
 		}
+		defer m.ldbAccessLock.RUnlock()
 	}
-	oldNeedle, found := m.Get(key)
+	oldNeedle, found := m.getFromDb(key)
 	if !found || oldNeedle.Size.IsDeleted() {
 		return nil
 	}
@@ -398,6 +396,24 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 		return e
 	})
 	return err
+}
+
+func (m *LevelDbNeedleMap) ensureLdbLoaded() error {
+	for {
+		m.ldbAccessLock.RLock()
+		if m.db != nil {
+			return nil
+		}
+		m.ldbAccessLock.RUnlock()
+		m.ldbAccessLock.Lock()
+		if m.db == nil {
+			if err := reloadLdb(m); err != nil {
+				m.ldbAccessLock.Unlock()
+				return err
+			}
+		}
+		m.ldbAccessLock.Unlock()
+	}
 }
 
 func reloadLdb(m *LevelDbNeedleMap) (err error) {

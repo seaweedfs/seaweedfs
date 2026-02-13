@@ -3,7 +3,7 @@ FROM golang:1.24 AS builder
 RUN apt-get update
 RUN apt-get install -y build-essential libsnappy-dev zlib1g-dev libbz2-dev libgflags-dev liblz4-dev libzstd-dev
 
-ARG ROCKSDB_VERSION=v10.5.1
+ARG ROCKSDB_VERSION=v10.10.1
 ENV ROCKSDB_VERSION=${ROCKSDB_VERSION}
 
 # build RocksDB

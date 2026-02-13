@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"sync"
@@ -294,7 +295,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "notSpecifyAccountId",
 				Account:      &AccountAdmin,
-				PrincipalArn: "arn:aws:iam::user/notSpecifyAccountId",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/notSpecifyAccountId", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -320,7 +321,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "specifiedAccountID",
 				Account:      &specifiedAccount,
-				PrincipalArn: "arn:aws:iam::user/specifiedAccountID",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/specifiedAccountID", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -338,7 +339,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "anonymous",
 				Account:      &AccountAnonymous,
-				PrincipalArn: "arn:aws:iam::user/anonymous",
+				PrincipalArn: "*",
 				Actions: []Action{
 					"Read",
 					"Write",

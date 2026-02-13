@@ -4,22 +4,58 @@ on:
   push:
     tags:
       - '*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Git ref to build (branch, tag, or commit SHA)'
+        required: true
+        default: 'master'
+      image_tag:
+        description: 'Docker tag to publish (without variant suffix)'
+        required: true
+        default: 'latest'
+      variant:
+        description: 'Variant to build manually'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - standard
+          - large_disk
 
 permissions:
   contents: read
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      variants: ${{ steps.set-variants.outputs.variants }}
+    steps:
+      - name: Select variants for this run
+        id: set-variants
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.variant }}" != "all" ]; then
+            variants="[\"${{ github.event.inputs.variant }}\"]"
+          else
+            variants='["standard","large_disk"]'
+          fi
+          echo "variants=$variants" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: [setup]
     runs-on: ubuntu-latest
     strategy:
       matrix:
         platform: [amd64, arm64, arm, 386]
-        variant: [standard, large_disk]
+        variant: ${{ fromJSON(needs.setup.outputs.variants) }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Free Disk Space
         run: |
           echo "Available disk space before cleanup:"
@@ -55,7 +91,7 @@ jobs:
           images: |
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
-          tags: type=raw,value=latest,suffix=${{ steps.config.outputs.tag_suffix }}
+          tags: type=raw,value=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }},suffix=${{ steps.config.outputs.tag_suffix }}
           labels: |
             org.opencontainers.image.title=seaweedfs
             org.opencontainers.image.description=SeaweedFS is a distributed storage system for blobs, objects, files, and data lake, to store and serve billions of files fast!
@@ -97,13 +133,13 @@ jobs:
           file: ./docker/Dockerfile.go_build
           platforms: linux/${{ matrix.platform }}
           # Push to GHCR only during build to avoid Docker Hub rate limits
-          tags: ghcr.io/chrislusf/seaweedfs:latest${{ steps.config.outputs.tag_suffix }}-${{ matrix.platform }}
+          tags: ghcr.io/chrislusf/seaweedfs:${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}-${{ matrix.platform }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.platform }}
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            BRANCH=${{ github.sha }}
+            BRANCH=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.sha }}
             ${{ steps.config.outputs.build_args }}
       - name: Clean up build artifacts
         if: always()
@@ -115,14 +151,16 @@ jobs:
 
   create-manifest:
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [setup, build]
     if: github.event_name != 'pull_request'
     strategy:
       matrix:
-        variant: [standard, large_disk]
+        variant: ${{ fromJSON(needs.setup.outputs.variants) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       
       - name: Configure variant
         id: config
@@ -140,7 +178,7 @@ jobs:
           images: |
             chrislusf/seaweedfs
             ghcr.io/chrislusf/seaweedfs
-          tags: type=raw,value=latest,suffix=${{ steps.config.outputs.tag_suffix }}
+          tags: type=raw,value=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }},suffix=${{ steps.config.outputs.tag_suffix }}
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -162,14 +200,15 @@ jobs:
       - name: Create and push manifest
         run: |
           SUFFIX="${{ steps.config.outputs.tag_suffix }}"
+          BASE_TAG="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}"
           
           # Create manifest on GHCR first (no rate limits)
           echo "Creating GHCR manifest (no rate limits)..."
-          docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} \
-            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-amd64 \
-            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm64 \
-            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm \
-            ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-386
+          docker buildx imagetools create -t ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-amd64 \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm64 \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
+            ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
           
           # Copy the complete multi-arch image from GHCR to Docker Hub
           # This only requires one pull from GHCR (no rate limit) and one push to Docker Hub
@@ -205,16 +244,16 @@ jobs:
           # Use crane or skopeo to copy, fallback to docker if not available
           if command -v crane &> /dev/null; then
             echo "Using crane to copy..."
-            retry_with_backoff crane copy ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} chrislusf/seaweedfs:latest${SUFFIX}
+            retry_with_backoff crane copy ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}
           elif command -v skopeo &> /dev/null; then
             echo "Using skopeo to copy..."
-            retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs:latest${SUFFIX} docker://chrislusf/seaweedfs:latest${SUFFIX}
+            retry_with_backoff skopeo copy --all docker://ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} docker://chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}
           else
             echo "Using docker buildx imagetools (pulling 4 images from Docker Hub)..."
             # Fallback: create manifest directly on Docker Hub (pulls from Docker Hub - rate limited)
-            retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:latest${SUFFIX} \
-              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-amd64 \
-              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm64 \
-              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-arm \
-              ghcr.io/chrislusf/seaweedfs:latest${SUFFIX}-386
+            retry_with_backoff docker buildx imagetools create -t chrislusf/seaweedfs:${BASE_TAG}${SUFFIX} \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-amd64 \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm64 \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-arm \
+              ghcr.io/chrislusf/seaweedfs:${BASE_TAG}${SUFFIX}-386
           fi

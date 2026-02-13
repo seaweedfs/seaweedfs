@@ -226,16 +226,27 @@ func parseOptionalIntParam(r *http.Request, name string) (int, error) {
 	return parsed, nil
 }
 
-func parseOptionalNamespace(r *http.Request, name string) []string {
+func parseOptionalNamespace(r *http.Request, name string) ([]string, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
-		return nil
+		return nil, nil
 	}
-	if _, err := s3tables.ValidateNamespace([]string{value}); err != nil {
-		glog.V(1).Infof("invalid namespace value for %s: %q: %v", name, value, err)
-		return nil
+	parts, err := s3tables.ParseNamespace(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
 	}
-	return []string{value}
+	return parts, nil
+}
+
+func parseRequiredNamespacePathParam(r *http.Request, name string) ([]string, error) {
+	value, err := getDecodedPathParam(r, name)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	return s3tables.ParseNamespace(value)
 }
 
 // parseTagKeys handles tag key parsing from query parameters.
@@ -352,19 +363,13 @@ func buildGetNamespaceRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	return &s3tables.GetNamespaceRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}, nil
 }
 
@@ -373,19 +378,13 @@ func buildDeleteNamespaceRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	return &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}, nil
 }
 
@@ -398,23 +397,21 @@ func buildCreateTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
 		return nil, err
 	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
-		return nil, err
-	}
 	req.TableBucketARN = tableBucketARN
-	req.Namespace = []string{namespace}
+	req.Namespace = namespace
 	return &req, nil
 }
 
 func buildListTablesRequest(r *http.Request) (interface{}, error) {
 	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	namespace, err := parseOptionalNamespace(r, "namespace")
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +421,7 @@ func buildListTablesRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.ListTablesRequest{
 		TableBucketARN:    tableBucketARN,
-		Namespace:         parseOptionalNamespace(r, "namespace"),
+		Namespace:         namespace,
 		Prefix:            r.URL.Query().Get("prefix"),
 		ContinuationToken: r.URL.Query().Get("continuationToken"),
 		MaxTables:         maxTables,
@@ -439,7 +436,11 @@ func buildGetTableRequest(r *http.Request) (interface{}, error) {
 	}
 	if tableARN == "" {
 		req.TableBucketARN = query.Get("tableBucketARN")
-		req.Namespace = parseOptionalNamespace(r, "namespace")
+		namespace, err := parseOptionalNamespace(r, "namespace")
+		if err != nil {
+			return nil, err
+		}
+		req.Namespace = namespace
 		req.Name = query.Get("name")
 		if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 			return nil, fmt.Errorf("either tableArn or (tableBucketARN, namespace, name) must be provided")
@@ -453,14 +454,8 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -475,7 +470,7 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.DeleteTableRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 		VersionToken:   r.URL.Query().Get("versionToken"),
 	}, nil
@@ -490,14 +485,8 @@ func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -511,7 +500,7 @@ func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 		return nil, err
 	}
 	req.TableBucketARN = tableBucketARN
-	req.Namespace = []string{namespace}
+	req.Namespace = namespace
 	req.Name = name
 	return &req, nil
 }
@@ -521,14 +510,8 @@ func buildGetTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -543,7 +526,7 @@ func buildGetTablePolicyRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.GetTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}, nil
 }
@@ -553,14 +536,8 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -575,7 +552,7 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.DeleteTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}, nil
 }
