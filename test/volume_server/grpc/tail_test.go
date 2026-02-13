@@ -1,6 +1,7 @@
 package volume_server_grpc_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -135,5 +136,71 @@ func TestVolumeTailReceiverReplicatesSourceUpdates(t *testing.T) {
 	}
 	if string(destReadBody) != string(payload) {
 		t.Fatalf("destination tail-received payload mismatch: got %q want %q", string(destReadBody), string(payload))
+	}
+}
+
+func TestVolumeTailSenderLargeNeedleChunking(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(73)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 880004, 0x456789AB)
+	largePayload := bytes.Repeat([]byte("L"), 2*1024*1024+128*1024)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, largePayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("large upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.VolumeTailSender(ctx, &volume_server_pb.VolumeTailSenderRequest{
+		VolumeId:           volumeID,
+		SinceNs:            0,
+		IdleTimeoutSeconds: 1,
+	})
+	if err != nil {
+		t.Fatalf("VolumeTailSender start failed: %v", err)
+	}
+
+	dataChunkCount := 0
+	sawNonLastDataChunk := false
+	sawLastDataChunk := false
+	for {
+		msg, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("VolumeTailSender recv failed: %v", recvErr)
+		}
+		if len(msg.GetNeedleBody()) == 0 {
+			continue
+		}
+		dataChunkCount++
+		if msg.GetIsLastChunk() {
+			sawLastDataChunk = true
+		} else {
+			sawNonLastDataChunk = true
+		}
+	}
+
+	if dataChunkCount < 2 {
+		t.Fatalf("VolumeTailSender expected multiple chunks for large needle, got %d", dataChunkCount)
+	}
+	if !sawNonLastDataChunk {
+		t.Fatalf("VolumeTailSender expected at least one non-last data chunk")
+	}
+	if !sawLastDataChunk {
+		t.Fatalf("VolumeTailSender expected a final data chunk marked IsLastChunk=true")
 	}
 }
