@@ -847,3 +847,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: explicit `HEAD` + `If-Modified-Since` parity remains expandable.
 - Commit: `9984f2ec4`
+
+- Date: 2026-02-12
+- Change: Added HTTP `HEAD` + `If-Modified-Since` conditional parity coverage.
+- APIs covered: `HEAD` conditional path returning `304` with empty-body semantics when `If-Modified-Since` matches Last-Modified.
+- Profiles covered: P1.
+- Gaps introduced/remaining: deeper conditional-header combinations (`If-None-Match` + `If-Modified-Since` precedence) remain expandable.
+- Commit: `e87563a3c`
