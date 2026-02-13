@@ -1120,3 +1120,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: request-cancel (`499`) and deep transport-interruption branches remain pending.
 - Commit: `38a1f4f4f`
+
+- Date: 2026-02-13
+- Change: Added EC shard-copy source-unavailable error coverage.
+- APIs covered: `VolumeEcShardsCopy` network/source-unreachable failure path with wrapped RPC error propagation.
+- Profiles covered: P1.
+- Gaps introduced/remaining: `499` cancellation and transport-interruption branches remain pending.
+- Commit: `d1e5f390a`
