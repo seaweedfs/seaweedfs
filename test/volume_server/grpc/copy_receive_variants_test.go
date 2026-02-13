@@ -293,3 +293,139 @@ func TestReceiveFileSuccessForRegularVolume(t *testing.T) {
 		t.Fatalf("received file data mismatch: got %q want %q", string(copied), string(expected))
 	}
 }
+
+func TestReceiveFileSuccessForEcVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const volumeID = uint32(96)
+	const collection = "ec-receive-success"
+	const ext = ".ec00"
+
+	payloadA := []byte("receive-ec-file-chunk-a:")
+	payloadB := []byte("receive-ec-file-chunk-b")
+	expected := append(append([]byte{}, payloadA...), payloadB...)
+
+	receiveStream, err := grpcClient.ReceiveFile(ctx)
+	if err != nil {
+		t.Fatalf("ReceiveFile stream create failed: %v", err)
+	}
+
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_Info{
+			Info: &volume_server_pb.ReceiveFileInfo{
+				VolumeId:   volumeID,
+				Ext:        ext,
+				Collection: collection,
+				IsEcVolume: true,
+				ShardId:    0,
+				FileSize:   uint64(len(expected)),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send EC info failed: %v", err)
+	}
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_FileContent{FileContent: payloadA},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send EC payloadA failed: %v", err)
+	}
+	if err = receiveStream.Send(&volume_server_pb.ReceiveFileRequest{
+		Data: &volume_server_pb.ReceiveFileRequest_FileContent{FileContent: payloadB},
+	}); err != nil {
+		t.Fatalf("ReceiveFile send EC payloadB failed: %v", err)
+	}
+
+	resp, err := receiveStream.CloseAndRecv()
+	if err != nil {
+		t.Fatalf("ReceiveFile EC close failed: %v", err)
+	}
+	if resp.GetError() != "" {
+		t.Fatalf("ReceiveFile EC unexpected error response: %+v", resp)
+	}
+	if resp.GetBytesWritten() != uint64(len(expected)) {
+		t.Fatalf("ReceiveFile EC bytes_written mismatch: got %d want %d", resp.GetBytesWritten(), len(expected))
+	}
+
+	copyStream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Collection:         collection,
+		IsEcVolume:         true,
+		Ext:                ext,
+		CompactionRevision: math.MaxUint32,
+		StopOffset:         uint64(len(expected)),
+	})
+	if err != nil {
+		t.Fatalf("CopyFile for received EC data start failed: %v", err)
+	}
+
+	var copied []byte
+	for {
+		msg, recvErr := copyStream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("CopyFile for received EC data recv failed: %v", recvErr)
+		}
+		copied = append(copied, msg.GetFileContent()...)
+	}
+
+	if string(copied) != string(expected) {
+		t.Fatalf("received EC file data mismatch: got %q want %q", string(copied), string(expected))
+	}
+}
+
+func TestCopyFileEcVolumeIgnoreMissingSourcePaths(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	streamNoIgnore, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:                 99601,
+		Collection:               "ec-copy-missing",
+		IsEcVolume:               true,
+		Ext:                      ".ec00",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               1,
+		IgnoreSourceFileNotFound: false,
+	})
+	if err == nil {
+		_, err = streamNoIgnore.Recv()
+	}
+	if err == nil || !strings.Contains(err.Error(), "not found ec volume id") {
+		t.Fatalf("CopyFile EC missing source error mismatch: %v", err)
+	}
+
+	streamIgnore, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:                 99602,
+		Collection:               "ec-copy-missing",
+		IsEcVolume:               true,
+		Ext:                      ".ec00",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               1,
+		IgnoreSourceFileNotFound: true,
+	})
+	if err != nil {
+		t.Fatalf("CopyFile EC ignore-missing start failed: %v", err)
+	}
+	_, err = streamIgnore.Recv()
+	if err != io.EOF {
+		t.Fatalf("CopyFile EC ignore-missing expected EOF, got: %v", err)
+	}
+}
