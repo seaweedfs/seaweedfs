@@ -1,6 +1,7 @@
 package volume_server_grpc_test
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"strings"
@@ -210,5 +211,54 @@ func TestBatchDeleteMixedStatusesAndMismatchStopsProcessing(t *testing.T) {
 	_ = framework.ReadAllAndClose(t, readC)
 	if readC.StatusCode != http.StatusOK {
 		t.Fatalf("fidC should remain when batch processing stops on mismatch, got %d", readC.StatusCode)
+	}
+}
+
+func TestBatchDeleteRejectsChunkManifestNeedles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(33)
+	framework.AllocateVolume(t, client, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 920001, 0x5555AAAA)
+	req, err := http.NewRequest(http.MethodPost, cluster.VolumeAdminURL()+"/"+fid+"?cm=true", bytes.NewReader([]byte("manifest-placeholder-payload")))
+	if err != nil {
+		t.Fatalf("create chunk manifest upload request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	uploadResp := framework.DoRequest(t, httpClient, req)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("chunk manifest upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := client.BatchDelete(ctx, &volume_server_pb.BatchDeleteRequest{FileIds: []string{fid}})
+	if err != nil {
+		t.Fatalf("BatchDelete chunk manifest should return response, got grpc error: %v", err)
+	}
+	if len(resp.GetResults()) != 1 {
+		t.Fatalf("BatchDelete chunk manifest expected one result, got %d", len(resp.GetResults()))
+	}
+	if resp.GetResults()[0].GetStatus() != http.StatusNotAcceptable {
+		t.Fatalf("BatchDelete chunk manifest expected status 406, got %d", resp.GetResults()[0].GetStatus())
+	}
+	if !strings.Contains(resp.GetResults()[0].GetError(), "ChunkManifest") {
+		t.Fatalf("BatchDelete chunk manifest expected error mentioning ChunkManifest, got %q", resp.GetResults()[0].GetError())
+	}
+
+	readResp := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("chunk manifest should not be deleted by BatchDelete reject path, got %d", readResp.StatusCode)
 	}
 }
