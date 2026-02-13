@@ -250,17 +250,42 @@ from botocore.exceptions import ClientError
 import json
 import sys
 import time
+import urllib.error
+import urllib.request
 
 print("Starting STS inline session policy test...")
 
-endpoint_url = "http://host.docker.internal:%d"
+primary_endpoint = "http://host.docker.internal:%d"
+fallback_endpoint = "http://%s:%d"
 access_key = "%s"
 secret_key = "%s"
 region = "us-east-1"
 
 try:
+    def wait_for_endpoint(url, timeout=30):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(url, timeout=2):
+                    return True
+            except urllib.error.HTTPError:
+                return True
+            except Exception:
+                time.sleep(1)
+        return False
+
+    def select_endpoint(urls):
+        for url in urls:
+            if wait_for_endpoint(url):
+                return url
+        raise Exception("No reachable S3 endpoint from container")
+
+    endpoint_url = select_endpoint([primary_endpoint, fallback_endpoint])
+    print(f"Using endpoint {endpoint_url}")
+
     config = botocore.config.Config(
-        retries={'max_attempts': 0}
+        retries={'max_attempts': 0},
+        s3={'addressing_style': 'path'}
     )
     admin_s3 = boto3.client(
         's3',
@@ -357,7 +382,7 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     sys.exit(1)
-`, env.s3Port, env.accessKey, env.secretKey)
+`, env.s3Port, env.bindIP, env.s3Port, env.accessKey, env.secretKey)
 
 	scriptPath := filepath.Join(env.dataDir, "sts_test.py")
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
