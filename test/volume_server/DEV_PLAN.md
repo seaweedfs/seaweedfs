@@ -1050,3 +1050,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: range-sum oversized-request behavior and image transform/chunk-manifest read branches remain pending.
 - Commit: `31d59f0b8`
+
+- Date: 2026-02-13
+- Change: Added HTTP oversized-multi-range guard coverage.
+- APIs covered: `GET` `Range` requests where combined ranges exceed total object size (`sumRangesSize > totalSize`) with current parity response (`200` + empty body).
+- Profiles covered: P1.
+- Gaps introduced/remaining: image resize/crop and chunk-manifest read branches remain pending.
+- Commit: `612e5f61c`
