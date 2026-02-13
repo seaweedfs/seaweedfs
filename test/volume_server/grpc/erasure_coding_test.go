@@ -751,3 +751,27 @@ func TestEcShardsCopyFromPeerSuccess(t *testing.T) {
 		}
 	}
 }
+
+func TestEcShardsCopyFailsWhenSourceUnavailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsCopy(ctx, &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       12345,
+		Collection:     "",
+		SourceDataNode: "127.0.0.1:1.1",
+		ShardIds:       []uint32{0},
+		CopyEcxFile:    true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "VolumeEcShardsCopy volume") {
+		t.Fatalf("VolumeEcShardsCopy source-unavailable error mismatch: %v", err)
+	}
+}
