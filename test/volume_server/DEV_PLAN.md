@@ -1064,3 +1064,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: chunk-manifest read/`cm=false` parity and compressed-content encoding matrix remain pending.
 - Commit: `d68803ecc`
+
+- Date: 2026-02-13
+- Change: Added HTTP chunk-manifest integration coverage for expansion and bypass.
+- APIs covered: chunk-manifest auto-expansion read path (`X-File-Store: chunked`) and `cm=false` raw-manifest bypass parity.
+- Profiles covered: P1.
+- Gaps introduced/remaining: compressed-content encoding matrix and some write/delete failure-injection branches remain pending.
+- Commit: `8ecf427c4`
