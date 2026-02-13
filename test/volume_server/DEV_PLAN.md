@@ -833,3 +833,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: CSV parsing behavior beyond current no-output path remains pending.
 - Commit: `2aaf0a339`
+
+- Date: 2026-02-12
+- Change: Added positive gRPC `Ping` coverage for master targets.
+- APIs covered: `Ping` success path for `target_type=master` with non-zero remote timestamp and valid timing envelope.
+- Profiles covered: P1.
+- Gaps introduced/remaining: positive filer-target ping path still requires a filer fixture in the integration harness.
+- Commit: `fa5cad6dc`
