@@ -117,7 +117,9 @@ func (t *Topology) IsLeader() bool {
 		if t.RaftServer.State() == raft.Leader {
 			return true
 		}
-		if leader, err := t.MaybeLeader(); err == nil {
+		// Directly check leader to avoid re-acquiring lock via MaybeLeader()
+		leader := pb.ServerAddress(t.RaftServer.Leader())
+		if leader != "" {
 			if pb.ServerAddress(t.RaftServer.Name()).Equals(leader) {
 				return true
 			}
@@ -175,8 +177,15 @@ func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 		func() (l pb.ServerAddress, err error) {
 			l, err = t.MaybeLeader()
 			if err == nil && l == "" {
+				// Thread-safe check if we are the leader
+				t.RaftServerAccessLock.RLock()
 				if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
-					return pb.ServerAddress(t.RaftServer.Name()), nil
+					l = pb.ServerAddress(t.RaftServer.Name())
+				}
+				t.RaftServerAccessLock.RUnlock()
+
+				if l != "" {
+					return l, nil
 				}
 				err = leaderNotSelected
 			}

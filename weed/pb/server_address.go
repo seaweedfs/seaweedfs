@@ -63,6 +63,9 @@ func (sa ServerAddress) ToHttpAddress() string {
 }
 
 func (sa ServerAddress) Equals(other ServerAddress) bool {
+	if sa == other {
+		return true
+	}
 	return sa.ToHttpAddress() == other.ToHttpAddress()
 }
 
