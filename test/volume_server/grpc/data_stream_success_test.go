@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,6 +172,61 @@ func TestReadAllNeedlesStreamsUploadedRecords(t *testing.T) {
 		if got != body {
 			t.Fatalf("ReadAllNeedles body mismatch for key %d: got %q want %q", key, got, body)
 		}
+	}
+}
+
+func TestReadAllNeedlesExistingThenMissingVolumeAbortsStream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const existingVolumeID = uint32(85)
+	const missingVolumeID = uint32(98585)
+	const needleID = uint64(445551)
+	framework.AllocateVolume(t, grpcClient, existingVolumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(existingVolumeID, needleID, 0xAA11BB22)
+	payload := "read-all-existing-then-missing"
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte(payload))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != 201 {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.ReadAllNeedles(ctx, &volume_server_pb.ReadAllNeedlesRequest{
+		VolumeIds: []uint32{existingVolumeID, missingVolumeID},
+	})
+	if err != nil {
+		t.Fatalf("ReadAllNeedles start failed: %v", err)
+	}
+
+	seenUploadedNeedle := false
+	for {
+		msg, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			t.Fatalf("ReadAllNeedles expected stream error for missing volume, got EOF")
+		}
+		if recvErr != nil {
+			if !strings.Contains(recvErr.Error(), "not found volume id") {
+				t.Fatalf("ReadAllNeedles missing-volume error mismatch: %v", recvErr)
+			}
+			break
+		}
+		if msg.GetNeedleId() == needleID && string(msg.GetNeedleBlob()) == payload {
+			seenUploadedNeedle = true
+		}
+	}
+
+	if !seenUploadedNeedle {
+		t.Fatalf("ReadAllNeedles should stream entries from existing volume before missing-volume abort")
 	}
 }
 
