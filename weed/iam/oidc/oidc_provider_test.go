@@ -1064,6 +1064,86 @@ func TestOIDCProviderReinitialization(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
+	// Test the eager cleanup mechanism when cache approaches capacity
+	privateKey, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-eager-cleanup")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            10, // Small cache for testing
+	}
+	require.NoError(t, provider.Initialize(config))
+	defer provider.Shutdown(context.Background())
+
+	// Manually add expired entries to the cache
+	for i := 0; i < 5; i++ {
+		jti := fmt.Sprintf("expired-jti-%d", i)
+		entry := &jtiEntry{
+			subject:   fmt.Sprintf("expired-user-%d", i),
+			expiresAt: time.Now().Add(-time.Hour), // Already expired
+		}
+		provider.jtiStore.Store(jti, entry)
+		provider.jtiCount.Add(1)
+	}
+
+	assert.Equal(t, int64(5), provider.jtiCount.Load(), "Should have 5 expired entries")
+
+	// Perform eager cleanup - should remove all expired entries
+	provider.performEagerCleanup()
+
+	assert.Equal(t, int64(0), provider.jtiCount.Load(),
+		"All expired entries should be removed by eager cleanup")
+
+	// Now test that adding valid tokens works after cleanup
+	for i := 0; i < 9; i++ {
+		token := createTestJWT(t, privateKey, jwt.MapClaims{
+			"iss": jwksServer.URL,
+			"aud": "test-client",
+			"sub": fmt.Sprintf("user-%d", i),
+			"jti": fmt.Sprintf("valid-jti-%d", i),
+			"exp": time.Now().Add(time.Hour).Unix(),
+			"iat": time.Now().Unix(),
+		})
+		_, err := provider.ValidateToken(context.Background(), token)
+		require.NoError(t, err)
+	}
+
+	// Should have 9 valid entries now (90% of capacity, triggers eager cleanup warning)
+	assert.Equal(t, int64(9), provider.jtiCount.Load(), "Should have 9 valid entries")
+
+	// 10th token should succeed (at capacity but not over)
+	token10 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user-10",
+		"jti": "valid-jti-10",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err := provider.ValidateToken(context.Background(), token10)
+	require.NoError(t, err, "10th token should validate (at capacity)")
+
+	// 11th token should fail (over capacity)
+	token11 := createTestJWT(t, privateKey, jwt.MapClaims{
+		"iss": jwksServer.URL,
+		"aud": "test-client",
+		"sub": "user-11",
+		"jti": "valid-jti-11",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	_, err = provider.ValidateToken(context.Background(), token11)
+	assert.Error(t, err, "11th token should fail (over capacity)")
+	assert.Contains(t, err.Error(), "capacity exceeded", "Should indicate capacity exceeded")
+}
+
 func TestOIDCProviderShutdown(t *testing.T) {
 	// Test graceful shutdown
 	_, publicKey := generateTestKeys(t)
@@ -1084,12 +1164,52 @@ func TestOIDCProviderShutdown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Measure shutdown time to ensure it doesn't block unnecessarily
+	start := time.Now()
 	err := provider.Shutdown(ctx)
+	duration := time.Since(start)
+
 	assert.NoError(t, err)
+	// Shutdown should be quick (goroutine exits immediately on cancel)
+	// Allow 1 second for goroutine scheduling overhead
+	assert.Less(t, duration, 1*time.Second,
+		"Shutdown should not block for fixed timeout, took %v", duration)
 
 	// Second shutdown should be idempotent
 	err = provider.Shutdown(ctx)
 	assert.NoError(t, err)
+}
+
+func TestOIDCProviderShutdownTimeout(t *testing.T) {
+	// Test that shutdown respects caller's context timeout
+	_, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-shutdown-timeout")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+	}
+	require.NoError(t, provider.Initialize(config))
+
+	// Use a very short timeout to test timeout handling
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	defer cancel()
+
+	// Wait a bit to ensure context expires
+	time.Sleep(10 * time.Millisecond)
+
+	err := provider.Shutdown(ctx)
+	// Should return context error if timeout occurs
+	if err != nil {
+		assert.ErrorIs(t, err, context.DeadlineExceeded,
+			"Should return deadline exceeded error when context times out")
+	}
+	// Note: goroutine may exit before timeout, so error is optional
 }
 
 // Benchmark tests

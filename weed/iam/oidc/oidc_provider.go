@@ -63,11 +63,13 @@ type OIDCProvider struct {
 	jwksTTL       time.Duration
 
 	// JTI replay protection fields
+	jtiEnabled       bool     // Explicit flag for JTI protection status
 	jtiStore         sync.Map // map[string]*jtiEntry - atomic storage for JTI claims
 	jtiCount         atomic.Int64
 	jtiMaxSize       int64
 	jtiCleanupCtx    context.Context
 	jtiCleanupCancel context.CancelFunc
+	jtiCleanupDone   chan struct{} // Closed when cleanup goroutine exits
 	shutdownOnce     sync.Once
 }
 
@@ -190,9 +192,19 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		if p.jtiCleanupCancel != nil {
 			glog.V(3).Infof("OIDC provider %q: Stopping existing JTI cleanup goroutine", p.name)
 			p.jtiCleanupCancel()
+			// Wait for old goroutine to exit (with timeout to prevent blocking indefinitely)
+			if p.jtiCleanupDone != nil {
+				select {
+				case <-p.jtiCleanupDone:
+					glog.V(3).Infof("OIDC provider %q: Old cleanup goroutine exited", p.name)
+				case <-time.After(2 * time.Second):
+					glog.Warningf("OIDC provider %q: Timeout waiting for old cleanup goroutine", p.name)
+				}
+			}
 			p.jtiCleanupCancel = nil
 		}
 
+		p.jtiEnabled = true
 		p.jtiMaxSize = int64(oidcConfig.JTICacheMaxSize)
 		if p.jtiMaxSize <= 0 {
 			p.jtiMaxSize = defaultJTICacheSize
@@ -201,12 +213,14 @@ func (p *OIDCProvider) Initialize(config interface{}) error {
 		p.jtiStore = sync.Map{}
 		p.jtiCount = atomic.Int64{}
 		p.jtiCleanupCtx, p.jtiCleanupCancel = context.WithCancel(context.Background())
+		p.jtiCleanupDone = make(chan struct{})
 
 		// Start background cleanup goroutine for expired JTI entries
 		go p.cleanupExpiredJTIs(p.jtiCleanupCtx, defaultCleanupInterval)
 
 		glog.V(2).Infof("OIDC provider %q: JTI replay protection enabled (max size: %d)", p.name, p.jtiMaxSize)
 	} else {
+		p.jtiEnabled = false
 		glog.Warningf("OIDC provider %q: JTI replay protection is DISABLED", p.name)
 	}
 
@@ -562,13 +576,23 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 	}
 
 	// Extract and validate JTI claim for replay protection
-	if p.jtiCleanupCancel != nil { // Check if JTI protection is enabled
+	if p.jtiEnabled { // Check if JTI protection is enabled
 		jti, jtiExists := claims["jti"].(string)
 
 		if jtiExists && len(jti) > 0 {
-			// Check current count before attempting to store (prevent memory exhaustion)
-			if p.jtiCount.Load() >= p.jtiMaxSize {
-				glog.Warningf("OIDC provider %q: JTI cache full (%d entries), rejecting token",
+			currentCount := p.jtiCount.Load()
+
+			// Trigger eager cleanup when cache reaches 90% capacity to prevent DoS
+			if currentCount >= (p.jtiMaxSize * 9 / 10) {
+				glog.Warningf("OIDC provider %q: JTI cache at %d%% capacity (%d/%d), triggering eager cleanup",
+					p.name, (currentCount*100)/p.jtiMaxSize, currentCount, p.jtiMaxSize)
+				go p.performEagerCleanup()
+			}
+
+			// Final check: reject if cache is completely full (prevent memory exhaustion)
+			if currentCount >= p.jtiMaxSize {
+				glog.Errorf("OIDC provider %q: JTI cache FULL (%d entries) - rejecting token. "+
+					"This may indicate a DoS attack or insufficient cache size. Consider increasing JTICacheMaxSize.",
 					p.name, p.jtiMaxSize)
 				return nil, fmt.Errorf("JTI cache capacity exceeded")
 			}
@@ -905,10 +929,44 @@ func (p *OIDCProvider) mapUserInfoToIdentity(userInfo map[string]interface{}) *p
 	return identity
 }
 
+// performEagerCleanup performs an immediate cleanup of expired JTI entries.
+// Called when cache approaches capacity to prevent DoS scenarios where
+// legitimate tokens are rejected due to accumulated expired entries.
+func (p *OIDCProvider) performEagerCleanup() {
+	if !p.jtiEnabled {
+		return
+	}
+
+	now := time.Now()
+	count := 0
+	beforeCount := p.jtiCount.Load()
+
+	p.jtiStore.Range(func(key, value interface{}) bool {
+		entry := value.(*jtiEntry)
+		if now.After(entry.expiresAt) {
+			p.jtiStore.Delete(key)
+			p.jtiCount.Add(-1)
+			count++
+		}
+		return true // continue iteration
+	})
+
+	if count > 0 {
+		glog.Infof("OIDC provider %q: Eager cleanup removed %d expired JTI entries (%d -> %d)",
+			p.name, count, beforeCount, p.jtiCount.Load())
+	} else {
+		glog.Warningf("OIDC provider %q: Eager cleanup found no expired entries to remove. "+
+			"Cache may be filled with valid long-lived tokens. Consider increasing JTICacheMaxSize.",
+			p.name)
+	}
+}
+
 // cleanupExpiredJTIs periodically removes expired JTI entries from the cache.
 // This prevents memory growth by removing JTIs after their tokens have expired.
 // Runs in a background goroutine until the provider is shut down.
 func (p *OIDCProvider) cleanupExpiredJTIs(ctx context.Context, interval time.Duration) {
+	defer close(p.jtiCleanupDone) // Signal goroutine exit
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -949,13 +1007,15 @@ func (p *OIDCProvider) Shutdown(ctx context.Context) error {
 		if p.jtiCleanupCancel != nil {
 			p.jtiCleanupCancel()
 
-			// Wait for cleanup goroutine to exit with timeout
-			select {
-			case <-ctx.Done():
-				err = ctx.Err()
-				glog.Warningf("OIDC provider %q: Shutdown timeout: %v", p.name, err)
-			case <-time.After(5 * time.Second):
-				glog.V(2).Infof("OIDC provider %q: Cleanup goroutine shutdown complete", p.name)
+			// Wait for cleanup goroutine to exit
+			if p.jtiCleanupDone != nil {
+				select {
+				case <-p.jtiCleanupDone:
+					glog.V(2).Infof("OIDC provider %q: Cleanup goroutine shutdown complete", p.name)
+				case <-ctx.Done():
+					err = ctx.Err()
+					glog.Warningf("OIDC provider %q: Shutdown timeout waiting for cleanup goroutine: %v", p.name, err)
+				}
 			}
 		}
 	})
