@@ -987,3 +987,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: multi-shard, rebuild/copy/blob-delete/to-volume positive permutations remain for broader EC matrix completeness.
 - Commit: `80dce7c5b`
+
+- Date: 2026-02-12
+- Change: Expanded EC positive-path coverage for shard-read and blob-delete behavior.
+- APIs covered: `VolumeEcShardRead` success, `VolumeEcBlobDelete` first-delete + idempotent second-delete, and `VolumeEcShardRead` deleted-marker (`IsDeleted`) path.
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC copy/rebuild/to-volume multi-node success permutations remain for broader matrix completeness.
+- Commit: `1f405f52d`
