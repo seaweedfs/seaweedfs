@@ -621,8 +621,10 @@ func (p *OIDCProvider) ValidateToken(ctx context.Context, token string) (*provid
 			ttl := time.Until(entry.expiresAt)
 			if ttl <= 0 {
 				// Token is expired even with clock skew tolerance
-				p.jtiStore.Delete(jti)
-				p.jtiCount.Add(-1)
+				// Use LoadAndDelete in case cleanup goroutine already removed it
+				if _, loaded := p.jtiStore.LoadAndDelete(jti); loaded {
+					p.jtiCount.Add(-1)
+				}
 				glog.Warningf("OIDC provider %q: Token with JTI %s is already expired (exp: %v)",
 					p.name, jti, tokenClaims.ExpiresAt)
 				return nil, fmt.Errorf("%w: token expired", providers.ErrProviderTokenExpired)
@@ -944,9 +946,12 @@ func (p *OIDCProvider) performEagerCleanup() {
 	p.jtiStore.Range(func(key, value interface{}) bool {
 		entry := value.(*jtiEntry)
 		if now.After(entry.expiresAt) {
-			p.jtiStore.Delete(key)
-			p.jtiCount.Add(-1)
-			count++
+			// Use LoadAndDelete to ensure we only decrement if we actually removed the entry
+			// This prevents double-decrement if concurrent cleanups try to remove the same key
+			if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
+				p.jtiCount.Add(-1)
+				count++
+			}
 		}
 		return true // continue iteration
 	})
@@ -984,9 +989,12 @@ func (p *OIDCProvider) cleanupExpiredJTIs(ctx context.Context, interval time.Dur
 			p.jtiStore.Range(func(key, value interface{}) bool {
 				entry := value.(*jtiEntry)
 				if now.After(entry.expiresAt) {
-					p.jtiStore.Delete(key)
-					p.jtiCount.Add(-1)
-					count++
+					// Use LoadAndDelete to ensure we only decrement if we actually removed the entry
+					// This prevents double-decrement if concurrent cleanups try to remove the same key
+					if _, loaded := p.jtiStore.LoadAndDelete(key); loaded {
+						p.jtiCount.Add(-1)
+						count++
+					}
 				}
 				return true // continue iteration
 			})

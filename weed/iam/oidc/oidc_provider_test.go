@@ -1144,6 +1144,69 @@ func TestOIDCProviderJTIEagerCleanup(t *testing.T) {
 	assert.Contains(t, err.Error(), "capacity exceeded", "Should indicate capacity exceeded")
 }
 
+func TestOIDCProviderConcurrentCleanupNoNegativeCount(t *testing.T) {
+	// Test that concurrent cleanups don't cause jtiCount to go negative
+	// due to double-decrement of the same entry
+	_, publicKey := generateTestKeys(t)
+	jwksServer := setupOIDCTestServer(t, publicKey)
+	defer jwksServer.Close()
+
+	provider := NewOIDCProvider("test-oidc-cleanup-race")
+	jtiEnabled := true
+	config := &OIDCConfig{
+		Issuer:                     jwksServer.URL,
+		ClientID:                   "test-client",
+		JWKSUri:                    jwksServer.URL + "/jwks",
+		JTIReplayProtectionEnabled: &jtiEnabled,
+		JTICacheMaxSize:            100,
+	}
+	require.NoError(t, provider.Initialize(config))
+	defer provider.Shutdown(context.Background())
+
+	// Manually add expired entries to the cache
+	for i := 0; i < 50; i++ {
+		jti := fmt.Sprintf("expired-jti-%d", i)
+		entry := &jtiEntry{
+			subject:   fmt.Sprintf("user-%d", i),
+			expiresAt: time.Now().Add(-time.Hour), // Already expired
+		}
+		provider.jtiStore.Store(jti, entry)
+		provider.jtiCount.Add(1)
+	}
+
+	initialCount := provider.jtiCount.Load()
+	assert.Equal(t, int64(50), initialCount, "Should have 50 expired entries")
+
+	// Run multiple concurrent cleanups
+	var wg sync.WaitGroup
+	numCleanups := 10
+
+	for i := 0; i < numCleanups; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			provider.performEagerCleanup()
+		}()
+	}
+
+	wg.Wait()
+
+	// Counter should be 0 (all entries removed), never negative
+	finalCount := provider.jtiCount.Load()
+	assert.Equal(t, int64(0), finalCount,
+		"Counter should be 0 after concurrent cleanups, got %d", finalCount)
+	assert.GreaterOrEqual(t, finalCount, int64(0),
+		"Counter should never go negative, got %d", finalCount)
+
+	// Verify store is actually empty
+	storeCount := 0
+	provider.jtiStore.Range(func(key, value interface{}) bool {
+		storeCount++
+		return true
+	})
+	assert.Equal(t, 0, storeCount, "Store should be empty")
+}
+
 func TestOIDCProviderShutdown(t *testing.T) {
 	// Test graceful shutdown
 	_, publicKey := generateTestKeys(t)
