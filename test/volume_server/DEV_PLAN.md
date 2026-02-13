@@ -980,3 +980,10 @@ Update this section during implementation:
 - Profiles covered: P8.
 - Gaps introduced/remaining: explicit cancellation (`499`) path remains pending due client-side transport observability limits.
 - Commit: `3214972fa`
+
+- Date: 2026-02-12
+- Change: Added positive erasure-coding lifecycle coverage for generate/mount/info/unmount flows.
+- APIs covered: `VolumeEcShardsGenerate` success, `VolumeEcShardsMount` success, `VolumeEcShardsInfo` success after mount, and expected not-found after unmount.
+- Profiles covered: P1.
+- Gaps introduced/remaining: multi-shard, rebuild/copy/blob-delete/to-volume positive permutations remain for broader EC matrix completeness.
+- Commit: `80dce7c5b`
