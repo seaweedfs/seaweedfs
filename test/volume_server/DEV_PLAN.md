@@ -1071,3 +1071,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: compressed-content encoding matrix and some write/delete failure-injection branches remain pending.
 - Commit: `8ecf427c4`
+
+- Date: 2026-02-13
+- Change: Added HTTP compressed-read encoding matrix coverage.
+- APIs covered: compressed needle read branch with `Accept-Encoding=gzip` passthrough (`Content-Encoding: gzip`) and `Accept-Encoding=identity` decompression parity.
+- Profiles covered: P1.
+- Gaps introduced/remaining: write/delete failure-injection and request-cancel (`499`) paths remain pending due transport/fault observability constraints.
+- Commit: `e17604c57`
