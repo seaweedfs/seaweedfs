@@ -791,3 +791,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: explicit externally visible timestamp override effects remain limited in current API responses.
 - Commit: `225b8e800`
+
+- Date: 2026-02-12
+- Change: Added gRPC invalid-offset coverage for needle blob/meta reads.
+- APIs covered: `ReadNeedleBlob` and `ReadNeedleMeta` failure paths on existing volumes with out-of-range offsets.
+- Profiles covered: P1.
+- Gaps introduced/remaining: low-level corrupted-size and backend I/O fault branches still require fault-injection hooks.
+- Commit: `33ed77ad6`
