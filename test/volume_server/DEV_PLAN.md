@@ -959,3 +959,10 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: none for baseline public-port `GET/HEAD/OPTIONS` method coverage.
 - Commit: `127c43b1a`
+
+- Date: 2026-02-12
+- Change: Added throttling wait-then-proceed branch coverage for both upload and download paths.
+- APIs covered: over-limit `wait then proceed` behavior (`waitForUploadSlot` and `waitForDownloadSlot`) when in-flight pressure is released before timeout.
+- Profiles covered: P8.
+- Gaps introduced/remaining: explicit cancellation (`499`) path remains pending due client-side transport observability limits.
+- Commit: `f7b362a2a`
