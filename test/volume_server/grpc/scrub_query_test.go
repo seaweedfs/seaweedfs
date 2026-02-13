@@ -333,3 +333,53 @@ func TestQueryJsonNoMatchReturnsEmptyStripe(t *testing.T) {
 		t.Fatalf("Query json no-match expected EOF after first empty stripe, got: %v", err)
 	}
 }
+
+func TestQueryCookieMismatchReturnsEOFNoResults(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(66)
+	const needleID = uint64(777003)
+	const cookie = uint32(0xCDCDABAB)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	jsonLines := []byte("{\"score\":7}\n{\"score\":8}\n")
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, jsonLines)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != 201 {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	wrongCookieFid := framework.NewFileID(volumeID, needleID, cookie+1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.Query(ctx, &volume_server_pb.QueryRequest{
+		FromFileIds: []string{wrongCookieFid},
+		Selections:  []string{"score"},
+		Filter: &volume_server_pb.QueryRequest_Filter{
+			Field:   "score",
+			Operand: ">",
+			Value:   "0",
+		},
+		InputSerialization: &volume_server_pb.QueryRequest_InputSerialization{
+			JsonInput: &volume_server_pb.QueryRequest_InputSerialization_JSONInput{Type: "LINES"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query start for cookie mismatch should not fail immediately, got: %v", err)
+	}
+
+	_, err = stream.Recv()
+	if err != io.EOF {
+		t.Fatalf("Query cookie mismatch expected EOF with no streamed records, got: %v", err)
+	}
+}
