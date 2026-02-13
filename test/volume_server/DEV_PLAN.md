@@ -1001,3 +1001,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: `VolumeEcShardsToVolume` full success conversion path and EC copy/rebuild multi-node permutations remain pending.
 - Commit: `e8c449c16`
+
+- Date: 2026-02-13
+- Change: Added positive `VolumeEcShardsToVolume` conversion coverage with post-conversion read verification.
+- APIs covered: `VolumeEcShardsToVolume` success path (mounted data shards -> convert -> readable needle payload parity).
+- Profiles covered: P1.
+- Gaps introduced/remaining: EC multi-node shard-copy/rebuild permutations and last-shard cleanup edge cases remain pending.
+- Commit: `6d223338a`
