@@ -98,3 +98,49 @@ func TestWriteNeedleBlobMaintenanceAndMissingVolume(t *testing.T) {
 		t.Fatalf("WriteNeedleBlob maintenance mode error mismatch: %v", err)
 	}
 }
+
+func TestReadNeedleBlobAndMetaInvalidOffsets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(92)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 880001, 0xCCDD1122)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("invalid-offset-check"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != 201 {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.ReadNeedleBlob(ctx, &volume_server_pb.ReadNeedleBlobRequest{
+		VolumeId: volumeID,
+		Offset:   1 << 40,
+		Size:     64,
+	})
+	if err == nil {
+		t.Fatalf("ReadNeedleBlob should fail for invalid offset")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "read needle blob") {
+		t.Fatalf("ReadNeedleBlob invalid offset error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.ReadNeedleMeta(ctx, &volume_server_pb.ReadNeedleMetaRequest{
+		VolumeId: volumeID,
+		NeedleId: 880001,
+		Offset:   1 << 40,
+		Size:     64,
+	})
+	if err == nil {
+		t.Fatalf("ReadNeedleMeta should fail for invalid offset")
+	}
+}
