@@ -399,26 +399,32 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	if err != nil {
 		return false, fmt.Errorf("policy evaluation failed: %w", err)
 	}
-	baseAllowed := baseResult.Effect == policy.EffectAllow
 
+	// Base policy must allow; if it doesn't, deny immediately (session policy can only further restrict)
+	if baseResult.Effect != policy.EffectAllow {
+		return false, nil
+	}
+
+	// If there's a session policy, it must also allow the action
 	if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
 		var sessionPolicy policy.PolicyDocument
 		if err := json.Unmarshal([]byte(sessionInfo.SessionPolicy), &sessionPolicy); err != nil {
-			return false, fmt.Errorf("invalid session policy: %w", err)
+			return false, fmt.Errorf("invalid session policy JSON: %w", err)
 		}
 		if err := policy.ValidatePolicyDocument(&sessionPolicy); err != nil {
-			return false, fmt.Errorf("invalid session policy: %w", err)
+			return false, fmt.Errorf("invalid session policy document: %w", err)
 		}
 		sessionResult, err := m.policyEngine.EvaluatePolicyDocument(ctx, evalCtx, "session-policy", &sessionPolicy, policy.EffectDeny)
 		if err != nil {
 			return false, fmt.Errorf("session policy evaluation failed: %w", err)
 		}
 		if sessionResult.Effect != policy.EffectAllow {
+			// Session policy does not allow this action
 			return false, nil
 		}
 	}
 
-	return baseAllowed, nil
+	return true, nil
 }
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)

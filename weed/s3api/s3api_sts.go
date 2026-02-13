@@ -219,6 +219,9 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 
 // handleAssumeRole handles the AssumeRole API action
 // This requires AWS Signature V4 authentication
+// NOTE: Session policy support (Policy parameter) is implemented for AssumeRole.
+// AssumeRoleWithWebIdentity and AssumeRoleWithLDAPIdentity do not currently support
+// inline session policies. This can be extended in future work if needed.
 func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters from form
 	roleArn := r.FormValue("RoleArn")
