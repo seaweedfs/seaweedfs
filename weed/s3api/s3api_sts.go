@@ -303,8 +303,16 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// If RoleArn is missing, default to the caller's identity (User Context)
+		// This allows the user to "assume" a session for themselves, inheriting their own permissions.
+		roleArn = identity.PrincipalArn
+		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
+
+		// We still enforce a global "sts:AssumeRole" check, similar to how we'd check if they can assume *any* role.
+		// However, for self-assumption, this might be implicit.
+		// For safety/consistency with previous logic, we keep the check but strictly it might not be required by AWS for GetSessionToken.
+		// But since this IS AssumeRole, let's keep it.
 		// Admin/Global check when no specific role is requested
-		// Ensure caller has sts:AssumeRole permission globally (on "arn:aws:s3:::*")
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
@@ -499,22 +507,14 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	expiration := time.Now().Add(duration)
 
 	// Extract role name from ARN for proper response formatting
-	// Extract role name from ARN for proper response formatting
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromPrincipal(roleArn)
 	if roleName == "" {
-		if roleArn != "" {
-			roleName = roleArn // Fallback to full ARN if extraction fails
-		} else {
-			// Check if a default role is configured
-			if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.DefaultRole != "" {
-				roleName = utils.ExtractRoleNameFromArn(h.stsService.Config.DefaultRole)
-				if roleName == "" {
-					roleName = "root" // Fallback if configured default role ARN is invalid
-				}
-			} else {
-				roleName = "root"
-			}
-		}
+		// Try to extract user name if it's a user ARN (for "User Context" assumption)
+		roleName = utils.ExtractUserNameFromPrincipal(roleArn)
+	}
+
+	if roleName == "" {
+		roleName = roleArn // Fallback to full ARN if extraction fails
 	}
 
 	accountID := h.getAccountID()

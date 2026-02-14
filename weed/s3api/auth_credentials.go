@@ -300,7 +300,8 @@ func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
 		Actions: []Action{
 			s3_constants.ACTION_ADMIN,
 		},
-		IsStatic: true,
+		PrincipalArn: generatePrincipalArn(identityName),
+		IsStatic:     true,
 	}
 
 	iam.m.Lock()

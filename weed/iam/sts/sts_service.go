@@ -105,10 +105,6 @@ type STSConfig struct {
 	// Defaults to "111122223333" if not specified
 	AccountId string `json:"accountId,omitempty"`
 
-	// DefaultRole is the default role ARN to assume if RoleArn is missing
-	// Defaults to "root" role if not specified
-	DefaultRole string `json:"defaultRole,omitempty"`
-
 	// Providers configuration - enables automatic provider loading
 	Providers []*ProviderConfig `json:"providers,omitempty"`
 }
