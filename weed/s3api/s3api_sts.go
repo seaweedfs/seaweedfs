@@ -237,13 +237,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	roleSessionName := r.FormValue("RoleSessionName")
 
 	// Validate required parameters
-	// Validate required parameters
-	// RoleArn is optional in some S3 compatible implementations
-	// if roleArn == "" {
-	// 	h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-	// 		fmt.Errorf("RoleArn is required"))
-	// 	return
-	// }
+	// RoleArn is optional to support S3-compatible clients that omit it
 
 	if roleSessionName == "" {
 		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
@@ -292,21 +286,28 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
 	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
+	// Check authorizations
 	if roleArn != "" {
+		// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
 		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
 			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
 			return
 		}
-	}
 
-	// Validate that the target role trusts the caller (Trust Policy)
-	// This ensures the role's trust policy explicitly allows the principal to assume it
-	if roleArn != "" {
+		// Validate that the target role trusts the caller (Trust Policy)
 		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
 			glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+			return
+		}
+	} else {
+		// Admin/Global check when no specific role is requested
+		// Ensure caller has sts:AssumeRole permission globally (on "arn:aws:s3:::*")
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", ""); authErr != s3err.ErrNone {
+			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
 			return
 		}
 	}
@@ -512,12 +513,19 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	// Construct AssumedRoleUser ARN - this will be used as the principal for the vended token
 	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountID, roleName, roleSessionName)
 
+	// Use assumedRoleArn as RoleArn in claims if original RoleArn is empty
+	// This ensures STSSessionClaims.IsValid() passes (it requires non-empty RoleArn)
+	effectiveRoleArn := roleArn
+	if effectiveRoleArn == "" {
+		effectiveRoleArn = assumedRoleArn
+	}
+
 	// Create session claims with role information
 	// SECURITY: Use the assumedRoleArn as the principal in the token.
 	// This ensures that subsequent requests using this token are correctly identified as the assumed role.
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
-		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
 
 	if sessionPolicy != "" {
 		claims.WithSessionPolicy(sessionPolicy)
