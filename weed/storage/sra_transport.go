@@ -29,11 +29,11 @@ type SraTransport struct {
 //
 // Response: status(1) + pad(3) + request_id(4) = 8 bytes
 const (
-	sraOpcodeReplicate uint8  = 0x03
-	sraReplicateHeaderSize    = 16 // opcode(1)+pad(3)+request_id(4)+volume_id(4)+target_host_len(4)
-	sraReplicateResponseSize  = 8
-	sraStatusOk        uint8  = 0x00
-	sraStatusError     uint8  = 0xFF
+	sraOpcodeReplicate       uint8 = 0x03
+	sraReplicateHeaderSize         = 16 // opcode(1)+pad(3)+request_id(4)+volume_id(4)+target_host_len(4)
+	sraReplicateResponseSize       = 8
+	sraStatusOk              uint8 = 0x00
+	sraStatusError           uint8 = 0xFF
 )
 
 var nextRequestId uint32
