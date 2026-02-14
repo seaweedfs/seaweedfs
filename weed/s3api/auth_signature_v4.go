@@ -36,6 +36,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -410,7 +411,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	cred := &Credential{
 		AccessKey:  sessionInfo.Credentials.AccessKeyId,
 		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
-		Status:     "Active",
+		Status:     weed_iam.AccessKeyStatusActive,
 		Expiration: sessionInfo.ExpiresAt.Unix(),
 	}
 

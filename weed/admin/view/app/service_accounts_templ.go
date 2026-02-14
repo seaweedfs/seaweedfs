@@ -121,7 +121,7 @@ func ServiceAccounts(data dash.ServiceAccountsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if sa.Status == "Active" {
+			if sa.Status == dash.StatusActive {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<span class=\"badge bg-success\">Active</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
@@ -188,7 +188,7 @@ func ServiceAccounts(data dash.ServiceAccountsData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if sa.Status == "Active" {
+			if sa.Status == dash.StatusActive {
 				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "<i class=\"fas fa-pause\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
