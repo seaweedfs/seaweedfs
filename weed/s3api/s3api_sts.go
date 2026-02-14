@@ -237,11 +237,13 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	roleSessionName := r.FormValue("RoleSessionName")
 
 	// Validate required parameters
-	if roleArn == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleArn is required"))
-		return
-	}
+	// Validate required parameters
+	// RoleArn is optional in some S3 compatible implementations
+	// if roleArn == "" {
+	// 	h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+	// 		fmt.Errorf("RoleArn is required"))
+	// 	return
+	// }
 
 	if roleSessionName == "" {
 		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
@@ -290,19 +292,23 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
 	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
-	if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
-		glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
-		return
+	if roleArn != "" {
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
+			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
+			return
+		}
 	}
 
 	// Validate that the target role trusts the caller (Trust Policy)
 	// This ensures the role's trust policy explicitly allows the principal to assume it
-	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
-		glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
-		return
+	if roleArn != "" {
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
+			glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+			return
+		}
 	}
 
 	// Parse optional inline session policy for downscoping
@@ -494,7 +500,11 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	// Extract role name from ARN for proper response formatting
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
-		roleName = roleArn // Fallback to full ARN if extraction fails
+		if roleArn != "" {
+			roleName = roleArn // Fallback to full ARN if extraction fails
+		} else {
+			roleName = "root"
+		}
 	}
 
 	accountID := h.getAccountID()
