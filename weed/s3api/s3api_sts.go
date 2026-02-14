@@ -499,12 +499,21 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	expiration := time.Now().Add(duration)
 
 	// Extract role name from ARN for proper response formatting
+	// Extract role name from ARN for proper response formatting
 	roleName := utils.ExtractRoleNameFromArn(roleArn)
 	if roleName == "" {
 		if roleArn != "" {
 			roleName = roleArn // Fallback to full ARN if extraction fails
 		} else {
-			roleName = "root"
+			// Check if a default role is configured
+			if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.DefaultRole != "" {
+				roleName = utils.ExtractRoleNameFromArn(h.stsService.Config.DefaultRole)
+				if roleName == "" {
+					roleName = "root" // Fallback if configured default role ARN is invalid
+				}
+			} else {
+				roleName = "root"
+			}
 		}
 	}
 
