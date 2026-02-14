@@ -61,40 +61,43 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 		glog.V(1).Infof("Skipping IAM config update for static configuration")
 		return nil
 	}
+	if s3a.iam == nil {
+		return nil
+	}
+
+	reloadIamConfig := func(reason string) error {
+		glog.V(1).Infof("IAM change detected in %s, reloading configuration", reason)
+		if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Errorf("failed to reload IAM configuration after change in %s: %v", reason, err)
+			return err
+		}
+		return nil
+	}
 
 	// 1. Handle traditional single identity.json file
 	if dir == filer.IamConfigDirectory {
-		// Handle deletion: reset to empty config
-		if newEntry == nil && oldEntry != nil && oldEntry.Name == filer.IamIdentityFile {
-			glog.V(1).Infof("IAM config file deleted, clearing identities")
-			if err := s3a.iam.LoadS3ApiConfigurationFromBytes([]byte{}); err != nil {
-				glog.Warningf("failed to clear IAM config on deletion: %v", err)
+		// Handle create/update/delete events on legacy identity.json.
+		// During migration this file is renamed, which emits a delete event.
+		// Always reload from the credential manager so we keep the migrated identities.
+		if (oldEntry != nil && oldEntry.Name == filer.IamIdentityFile) ||
+			(newEntry != nil && newEntry.Name == filer.IamIdentityFile) {
+			if err := reloadIamConfig(dir + "/" + filer.IamIdentityFile); err != nil {
 				return err
 			}
-			return nil
-		}
-
-		// Handle create/update
-		if newEntry != nil && newEntry.Name == filer.IamIdentityFile {
-			if err := s3a.iam.LoadS3ApiConfigurationFromBytes(newEntry.Content); err != nil {
-				return err
-			}
-			glog.V(1).Infof("updated %s/%s", dir, newEntry.Name)
 		}
 		return nil
 	}
 
 	// 2. Handle multiple-file identities and policies
-	// Watch /etc/seaweedfs/identities and /etc/seaweedfs/policies
-	isIdentityDir := strings.HasPrefix(dir, "/etc/seaweedfs/identities")
-	isPolicyDir := strings.HasPrefix(dir, "/etc/seaweedfs/policies")
+	// Watch /etc/iam/{identities,policies,service_accounts}
+	isIdentityDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/identities")
+	isPolicyDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/policies")
+	isServiceAccountDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/service_accounts")
 
-	if isIdentityDir || isPolicyDir {
+	if isIdentityDir || isPolicyDir || isServiceAccountDir {
 		// For multiple-file mode, any change in these directories should trigger a full reload
 		// from the credential manager (which handles the details of loading from multiple files).
-		glog.V(1).Infof("IAM change detected in %s, reloading configuration", dir)
-		if err := s3a.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
-			glog.Errorf("failed to reload IAM configuration after change in %s: %v", dir, err)
+		if err := reloadIamConfig(dir); err != nil {
 			return err
 		}
 	}
