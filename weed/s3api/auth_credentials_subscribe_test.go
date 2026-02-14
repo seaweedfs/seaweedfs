@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -69,27 +70,48 @@ func TestOnIamConfigChangeReloadsOnIamIdentityDirectoryChanges(t *testing.T) {
 func newTestS3ApiServerWithMemoryIAM(t *testing.T, identities []*iam_pb.Identity) *S3ApiServer {
 	t.Helper()
 
-	t.Setenv("AWS_ACCESS_KEY_ID", "")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	// Create S3ApiConfiguration for test with provided identities
+	config := &iam_pb.S3ApiConfiguration{
+		Identities:      identities,
+		Accounts:        []*iam_pb.Account{},
+		ServiceAccounts: []*iam_pb.ServiceAccount{},
+	}
 
+	// Create memory credential manager
 	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
 	if err != nil {
 		t.Fatalf("failed to create memory credential manager: %v", err)
 	}
-	if err := cm.SaveConfiguration(context.Background(), &iam_pb.S3ApiConfiguration{}); err != nil {
-		t.Fatalf("failed to reset memory credential manager: %v", err)
+
+	// Save test configuration
+	if err := cm.SaveConfiguration(context.Background(), config); err != nil {
+		t.Fatalf("failed to save test configuration: %v", err)
 	}
 
-	for _, identity := range identities {
-		if err := cm.CreateUser(context.Background(), identity); err != nil {
-			t.Fatalf("failed to seed identity %q: %v", identity.Name, err)
-		}
+	// Create a test IAM instance
+	iam := &IdentityAccessManagement{
+		m:              sync.RWMutex{},
+		nameToIdentity: make(map[string]*Identity),
+		accessKeyIdent: make(map[string]*Identity),
+		identities:     []*Identity{},
+		policies:       make(map[string]*iam_pb.Policy),
+		accounts:       make(map[string]*Account),
+		emailAccount:   make(map[string]*Account),
+		hashes:         make(map[string]*sync.Pool),
+		hashCounters:   make(map[string]*int32),
+		isAuthEnabled:  false,
+		stopChan:       make(chan struct{}),
+		useStaticConfig: false,
+		credentialManager: cm,
+	}
+
+	// Load test configuration
+	if err := iam.ReplaceS3ApiConfiguration(config); err != nil {
+		t.Fatalf("failed to load test configuration: %v", err)
 	}
 
 	return &S3ApiServer{
-		iam: &IdentityAccessManagement{
-			credentialManager: cm,
-		},
+		iam: iam,
 	}
 }
 
