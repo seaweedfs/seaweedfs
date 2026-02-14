@@ -90,9 +90,9 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 
 	// 2. Handle multiple-file identities and policies
 	// Watch /etc/iam/{identities,policies,service_accounts}
-	isIdentityDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/identities")
-	isPolicyDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/policies")
-	isServiceAccountDir := strings.HasPrefix(dir, filer.IamConfigDirectory+"/service_accounts")
+	isIdentityDir := dir == filer.IamConfigDirectory+"/identities" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/identities/")
+	isPolicyDir := dir == filer.IamConfigDirectory+"/policies" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/policies/")
+	isServiceAccountDir := dir == filer.IamConfigDirectory+"/service_accounts" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/service_accounts/")
 
 	if isIdentityDir || isPolicyDir || isServiceAccountDir {
 		// For multiple-file mode, any change in these directories should trigger a full reload
