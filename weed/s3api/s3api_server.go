@@ -254,7 +254,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
 	}
 
-	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
+	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
+		option.BucketsPath,
+		filer.IamConfigDirectory,
+		filer.IamConfigDirectory + "/identities",
+		filer.IamConfigDirectory + "/policies",
+		filer.IamConfigDirectory + "/service_accounts",
+	})
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
