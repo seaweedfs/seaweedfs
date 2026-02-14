@@ -94,13 +94,12 @@ func (iama *IamApiServer) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, value
 			continue
 		}
 		for _, cred := range ident.Credentials {
-			statusValue := cred.Status
-			if statusValue == "" {
-				statusValue = accessKeyStatusActive
+			status := cred.Status
+			if status == "" {
+				status = accessKeyStatusActive
 			}
 			identName := ident.Name
 			accessKey := cred.AccessKey
-			status := statusValue
 			resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
 				&iam.AccessKeyMetadata{UserName: &identName, AccessKeyId: &accessKey, Status: &status},
 			)
