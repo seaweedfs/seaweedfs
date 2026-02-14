@@ -240,6 +240,7 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 				identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 					AccessKey: *accessKey,
 					SecretKey: *secretKey,
+					Status:    "Active",
 				})
 			}
 		}
