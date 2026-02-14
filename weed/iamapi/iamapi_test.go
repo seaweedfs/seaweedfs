@@ -84,6 +84,58 @@ func TestListAccessKeys(t *testing.T) {
 	assert.Equal(t, http.StatusOK, response.Code)
 }
 
+func TestUpdateAccessKey(t *testing.T) {
+	svc := iam.New(session.New())
+
+	createReq, _ := svc.CreateAccessKeyRequest(&iam.CreateAccessKeyInput{UserName: aws.String("Test")})
+	_ = createReq.Build()
+	createOut := CreateAccessKeyResponse{}
+	response, err := executeRequest(createReq.HTTPRequest, createOut)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	var createResp CreateAccessKeyResponse
+	err = xml.Unmarshal(response.Body.Bytes(), &createResp)
+	assert.Equal(t, nil, err)
+	accessKeyId := createResp.CreateAccessKeyResult.AccessKey.AccessKeyId
+	if accessKeyId == nil {
+		t.Fatalf("expected access key id to be set")
+	}
+
+	updateReq, _ := svc.UpdateAccessKeyRequest(&iam.UpdateAccessKeyInput{
+		UserName:    aws.String("Test"),
+		AccessKeyId: accessKeyId,
+		Status:      aws.String("Inactive"),
+	})
+	_ = updateReq.Build()
+	updateOut := UpdateAccessKeyResponse{}
+	response, err = executeRequest(updateReq.HTTPRequest, updateOut)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	listReq, _ := svc.ListAccessKeysRequest(&iam.ListAccessKeysInput{UserName: aws.String("Test")})
+	_ = listReq.Build()
+	listOut := ListAccessKeysResponse{}
+	response, err = executeRequest(listReq.HTTPRequest, listOut)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	var listResp ListAccessKeysResponse
+	err = xml.Unmarshal(response.Body.Bytes(), &listResp)
+	assert.Equal(t, nil, err)
+	found := false
+	for _, key := range listResp.ListAccessKeysResult.AccessKeyMetadata {
+		if key.AccessKeyId != nil && *key.AccessKeyId == *accessKeyId {
+			found = true
+			if assert.NotNil(t, key.Status) {
+				assert.Equal(t, "Inactive", *key.Status)
+			}
+			break
+		}
+	}
+	assert.True(t, found)
+}
+
 func TestGetUser(t *testing.T) {
 	userName := aws.String("Test")
 	params := &iam.GetUserInput{UserName: userName}
