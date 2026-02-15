@@ -134,6 +134,26 @@ func (c *Credential) isCredentialExpired() bool {
 }
 
 // NewIdentityAccessManagement creates a new IAM manager
+// SetFilerClient updates the filer client and its associated credential store
+func (iam *IdentityAccessManagement) SetFilerClient(filerClient *wdclient.FilerClient) {
+	iam.m.Lock()
+	iam.filerClient = filerClient
+	iam.m.Unlock()
+
+	if iam.credentialManager == nil || filerClient == nil {
+		return
+	}
+
+	// Update credential store to use FilerClient's current filer for HA
+	if store := iam.credentialManager.GetStore(); store != nil {
+		if filerFuncSetter, ok := store.(interface {
+			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+		}); ok {
+			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, iam.grpcDialOption)
+		}
+	}
+}
+
 func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
 	return NewIdentityAccessManagementWithStore(option, filerClient, "")
 }
@@ -604,6 +624,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			}
 		}
 		if !exists {
+			if len(envIdent.Credentials) == 0 {
+				continue
+			}
 			iam.identities = append(iam.identities, envIdent)
 			iam.accessKeyIdent[envIdent.Credentials[0].AccessKey] = envIdent
 			iam.nameToIdentity[envIdent.Name] = envIdent
@@ -1145,6 +1168,9 @@ func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *
 // Wrapper to maintain backward compatibility
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	identity, err, _ := iam.authRequestWithAuthType(r, action)
+	if err != s3err.ErrNone {
+		return nil, err
+	}
 	return identity, err
 }
 
@@ -1245,8 +1271,8 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
 
-	if action == s3_constants.ACTION_LIST && bucket == "" {
-		// ListBuckets operation - authorization handled per-bucket in the handler
+	if action == s3_constants.ACTION_LIST && bucket == "" && identity.Name != s3_constants.AccountAnonymousId {
+		// ListBuckets operation for authenticated users - authorization handled per-bucket in the handler
 	} else {
 		// First check bucket policy if one exists
 		// Bucket policies can grant or deny access to specific users/principals

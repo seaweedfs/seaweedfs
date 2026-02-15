@@ -156,15 +156,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 
 	// Update credential store to use FilerClient's current filer for HA
-	if store := iam.credentialManager.GetStore(); store != nil {
-		if filerFuncSetter, ok := store.(interface {
-			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
-		}); ok {
-			// Use FilerClient's GetCurrentFiler for true HA
-			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, option.GrpcDialOption)
-			glog.V(1).Infof("Updated credential store to use FilerClient's current active filer (HA-aware)")
-		}
-	}
+	iam.SetFilerClient(filerClient)
 
 	s3ApiServer = &S3ApiServer{
 		option:                option,
@@ -249,8 +241,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
 
-	// Initialize basic/legacy IAM
-	s3ApiServer.iam = NewIdentityAccessManagement(option, s3ApiServer.filerClient)
+	// Update IAM with the final filer client (already handled by SetFilerClient above,
+	// but this reinforces it if we ever change the flow)
+	s3ApiServer.iam.SetFilerClient(s3ApiServer.filerClient)
 	if option.LocalFilerSocket == "" {
 		if s3ApiServer.client, err = util_http.NewGlobalHttpClient(); err != nil {
 			return nil, err
@@ -877,20 +870,21 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 
 	// Ensure a valid policy engine config exists
 	if configRoot.Policy == nil {
-		// Provide a secure default if not specified in the config file
+		configRoot.Policy = &policy.PolicyEngineConfig{}
+	}
+	if configRoot.Policy.StoreType == "" {
+		configRoot.Policy.StoreType = sts.StoreTypeMemory
+	}
+	if configRoot.Policy.DefaultEffect == "" {
 		// Default to Allow (open) with in-memory store so that
 		// users can start using STS without locking themselves out immediately.
-		// To lock down the system, users should provide a config file with DefaultEffect="Deny".
-		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectAllow, sts.StoreTypeMemory)
-		configRoot.Policy = &policy.PolicyEngineConfig{
-			DefaultEffect: sts.EffectAllow,
-			StoreType:     sts.StoreTypeMemory,
+		// For other stores (e.g. filer), default to Deny (closed) for security.
+		if configRoot.Policy.StoreType == sts.StoreTypeMemory {
+			configRoot.Policy.DefaultEffect = sts.EffectAllow
+		} else {
+			configRoot.Policy.DefaultEffect = sts.EffectDeny
 		}
-	} else if configRoot.Policy.StoreType == "" {
-		// If policy config exists but storeType is not specified, use memory store
-		// This ensures JSON-defined policies are stored in memory and work correctly
-		configRoot.Policy.StoreType = sts.StoreTypeMemory
-		glog.V(1).Infof("Policy storeType not specified; using memory store for JSON config-based setup")
+		glog.V(1).Infof("Using policy defaults: DefaultEffect=%s, StoreType=%s", configRoot.Policy.DefaultEffect, configRoot.Policy.StoreType)
 	}
 
 	// Create IAM configuration
