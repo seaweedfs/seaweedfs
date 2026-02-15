@@ -13,6 +13,7 @@ Build a Rust implementation of SeaweedFS volume server that is behavior-compatib
 ### Phase 0: Bootstrap and Harness Integration
 - [x] Add Rust volume-server crate.
 - [x] Implement Rust launcher that can run as a volume-server process entrypoint.
+- [x] Add launcher execution modes (`exec` and `proxy`) behind `VOLUME_SERVER_RUST_MODE`.
 - [x] Add integration harness switches so tests can run with:
   - Go master + Go volume (default)
   - Go master + Rust volume (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY=...`)
@@ -60,3 +61,12 @@ Build a Rust implementation of SeaweedFS volume server that is behavior-compatib
 - Change: Created Rust volume-server crate (`weed-volume-rs`) as compatibility launcher and wired harness binary selection (`VOLUME_SERVER_IMPL`/`VOLUME_SERVER_BINARY`).
 - Validation: local Rust-mode smoke and full-suite runs passed:
   - `VOLUME_SERVER_IMPL=rust go test ./test/volume_server/http ./test/volume_server/grpc`
+- Commits: `7beab85c2`, `880c2e1da`, `63d08e8a9`, `d402573ea`, `3bd20e6a1`, `6ce4d7ede`
+
+- Date: 2026-02-15
+- Change: Added Rust proxy supervisor mode (`VOLUME_SERVER_RUST_MODE=proxy`) with front-side TCP listeners for HTTP/public/gRPC and managed Go backend process.
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 -timeout=200m ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 -timeout=240m ./test/volume_server/grpc`
+  - Result: both suites pass end-to-end in proxy mode.
+- Commits: `a7f50d23b`, `548b3d9a3`

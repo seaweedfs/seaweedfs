@@ -1140,4 +1140,18 @@ Update this section during implementation:
 - APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` suites executed successfully with `VOLUME_SERVER_IMPL=rust`.
 - Profiles covered: existing integration matrix in Rust launcher mode.
 - Gaps introduced/remaining: native Rust endpoint and storage/RPC implementation remains pending; current mode delegates execution to Go volume server.
-- Commit: pending
+- Commit: `6ce4d7ede`
+
+- Date: 2026-02-15
+- Change: Added Rust proxy-supervision launcher mode and validated all volume-server integration suites in proxy mode.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` suites executed successfully with `VOLUME_SERVER_IMPL=rust` and `VOLUME_SERVER_RUST_MODE=proxy`.
+- Profiles covered: existing integration matrix in Rust proxy launcher mode.
+- Gaps introduced/remaining: native Rust endpoint/storage/RPC logic remains pending; current proxy mode still delegates backend handlers to Go.
+- Commit: `a7f50d23b`
+
+- Date: 2026-02-15
+- Change: Expanded GitHub CI Rust smoke job to run both launcher modes (`exec` and `proxy`).
+- APIs covered: representative HTTP/gRPC smoke flows now validated in CI for both Rust launcher execution paths.
+- Profiles covered: CI smoke profile for P1 representative calls.
+- Gaps introduced/remaining: CI still runs Rust mode as smoke scope; full-suite Rust-mode CI remains optional due runtime cost.
+- Commit: `548b3d9a3`
