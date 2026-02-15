@@ -102,6 +102,13 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		masterClient:    masterClient,
 	}
 
+	// Keep attempting to load configuration from filer now that we have a client
+	go func() {
+		if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Warningf("Failed to load IAM config from credential manager after client update: %v", err)
+		}
+	}()
+
 	iamApiServer.registerRouter(router)
 
 	return iamApiServer, nil

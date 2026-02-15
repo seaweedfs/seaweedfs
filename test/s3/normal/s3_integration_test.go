@@ -159,6 +159,24 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			os.Args = oldArgs
 		}()
 
+		// Set environment variables for admin credentials
+		oldAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		oldSecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		os.Setenv("AWS_ACCESS_KEY_ID", "admin")
+		os.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+		defer func() {
+			if oldAccessKey != "" {
+				os.Setenv("AWS_ACCESS_KEY_ID", oldAccessKey)
+			} else {
+				os.Unsetenv("AWS_ACCESS_KEY_ID")
+			}
+			if oldSecretKey != "" {
+				os.Setenv("AWS_SECRET_ACCESS_KEY", oldSecretKey)
+			} else {
+				os.Unsetenv("AWS_SECRET_ACCESS_KEY")
+			}
+		}()
+
 		// Change to test directory so mini picks up security.toml
 		os.Chdir(testDir)
 
