@@ -62,14 +62,14 @@ func TestMakeDiff(t *testing.T) {
 }
 
 func TestMemIndexCompaction(t *testing.T) {
-	testCompaction(t, NeedleMapInMemory)
+	testCompactionByIndex(t, NeedleMapInMemory)
 }
 
 func TestLDBIndexCompaction(t *testing.T) {
-	testCompaction(t, NeedleMapLevelDb)
+	testCompactionByIndex(t, NeedleMapLevelDb)
 }
 
-func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
+func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -87,7 +87,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 
 	startTime := time.Now()
-	v.Compact2(0, 0, nil)
+	v.CompactByIndex(nil)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
