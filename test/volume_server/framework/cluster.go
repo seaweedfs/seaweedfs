@@ -32,11 +32,12 @@ type Cluster struct {
 	testingTB testing.TB
 	profile   matrix.Profile
 
-	weedBinary string
-	baseDir    string
-	configDir  string
-	logsDir    string
-	keepLogs   bool
+	weedBinary   string
+	volumeBinary string
+	baseDir      string
+	configDir    string
+	logsDir      string
+	keepLogs     bool
 
 	masterPort     int
 	masterGrpcPort int
@@ -54,9 +55,9 @@ type Cluster struct {
 func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 	t.Helper()
 
-	weedBinary, err := FindOrBuildWeedBinary()
+	weedBinary, volumeBinary, err := FindOrBuildServerBinaries()
 	if err != nil {
-		t.Fatalf("resolve weed binary: %v", err)
+		t.Fatalf("resolve server binaries: %v", err)
 	}
 
 	baseDir, keepLogs, err := newWorkDir()
@@ -92,6 +93,7 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		testingTB:      t,
 		profile:        profile,
 		weedBinary:     weedBinary,
+		volumeBinary:   volumeBinary,
 		baseDir:        baseDir,
 		configDir:      configDir,
 		logsDir:        logsDir,
@@ -207,7 +209,7 @@ func (c *Cluster) startVolume(dataDir string) error {
 		args = append(args, "-inflightDownloadDataTimeout="+c.profile.InflightDownloadTimeout.String())
 	}
 
-	c.volumeCmd = exec.Command(c.weedBinary, args...)
+	c.volumeCmd = exec.Command(c.volumeBinary, args...)
 	c.volumeCmd.Dir = c.baseDir
 	c.volumeCmd.Stdout = logFile
 	c.volumeCmd.Stderr = logFile
@@ -341,17 +343,12 @@ func FindOrBuildWeedBinary() (string, error) {
 		return "", fmt.Errorf("WEED_BINARY is set but not executable: %s", fromEnv)
 	}
 
-	repoRoot := ""
-	if _, file, _, ok := runtime.Caller(0); ok {
-		repoRoot = filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-		candidate := filepath.Join(repoRoot, "weed", "weed")
-		if isExecutableFile(candidate) {
-			return candidate, nil
-		}
+	repoRoot, err := detectRepoRoot()
+	if err != nil {
+		return "", err
 	}
-
-	if repoRoot == "" {
-		return "", errors.New("unable to detect repository root")
+	if candidate := filepath.Join(repoRoot, "weed", "weed"); isExecutableFile(candidate) {
+		return candidate, nil
 	}
 
 	binDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_bin")
@@ -375,6 +372,82 @@ func FindOrBuildWeedBinary() (string, error) {
 		return "", fmt.Errorf("built weed binary is not executable: %s", binPath)
 	}
 	return binPath, nil
+}
+
+// FindOrBuildServerBinaries returns master and volume executables.
+// Master always runs from the Go weed binary; volume can be switched via env.
+func FindOrBuildServerBinaries() (masterBinary string, volumeBinary string, err error) {
+	masterBinary, err = FindOrBuildWeedBinary()
+	if err != nil {
+		return "", "", err
+	}
+	volumeBinary, err = FindOrBuildVolumeServerBinary(masterBinary)
+	if err != nil {
+		return "", "", err
+	}
+	return masterBinary, volumeBinary, nil
+}
+
+// FindOrBuildVolumeServerBinary resolves the executable used for volume-server processes.
+//
+// Behavior:
+//   - `VOLUME_SERVER_BINARY=/path/to/bin`: use explicit executable path.
+//   - `VOLUME_SERVER_IMPL=rust`: build/use Rust volume server launcher.
+//   - default: use the same Go `weed` binary.
+func FindOrBuildVolumeServerBinary(defaultBinary string) (string, error) {
+	if fromEnv := os.Getenv("VOLUME_SERVER_BINARY"); fromEnv != "" {
+		if isExecutableFile(fromEnv) {
+			return fromEnv, nil
+		}
+		return "", fmt.Errorf("VOLUME_SERVER_BINARY is set but not executable: %s", fromEnv)
+	}
+
+	impl := strings.ToLower(strings.TrimSpace(os.Getenv("VOLUME_SERVER_IMPL")))
+	if impl == "" || impl == "go" {
+		return defaultBinary, nil
+	}
+	if impl != "rust" {
+		return "", fmt.Errorf("unsupported VOLUME_SERVER_IMPL %q (supported: go, rust)", impl)
+	}
+
+	repoRoot, err := detectRepoRoot()
+	if err != nil {
+		return "", err
+	}
+	return FindOrBuildRustVolumeServerBinary(repoRoot)
+}
+
+// FindOrBuildRustVolumeServerBinary builds the Rust volume server launcher when needed.
+func FindOrBuildRustVolumeServerBinary(repoRoot string) (string, error) {
+	manifestPath := filepath.Join(repoRoot, "rust", "volume_server", "Cargo.toml")
+	if _, err := os.Stat(manifestPath); err != nil {
+		return "", fmt.Errorf("rust volume server manifest not found at %s: %w", manifestPath, err)
+	}
+
+	targetDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_rust_target")
+	binPath := filepath.Join(targetDir, "release", "weed-volume-rs")
+	if isExecutableFile(binPath) && os.Getenv("VOLUME_SERVER_RUST_REBUILD") != "1" {
+		return binPath, nil
+	}
+
+	cmd := exec.Command("cargo", "build", "--release", "--manifest-path", manifestPath, "--target-dir", targetDir)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("build rust volume server binary: %w\n%s", err, out.String())
+	}
+	if !isExecutableFile(binPath) {
+		return "", fmt.Errorf("built rust volume server binary is not executable: %s", binPath)
+	}
+	return binPath, nil
+}
+
+func detectRepoRoot() (string, error) {
+	if _, file, _, ok := runtime.Caller(0); ok {
+		return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..")), nil
+	}
+	return "", errors.New("unable to detect repository root")
 }
 
 func isExecutableFile(path string) bool {
