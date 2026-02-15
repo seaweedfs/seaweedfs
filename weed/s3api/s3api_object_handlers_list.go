@@ -520,9 +520,6 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 		StartFromFileName:  marker,
 		InclusiveStartFrom: inclusiveStartFrom,
 	}
-	if cursor.prefixEndsOnDelimiter {
-		request.Limit = uint32(1)
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

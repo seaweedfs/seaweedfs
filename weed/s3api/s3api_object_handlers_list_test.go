@@ -55,6 +55,12 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 		}
 		entries = filtered
 	}
+
+	// Respect Limit
+	if in.Limit > 0 && int(in.Limit) < len(entries) {
+		entries = entries[:in.Limit]
+	}
+
 	return &testListEntriesStream{entries: entries}, nil
 }
 
@@ -593,4 +599,110 @@ func TestObjectLevelListPermissions(t *testing.T) {
 	t.Log("This test validates the fix for issue #7039")
 	t.Log("Object-level List permissions like 'List:bucket/prefix/*' now work correctly")
 	t.Log("Middleware properly extracts prefix for permission validation")
+}
+
+func TestListObjectsV2_Regression(t *testing.T) {
+	// Reproduce issue: ListObjectsV2 without delimiter returns 0 objects even though files exist
+	// Structure: s3://reports/reports/[timestamp]/file
+	// Request: ListObjectsV2(Bucket='reports', Prefix='reports/')
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/reports": {
+				{Name: "reports", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports": {
+				{Name: "01771152617961894200", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports/01771152617961894200": {
+				{Name: "file1", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// s3.list_objects_v2(Bucket='reports', Prefix='reports/')
+	// normalized: requestDir="", prefix="reports"
+	// doListFilerEntries called with dir="/buckets/reports", prefix="reports", delimiter=""
+
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true} // set based on "reports/" original prefix
+	var results []string
+
+	// mock the bucketPrefix function since s3a is not fully initialized
+	// But s3a.bucketPrefix uses s3a.option which is nil.
+	// We need to construct s3a properly or verify if we can bypass it.
+	// listFilerEntries calls s3a.bucketPrefix(bucket).
+	// We are calling doListFilerEntries directly to skip s3a setup,
+	// matching the logic in listFilerEntries for the specific call that likely happens.
+
+	// In listFilerEntries:
+	// originalPrefix="reports/", originalMarker=""
+	// normalizePrefixMarker("reports/", "") -> requestDir="", prefix="reports", marker=""
+	// bucketPrefix for "reports" -> "/buckets/reports/" (assuming default)
+	// reqDir = "/buckets/reports"
+	// doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", ...)
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, results, "file1", "Should return the nested file")
+}
+
+func TestListObjectsV2_Regression_Sorting(t *testing.T) {
+	// Reproduce issue: ListObjectsV2 with Limit=1 might miss the directory if it's not the first entry
+	// This simulates a case where "reports" directory is returned AFTER some other entry
+	// (which shouldn't happen in a perfect world with "reports" prefix, but could with other similar prefixes if logic is flawed)
+	// However, more critically, it tests that removing Limit=1 allows processing multiple entries to find the right one.
+
+	// Better scenario:
+	// Prefix = "reports/"
+	// Entries: "reports-archive" (lexicographically > "reports" if just "reports", but < "reports/")
+	// Wait, "reports/" prefix means we scan "reports" directory.
+	// The code sets Limit=1 when prefixEndsOnDelimiter is true.
+	// It assumes the first entry returned by `ListEntries` with `Prefix="reports"` and `Directory="/buckets/reports"`
+	// will be the "reports" directory itself.
+	// If we have "reports-archive", it starts with "reports".
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/reports": {
+				{Name: "reports-archive", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "reports", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports": {
+				{Name: "01771152617961894200", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports/01771152617961894200": {
+				{Name: "file1", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// This cursor setup mimics what happens in listFilerEntries
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	// The current code with Limit=1 inside doListFilerEntries will fetch "reports-archive" (if sorted that way)
+	// and since "reports-archive" != "reports" (prefix), it might skip it and stop?
+	// limit=1 means we get ONE entry.
+	// If that entry is "reports-archive", and we are looking for "reports", we check:
+	// if entry.Name == prefix ("reports-archive" == "reports") -> False.
+	// -> continue. loop finishes.
+	// We missed "reports".
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	// With Limit=1, this fails because it only sees "reports-archive"
+	// With fix, it sees both and processes "reports"
+	assert.Contains(t, results, "file1", "Should return the nested file even if 'reports' directory is not the first match")
 }
