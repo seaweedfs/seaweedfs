@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,13 +57,25 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 			Name:         "alice",
 			Account:      &AccountAdmin,
 			PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/alice", defaultAccountID),
+			Actions:      []Action{s3_constants.ACTION_ADMIN},
 		}
 
 		// 1. Test prepareSTSCredentials with NO RoleArn (simulating the fallback logic having passed PrincipalArn)
 		// expected RoleArn passed to prepareSTSCredentials would be the caller's PrincipalArn
 		fallbackRoleArn := callerIdentity.PrincipalArn
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(fallbackRoleArn, "test-session", nil, "", nil)
+		// Prepare custom claims for the session (mimicking handleAssumeRole logic)
+		var modifyClaims func(claims *sts.STSSessionClaims)
+		if callerIdentity.isAdmin() {
+			modifyClaims = func(claims *sts.STSSessionClaims) {
+				if claims.RequestContext == nil {
+					claims.RequestContext = make(map[string]interface{})
+				}
+				claims.RequestContext["is_admin"] = true
+			}
+		}
+
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(fallbackRoleArn, "test-session", nil, "", modifyClaims)
 		require.NoError(t, err)
 
 		// Assertions
@@ -75,6 +89,11 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 
 		// The RoleArn in session info should match the fallback ARN (user ARN)
 		assert.Equal(t, fallbackRoleArn, sessionInfo.RoleArn)
+
+		// Verify is_admin claim is present
+		isAdmin, ok := sessionInfo.RequestContext["is_admin"].(bool)
+		assert.True(t, ok, "is_admin claim should be present")
+		assert.True(t, isAdmin, "is_admin claim should be true")
 	})
 
 	// Test case 2: Caller is an STS Assumed Role, No RoleArn

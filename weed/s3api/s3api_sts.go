@@ -328,8 +328,19 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prepare custom claims for the session
+	var modifyClaims func(claims *sts.STSSessionClaims)
+	if identity.isAdmin() {
+		modifyClaims = func(claims *sts.STSSessionClaims) {
+			if claims.RequestContext == nil {
+				claims.RequestContext = make(map[string]interface{})
+			}
+			claims.RequestContext["is_admin"] = true
+		}
+	}
+
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, nil)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return

@@ -434,6 +434,11 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
 
+	// Restore admin privileges if the session was created by an admin
+	if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
+		identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
+	}
+
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
 	return identity, cred, s3err.ErrNone
