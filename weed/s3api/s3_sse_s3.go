@@ -19,9 +19,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc"
 )
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
@@ -476,9 +479,31 @@ func GetSSES3KeyManager() *SSES3KeyManager {
 	return globalSSES3KeyManager
 }
 
+// KeyManagerFilerClient wraps wdclient.FilerClient to satisfy filer_pb.FilerClient interface
+type KeyManagerFilerClient struct {
+	*wdclient.FilerClient
+	grpcDialOption grpc.DialOption
+}
+
+func (k *KeyManagerFilerClient) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
+
+func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	filerAddress := k.GetCurrentFiler()
+	if filerAddress == "" {
+		return fmt.Errorf("no filer available")
+	}
+	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, fn)
+}
+
 // InitializeGlobalSSES3KeyManager initializes the global key manager with filer access
-func InitializeGlobalSSES3KeyManager(s3ApiServer *S3ApiServer) error {
-	return globalSSES3KeyManager.InitializeWithFiler(s3ApiServer)
+func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDialOption grpc.DialOption) error {
+	wrapper := &KeyManagerFilerClient{
+		FilerClient:    filerClient,
+		grpcDialOption: grpcDialOption,
+	}
+	return globalSSES3KeyManager.InitializeWithFiler(wrapper)
 }
 
 // ProcessSSES3Request processes an SSE-S3 request and returns encryption metadata

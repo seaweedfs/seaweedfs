@@ -146,6 +146,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 
+	// Initialize Global SSE-S3 Key Manager early so it's available for IAM fallback
+	// This ensures we can access the KEK for STS signing key if needed
+	if err := InitializeGlobalSSES3KeyManager(filerClient, option.GrpcDialOption); err != nil {
+		glog.Errorf("Failed to initialize SSE-S3 Key Manager: %v", err)
+		// We continue, as this might be a transient failure or non-critical for some setups,
+		// but IAM fallback to KEK will fail if this didn't succeed.
+	}
+
 	// Update credential store to use FilerClient's current filer for HA
 	if store := iam.credentialManager.GetStore(); store != nil {
 		if filerFuncSetter, ok := store.(interface {
@@ -252,9 +260,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	s3ApiServer.registerRouter(router)
 
 	// Initialize the global SSE-S3 key manager with filer access
-	if err := InitializeGlobalSSES3KeyManager(s3ApiServer); err != nil {
-		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
-	}
+	// if err := InitializeGlobalSSES3KeyManager(s3ApiServer); err != nil {
+	// 	return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
+	// }
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
 		option.BucketsPath,
