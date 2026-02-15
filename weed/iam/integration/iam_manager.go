@@ -323,14 +323,30 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
-	// Validate session token if present (skip for OIDC tokens which are already validated,
-	// and skip for empty tokens which represent static access keys)
+	// Validate session token if present
+	// We always try to validate with the internal STS service first if it's a SeaweedFS token.
+	// This ensures that session policies embedded in the token are correctly extracted and enforced.
 	var sessionInfo *sts.SessionInfo
-	if request.SessionToken != "" && !isOIDCToken(request.SessionToken) {
-		var err error
-		sessionInfo, err = m.stsService.ValidateSessionToken(ctx, request.SessionToken)
-		if err != nil {
-			return false, fmt.Errorf("invalid session: %w", err)
+	if request.SessionToken != "" {
+		// Parse unverified to check issuer
+		parsed, _, err := new(jwt.Parser).ParseUnverified(request.SessionToken, jwt.MapClaims{})
+		isInternal := false
+		if err == nil {
+			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				if issuer, ok := claims["iss"].(string); ok && m.stsService != nil && m.stsService.Config != nil {
+					if issuer == m.stsService.Config.Issuer {
+						isInternal = true
+					}
+				}
+			}
+		}
+
+		if isInternal || !isOIDCToken(request.SessionToken) {
+			var err error
+			sessionInfo, err = m.stsService.ValidateSessionToken(ctx, request.SessionToken)
+			if err != nil {
+				return false, fmt.Errorf("invalid session: %w", err)
+			}
 		}
 	}
 
