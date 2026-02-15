@@ -187,9 +187,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// This avoids circular dependency by not passing the entire S3ApiServer
 	iam.policyEngine = policyEngine
 
-	// Initialize advanced IAM system if config is provided
-	if option.IamConfig != "" {
-		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
+	// Initialize advanced IAM system if config is provided or explicitly enabled
+	if option.IamConfig != "" || option.EnableIam {
+		configSource := "defaults"
+		if option.IamConfig != "" {
+			configSource = option.IamConfig
+		}
+		glog.V(1).Infof("Loading advanced IAM configuration from: %s", configSource)
 
 		// Use FilerClient's GetCurrentFiler for HA-aware filer selection
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
