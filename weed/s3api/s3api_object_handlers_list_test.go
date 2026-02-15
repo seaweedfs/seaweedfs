@@ -628,19 +628,8 @@ func TestListObjectsV2_Regression(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true} // set based on "reports/" original prefix
 	var results []string
 
-	// mock the bucketPrefix function since s3a is not fully initialized
-	// But s3a.bucketPrefix uses s3a.option which is nil.
-	// We need to construct s3a properly or verify if we can bypass it.
-	// listFilerEntries calls s3a.bucketPrefix(bucket).
-	// We are calling doListFilerEntries directly to skip s3a setup,
-	// matching the logic in listFilerEntries for the specific call that likely happens.
-
-	// In listFilerEntries:
-	// originalPrefix="reports/", originalMarker=""
-	// normalizePrefixMarker("reports/", "") -> requestDir="", prefix="reports", marker=""
-	// bucketPrefix for "reports" -> "/buckets/reports/" (assuming default)
-	// reqDir = "/buckets/reports"
-	// doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", ...)
+	// Call doListFilerEntries directly to unit test listing logic in isolation,
+	// simulating parameters passed from listFilerEntries for prefix "reports/".
 
 	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
 		if !entry.IsDirectory {
@@ -653,19 +642,9 @@ func TestListObjectsV2_Regression(t *testing.T) {
 }
 
 func TestListObjectsV2_Regression_Sorting(t *testing.T) {
-	// Reproduce issue: ListObjectsV2 with Limit=1 might miss the directory if it's not the first entry
-	// This simulates a case where "reports" directory is returned AFTER some other entry
-	// (which shouldn't happen in a perfect world with "reports" prefix, but could with other similar prefixes if logic is flawed)
-	// However, more critically, it tests that removing Limit=1 allows processing multiple entries to find the right one.
-
-	// Better scenario:
-	// Prefix = "reports/"
-	// Entries: "reports-archive" (lexicographically > "reports" if just "reports", but < "reports/")
-	// Wait, "reports/" prefix means we scan "reports" directory.
-	// The code sets Limit=1 when prefixEndsOnDelimiter is true.
-	// It assumes the first entry returned by `ListEntries` with `Prefix="reports"` and `Directory="/buckets/reports"`
-	// will be the "reports" directory itself.
-	// If we have "reports-archive", it starts with "reports".
+	// Verify that listing logic correctly finds the target directory even when
+	// other entries with a similar prefix are returned first by the filer,
+	// a scenario where the removed Limit=1 optimization would fail.
 
 	s3a := &S3ApiServer{}
 	client := &testFilerClient{
@@ -687,13 +666,8 @@ func TestListObjectsV2_Regression_Sorting(t *testing.T) {
 	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
 	var results []string
 
-	// The current code with Limit=1 inside doListFilerEntries will fetch "reports-archive" (if sorted that way)
-	// and since "reports-archive" != "reports" (prefix), it might skip it and stop?
-	// limit=1 means we get ONE entry.
-	// If that entry is "reports-archive", and we are looking for "reports", we check:
-	// if entry.Name == prefix ("reports-archive" == "reports") -> False.
-	// -> continue. loop finishes.
-	// We missed "reports".
+	// Without the fix, Limit=1 would cause the lister to stop after "reports-archive",
+	// missing the intended "reports" directory.
 
 	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
 		if !entry.IsDirectory {
