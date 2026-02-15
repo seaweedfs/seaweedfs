@@ -1,6 +1,7 @@
 package volume_server_http_test
 
 import (
+	"bytes"
 	"net/http"
 	"strings"
 	"testing"
@@ -70,5 +71,34 @@ func TestWriteMalformedMultipartAndMD5Mismatch(t *testing.T) {
 	}
 	if !strings.Contains(string(md5MismatchBody), "Content-MD5") {
 		t.Fatalf("content-md5 mismatch response should mention Content-MD5, got %q", string(md5MismatchBody))
+	}
+}
+
+func TestWriteRejectsPayloadOverFileSizeLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P1()
+	profile.FileSizeLimitMB = 1
+	clusterHarness := framework.StartSingleVolumeCluster(t, profile)
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(99)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 772002, 0x2A3B4C5D)
+	oversizedPayload := bytes.Repeat([]byte("z"), 1024*1024+1)
+
+	oversizedReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/"+fid, oversizedPayload)
+	oversizedResp := framework.DoRequest(t, client, oversizedReq)
+	oversizedBody := framework.ReadAllAndClose(t, oversizedResp)
+	if oversizedResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("oversized write expected 400, got %d", oversizedResp.StatusCode)
+	}
+	if !strings.Contains(strings.ToLower(string(oversizedBody)), "limited") {
+		t.Fatalf("oversized write response should mention limit, got %q", string(oversizedBody))
 	}
 }

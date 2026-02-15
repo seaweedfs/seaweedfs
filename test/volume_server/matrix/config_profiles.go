@@ -19,6 +19,7 @@ type Profile struct {
 	ConcurrentDownloadLimitMB int
 	InflightUploadTimeout     time.Duration
 	InflightDownloadTimeout   time.Duration
+	FileSizeLimitMB           int
 
 	ReplicatedLayout bool
 	HasErasureCoding bool

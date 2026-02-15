@@ -208,6 +208,9 @@ func (c *Cluster) startVolume(dataDir string) error {
 	if c.profile.InflightDownloadTimeout > 0 {
 		args = append(args, "-inflightDownloadDataTimeout="+c.profile.InflightDownloadTimeout.String())
 	}
+	if c.profile.FileSizeLimitMB > 0 {
+		args = append(args, "-fileSizeLimitMB="+strconv.Itoa(c.profile.FileSizeLimitMB))
+	}
 
 	c.volumeCmd = exec.Command(c.volumeBinary, args...)
 	c.volumeCmd.Dir = c.baseDir
