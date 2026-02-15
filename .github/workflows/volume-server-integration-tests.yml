@@ -9,6 +9,7 @@ on:
       - 'weed/storage/**'
       - 'weed/pb/volume_server.proto'
       - 'weed/pb/volume_server_pb/**'
+      - 'rust/volume_server/**'
       - '.github/workflows/volume-server-integration-tests.yml'
   push:
     branches: [ master, main ]
@@ -18,6 +19,7 @@ on:
       - 'weed/storage/**'
       - 'weed/pb/volume_server.proto'
       - 'weed/pb/volume_server_pb/**'
+      - 'rust/volume_server/**'
       - '.github/workflows/volume-server-integration-tests.yml'
 
 concurrency:
@@ -120,3 +122,49 @@ jobs:
           echo "## Volume Server Integration Test Summary (${{ matrix.test-type }} - Shard ${{ matrix.shard }})" >> "$GITHUB_STEP_SUMMARY"
           echo "- Suite: test/volume_server/${{ matrix.test-type }} (Pattern: ${TEST_PATTERN})" >> "$GITHUB_STEP_SUMMARY"
           echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
+
+  volume-server-rust-smoke:
+    name: Volume Server Rust Smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build SeaweedFS binary
+        run: |
+          cd weed
+          go build -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Run Rust-mode HTTP smoke tests
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+          VOLUME_SERVER_IMPL: rust
+        run: |
+          go test -v -count=1 -timeout=25m ./test/volume_server/http/... -run "TestAdminStatusAndHealthz|TestUploadReadRangeHeadDeleteRoundTrip"
+
+      - name: Run Rust-mode gRPC smoke tests
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+          VOLUME_SERVER_IMPL: rust
+        run: |
+          go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run "TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus"
+
+      - name: Rust smoke summary
+        if: always()
+        run: |
+          echo "## Volume Server Rust Smoke Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: Go master + Rust volume server launcher (VOLUME_SERVER_IMPL=rust)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- HTTP Command: go test -v -count=1 -timeout=25m ./test/volume_server/http/... -run \"TestAdminStatusAndHealthz|TestUploadReadRangeHeadDeleteRoundTrip\"" >> "$GITHUB_STEP_SUMMARY"
+          echo "- gRPC Command: go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run \"TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus\"" >> "$GITHUB_STEP_SUMMARY"
