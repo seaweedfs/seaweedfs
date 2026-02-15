@@ -158,6 +158,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Update credential store to use FilerClient's current filer for HA
 	iam.SetFilerClient(filerClient)
 
+	// Keep attempting to load configuration from filer now that we have a client
+	// The initial load in NewIdentityAccessManagementWithStore might have failed if client was nil
+	go func() {
+		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+			glog.Warningf("Failed to load IAM config from filer after client update: %v", err)
+		}
+	}()
+
 	s3ApiServer = &S3ApiServer{
 		option:                option,
 		iam:                   iam,
