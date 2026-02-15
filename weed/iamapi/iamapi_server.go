@@ -89,7 +89,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		GrpcDialOption: option.GrpcDialOption,
 	}
 
-	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, explicitStore)
+	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, nil, explicitStore)
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
