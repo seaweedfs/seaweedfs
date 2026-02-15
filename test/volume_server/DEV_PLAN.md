@@ -1162,3 +1162,10 @@ Update this section during implementation:
 - Profiles covered: P3 and P3+`access.ui=true`.
 - Gaps introduced/remaining: UI exposure behavior under JWT profiles is now covered for both secured and override branches.
 - Commit: `de974c05d`
+
+- Date: 2026-02-15
+- Change: Added oversized upload integration coverage using explicit `-fileSizeLimitMB` profile configuration.
+- APIs covered: HTTP write path now verifies payloads larger than configured file-size limit are rejected (`400`) with limit-related error context.
+- Profiles covered: P1-derived profile with `FileSizeLimitMB=1`.
+- Gaps introduced/remaining: file-size limit rejection branch is now covered; replicate-write failure and cancellation (`499`) branches remain pending.
+- Commit: `4d61cbdee`
