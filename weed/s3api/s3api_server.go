@@ -852,11 +852,8 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 	if err := json.Unmarshal(configData, &configRoot); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-	glog.V(0).Infof("DEBUG: Loaded IAM Config. Policy=%v. Raw JSON len=%d", configRoot.Policy, len(configData))
 	if configRoot.Policy != nil {
-		glog.V(0).Infof("DEBUG: Policy Config: DefaultEffect='%s'", configRoot.Policy.DefaultEffect)
 	} else {
-		glog.V(0).Infof("DEBUG: Policy Config is NIL")
 	}
 
 	// Ensure a valid policy engine config exists

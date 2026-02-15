@@ -186,8 +186,6 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		Policy:           sessionPolicyPtr,
 	}
 
-	glog.V(0).Infof("DEBUG: AssumeRoleWithWebIdentity: RoleArn=%s SessionPolicyLen=%d", roleArn, len(sessionPolicyJSON))
-
 	// Call STS service
 	response, err := h.stsService.AssumeRoleWithWebIdentity(ctx, request)
 	if err != nil {
