@@ -349,7 +349,17 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// Add principal to context for policy matching
 	// The PolicyEngine checks RequestContext["principal"] or RequestContext["aws:PrincipalArn"]
 	evalCtx.RequestContext["principal"] = request.Principal
-	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal
+	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal // AWS standard key
+
+	// Check if this is an admin request - bypass policy evaluation if so
+	// This mirrors the logic in auth_signature_v4.go but applies it at authorization time
+	isAdmin := false
+	if request.RequestContext != nil {
+		if val, ok := request.RequestContext["is_admin"].(bool); ok && val {
+			isAdmin = true
+		}
+		// Print full request context for debugging
+	}
 
 	// Parse principal ARN to extract details for context variables (e.g. ${aws:username})
 	arnInfo := utils.ParsePrincipalARN(request.Principal)
@@ -382,48 +392,56 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		}
 	}
 
-	policies := request.PolicyNames
-	if len(policies) == 0 {
-		// Extract role name from principal ARN
-		roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
-		if roleName == "" {
-			userName := utils.ExtractUserNameFromPrincipal(request.Principal)
-			if userName == "" {
-				return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
-			}
-			if m.userStore == nil {
-				return false, fmt.Errorf("user store unavailable for principal: %s", request.Principal)
-			}
-			user, err := m.userStore.GetUser(ctx, userName)
-			if err != nil || user == nil {
-				return false, fmt.Errorf("user not found for principal: %s (user=%s)", request.Principal, userName)
-			}
-			policies = user.GetPolicyNames()
-		} else {
-			// Get role definition
-			roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-			if err != nil {
-				return false, fmt.Errorf("role not found: %s", roleName)
-			}
+	var baseResult *policy.EvaluationResult
+	var err error
 
-			policies = roleDef.AttachedPolicies
+	if isAdmin {
+		// Admin always has base access allowed
+		baseResult = &policy.EvaluationResult{Effect: policy.EffectAllow}
+	} else {
+		policies := request.PolicyNames
+		if len(policies) == 0 {
+			// Extract role name from principal ARN
+			roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
+			if roleName == "" {
+				userName := utils.ExtractUserNameFromPrincipal(request.Principal)
+				if userName == "" {
+					return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+				}
+				if m.userStore == nil {
+					return false, fmt.Errorf("user store unavailable for principal: %s", request.Principal)
+				}
+				user, err := m.userStore.GetUser(ctx, userName)
+				if err != nil || user == nil {
+					return false, fmt.Errorf("user not found for principal: %s (user=%s)", request.Principal, userName)
+				}
+				policies = user.GetPolicyNames()
+			} else {
+				// Get role definition
+				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+				if err != nil {
+					return false, fmt.Errorf("role not found: %s", roleName)
+				}
+
+				policies = roleDef.AttachedPolicies
+			}
 		}
-	}
 
-	if bucketPolicyName != "" {
-		// Enforce an upper bound on the number of policies to avoid excessive allocations
-		if len(policies) >= maxPoliciesForEvaluation {
-			return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
+		if bucketPolicyName != "" {
+			// Enforce an upper bound on the number of policies to avoid excessive allocations
+			if len(policies) >= maxPoliciesForEvaluation {
+				return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
+			}
+			// Create a new slice to avoid modifying the original and append the bucket policy
+			copied := make([]string, len(policies))
+			copy(copied, policies)
+			policies = append(copied, bucketPolicyName)
 		}
-		// Create a new slice to avoid modifying the original and append the bucket policy
-		copied := make([]string, len(policies))
-		copy(copied, policies)
-		policies = append(copied, bucketPolicyName)
-	}
 
-	baseResult, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
-	if err != nil {
-		return false, fmt.Errorf("policy evaluation failed: %w", err)
+		baseResult, err = m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
+		if err != nil {
+			return false, fmt.Errorf("policy evaluation failed: %w", err)
+		}
 	}
 
 	// Base policy must allow; if it doesn't, deny immediately (session policy can only further restrict)

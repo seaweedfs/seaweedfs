@@ -233,6 +233,10 @@ func (s3iam *S3IAMIntegration) ValidateSessionToken(ctx context.Context, token s
 
 // AuthorizeAction authorizes actions using our policy engine
 func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode {
+	fmt.Printf("DEBUG: AuthorizeAction called: Identity=%s Action=%s Bucket=%s Enabled=%v\n", identity.Name, action, bucket, s3iam.enabled)
+	if identity.Claims != nil {
+		fmt.Printf("DEBUG: AuthorizeAction Identity.Claims=%v\n", identity.Claims)
+	}
 	if !s3iam.enabled {
 		return s3err.ErrNone // Fallback to existing authorization
 	}
