@@ -15,6 +15,9 @@ If a `weed` binary is not found, the harness will build one automatically.
 ## Optional environment variables
 
 - `WEED_BINARY`: explicit path to the `weed` executable (disables auto-build).
+- `VOLUME_SERVER_IMPL`: select volume-server implementation (`go` default, `rust` for Rust launcher mode).
+- `VOLUME_SERVER_BINARY`: explicit path to the volume-server executable (overrides `VOLUME_SERVER_IMPL`).
+- `VOLUME_SERVER_RUST_REBUILD=1`: force rebuild of Rust volume-server binary in Rust mode.
 - `VOLUME_SERVER_IT_KEEP_LOGS=1`: keep temporary test directories and process logs.
 
 ## Current scope (Phase 0)

@@ -1127,3 +1127,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: `499` cancellation and transport-interruption branches remain pending.
 - Commit: `d1e5f390a`
+
+- Date: 2026-02-15
+- Change: Added Rust volume-server migration bootstrap wiring.
+- APIs covered: Harness now supports Go master + selectable volume binary (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY`), with Rust-mode smoke coverage for representative HTTP/gRPC integration tests.
+- Profiles covered: P1 smoke and default Go matrix unchanged.
+- Gaps introduced/remaining: native Rust handler implementations are tracked in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`; current Rust mode is a compatibility launcher phase.
+- Commit: pending
