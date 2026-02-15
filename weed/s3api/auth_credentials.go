@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -54,7 +55,7 @@ type IdentityAccessManagement struct {
 	domain            string
 	isAuthEnabled     bool
 	credentialManager *credential.CredentialManager
-	filerClient       filer_pb.SeaweedFilerClient
+	filerClient       *wdclient.FilerClient
 	grpcDialOption    grpc.DialOption
 
 	// IAM Integration for advanced features
@@ -132,15 +133,17 @@ func (c *Credential) isCredentialExpired() bool {
 	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
 }
 
-func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
-	return NewIdentityAccessManagementWithStore(option, "")
+// NewIdentityAccessManagement creates a new IAM manager
+func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
+	return NewIdentityAccessManagementWithStore(option, filerClient, "")
 }
 
-func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitStore string) *IdentityAccessManagement {
+func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient *wdclient.FilerClient, explicitStore string) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain:       option.DomainName,
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
+		filerClient:  filerClient,
 	}
 
 	// Always initialize credential manager with fallback to defaults
@@ -172,6 +175,25 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 
 	iam.credentialManager = credentialManager
 	iam.stopChan = make(chan struct{})
+	iam.grpcDialOption = option.GrpcDialOption
+
+	// Initialize default anonymous identity
+	// This ensures consistent behavior for anonymous access:
+	// 1. In simple auth mode (no IAM integration):
+	//    - lookupAnonymous returns this identity
+	//    - VerifyActionPermission checks actions (which are empty) -> Denies access
+	//    - This preserves the secure-by-default behavior for simple auth
+	// 2. In advanced IAM mode (with Policy Engine):
+	//    - lookupAnonymous returns this identity
+	//    - VerifyActionPermission proceeds to Policy Engine
+	//    - Policy Engine evaluates against policies (DefaultEffect=Allow if no config)
+	//    - This enables the flexible "Open by Default" for zero-config startup
+	iam.identityAnonymous = &Identity{
+		Name:     "anonymous",
+		Account:  &AccountAnonymous,
+		Actions:  []Action{},
+		IsStatic: true,
+	}
 
 	// First, try to load configurations from file or filer
 	startConfigFile := option.Config
@@ -549,6 +571,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 		if ident.IsStatic && strings.HasPrefix(ident.Name, "admin-") {
 			// This is an environment-based admin identity, preserve it
 			envIdentities = append(envIdentities, ident)
+		}
+	}
+
+	// Ensure anonymous identity exists
+	if identityAnonymous == nil {
+		identityAnonymous = &Identity{
+			Name:     "anonymous",
+			Account:  accounts[AccountAnonymous.Id],
+			Actions:  []Action{},
+			IsStatic: true,
 		}
 	}
 
@@ -992,7 +1024,8 @@ func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identi
 	return iam.lookupByAccessKey(accessKey)
 }
 
-func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
+// LookupAnonymous returns the anonymous identity if it exists
+func (iam *IdentityAccessManagement) LookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	if iam.identityAnonymous != nil {
@@ -1173,7 +1206,7 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 		}
 	case authTypeAnonymous:
 		amzAuthType = "Anonymous"
-		if identity, found = iam.lookupAnonymous(); !found {
+		if identity, found = iam.LookupAnonymous(); !found {
 			r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 			return identity, s3err.ErrAccessDenied, reqAuthType
 		}

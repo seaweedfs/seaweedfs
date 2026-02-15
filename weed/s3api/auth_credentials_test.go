@@ -450,7 +450,7 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 			option := &S3ApiServerOption{
 				Config: "", // No config file - this should trigger environment variable fallback
 			}
-			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+			iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 			if tt.expectEnvIdentity {
 				// Should have exactly one identity from environment variables
@@ -510,7 +510,7 @@ func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+	iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 	// Should have exactly one identity from environment variables
 	assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables even when config file exists with no identities")
@@ -762,7 +762,7 @@ func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
 }
 
 func TestStaticIdentityProtection(t *testing.T) {
-	iam := NewIdentityAccessManagement(&S3ApiServerOption{})
+	iam := NewIdentityAccessManagement(&S3ApiServerOption{}, nil)
 
 	// Add a static identity
 	staticIdent := &Identity{

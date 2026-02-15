@@ -110,7 +110,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option.AllowedOrigins = domains
 	}
 
-	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
+	// Initialize basic/legacy IAM - filerClient not available yet, passed as nil
+	iam := NewIdentityAccessManagementWithStore(option, nil, explicitStore)
 
 	// Initialize bucket policy engine first
 	policyEngine := NewBucketPolicyEngine()
@@ -199,8 +200,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
-			if iam.credentialManager != nil {
-				iamManager.SetUserStore(iam.credentialManager)
+			if s3ApiServer.iam.credentialManager != nil {
+				iamManager.SetUserStore(s3ApiServer.iam.credentialManager)
 			}
 			glog.V(1).Infof("IAM Manager loaded, creating integration")
 			// Create S3 IAM integration with the loaded IAM manager
@@ -243,6 +244,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		})
 	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
+
+	// Initialize basic/legacy IAM
+	s3ApiServer.iam = NewIdentityAccessManagement(option, s3ApiServer.filerClient)
 	if option.LocalFilerSocket == "" {
 		if s3ApiServer.client, err = util_http.NewGlobalHttpClient(); err != nil {
 			return nil, err
@@ -841,13 +845,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 // loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
 func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string, getFilerSigningKey func() string) (*integration.IAMManager, error) {
-	// Read configuration file
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// Parse configuration structure
 	var configRoot struct {
 		STS       *sts.STSConfig                `json:"sts"`
 		Policy    *policy.PolicyEngineConfig    `json:"policy"`
@@ -859,17 +856,35 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		} `json:"policies"`
 	}
 
-	if err := json.Unmarshal(configData, &configRoot); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+	if configPath != "" {
+		// Read configuration file
+		configData, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+
+		if err := json.Unmarshal(configData, &configRoot); err != nil {
+			return nil, fmt.Errorf("failed to parse config: %w", err)
+		}
+	} else {
+		glog.V(1).Infof("No IAM config file provided; using defaults")
+		// Initialize with empty config which will trigger defaults below
+	}
+
+	// Ensure STS config exists so we can apply defaults later
+	if configRoot.STS == nil {
+		configRoot.STS = &sts.STSConfig{}
 	}
 
 	// Ensure a valid policy engine config exists
 	if configRoot.Policy == nil {
 		// Provide a secure default if not specified in the config file
-		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
+		// Default to Allow (open) with in-memory store so that
+		// users can start using STS without locking themselves out immediately.
+		// To lock down the system, users should provide a config file with DefaultEffect="Deny".
+		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectAllow, sts.StoreTypeMemory)
 		configRoot.Policy = &policy.PolicyEngineConfig{
-			DefaultEffect: sts.EffectDeny,
+			DefaultEffect: sts.EffectAllow,
 			StoreType:     sts.StoreTypeMemory,
 		}
 	} else if configRoot.Policy.StoreType == "" {
