@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/crypto/hkdf"
 	"google.golang.org/grpc"
 )
 
@@ -455,8 +457,8 @@ func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
 	return nil, false
 }
 
-// GetMasterKey returns the current super key (KEK)
-// This is used by other components (like STS) that need a cluster-wide shared secret
+// GetMasterKey returns a derived key from the master KEK for STS signing
+// This uses HKDF to isolate the STS security domain from the SSE-S3 domain
 func (km *SSES3KeyManager) GetMasterKey() []byte {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
@@ -465,10 +467,15 @@ func (km *SSES3KeyManager) GetMasterKey() []byte {
 		return nil
 	}
 
-	// Return a copy to prevent external modification
-	keyCopy := make([]byte, len(km.superKey))
-	copy(keyCopy, km.superKey)
-	return keyCopy
+	// Derive a separate key for STS to isolate security domains
+	// We use the KEK as the secret, and "seaweedfs-sts-signing-key" as the info
+	hkdfReader := hkdf.New(sha256.New, km.superKey, nil, []byte("seaweedfs-sts-signing-key"))
+	derived := make([]byte, 32) // 256-bit derived key
+	if _, err := io.ReadFull(hkdfReader, derived); err != nil {
+		glog.Errorf("Failed to derive STS key: %v", err)
+		return nil
+	}
+	return derived
 }
 
 // Global SSE-S3 key manager instance
