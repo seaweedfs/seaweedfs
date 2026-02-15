@@ -164,6 +164,26 @@ func TestUiIndexNotExposedWhenJwtSigningEnabled(t *testing.T) {
 	}
 }
 
+func TestUiIndexExposedWhenJwtSigningEnabledAndAccessUITrue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	profile.AccessUI = true
+	cluster := framework.StartSingleVolumeCluster(t, profile)
+	client := framework.NewHTTPClient()
+
+	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
+	body := framework.ReadAllAndClose(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected /ui/index.html to be exposed when access.ui=true under JWT profile, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(strings.ToLower(string(body)), "volume") {
+		t.Fatalf("ui page does not look like volume status page")
+	}
+}
+
 func mustNewRequest(t testing.TB, method, url string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, url, nil)
