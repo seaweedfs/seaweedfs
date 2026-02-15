@@ -1155,3 +1155,10 @@ Update this section during implementation:
 - Profiles covered: CI smoke profile for P1 representative calls.
 - Gaps introduced/remaining: CI still runs Rust mode as smoke scope; full-suite Rust-mode CI remains optional due runtime cost.
 - Commit: `548b3d9a3`
+
+- Date: 2026-02-15
+- Change: Added JWT UI override integration coverage with explicit `access.ui=true` profile support.
+- APIs covered: `/ui/index.html` behavior under JWT profile now verifies both default auth-gated path (`401`) and explicit UI-enable override path (`200` with rendered UI).
+- Profiles covered: P3 and P3+`access.ui=true`.
+- Gaps introduced/remaining: UI exposure behavior under JWT profiles is now covered for both secured and override branches.
+- Commit: `de974c05d`
