@@ -1169,3 +1169,10 @@ Update this section during implementation:
 - Profiles covered: P1-derived profile with `FileSizeLimitMB=1`.
 - Gaps introduced/remaining: file-size limit rejection branch is now covered; replicate-write failure and cancellation (`499`) branches remain pending.
 - Commit: `4d61cbdee`
+
+- Date: 2026-02-15
+- Change: Added gRPC EC-only metadata-read unsupported-path coverage.
+- APIs covered: `ReadNeedleMeta` now verifies the explicit unsupported branch when a volume is unmounted and only EC shards are mounted.
+- Profiles covered: P1 with EC shard generation/mount lifecycle setup.
+- Gaps introduced/remaining: low-level read metadata fault-injection and transport interruption branches remain pending.
+- Commit: `37bf9b5eb`
