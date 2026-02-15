@@ -185,6 +185,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// Use FilerClient's GetCurrentFiler for HA-aware filer selection
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return string(filerClient.GetCurrentFiler())
+		}, func() string {
+			return signingKey
 		})
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
@@ -830,7 +832,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 }
 
 // loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
-func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string) (*integration.IAMManager, error) {
+func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string, getFilerSigningKey func() string) (*integration.IAMManager, error) {
 	// Read configuration file
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
@@ -876,6 +878,26 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		Roles: &integration.RoleStoreConfig{
 			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
 		},
+	}
+
+	// Apply default signing key if not present in config
+	if iamConfig.STS != nil && len(iamConfig.STS.SigningKey) == 0 {
+		// 1. Try server-configured signing key (security.toml / CLI)
+		if key := getFilerSigningKey(); key != "" {
+			iamConfig.STS.SigningKey = []byte(key)
+			glog.V(1).Infof("Using default filer signing key for STS service")
+		} else {
+			// 2. Try cluster-wide SSE-S3 Master Key (KEK) from Filer
+			// This ensures zero-config consistency across the cluster
+			if kek := GetSSES3KeyManager().GetMasterKey(); len(kek) > 0 {
+				iamConfig.STS.SigningKey = kek
+				glog.V(1).Infof("Using SSE-S3 Master Key (KEK) for STS service")
+			} else {
+				// 3. Fail if no signing key is available
+				// This ensures consistency across multiple S3 servers and secure operation
+				return nil, fmt.Errorf("no signing key found for STS service; please provide 'signingKey' in IAM config, configure 'jwt.filer_signing.key' in security.toml, or ensure SSE-S3 is initialized")
+			}
+		}
 	}
 
 	// Initialize IAM manager

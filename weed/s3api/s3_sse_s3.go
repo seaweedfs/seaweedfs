@@ -452,6 +452,22 @@ func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
 	return nil, false
 }
 
+// GetMasterKey returns the current super key (KEK)
+// This is used by other components (like STS) that need a cluster-wide shared secret
+func (km *SSES3KeyManager) GetMasterKey() []byte {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	if len(km.superKey) == 0 {
+		return nil
+	}
+
+	// Return a copy to prevent external modification
+	keyCopy := make([]byte, len(km.superKey))
+	copy(keyCopy, km.superKey)
+	return keyCopy
+}
+
 // Global SSE-S3 key manager instance
 var globalSSES3KeyManager = NewSSES3KeyManager()
 
