@@ -89,6 +89,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		GrpcDialOption: option.GrpcDialOption,
 	}
 
+	// Initialize FilerClient for IAM - explicit filers only (no discovery as FilerGroup unspecified)
 	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, "")
 	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, filerClient, explicitStore)
 	configure.credentialManager = iam.GetCredentialManager()
