@@ -124,9 +124,13 @@ jobs:
           echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"
 
   volume-server-rust-smoke:
-    name: Volume Server Rust Smoke
+    name: Volume Server Rust Smoke (${{ matrix.mode }})
     runs-on: ubuntu-22.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [exec, proxy]
 
     steps:
       - name: Checkout code
@@ -151,6 +155,7 @@ jobs:
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
           VOLUME_SERVER_IMPL: rust
+          VOLUME_SERVER_RUST_MODE: ${{ matrix.mode }}
         run: |
           go test -v -count=1 -timeout=25m ./test/volume_server/http/... -run "TestAdminStatusAndHealthz|TestUploadReadRangeHeadDeleteRoundTrip"
 
@@ -158,13 +163,14 @@ jobs:
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
           VOLUME_SERVER_IMPL: rust
+          VOLUME_SERVER_RUST_MODE: ${{ matrix.mode }}
         run: |
           go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run "TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus"
 
       - name: Rust smoke summary
         if: always()
         run: |
-          echo "## Volume Server Rust Smoke Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Mode: Go master + Rust volume server launcher (VOLUME_SERVER_IMPL=rust)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Volume Server Rust Smoke Summary (${{ matrix.mode }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: Go master + Rust volume server launcher (VOLUME_SERVER_IMPL=rust, VOLUME_SERVER_RUST_MODE=${{ matrix.mode }})" >> "$GITHUB_STEP_SUMMARY"
           echo "- HTTP Command: go test -v -count=1 -timeout=25m ./test/volume_server/http/... -run \"TestAdminStatusAndHealthz|TestUploadReadRangeHeadDeleteRoundTrip\"" >> "$GITHUB_STEP_SUMMARY"
           echo "- gRPC Command: go test -v -count=1 -timeout=25m ./test/volume_server/grpc/... -run \"TestStateAndStatusRPCs|TestVolumeSyncStatusAndReadVolumeFileStatus\"" >> "$GITHUB_STEP_SUMMARY"
