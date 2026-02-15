@@ -16,7 +16,7 @@ Build a Rust implementation of SeaweedFS volume server that is behavior-compatib
 - [x] Add integration harness switches so tests can run with:
   - Go master + Go volume (default)
   - Go master + Rust volume (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY=...`)
-- [ ] Add CI smoke coverage for Rust volume-server mode.
+- [x] Add CI smoke coverage for Rust volume-server mode.
 
 ### Phase 1: Native Rust Control Plane Skeleton
 - [ ] Native Rust HTTP server with admin endpoints:
@@ -58,4 +58,5 @@ Build a Rust implementation of SeaweedFS volume server that is behavior-compatib
 ## Progress Log
 - Date: 2026-02-15
 - Change: Created Rust volume-server crate (`weed-volume-rs`) as compatibility launcher and wired harness binary selection (`VOLUME_SERVER_IMPL`/`VOLUME_SERVER_BINARY`).
-- Validation: Rust-mode conformance smoke execution pending CI and local subset runs.
+- Validation: local Rust-mode smoke and full-suite runs passed:
+  - `VOLUME_SERVER_IMPL=rust go test ./test/volume_server/http ./test/volume_server/grpc`

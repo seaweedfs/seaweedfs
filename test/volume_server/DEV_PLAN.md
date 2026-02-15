@@ -1133,4 +1133,11 @@ Update this section during implementation:
 - APIs covered: Harness now supports Go master + selectable volume binary (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY`), with Rust-mode smoke coverage for representative HTTP/gRPC integration tests.
 - Profiles covered: P1 smoke and default Go matrix unchanged.
 - Gaps introduced/remaining: native Rust handler implementations are tracked in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`; current Rust mode is a compatibility launcher phase.
+- Commit: `7beab85c2`, `880c2e1da`, `63d08e8a9`, `d402573ea`
+
+- Date: 2026-02-15
+- Change: Validated Rust-mode compatibility path with full integration suites.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` suites executed successfully with `VOLUME_SERVER_IMPL=rust`.
+- Profiles covered: existing integration matrix in Rust launcher mode.
+- Gaps introduced/remaining: native Rust endpoint and storage/RPC implementation remains pending; current mode delegates execution to Go volume server.
 - Commit: pending
