@@ -1253,3 +1253,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: ping target-type matrix is covered for success and unreachable branches across master/filer/volume-server.
 - Commit: `b9fbb85af`
+
+- Date: 2026-02-15
+- Change: Expanded deleted-read HTTP matrix with `HEAD` parity coverage.
+- APIs covered: `HEAD` with `readDeleted=true` now validates current behavior (`200`, empty body, payload-size `Content-Length`) after delete.
+- Profiles covered: P1.
+- Gaps introduced/remaining: deleted-read parity now covers both `GET` and `HEAD` semantics on local-volume path.
+- Commit: `cc80ad364`
