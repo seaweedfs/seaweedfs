@@ -3,6 +3,12 @@
 ## Goal
 Create a Go integration test suite under `test/volume_server` that validates **drop-in behavior parity** for the Volume Server HTTP and gRPC APIs, so a Rust rewrite can be verified against the current Go behavior.
 
+## Current Program Focus (2026-02-16)
+- Primary execution focus has shifted to implementing native Rust volume-server parity.
+- This integration suite is now the parity gate for Rust implementation work.
+- New tests should be added only when native Rust implementation reveals uncovered Go behavior that is not yet captured.
+- Rust implementation roadmap lives in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`.
+
 ## Hard Requirements
 - Tests live under `test/volume_server`.
 - Tests are written in Go.
@@ -1260,3 +1266,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: deleted-read parity now covers both `GET` and `HEAD` semantics on local-volume path.
 - Commit: `cc80ad364`
+
+- Date: 2026-02-16
+- Change: Shifted planning priority to native Rust implementation parity.
+- APIs covered: no new API additions in this plan entry; integration suite remains the validation gate.
+- Profiles covered: unchanged.
+- Gaps introduced/remaining: primary remaining gap is native Rust handler/storage/RPC implementation replacing Go backend delegation.
+- Commit: pending

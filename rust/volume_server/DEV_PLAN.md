@@ -1,72 +1,147 @@
-# Rust Volume Server Rewrite Dev Plan
+# Rust Volume Server Parity Implementation Plan
 
-## Goal
-Build a Rust implementation of SeaweedFS volume server that is behavior-compatible with the current Go implementation and can pass the existing integration suites under `/Users/chris/dev/seaweedfs2/test/volume_server/http` and `/Users/chris/dev/seaweedfs2/test/volume_server/grpc`.
+## Objective
+Implement a native Rust volume server that replicates Go volume-server behavior for HTTP and gRPC APIs, so it can become a drop-in replacement validated by existing integration suites.
 
-## Compatibility Target
-- CLI compatibility for volume-server startup flags used by integration harness.
-- HTTP and gRPC behavioral parity for tested paths.
-- Drop-in process integration with current Go master in transition phases.
+## Current Focus (2026-02-16)
+- Program focus is now Rust implementation parity, not broad test expansion.
+- `test/volume_server` is treated as the parity gate.
+- Existing Rust launcher modes (`exec`, `proxy`) are transition tools; they are not the final target.
 
-## Phases
-
-### Phase 0: Bootstrap and Harness Integration
-- [x] Add Rust volume-server crate.
-- [x] Implement Rust launcher that can run as a volume-server process entrypoint.
-- [x] Add launcher execution modes (`exec` and `proxy`) behind `VOLUME_SERVER_RUST_MODE`.
-- [x] Add integration harness switches so tests can run with:
+## Current Status
+- Rust crate and launcher are in place.
+- Integration harness can run:
   - Go master + Go volume (default)
-  - Go master + Rust volume (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY=...`)
-- [x] Add CI smoke coverage for Rust volume-server mode.
+  - Go master + Rust launcher (`VOLUME_SERVER_IMPL=rust`)
+- Rust launcher `proxy` mode has full-suite integration pass while delegating backend handlers to Go.
+- Native Rust API/storage logic is not implemented yet.
 
-### Phase 1: Native Rust Control Plane Skeleton
-- [ ] Native Rust HTTP server with admin endpoints:
+## Parity Exit Criteria
+1. Native mode passes:
+   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
+   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
+2. CI runs native Rust mode integration coverage (at least smoke, then expanded shards).
+3. Rust mode defaults to native behavior for integration harness.
+4. Go-backend delegation is removed (or retained only as explicit fallback mode).
+
+## Architecture Workstreams
+
+### A. Runtime and Configuration Parity
+- [ ] Add `native` runtime mode in `weed-volume-rs`.
+- [ ] Parse and honor volume-server CLI/config flags used by integration harness:
+  - [ ] network/bind ports (`-ip`, `-port`, `-port.grpc`, `-port.public`)
+  - [ ] master target/config dir/read mode/throttling/JWT-related config
+  - [ ] size/timeout controls and maintenance state defaults
+- [ ] Implement graceful lifecycle behavior (signals, shutdown, readiness).
+
+### B. Native HTTP Surface
+- [ ] Admin/control endpoints:
   - [ ] `GET /status`
   - [ ] `GET /healthz`
-  - [ ] static/UI endpoints used by tests
-- [ ] Native Rust gRPC server with basic lifecycle/state RPCs:
-  - [ ] `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`
-- [ ] Flag/config parser parity for currently exercised startup options.
+  - [ ] static/UI endpoints currently exercised
+- [ ] Data read path parity:
+  - [ ] fid parsing/path variants
+  - [ ] conditional headers (`If-Modified-Since`, `If-None-Match`)
+  - [ ] range handling (single/multi/invalid)
+  - [ ] deleted reads, auth checks, read-mode branches
+  - [ ] chunk-manifest and compression/image transformation branches
+- [ ] Data write/delete parity:
+  - [ ] write success/unchanged/error paths
+  - [ ] replication and file-size-limit paths
+  - [ ] delete and chunk-manifest delete branches
+- [ ] Method/CORS/public-port parity for split admin/public behavior.
 
-### Phase 2: Native Data Path (HTTP + core gRPC)
-- [ ] HTTP read/write/delete parity:
-  - [ ] path variants, conditional headers, ranges, auth, throttling
-  - [ ] chunk manifest read/delete behavior
-  - [ ] image and compression transform branches
-- [ ] gRPC data RPC parity:
+### C. Native gRPC Surface
+- [ ] Control-plane RPCs:
+  - [ ] `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`
+  - [ ] admin lifecycle: allocate/mount/unmount/delete/configure/readonly/writable
+- [ ] Data RPCs:
   - [ ] `ReadNeedleBlob`, `ReadNeedleMeta`, `WriteNeedleBlob`
   - [ ] `BatchDelete`, `ReadAllNeedles`
-  - [ ] copy/receive/sync baseline
+  - [ ] sync/copy/receive and status endpoints
+- [ ] Stream RPCs:
+  - [ ] tail sender/receiver
+  - [ ] vacuum streams
+  - [ ] query streams
+- [ ] Advanced families:
+  - [ ] erasure coding RPC set
+  - [ ] tiering/remote fetch
+  - [ ] scrub/query mode matrix
 
-### Phase 3: Advanced gRPC Surface
-- [ ] Vacuum RPC family.
-- [ ] Tail sender/receiver.
-- [ ] Erasure coding family.
-- [ ] Tiering/remote fetch family.
-- [ ] Query/Scrub family.
+### D. Storage Compatibility Layer
+- [ ] Implement volume data/index handling compatible with Go on-disk format.
+- [ ] Preserve cookie/checksum/timestamp semantics used by tests.
+- [ ] Match read/write/delete consistency and error mapping behavior.
+- [ ] Ensure EC metadata/data-path compatibility with existing files.
 
-### Phase 4: Hardening and Cutover
-- [ ] Determinism/flake hardening in integration runtime.
-- [ ] Performance and resource-baseline checks versus Go.
-- [ ] Optional dual-run diff tooling for payload/header parity.
-- [ ] Default harness/CI mode switch to Rust volume server once parity threshold is met.
+### E. Operational Hardening
+- [ ] Deterministic startup/readiness and shutdown semantics.
+- [ ] Log/error parity sufficient for debugging and CI triage.
+- [ ] Concurrency/timeout behavior alignment for throttling and streams.
+- [ ] Performance baseline checks vs Go for key flows.
 
-## Integration Test Mapping
-- HTTP suite: `/Users/chris/dev/seaweedfs2/test/volume_server/http`
-- gRPC suite: `/Users/chris/dev/seaweedfs2/test/volume_server/grpc`
-- Harness: `/Users/chris/dev/seaweedfs2/test/volume_server/framework`
+## Milestone Plan
+
+### M0 (Completed): Harness + Launcher Transition
+- [x] Rust launcher integrated into harness.
+- [x] Proxy mode full-suite validation with Go backend delegation.
+
+### M1: Native Skeleton (Control Plane First)
+- [ ] `native` mode boots and serves:
+  - [ ] `/status`, `/healthz`
+  - [ ] `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`
+- Gate:
+  - targeted HTTP/grpc control tests pass in `native` mode.
+
+### M2: Native Core Data Paths
+- [ ] Native HTTP read/write/delete baseline parity.
+- [ ] Native gRPC data baseline parity (`Read/WriteNeedle*`, `BatchDelete`, `ReadAllNeedles`).
+- Gate:
+  - core HTTP and gRPC data suites pass in `native` mode.
+
+### M3: Native Stream + Copy/Sync
+- [ ] Tail/copy/receive/sync paths in native mode.
+- Gate:
+  - stream/copy families pass in `native` mode.
+
+### M4: Native Advanced Feature Families
+- [ ] EC, tiering, scrub/query advanced branches.
+- Gate:
+  - full `/test/volume_server/http` and `/test/volume_server/grpc` pass in `native` mode.
+
+### M5: CI/Cutover
+- [ ] Add/expand native-mode CI jobs.
+- [ ] Make native mode default for Rust integration runs.
+- [ ] Keep `exec`/`proxy` only as explicit fallback modes during rollout.
+
+## Immediate Next Steps
+1. Introduce `VOLUME_SERVER_RUST_MODE=native` and wire native server startup skeleton.
+2. Implement `/status` and `/healthz` with parity headers/payload fields.
+3. Implement minimal gRPC state/ping RPCs.
+4. Run targeted integration tests in native mode and iterate on mismatches.
+
+## Risk Register
+- On-disk format mismatch risk:
+  - Mitigation: implement format-level compatibility tests early (idx/dat/needle encoding).
+- Behavioral drift in edge branches:
+  - Mitigation: use integration suite failures as primary truth; only add tests for newly discovered untracked branches.
+- Stream/concurrency semantic mismatch:
+  - Mitigation: stabilize with focused interruption/timeout parity tests.
 
 ## Progress Log
 - Date: 2026-02-15
-- Change: Created Rust volume-server crate (`weed-volume-rs`) as compatibility launcher and wired harness binary selection (`VOLUME_SERVER_IMPL`/`VOLUME_SERVER_BINARY`).
-- Validation: local Rust-mode smoke and full-suite runs passed:
-  - `VOLUME_SERVER_IMPL=rust go test ./test/volume_server/http ./test/volume_server/grpc`
+- Change: Added Rust launcher integration (`exec`) and harness wiring.
+- Validation: Rust launcher mode passed smoke and full integration suites while delegating to Go backend.
 - Commits: `7beab85c2`, `880c2e1da`, `63d08e8a9`, `d402573ea`, `3bd20e6a1`, `6ce4d7ede`
 
 - Date: 2026-02-15
-- Change: Added Rust proxy supervisor mode (`VOLUME_SERVER_RUST_MODE=proxy`) with front-side TCP listeners for HTTP/public/gRPC and managed Go backend process.
+- Change: Added Rust proxy supervisor mode and validated full integration suite.
 - Validation:
-  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 -timeout=200m ./test/volume_server/http`
-  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 -timeout=240m ./test/volume_server/grpc`
-  - Result: both suites pass end-to-end in proxy mode.
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=proxy go test -count=1 ./test/volume_server/grpc`
 - Commits: `a7f50d23b`, `548b3d9a3`
+
+- Date: 2026-02-16
+- Change: Re-focused plan from test expansion to native Rust implementation parity.
+- Validation basis: latest Rust proxy full-suite pass keeps regression baseline stable while native implementation starts.
+- Commits: pending
