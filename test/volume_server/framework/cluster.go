@@ -269,18 +269,46 @@ func stopProcess(cmd *exec.Cmd) {
 }
 
 func allocatePorts(count int) ([]int, error) {
+	const minPort = 10000
+	const maxPort = 55535
+	const host = "127.0.0.1"
+	rangeSize := maxPort - minPort + 1
+
 	listeners := make([]net.Listener, 0, count)
 	ports := make([]int, 0, count)
-	for i := 0; i < count; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			for _, ll := range listeners {
-				_ = ll.Close()
-			}
-			return nil, err
+	seen := make(map[int]struct{}, count)
+
+	closeAll := func() {
+		for _, ll := range listeners {
+			_ = ll.Close()
 		}
-		listeners = append(listeners, l)
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
+	}
+
+	startOffset := int(time.Now().UnixNano() % int64(rangeSize))
+	for i := 0; i < count; i++ {
+		found := false
+		for offset := 0; offset < rangeSize; offset++ {
+			port := minPort + (startOffset+offset)%rangeSize
+			if _, exists := seen[port]; exists {
+				continue
+			}
+
+			l, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+			if err != nil {
+				continue
+			}
+
+			seen[port] = struct{}{}
+			listeners = append(listeners, l)
+			ports = append(ports, port)
+			found = true
+			startOffset = (startOffset + offset + 1) % rangeSize
+			break
+		}
+		if !found {
+			closeAll()
+			return nil, fmt.Errorf("unable to allocate %d ports within range [%d,%d]", count, minPort, maxPort)
+		}
 	}
 	for _, l := range listeners {
 		_ = l.Close()
