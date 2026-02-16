@@ -1197,3 +1197,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: combined conditional-header precedence paths for `HEAD`/`GET` are now explicitly covered.
 - Commit: `ed23e290f`
+
+- Date: 2026-02-15
+- Change: Added multi-volume success-stream coverage for `ReadAllNeedles`.
+- APIs covered: `ReadAllNeedles` now verifies happy-path streaming across two existing volumes in one request, with per-volume payload validation.
+- Profiles covered: P1.
+- Gaps introduced/remaining: multi-volume stream boundary coverage is now present for successful reads; transport interruption branches remain pending.
+- Commit: `ab95a6ef1`
