@@ -1246,3 +1246,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: CSV parsing/selection implementation still absent in current server behavior; integration parity now locks the current no-output semantics for both JSON and CSV payload shapes.
 - Commit: `a12dd5f8d`
+
+- Date: 2026-02-15
+- Change: Expanded ping unreachable-target matrix with volume-server target coverage.
+- APIs covered: `Ping` now explicitly verifies unreachable-target error wrapping for `target_type=volumeServer`, alongside existing master/filer variants.
+- Profiles covered: P1.
+- Gaps introduced/remaining: ping target-type matrix is covered for success and unreachable branches across master/filer/volume-server.
+- Commit: `b9fbb85af`
