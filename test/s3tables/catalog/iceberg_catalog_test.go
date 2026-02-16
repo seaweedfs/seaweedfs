@@ -511,8 +511,10 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	t.Logf("Create table bucket %s response: status=%d, body=%s", bucketName, resp.StatusCode, string(body))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Failed to create table bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
 	}
 	t.Logf("Created table bucket %s", bucketName)

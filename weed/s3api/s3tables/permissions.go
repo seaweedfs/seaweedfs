@@ -118,20 +118,26 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 }
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	glog.V(0).Infof("S3Tables: checkPermission operation=%s principal=%s owner=%s defaultAllow=%v", operation, principal, owner, ctx != nil && ctx.DefaultAllow)
+
 	// Owner always has permission
 	if principal == owner {
+		glog.V(0).Infof("S3Tables: checkPermission allowing (principal == owner)")
 		return true
 	}
 
 	if hasIdentityPermission(operation, ctx) {
+		glog.V(0).Infof("S3Tables: checkPermission allowing (identity permission)")
 		return true
 	}
 
 	// If no policy is provided, use default allow if enabled
 	if resourcePolicy == "" {
 		if ctx != nil && ctx.DefaultAllow {
+			glog.V(0).Infof("S3Tables: checkPermission allowing (no policy, DefaultAllow=true)")
 			return true
 		}
+		glog.V(0).Infof("S3Tables: checkPermission denying (no policy, DefaultAllow=false)")
 		return false
 	}
 
