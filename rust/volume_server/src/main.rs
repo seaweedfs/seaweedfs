@@ -77,7 +77,7 @@ fn run() -> Result<(), String> {
 
     let forwarded = normalize_volume_args(args);
     let mode = env::var("VOLUME_SERVER_RUST_MODE")
-        .unwrap_or_else(|_| "exec".to_string())
+        .unwrap_or_else(|_| "native".to_string())
         .to_lowercase();
 
     match mode.as_str() {
@@ -422,9 +422,9 @@ fn print_help() {
     println!();
     println!("Rust compatibility launcher for SeaweedFS volume server.");
     println!("Modes:");
-    println!("  - exec  (default): exec Go weed volume process directly");
+    println!("  - native (default): bootstrap native mode entrypoint (currently supervises/proxies Go backend)");
+    println!("  - exec: exec Go weed volume process directly");
     println!("  - proxy: run Rust TCP proxy front-end and supervise Go weed backend");
-    println!("  - native: bootstrap native mode entrypoint (currently supervises/proxies Go backend)");
     println!();
     println!("Environment:");
     println!("  VOLUME_SERVER_RUST_MODE=exec|proxy|native");
