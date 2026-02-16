@@ -93,6 +93,36 @@ func TestVolumeTailReceiverMissingVolume(t *testing.T) {
 	}
 }
 
+func TestVolumeTailReceiverSourceUnavailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(89)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeTailReceiver(ctx, &volume_server_pb.VolumeTailReceiverRequest{
+		VolumeId:           volumeID,
+		SourceVolumeServer: "127.0.0.1:19999.29999",
+		SinceNs:            0,
+		IdleTimeoutSeconds: 1,
+	})
+	if err == nil {
+		t.Fatalf("VolumeTailReceiver should fail when source volume server is unavailable")
+	}
+	lowered := strings.ToLower(err.Error())
+	if !strings.Contains(lowered, "dial") && !strings.Contains(lowered, "unavailable") && !strings.Contains(lowered, "connection refused") {
+		t.Fatalf("VolumeTailReceiver source-unavailable error mismatch: %v", err)
+	}
+}
+
 func TestVolumeTailReceiverReplicatesSourceUpdates(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
