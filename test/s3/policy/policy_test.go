@@ -216,6 +216,14 @@ enabled = true
 	err = os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
 	require.NoError(t, err)
 
+	// Set environment variables for admin credentials safely for this test
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+	}
+
 	cluster.wg.Add(1)
 	go func() {
 		defer cluster.wg.Done()
