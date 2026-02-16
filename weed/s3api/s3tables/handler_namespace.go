@@ -309,6 +309,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
+			glog.V(0).Infof("S3Tables: handleListNamespaces getExtendedAttribute error: %v (type: %T)", err, err)
 			return err
 		}
 		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
@@ -331,6 +332,8 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	})
 
 	if err != nil {
+		glog.V(0).Infof("S3Tables: handleListNamespaces metadata fetch error: %v (isNotFound: %v, isAttrNotFound: %v)",
+			err, errors.Is(err, filer_pb.ErrNotFound), errors.Is(err, ErrAttributeNotFound))
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		} else {
@@ -342,15 +345,19 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
+	glog.V(0).Infof("S3Tables: handleListNamespaces about to check permission: principal=%s owner=%s defaultAllow=%v",
+		principal, bucketMetadata.OwnerAccountID, h.defaultAllow)
 	if !CheckPermissionWithContext("ListNamespaces", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
 		DefaultAllow:    h.defaultAllow,
 	}) {
+		glog.V(0).Infof("S3Tables: handleListNamespaces permission check FAILED")
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
 	}
+	glog.V(0).Infof("S3Tables: handleListNamespaces permission check PASSED")
 
 	var namespaces []NamespaceSummary
 

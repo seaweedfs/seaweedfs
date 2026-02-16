@@ -97,6 +97,7 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 	}
 
 	glog.V(3).Infof("S3Tables: handling operation %s", operation)
+	glog.V(0).Infof("S3Tables: handling operation %s (V0)", operation)
 
 	var err error
 	switch operation {

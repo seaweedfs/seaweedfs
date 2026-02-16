@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -20,7 +21,10 @@ type Manager struct {
 
 // NewManager creates a new Manager.
 func NewManager() *Manager {
-	return &Manager{handler: NewS3TablesHandler()}
+	m := &Manager{handler: NewS3TablesHandler()}
+	// Default to allowing access when IAM is not configured
+	m.handler.SetDefaultAllow(true)
+	return m
 }
 
 // SetRegion sets the AWS region for ARN generation.
@@ -33,8 +37,14 @@ func (m *Manager) SetAccountID(accountID string) {
 	m.handler.SetAccountID(accountID)
 }
 
+// SetDefaultAllow sets whether to allow access by default.
+func (m *Manager) SetDefaultAllow(allow bool) {
+	m.handler.SetDefaultAllow(allow)
+}
+
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).
 func (m *Manager) Execute(ctx context.Context, filerClient FilerClient, operation string, req interface{}, resp interface{}, identity string) error {
+	glog.V(0).Infof("S3Tables Manager: Execute operation=%s identity=%s", operation, identity)
 	body, err := json.Marshal(req)
 	if err != nil {
 		return err

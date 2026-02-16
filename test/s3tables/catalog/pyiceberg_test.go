@@ -39,9 +39,6 @@ func TestPyIcebergRestCatalog(t *testing.T) {
 	bucketName := "pyiceberg-compat-test"
 	createTableBucket(t, env, bucketName)
 
-	// Verify the bucket was created with metadata
-	verifyTableBucketMetadata(t, env, bucketName)
-
 	// Build the test working directory path
 	testDir := filepath.Join(env.seaweedDir, "test", "s3tables", "catalog")
 

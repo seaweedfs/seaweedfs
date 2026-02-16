@@ -64,6 +64,9 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	s3TablesApi := NewS3TablesApiServer(s3a)
 	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
 		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
+	} else {
+		// If IAM is not configured, allow all access by default
+		s3TablesApi.SetDefaultAllow(true)
 	}
 
 	// Regex for S3 Tables Bucket ARN
