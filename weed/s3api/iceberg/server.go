@@ -18,6 +18,7 @@ type FilerClient interface {
 
 type S3Authenticator interface {
 	AuthenticateRequest(r *http.Request) (string, interface{}, s3err.ErrorCode)
+	DefaultAllow() bool
 }
 
 // Server implements the Iceberg REST Catalog API.
@@ -128,20 +129,25 @@ func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 
 		identityName, identity, errCode := s.authenticator.AuthenticateRequest(r)
 		if errCode != s3err.ErrNone {
-			apiErr := s3err.GetAPIError(errCode)
-			errorType := "RESTException"
-			switch apiErr.HTTPStatusCode {
-			case http.StatusForbidden:
-				errorType = "ForbiddenException"
-			case http.StatusUnauthorized:
-				errorType = "NotAuthorizedException"
-			case http.StatusBadRequest:
-				errorType = "BadRequestException"
-			case http.StatusInternalServerError:
-				errorType = "InternalServerError"
+			// If authentication failed but DefaultAllow is enabled, proceed without identity
+			if s.authenticator.DefaultAllow() {
+				glog.V(2).Infof("Iceberg: AuthenticateRequest failed (%v), but DefaultAllow is true, proceeding", errCode)
+			} else {
+				apiErr := s3err.GetAPIError(errCode)
+				errorType := "RESTException"
+				switch apiErr.HTTPStatusCode {
+				case http.StatusForbidden:
+					errorType = "ForbiddenException"
+				case http.StatusUnauthorized:
+					errorType = "NotAuthorizedException"
+				case http.StatusBadRequest:
+					errorType = "BadRequestException"
+				case http.StatusInternalServerError:
+					errorType = "InternalServerError"
+				}
+				writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
+				return
 			}
-			writeError(w, apiErr.HTTPStatusCode, errorType, apiErr.Description)
-			return
 		}
 
 		if identityName != "" || identity != nil {

@@ -201,6 +201,7 @@ def main():
                     "uri": args.catalog_url,
                     "warehouse": args.warehouse,
                     "prefix": args.prefix,
+                    "s3.anonymous": "true",  # Disable AWS request signing for unauthenticated access
                 }
             )
             print(f"Successfully connected to catalog on attempt {attempt + 1}")

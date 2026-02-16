@@ -56,8 +56,6 @@ func TestPyIcebergRestCatalog(t *testing.T) {
 
 	cmd := exec.Command("docker", "run", "--rm",
 		"--add-host", "host.docker.internal:host-gateway",
-		"-e", fmt.Sprintf("AWS_ACCESS_KEY_ID=%s", "admin"),
-		"-e", fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", "admin"),
 		"-e", fmt.Sprintf("AWS_ENDPOINT_URL=%s", s3Endpoint),
 		"-v", fmt.Sprintf("%s:/app:ro", testDir),
 		"iceberg-rest-test",

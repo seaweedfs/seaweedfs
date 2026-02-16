@@ -626,9 +626,15 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 		// Use AuthSignatureOnly to authenticate the request without authorizing specific actions
 		identity, errCode := s3a.iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
-			glog.Errorf("S3Tables: AuthSignatureOnly failed: %v", errCode)
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
+			// If IAM is enabled but DefaultAllow is true, we can proceed even if unauthenticated
+			// authorization checks in handlers will then use DefaultAllow logic.
+			if s3a.iam.iamIntegration != nil && s3a.iam.iamIntegration.DefaultAllow() {
+				glog.V(2).Infof("S3Tables: AuthSignatureOnly failed (%v), but DefaultAllow is true, proceeding", errCode)
+			} else {
+				glog.Errorf("S3Tables: AuthSignatureOnly failed: %v", errCode)
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
 		}
 
 		// Store the authenticated identity in request context
