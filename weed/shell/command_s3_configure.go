@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"google.golang.org/grpc"
@@ -240,6 +241,7 @@ func (c *commandS3Configure) applyChanges(identity *iam_pb.Identity, isNewUser b
 				identity.Credentials = append(identity.Credentials, &iam_pb.Credential{
 					AccessKey: *accessKey,
 					SecretKey: *secretKey,
+					Status:    iam.AccessKeyStatusActive,
 				})
 			}
 		}

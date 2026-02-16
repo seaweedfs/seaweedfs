@@ -35,6 +35,8 @@ const (
 	StatementActionTagging  = iamlib.StatementActionTagging
 	StatementActionDelete   = iamlib.StatementActionDelete
 	USER_DOES_NOT_EXIST     = iamlib.UserDoesNotExist
+	accessKeyStatusActive   = iamlib.AccessKeyStatusActive
+	accessKeyStatusInactive = iamlib.AccessKeyStatusInactive
 )
 
 var (
@@ -67,6 +69,17 @@ func stringSlicesEqual(a, b []string) bool {
 	return iamlib.StringSlicesEqual(a, b)
 }
 
+func validateAccessKeyStatus(status string) error {
+	switch status {
+	case accessKeyStatusActive, accessKeyStatusInactive:
+		return nil
+	case "":
+		return fmt.Errorf("Status parameter is required")
+	default:
+		return fmt.Errorf("Status must be '%s' or '%s'", accessKeyStatusActive, accessKeyStatusInactive)
+	}
+}
+
 func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListUsersResponse) {
 	for _, ident := range s3cfg.Identities {
 		resp.ListUsersResult.Users = append(resp.ListUsersResult.Users, &iam.User{UserName: &ident.Name})
@@ -75,15 +88,20 @@ func (iama *IamApiServer) ListUsers(s3cfg *iam_pb.S3ApiConfiguration, values url
 }
 
 func (iama *IamApiServer) ListAccessKeys(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListAccessKeysResponse) {
-	status := iam.StatusTypeActive
 	userName := values.Get("UserName")
 	for _, ident := range s3cfg.Identities {
 		if userName != "" && userName != ident.Name {
 			continue
 		}
 		for _, cred := range ident.Credentials {
+			status := cred.Status
+			if status == "" {
+				status = accessKeyStatusActive
+			}
+			identName := ident.Name
+			accessKey := cred.AccessKey
 			resp.ListAccessKeysResult.AccessKeyMetadata = append(resp.ListAccessKeysResult.AccessKeyMetadata,
-				&iam.AccessKeyMetadata{UserName: &ident.Name, AccessKeyId: &cred.AccessKey, Status: &status},
+				&iam.AccessKeyMetadata{UserName: &identName, AccessKeyId: &accessKey, Status: &status},
 			)
 		}
 	}
@@ -325,7 +343,7 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 	for _, ident := range s3cfg.Identities {
 		if userName == ident.Name {
 			ident.Credentials = append(ident.Credentials,
-				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey})
+				&iam_pb.Credential{AccessKey: accessKeyId, SecretKey: secretAccessKey, Status: accessKeyStatusActive})
 			changed = true
 			break
 		}
@@ -338,12 +356,44 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 					{
 						AccessKey: accessKeyId,
 						SecretKey: secretAccessKey,
+						Status:    accessKeyStatusActive,
 					},
 				},
 			},
 		)
 	}
 	return resp, nil
+}
+
+// UpdateAccessKey updates the status of an access key (Active or Inactive).
+func (iama *IamApiServer) UpdateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp UpdateAccessKeyResponse, err *IamError) {
+	userName := values.Get("UserName")
+	accessKeyId := values.Get("AccessKeyId")
+	status := values.Get("Status")
+
+	if userName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	if accessKeyId == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId is required")}
+	}
+	if err := validateAccessKeyStatus(status); err != nil {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		for _, cred := range ident.Credentials {
+			if cred.AccessKey == accessKeyId {
+				cred.Status = status
+				return resp, nil
+			}
+		}
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the access key with id %s for user %s cannot be found", accessKeyId, userName)}
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
 }
 
 func (iama *IamApiServer) DeleteAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteAccessKeyResponse) {
@@ -475,6 +525,13 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "DeleteAccessKey":
 		iama.handleImplicitUsername(r, values)
 		response = iama.DeleteAccessKey(s3cfg, values)
+	case "UpdateAccessKey":
+		iama.handleImplicitUsername(r, values)
+		response, iamError = iama.UpdateAccessKey(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
 	case "CreatePolicy":
 		response, iamError = iama.CreatePolicy(s3cfg, values)
 		if iamError != nil {

@@ -427,6 +427,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Reset the memory store to avoid test pollution
+			if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+				if memStore, ok := store.(interface{ Reset() }); ok {
+					memStore.Reset()
+				}
+			}
+
 			// Set up environment variables
 			if tt.accessKeyId != "" {
 				os.Setenv("AWS_ACCESS_KEY_ID", tt.accessKeyId)
@@ -467,6 +474,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 // but contains no identities (e.g., only KMS settings), environment variables should still work.
 // This test validates the fix for issue #7311.
 func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
+	// Reset the memory store to avoid test pollution
+	if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+		if memStore, ok := store.(interface{ Reset() }); ok {
+			memStore.Reset()
+		}
+	}
+
 	// Set environment variables
 	testAccessKey := "AKIATEST1234567890AB"
 	testSecretKey := "testSecret1234567890123456789012345678901234"

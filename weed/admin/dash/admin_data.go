@@ -9,13 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
 // Access key status constants
 const (
-	AccessKeyStatusActive   = "Active"
-	AccessKeyStatusInactive = "Inactive"
+	AccessKeyStatusActive   = iam.AccessKeyStatusActive
+	AccessKeyStatusInactive = iam.AccessKeyStatusInactive
 )
 
 type AdminData struct {

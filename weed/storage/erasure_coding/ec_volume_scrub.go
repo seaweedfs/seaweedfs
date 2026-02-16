@@ -45,6 +45,9 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 		}
 
 		var read int64
+		var hasRemoteChunks bool
+		var data []byte
+
 		locations := ecv.LocateEcShardNeedleInterval(ecv.Version, offset.ToActualOffset(), size)
 
 		for i, iv := range locations {
@@ -53,6 +56,7 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 			shard, found := ecv.FindEcVolumeShard(sid)
 			if !found {
 				// shard is not local :( skip it
+				hasRemoteChunks = true
 				read += ssize
 				continue
 			}
@@ -61,8 +65,8 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 				continue
 			}
 
-			buf := make([]byte, ssize)
-			got, err := shard.ReadAt(buf, soffset)
+			chunk := make([]byte, ssize)
+			got, err := shard.ReadAt(chunk, soffset)
 			if err != nil {
 				flagShardBroken(shard, "failed to read chunk %d/%d for needle %d from local shard %d at offset %d: %v", i+1, len(locations), id, sid, soffset, err)
 				continue
@@ -71,11 +75,22 @@ func (ecv *EcVolume) ScrubLocal() (int64, []*volume_server_pb.EcShardInfo, []err
 				flagShardBroken(shard, "expected %d bytes for chunk %d/%d for needle %d from local shard %d, got %d", ssize, i+1, len(locations), id, sid, got)
 				continue
 			}
+
+			if !hasRemoteChunks {
+				data = append(data, chunk...)
+			}
 			read += int64(got)
 		}
 
 		if got, want := read, needle.GetActualSize(size, ecv.Version); got != want {
 			return fmt.Errorf("expected %d bytes for needle %d, got %d", want, id, got)
+		}
+		if !hasRemoteChunks {
+			// needle was fully recovered from local shards \o/ let's check it
+			n := needle.Needle{}
+			if err := n.ReadBytes(data, 0, size, ecv.Version); err != nil {
+				errs = append(errs, fmt.Errorf("needle %d on volume %d: %v", id, ecv.VolumeId, err))
+			}
 		}
 
 		return nil
