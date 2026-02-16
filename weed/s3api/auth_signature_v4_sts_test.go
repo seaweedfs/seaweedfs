@@ -44,6 +44,10 @@ func (m *MockIAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Context
 	return nil
 }
 
+func (m *MockIAMIntegration) DefaultAllow() bool {
+	return true
+}
+
 // TestVerifyV4SignatureWithSTSIdentity tests that verifyV4Signature properly handles STS identities
 // by falling back to IAM authorization when shouldCheckPermissions is true
 func TestVerifyV4SignatureWithSTSIdentity(t *testing.T) {
