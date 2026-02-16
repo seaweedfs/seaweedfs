@@ -1225,3 +1225,10 @@ Update this section during implementation:
 - Profiles covered: existing matrix in Rust proxy launcher mode.
 - Gaps introduced/remaining: native Rust endpoint/storage/RPC implementation remains pending (current Rust mode still delegates to Go backend handlers).
 - Commit: pending
+
+- Date: 2026-02-15
+- Change: Added tail sender stream-cancellation interruption coverage.
+- APIs covered: `VolumeTailSender` now verifies client-side context cancellation behavior (`codes.Canceled`) after stream start/heartbeat.
+- Profiles covered: P1.
+- Gaps introduced/remaining: tail transport interruption coverage is now partially closed; receiver-side interruption and deeper network fault injection remain pending.
+- Commit: `27a80f760`
