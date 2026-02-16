@@ -329,12 +329,12 @@ func TestRetentionModeCompliance(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockRetentionModeCompliance, retentionResp.Retention.Mode)
 
-	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	// Try simple DELETE - should fail for COMPLIANCE mode (strict WORM)
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+	require.Error(t, err, "Simple DELETE should be blocked by COMPLIANCE retention")
 
 	// Try DELETE with version ID - should fail for COMPLIANCE mode
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -388,12 +388,12 @@ func TestLegalHoldWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, types.ObjectLockLegalHoldStatusOn, legalHoldResp.LegalHold.Status)
 
-	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	// Try simple DELETE - should fail due to legal hold
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+	require.Error(t, err, "Simple DELETE should be blocked by legal hold")
 
 	// Try DELETE with version ID - should fail due to legal hold
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -591,12 +591,12 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	// Try simple DELETE - should fail due to legal hold + COMPLIANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+	require.Error(t, err, "Simple DELETE should be blocked by legal hold")
 
 	// Try DELETE with version ID and bypass - should still fail due to legal hold
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -607,7 +607,7 @@ func TestRetentionAndLegalHoldCombination(t *testing.T) {
 	})
 	require.Error(t, err, "Legal hold should prevent deletion even with governance bypass")
 
-	// Remove legal hold (must specify version ID since latest version is now delete marker)
+	// Remove legal hold (must specify version ID)
 	_, err = client.PutObjectLegalHold(context.TODO(), &s3.PutObjectLegalHoldInput{
 		Bucket:    aws.String(bucketName),
 		Key:       aws.String(key),

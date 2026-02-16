@@ -77,14 +77,14 @@ func TestObjectLockValidation(t *testing.T) {
 	require.NoError(t, err, "Setting Object Lock retention should succeed")
 	t.Log("   Object Lock retention applied successfully")
 
-	// Verify retention allows simple DELETE (creates delete marker) but blocks version deletion
-	// AWS S3 behavior: Simple DELETE (without version ID) is ALWAYS allowed and creates delete marker
+	// Verify retention blocks simple DELETE (COMPLIANCE mode is strict WORM)
+	// AWS S3 behavior: Simple DELETE (without version ID) is blocked by COMPLIANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker (AWS S3 behavior)")
-	t.Log("   Simple DELETE succeeded (creates delete marker - correct AWS behavior)")
+	require.Error(t, err, "Simple DELETE should be blocked by COMPLIANCE retention (AWS S3 behavior)")
+	t.Log("   Simple DELETE correctly blocked by COMPLIANCE retention")
 
 	// Now verify that DELETE with version ID is properly blocked by retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{

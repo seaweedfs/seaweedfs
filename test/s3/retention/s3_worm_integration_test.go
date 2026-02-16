@@ -42,12 +42,12 @@ func TestWORMRetentionIntegration(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	// Try simple DELETE - should fail due to GOVERNANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+	require.Error(t, err, "Simple DELETE should be blocked by GOVERNANCE retention")
 
 	// Try DELETE with version ID - should fail due to GOVERNANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
@@ -325,12 +325,12 @@ func TestRetentionWithMultipartUpload(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Try simple DELETE - should succeed and create delete marker (AWS S3 behavior)
+	// Try simple DELETE - should fail due to GOVERNANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(key),
 	})
-	require.NoError(t, err, "Simple DELETE should succeed and create delete marker")
+	require.Error(t, err, "Simple DELETE should be blocked by GOVERNANCE retention")
 
 	// Try DELETE with version ID - should fail due to GOVERNANCE retention
 	_, err = client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
