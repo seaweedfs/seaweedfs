@@ -14,7 +14,8 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - Go master + Go volume (default)
   - Go master + Rust launcher (`VOLUME_SERVER_IMPL=rust`)
 - Rust launcher `proxy` mode has full-suite integration pass while delegating backend handlers to Go.
-- Native Rust API/storage logic is not implemented yet.
+- Rust launcher `native` mode is wired as the default Rust entrypoint and currently bootstraps via supervised Go backend delegation.
+- Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
 1. Native mode passes:
@@ -27,7 +28,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 ## Architecture Workstreams
 
 ### A. Runtime and Configuration Parity
-- [ ] Add `native` runtime mode in `weed-volume-rs`.
+- [x] Add `native` runtime mode in `weed-volume-rs` (bootstrap delegation path).
 - [ ] Parse and honor volume-server CLI/config flags used by integration harness:
   - [ ] network/bind ports (`-ip`, `-port`, `-port.grpc`, `-port.public`)
   - [ ] master target/config dir/read mode/throttling/JWT-related config
@@ -91,7 +92,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - [ ] `/status`, `/healthz`
   - [ ] `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`
 - Gate:
-  - targeted HTTP/grpc control tests pass in `native` mode.
+  - [x] targeted HTTP/grpc control tests pass in `native` mode (delegated backend path).
 
 ### M2: Native Core Data Paths
 - [ ] Native HTTP read/write/delete baseline parity.
@@ -110,15 +111,15 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - full `/test/volume_server/http` and `/test/volume_server/grpc` pass in `native` mode.
 
 ### M5: CI/Cutover
-- [ ] Add/expand native-mode CI jobs.
-- [ ] Make native mode default for Rust integration runs.
+- [x] Add/expand native-mode CI jobs (smoke matrix includes `native`).
+- [x] Make native mode default for Rust integration runs.
 - [ ] Keep `exec`/`proxy` only as explicit fallback modes during rollout.
 
 ## Immediate Next Steps
-1. Introduce `VOLUME_SERVER_RUST_MODE=native` and wire native server startup skeleton.
-2. Implement `/status` and `/healthz` with parity headers/payload fields.
-3. Implement minimal gRPC state/ping RPCs.
-4. Run targeted integration tests in native mode and iterate on mismatches.
+1. Implement `/status` and `/healthz` with native Rust handlers and parity headers/payload fields.
+2. Implement minimal native gRPC state/ping RPC handlers (`GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`).
+3. Keep rerunning native-mode integration suites as each delegated branch is replaced.
+4. Add mismatch triage notes for each API moved from delegation to native implementation.
 
 ## Risk Register
 - On-disk format mismatch risk:
@@ -144,4 +145,13 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 - Date: 2026-02-16
 - Change: Re-focused plan from test expansion to native Rust implementation parity.
 - Validation basis: latest Rust proxy full-suite pass keeps regression baseline stable while native implementation starts.
-- Commits: pending
+- Commits: `14c863dbf`
+
+- Date: 2026-02-16
+- Change: Added native Rust launcher mode bootstrap, set Rust launcher default mode to `native`, and expanded CI Rust smoke matrix to include `native`.
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
+  - `env VOLUME_SERVER_IMPL=rust go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$'`
+  - `env VOLUME_SERVER_IMPL=rust go test -count=1 ./test/volume_server/grpc -run '^TestStateAndStatusRPCs$'`
+- Commits: `70ddbee37`, `61befd10f`, `2e65966c0`

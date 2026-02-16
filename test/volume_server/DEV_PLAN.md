@@ -1230,7 +1230,7 @@ Update this section during implementation:
 - APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` packages.
 - Profiles covered: existing matrix in Rust proxy launcher mode.
 - Gaps introduced/remaining: native Rust endpoint/storage/RPC implementation remains pending (current Rust mode still delegates to Go backend handlers).
-- Commit: pending
+- Commit: `6bb9d8bac`
 
 - Date: 2026-02-15
 - Change: Added tail sender stream-cancellation interruption coverage.
@@ -1272,4 +1272,11 @@ Update this section during implementation:
 - APIs covered: no new API additions in this plan entry; integration suite remains the validation gate.
 - Profiles covered: unchanged.
 - Gaps introduced/remaining: primary remaining gap is native Rust handler/storage/RPC implementation replacing Go backend delegation.
-- Commit: pending
+- Commit: `14c863dbf`
+
+- Date: 2026-02-16
+- Change: Added Rust launcher `native` mode bootstrap, made it the default Rust launcher mode, and expanded CI Rust smoke matrix coverage to include `native`.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` packages re-validated in `VOLUME_SERVER_RUST_MODE=native`; default Rust launcher path (`VOLUME_SERVER_IMPL=rust`) smoke-validated for HTTP and gRPC control tests.
+- Profiles covered: existing HTTP/gRPC matrix in native launcher mode; default-mode smoke checks on P1 control flows.
+- Gaps introduced/remaining: native Rust API/storage/RPC handlers still pending; current `native` mode remains a delegation bootstrap while parity replacement proceeds.
+- Commit: `70ddbee37`, `61befd10f`, `2e65966c0`
