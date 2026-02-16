@@ -27,6 +27,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - absolute-form HTTP request-target normalization before native route matching
 - Native Rust HTTP data-path prevalidation now includes:
   - early malformed vid/fid rejection (`400`) for GET/HEAD/POST/PUT fid-route shapes before delegation
+  - slash-form fid-route parsing for `/{vid}/{fid}` and `/{vid}/{fid}/{filename}` with reserved-path exclusions (`/status`, `/healthz`, `/ui/index.html`, `/stats/*`, static assets)
   - write-path error prevalidation for fid routes:
     - malformed multipart form-data requests without a boundary => `400`
     - requests containing `Content-MD5` header => `400` mismatch parity branch
@@ -232,3 +233,13 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
 - Commits: `94cefd6f4`
+
+- Date: 2026-02-16
+- Change: Broadened native fid-route parser to cover slash-form URLs:
+  - `/{vid}/{fid}` and `/{vid}/{fid}/{filename}` now flow through native malformed vid/fid validation
+  - added explicit non-fid exclusions for control/stats/static paths to preserve route parity
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$|^TestReadPathShapesAndIfModifiedSince$|^TestMalformedVidFidPathReturnsBadRequest$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
+- Commits: `e66983e9b`

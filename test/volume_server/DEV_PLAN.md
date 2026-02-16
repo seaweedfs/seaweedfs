@@ -1325,3 +1325,10 @@ Update this section during implementation:
 - Profiles covered: P1 default and P1 with explicit file-size limit profile, plus full existing HTTP/gRPC native-mode matrix revalidation.
 - Gaps introduced/remaining: positive write/read/delete data handlers and all gRPC handler bodies are still delegated; native implementation continues incrementally.
 - Commit: `94cefd6f4`
+
+- Date: 2026-02-16
+- Change: Broadened Rust-native malformed-fid handling to slash-form read/write URL shapes with reserved-route exclusions.
+- APIs covered: `/{vid}/{fid}` and `/{vid}/{fid}/{filename}` malformed cases now hit native `400` validation path, while `/status`, `/healthz`, `/ui/index.html`, `/stats/*`, and static asset routes remain excluded from fid parsing.
+- Profiles covered: full existing HTTP/gRPC native-mode matrix, plus targeted admin/read-path malformed-slash validation run.
+- Gaps introduced/remaining: successful data-path read/write/delete handlers and all gRPC method bodies remain delegated and are still the primary native implementation gap.
+- Commit: `e66983e9b`
