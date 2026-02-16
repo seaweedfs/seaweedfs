@@ -66,7 +66,7 @@ func TestReproIssue7912(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, "memory")
+	iam := NewIdentityAccessManagementWithStore(option, nil, "memory")
 
 	assert.True(t, iam.isEnabled(), "Auth should be enabled")
 

@@ -1,0 +1,27 @@
+{
+    "identities": [
+        {
+            "name": "anonymous",
+            "actions": [
+                "Read",
+                "List"
+            ]
+        },
+        {
+            "name": "admin",
+            "credentials": [
+                {
+                    "accessKey": "some_access_key1",
+                    "secretKey": "some_secret_key1"
+                }
+            ],
+            "actions": [
+                "Admin",
+                "Read",
+                "List",
+                "Tagging",
+                "Write"
+            ]
+        }
+    ]
+}

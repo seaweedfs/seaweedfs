@@ -43,6 +43,11 @@ func (st *S3TablesApiServer) SetAccountID(accountID string) {
 	st.handler.SetAccountID(accountID)
 }
 
+// SetDefaultAllow sets whether to allow access by default
+func (st *S3TablesApiServer) SetDefaultAllow(allow bool) {
+	st.handler.SetDefaultAllow(allow)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -57,6 +62,12 @@ func (st *S3TablesApiServer) WithFilerClient(streamingMode bool, fn func(filer_p
 func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	// Create S3 Tables handler
 	s3TablesApi := NewS3TablesApiServer(s3a)
+	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
+		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
+	} else {
+		// If IAM is not configured, allow all access by default
+		s3TablesApi.SetDefaultAllow(true)
+	}
 
 	// Regex for S3 Tables Bucket ARN
 	const tableBucketARNRegex = "arn:aws:s3tables:[^/:]*:[^/:]*:bucket/[^/]+"
@@ -618,9 +629,15 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 		// Use AuthSignatureOnly to authenticate the request without authorizing specific actions
 		identity, errCode := s3a.iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
-			glog.Errorf("S3Tables: AuthSignatureOnly failed: %v", errCode)
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
+			// If IAM is enabled but DefaultAllow is true, we can proceed even if unauthenticated
+			// authorization checks in handlers will then use DefaultAllow logic.
+			if s3a.iam.iamIntegration != nil && s3a.iam.iamIntegration.DefaultAllow() {
+				glog.V(2).Infof("S3Tables: AuthSignatureOnly failed (%v), but DefaultAllow is true, proceeding", errCode)
+			} else {
+				glog.Errorf("S3Tables: AuthSignatureOnly failed: %v", errCode)
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
 		}
 
 		// Store the authenticated identity in request context

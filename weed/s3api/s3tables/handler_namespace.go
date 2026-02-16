@@ -118,6 +118,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		glog.Infof("S3Tables: Permission denied for CreateNamespace - principal=%s, owner=%s", principal, bucketMetadata.OwnerAccountID)
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create namespace in this bucket")
@@ -258,6 +259,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied
@@ -344,6 +346,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		TableBucketName: bucketName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchBucket, fmt.Sprintf("table bucket %s not found", bucketName))
 		return ErrAccessDenied
@@ -528,6 +531,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		Namespace:       namespaceName,
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		h.writeError(w, http.StatusNotFound, ErrCodeNoSuchNamespace, "namespace not found")
 		return ErrAccessDenied

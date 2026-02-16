@@ -75,9 +75,32 @@ func TestSTSServiceInitialization(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				assert.True(t, service.IsInitialized())
+
+				// Verify defaults if applicable
+				if tt.config.Issuer == "" {
+					assert.Equal(t, DefaultIssuer, service.Config.Issuer)
+				}
+				if tt.config.TokenDuration.Duration == 0 {
+					assert.Equal(t, time.Duration(DefaultTokenDuration)*time.Second, service.Config.TokenDuration.Duration)
+				}
 			}
 		})
 	}
+}
+
+func TestSTSServiceDefaults(t *testing.T) {
+	service := NewSTSService()
+	config := &STSConfig{
+		SigningKey: []byte("test-signing-key"),
+		// Missing duration and issuer
+	}
+
+	err := service.Initialize(config)
+	assert.NoError(t, err)
+
+	assert.Equal(t, DefaultIssuer, config.Issuer)
+	assert.Equal(t, time.Duration(DefaultTokenDuration)*time.Second, config.TokenDuration.Duration)
+	assert.Equal(t, time.Duration(DefaultMaxSessionLength)*time.Second, config.MaxSessionLength.Duration)
 }
 
 // TestAssumeRoleWithWebIdentity tests role assumption with OIDC tokens

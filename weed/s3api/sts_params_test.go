@@ -41,6 +41,9 @@ func (m *mockIAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Context
 func (m *mockIAMIntegration) ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error) {
 	return nil, nil
 }
+func (m *mockIAMIntegration) DefaultAllow() bool {
+	return true
+}
 
 func TestSTSAssumeRolePostBody(t *testing.T) {
 	// Setup S3ApiServer with IAM enabled

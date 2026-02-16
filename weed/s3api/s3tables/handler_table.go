@@ -145,6 +145,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		TagKeys:         mapKeys(req.Tags),
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -154,6 +155,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		TagKeys:         mapKeys(req.Tags),
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 
 	if !nsAllowed && !bucketAllowed {
@@ -390,6 +392,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("GetTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -398,6 +401,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 
 	if !tableAllowed && !bucketAllowed {
@@ -527,12 +531,14 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			})
 			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 				TableBucketName: bucketName,
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			})
 			if !nsAllowed && !bucketAllowed {
 				return ErrAccessDenied
@@ -574,6 +580,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				TableBucketName: bucketName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			}) {
 				return ErrAccessDenied
 			}
@@ -910,6 +917,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("DeleteTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -918,6 +926,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	if !tableAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
@@ -1053,6 +1062,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("UpdateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -1061,6 +1071,7 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 
 	if !tableAllowed && !bucketAllowed {

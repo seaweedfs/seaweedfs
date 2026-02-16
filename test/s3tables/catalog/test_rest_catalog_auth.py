@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Iceberg REST Catalog Compatibility Test for SeaweedFS
+Iceberg REST Catalog Compatibility Test for SeaweedFS (Authenticated)
 
-This script tests the Iceberg REST Catalog API compatibility of the
-SeaweedFS Iceberg REST Catalog implementation.
+This script tests the Iceberg REST Catalog API compatibility with authentication.
 
 Usage:
-    python3 test_rest_catalog.py --catalog-url http://localhost:8182
+    python3 test_rest_catalog_auth.py --catalog-url http://localhost:8182 \\
+        --access-key admin --secret-key admin
 
 Requirements:
     pip install pyiceberg[s3fs]
@@ -41,7 +41,7 @@ def test_config_endpoint(catalog):
 def test_namespace_operations(catalog, prefix):
     """Test namespace CRUD operations."""
     print("Testing namespace operations...")
-    namespace = (f"{prefix.replace('-', '_')}_test_ns",)
+    namespace = (f"{prefix.replace('-', '_')}_auth_test_ns",)
     
     # List initial namespaces
     namespaces = catalog.list_namespaces()
@@ -76,8 +76,8 @@ def test_namespace_operations(catalog, prefix):
 def test_table_operations(catalog, prefix):
     """Test table CRUD operations."""
     print("Testing table operations...")
-    namespace = (f"{prefix.replace('-', '_')}_test_ns",)
-    table_name = "test_table"
+    namespace = (f"{prefix.replace('-', '_')}_auth_test_ns",)
+    table_name = "auth_test_table"
     table_id = namespace + (table_name,)
     
     # Define a simple schema
@@ -119,42 +119,11 @@ def test_table_operations(catalog, prefix):
     return True
 
 
-def test_table_update(catalog, prefix):
-    """Test table update/commit operations."""
-    print("Testing table update operations...")
-    namespace = (f"{prefix.replace('-', '_')}_test_ns",)
-    table_name = "test_table"
-    table_id = namespace + (table_name,)
-    
-    try:
-        table = catalog.load_table(table_id)
-        
-        # Update table properties
-        with table.transaction() as transaction:
-            transaction.set_properties({"test.property": "test.value"})
-        
-        print("  Updated table properties")
-        
-        # Reload and verify
-        table = catalog.load_table(table_id)
-        if table.properties.get("test.property") == "test.value":
-            print("  Property update verified")
-        else:
-            print("  ! Property update failed or not persisted")
-            return False
-        
-    except Exception as e:
-        print(f"  Table update failed: {e}")
-        return False
-    
-    return True
-
-
 def test_cleanup(catalog, prefix):
     """Test table and namespace deletion."""
     print("Testing cleanup operations...")
-    namespace = (f"{prefix.replace('-', '_')}_test_ns",)
-    table_id = namespace + ("test_table",)
+    namespace = (f"{prefix.replace('-', '_')}_auth_test_ns",)
+    table_id = namespace + ("auth_test_table",)
     
     # Drop table
     try:
@@ -176,19 +145,22 @@ def test_cleanup(catalog, prefix):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Iceberg REST Catalog compatibility")
-    parser.add_argument("--catalog-url", required=True, help="Iceberg REST Catalog URL (e.g., http://localhost:8182)")
+    parser = argparse.ArgumentParser(description="Test Iceberg REST Catalog with authentication")
+    parser.add_argument("--catalog-url", required=True, help="Iceberg REST Catalog URL")
     parser.add_argument("--warehouse", default="s3://iceberg-test/", help="Warehouse location")
     parser.add_argument("--prefix", required=True, help="Table bucket prefix")
+    parser.add_argument("--access-key", required=True, help="AWS Access Key ID")
+    parser.add_argument("--secret-key", required=True, help="AWS Secret Access Key")
     parser.add_argument("--skip-cleanup", action="store_true", help="Skip cleanup at the end")
     args = parser.parse_args()
     
     print(f"Connecting to Iceberg REST Catalog at: {args.catalog_url}")
     print(f"Warehouse: {args.warehouse}")
     print(f"Prefix: {args.prefix}")
+    print(f"Using authenticated access with key: {args.access_key}")
     print()
     
-    # Load the REST catalog with retries to handle possible delay in catalog server readiness
+    # Load the REST catalog with authentication
     import time
     max_retries = 10
     catalog = None
@@ -201,7 +173,8 @@ def main():
                     "uri": args.catalog_url,
                     "warehouse": args.warehouse,
                     "prefix": args.prefix,
-                    "s3.anonymous": "true",  # Disable AWS request signing for unauthenticated access
+                    "s3.access-key-id": args.access_key,
+                    "s3.secret-access-key": args.secret_key,
                 }
             )
             print(f"Successfully connected to catalog on attempt {attempt + 1}")
@@ -219,7 +192,6 @@ def main():
         ("Config Endpoint", lambda: test_config_endpoint(catalog)),
         ("Namespace Operations", lambda: test_namespace_operations(catalog, args.prefix)),
         ("Table Operations", lambda: test_table_operations(catalog, args.prefix)),
-        ("Table Update", lambda: test_table_update(catalog, args.prefix)),
     ]
     
     if not args.skip_cleanup:

@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -19,9 +20,13 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/crypto/hkdf"
+	"google.golang.org/grpc"
 )
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
@@ -452,6 +457,27 @@ func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
 	return nil, false
 }
 
+// GetMasterKey returns a derived key from the master KEK for STS signing
+// This uses HKDF to isolate the STS security domain from the SSE-S3 domain
+func (km *SSES3KeyManager) GetMasterKey() []byte {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	if len(km.superKey) == 0 {
+		return nil
+	}
+
+	// Derive a separate key for STS to isolate security domains
+	// We use the KEK as the secret, and "seaweedfs-sts-signing-key" as the info
+	hkdfReader := hkdf.New(sha256.New, km.superKey, nil, []byte("seaweedfs-sts-signing-key"))
+	derived := make([]byte, 32) // 256-bit derived key
+	if _, err := io.ReadFull(hkdfReader, derived); err != nil {
+		glog.Errorf("Failed to derive STS key: %v", err)
+		return nil
+	}
+	return derived
+}
+
 // Global SSE-S3 key manager instance
 var globalSSES3KeyManager = NewSSES3KeyManager()
 
@@ -460,9 +486,31 @@ func GetSSES3KeyManager() *SSES3KeyManager {
 	return globalSSES3KeyManager
 }
 
+// KeyManagerFilerClient wraps wdclient.FilerClient to satisfy filer_pb.FilerClient interface
+type KeyManagerFilerClient struct {
+	*wdclient.FilerClient
+	grpcDialOption grpc.DialOption
+}
+
+func (k *KeyManagerFilerClient) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
+
+func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	filerAddress := k.GetCurrentFiler()
+	if filerAddress == "" {
+		return fmt.Errorf("no filer available")
+	}
+	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, fn)
+}
+
 // InitializeGlobalSSES3KeyManager initializes the global key manager with filer access
-func InitializeGlobalSSES3KeyManager(s3ApiServer *S3ApiServer) error {
-	return globalSSES3KeyManager.InitializeWithFiler(s3ApiServer)
+func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDialOption grpc.DialOption) error {
+	wrapper := &KeyManagerFilerClient{
+		FilerClient:    filerClient,
+		grpcDialOption: grpcDialOption,
+	}
+	return globalSSES3KeyManager.InitializeWithFiler(wrapper)
 }
 
 // ProcessSSES3Request processes an SSE-S3 request and returns encryption metadata

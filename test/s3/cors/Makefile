@@ -12,6 +12,7 @@ FILER_PORT := 8888
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestCORS
 SERVER_DIR := test-mini-data
+S3_CONFIG := s3_test_config.json
 
 # Default target
 help:
@@ -80,13 +81,15 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p $(SERVER_DIR)
 	@echo "🔍 DEBUG: Launching SeaweedFS S3 server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG)"
-	@$(WEED_BINARY) mini \
+	@echo "🔍 DEBUG: Command: AWS_ACCESS_KEY_ID=some_access_key1 AWS_SECRET_ACCESS_KEY=some_secret_key1 $(WEED_BINARY) mini -dir=$(SERVER_DIR) -s3.port=$(S3_PORT) -s3.config=$(S3_CONFIG)"
+	@env AWS_ACCESS_KEY_ID=some_access_key1 \
+	 AWS_SECRET_ACCESS_KEY=some_secret_key1 \
+	 $(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-s3.port=$(S3_PORT) \
 		-s3.config=$(S3_CONFIG) \
 		> weed-test.log 2>&1 & \
-		echo $$! > weed-test.pid
+		echo $$! > weed-server.pid
 	
 	@echo "Waiting for S3 server to be ready..."
 	@for i in $$(seq 1 30); do \
@@ -97,7 +100,7 @@ start-server: check-deps
 		sleep 1; \
 	done; \
 	echo "S3 server failed to start"; \
-	exit 1 > weed-server.pid
+	exit 1
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
 	@sleep 2

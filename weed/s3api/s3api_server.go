@@ -110,7 +110,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option.AllowedOrigins = domains
 	}
 
-	iam := NewIdentityAccessManagementWithStore(option, explicitStore)
+	// Initialize basic/legacy IAM - filerClient not available yet, passed as nil
+	iam := NewIdentityAccessManagementWithStore(option, nil, explicitStore)
 
 	// Initialize bucket policy engine first
 	policyEngine := NewBucketPolicyEngine()
@@ -146,16 +147,24 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 
-	// Update credential store to use FilerClient's current filer for HA
-	if store := iam.credentialManager.GetStore(); store != nil {
-		if filerFuncSetter, ok := store.(interface {
-			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
-		}); ok {
-			// Use FilerClient's GetCurrentFiler for true HA
-			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, option.GrpcDialOption)
-			glog.V(1).Infof("Updated credential store to use FilerClient's current active filer (HA-aware)")
-		}
+	// Initialize Global SSE-S3 Key Manager early so it's available for IAM fallback
+	// This ensures we can access the KEK for STS signing key if needed
+	if err := InitializeGlobalSSES3KeyManager(filerClient, option.GrpcDialOption); err != nil {
+		glog.Errorf("Failed to initialize SSE-S3 Key Manager: %v", err)
+		// We continue, as this might be a transient failure or non-critical for some setups,
+		// but IAM fallback to KEK will fail if this didn't succeed.
 	}
+
+	// Update credential store to use FilerClient's current filer for HA
+	iam.SetFilerClient(filerClient)
+
+	// Keep attempting to load configuration from filer now that we have a client
+	// The initial load in NewIdentityAccessManagementWithStore might have failed if client was nil
+	go func() {
+		if err := iam.loadS3ApiConfigurationFromFiler(option); err != nil {
+			glog.Warningf("Failed to load IAM config from filer after client update: %v", err)
+		}
+	}()
 
 	s3ApiServer = &S3ApiServer{
 		option:                option,
@@ -178,19 +187,25 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// This avoids circular dependency by not passing the entire S3ApiServer
 	iam.policyEngine = policyEngine
 
-	// Initialize advanced IAM system if config is provided
-	if option.IamConfig != "" {
-		glog.V(1).Infof("Loading advanced IAM configuration from: %s", option.IamConfig)
+	// Initialize advanced IAM system if config is provided or explicitly enabled
+	if option.IamConfig != "" || option.EnableIam {
+		configSource := "defaults"
+		if option.IamConfig != "" {
+			configSource = option.IamConfig
+		}
+		glog.V(1).Infof("Loading advanced IAM configuration from: %s", configSource)
 
 		// Use FilerClient's GetCurrentFiler for HA-aware filer selection
 		iamManager, err := loadIAMManagerFromConfig(option.IamConfig, func() string {
 			return string(filerClient.GetCurrentFiler())
+		}, func() string {
+			return signingKey
 		})
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
-			if iam.credentialManager != nil {
-				iamManager.SetUserStore(iam.credentialManager)
+			if s3ApiServer.iam.credentialManager != nil {
+				iamManager.SetUserStore(s3ApiServer.iam.credentialManager)
 			}
 			glog.V(1).Infof("IAM Manager loaded, creating integration")
 			// Create S3 IAM integration with the loaded IAM manager
@@ -233,6 +248,10 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		})
 	}
 	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
+
+	// Update IAM with the final filer client (already handled by SetFilerClient above,
+	// but this reinforces it if we ever change the flow)
+	s3ApiServer.iam.SetFilerClient(s3ApiServer.filerClient)
 	if option.LocalFilerSocket == "" {
 		if s3ApiServer.client, err = util_http.NewGlobalHttpClient(); err != nil {
 			return nil, err
@@ -248,11 +267,6 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	}
 
 	s3ApiServer.registerRouter(router)
-
-	// Initialize the global SSE-S3 key manager with filer access
-	if err := InitializeGlobalSSES3KeyManager(s3ApiServer); err != nil {
-		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
-	}
 
 	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
 		option.BucketsPath,
@@ -830,14 +844,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 }
 
 // loadIAMManagerFromConfig loads the advanced IAM manager from configuration file
-func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string) (*integration.IAMManager, error) {
-	// Read configuration file
-	configData, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	// Parse configuration structure
+func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() string, getFilerSigningKey func() string) (*integration.IAMManager, error) {
 	var configRoot struct {
 		STS       *sts.STSConfig                `json:"sts"`
 		Policy    *policy.PolicyEngineConfig    `json:"policy"`
@@ -849,24 +856,43 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		} `json:"policies"`
 	}
 
-	if err := json.Unmarshal(configData, &configRoot); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+	if configPath != "" {
+		// Read configuration file
+		configData, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+
+		if err := json.Unmarshal(configData, &configRoot); err != nil {
+			return nil, fmt.Errorf("failed to parse config: %w", err)
+		}
+	} else {
+		glog.V(1).Infof("No IAM config file provided; using defaults")
+		// Initialize with empty config which will trigger defaults below
+	}
+
+	// Ensure STS config exists so we can apply defaults later
+	if configRoot.STS == nil {
+		configRoot.STS = &sts.STSConfig{}
 	}
 
 	// Ensure a valid policy engine config exists
 	if configRoot.Policy == nil {
-		// Provide a secure default if not specified in the config file
-		// Default to Deny with in-memory store so that JSON-defined policies work without filer
-		glog.V(1).Infof("No policy engine config provided; using defaults (DefaultEffect=%s, StoreType=%s)", sts.EffectDeny, sts.StoreTypeMemory)
-		configRoot.Policy = &policy.PolicyEngineConfig{
-			DefaultEffect: sts.EffectDeny,
-			StoreType:     sts.StoreTypeMemory,
-		}
-	} else if configRoot.Policy.StoreType == "" {
-		// If policy config exists but storeType is not specified, use memory store
-		// This ensures JSON-defined policies are stored in memory and work correctly
+		configRoot.Policy = &policy.PolicyEngineConfig{}
+	}
+	if configRoot.Policy.StoreType == "" {
 		configRoot.Policy.StoreType = sts.StoreTypeMemory
-		glog.V(1).Infof("Policy storeType not specified; using memory store for JSON config-based setup")
+	}
+	if configRoot.Policy.DefaultEffect == "" {
+		// Default to Allow (open) with in-memory store so that
+		// users can start using STS without locking themselves out immediately.
+		// For other stores (e.g. filer), default to Deny (closed) for security.
+		if configRoot.Policy.StoreType == sts.StoreTypeMemory {
+			configRoot.Policy.DefaultEffect = sts.EffectAllow
+		} else {
+			configRoot.Policy.DefaultEffect = sts.EffectDeny
+		}
+		glog.V(1).Infof("Using policy defaults: DefaultEffect=%s, StoreType=%s", configRoot.Policy.DefaultEffect, configRoot.Policy.StoreType)
 	}
 
 	// Create IAM configuration
@@ -876,6 +902,26 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		Roles: &integration.RoleStoreConfig{
 			StoreType: sts.StoreTypeMemory, // Use memory store for JSON config-based setup
 		},
+	}
+
+	// Apply default signing key if not present in config
+	if iamConfig.STS != nil && len(iamConfig.STS.SigningKey) == 0 {
+		// 1. Try server-configured signing key (security.toml / CLI)
+		if key := getFilerSigningKey(); key != "" {
+			iamConfig.STS.SigningKey = []byte(key)
+			glog.V(1).Infof("Using default filer signing key for STS service")
+		} else {
+			// 2. Try cluster-wide SSE-S3 Master Key (KEK) from Filer
+			// This ensures zero-config consistency across the cluster
+			if kek := GetSSES3KeyManager().GetMasterKey(); len(kek) > 0 {
+				iamConfig.STS.SigningKey = kek
+				glog.V(1).Infof("Using SSE-S3 Master Key (KEK) for STS service")
+			} else {
+				// 3. Fail if no signing key is available
+				// This ensures consistency across multiple S3 servers and secure operation
+				return nil, fmt.Errorf("no signing key found for STS service; please provide 'signingKey' in IAM config, configure 'jwt.filer_signing.key' in security.toml, or ensure SSE-S3 is initialized")
+			}
+		}
 	}
 
 	// Initialize IAM manager
@@ -959,4 +1005,12 @@ func (s3a *S3ApiServer) AuthenticateRequest(r *http.Request) (string, interface{
 		return identity.Name, identity, err
 	}
 	return "", nil, err
+}
+
+// DefaultAllow returns whether access is allowed by default when no policy is found
+func (s3a *S3ApiServer) DefaultAllow() bool {
+	if s3a.iam == nil || s3a.iam.iamIntegration == nil {
+		return false
+	}
+	return s3a.iam.iamIntegration.DefaultAllow()
 }
