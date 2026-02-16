@@ -146,6 +146,14 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 		return nil, fmt.Errorf("failed to create security.toml: %v", err)
 	}
 
+	// Set environment variables for admin credentials safely for this test
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+	}
+
 	// Start weed mini in a goroutine by calling the command directly
 	cluster.wg.Add(1)
 	go func() {
@@ -158,10 +166,6 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			os.Chdir(oldDir)
 			os.Args = oldArgs
 		}()
-
-		// Set environment variables for admin credentials safely for this test
-		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
-		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
 
 		// Change to test directory so mini picks up security.toml
 		os.Chdir(testDir)
