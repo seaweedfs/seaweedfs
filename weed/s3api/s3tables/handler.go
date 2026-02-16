@@ -44,15 +44,17 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region    string
-	accountID string
+	region       string
+	accountID    string
+	defaultAllow bool // Whether to allow access by default (for zero-config IAM)
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
 func NewS3TablesHandler() *S3TablesHandler {
 	return &S3TablesHandler{
-		region:    DefaultRegion,
-		accountID: DefaultAccountID,
+		region:       DefaultRegion,
+		accountID:    DefaultAccountID,
+		defaultAllow: false,
 	}
 }
 
@@ -68,6 +70,11 @@ func (h *S3TablesHandler) SetAccountID(accountID string) {
 	if accountID != "" {
 		h.accountID = accountID
 	}
+}
+
+// SetDefaultAllow sets whether to allow access by default
+func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
+	h.defaultAllow = allow
 }
 
 // FilerClient interface for filer operations
