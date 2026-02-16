@@ -130,7 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [exec, proxy]
+        mode: [exec, proxy, native]
 
     steps:
       - name: Checkout code
