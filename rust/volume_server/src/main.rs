@@ -169,9 +169,16 @@ fn run_supervised_mode(
 
     let mut handles = Vec::new();
     for spec in build_listener_specs(&frontend, &backend) {
-        let enable_native_http =
-            enable_native_http_admin_control && spec.role == ListenerRole::HttpAdmin;
-        handles.push(start_proxy_listener(spec, enable_native_http));
+        let native_http_role = if enable_native_http_admin_control {
+            match spec.role {
+                ListenerRole::HttpAdmin => Some(ListenerRole::HttpAdmin),
+                ListenerRole::HttpPublic => Some(ListenerRole::HttpPublic),
+                ListenerRole::Grpc => None,
+            }
+        } else {
+            None
+        };
+        handles.push(start_proxy_listener(spec, native_http_role));
     }
 
     let mut terminated_by_signal = false;
@@ -209,7 +216,7 @@ fn run_supervised_mode(
 
 fn run_native_mode(forwarded: &[String]) -> Result<(), String> {
     eprintln!(
-        "weed-volume-rs: native mode bootstrap active; serving Rust /status and /healthz, delegating remaining handlers to Go backend"
+        "weed-volume-rs: native mode bootstrap active; serving Rust /status, /healthz, and OPTIONS control paths, delegating remaining handlers to Go backend"
     );
     run_supervised_mode(forwarded, true)
 }
@@ -231,7 +238,10 @@ fn terminate_child(child: &mut Child) {
     let _ = child.kill();
 }
 
-fn start_proxy_listener(spec: ProxySpec, enable_native_http: bool) -> thread::JoinHandle<()> {
+fn start_proxy_listener(
+    spec: ProxySpec,
+    native_http_role: Option<ListenerRole>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let listener = match TcpListener::bind(&spec.frontend_addr) {
             Ok(v) => v,
@@ -257,11 +267,11 @@ fn start_proxy_listener(spec: ProxySpec, enable_native_http: bool) -> thread::Jo
             match listener.accept() {
                 Ok((stream, _)) => {
                     let backend_addr = spec.backend_addr.clone();
-                    let native_http_enabled = enable_native_http;
+                    let native_http_role = native_http_role;
                     thread::spawn(move || {
                         let mut stream = stream;
-                        if native_http_enabled {
-                            match try_handle_native_admin_http(&mut stream) {
+                        if let Some(role) = native_http_role {
+                            match try_handle_native_http(&mut stream, role) {
                                 Ok(true) => return,
                                 Ok(false) => {}
                                 Err(err) => {
@@ -339,14 +349,23 @@ fn build_listener_specs(frontend: &FrontendPorts, backend: &BackendPorts) -> Vec
     specs
 }
 
-fn try_handle_native_admin_http(stream: &mut TcpStream) -> io::Result<bool> {
+fn try_handle_native_http(stream: &mut TcpStream, role: ListenerRole) -> io::Result<bool> {
     let parsed = match peek_http_request_headers(stream)? {
         Some(v) => v,
         None => return Ok(false),
     };
 
-    let is_control = parsed.path == "/status" || parsed.path == "/healthz";
-    if !is_control {
+    if parsed.method == "OPTIONS" {
+        consume_bytes(stream, parsed.header_len)?;
+        write_native_options_response(stream, role, parsed.origin.is_some())?;
+        let _ = stream.shutdown(Shutdown::Both);
+        return Ok(true);
+    }
+
+    let is_admin_control = role == ListenerRole::HttpAdmin
+        && (parsed.path == "/status" || parsed.path == "/healthz")
+        && (parsed.method == "GET" || parsed.method == "HEAD");
+    if !is_admin_control {
         return Ok(false);
     }
 
@@ -366,6 +385,7 @@ struct ParsedHttpRequest {
     method: String,
     path: String,
     request_id: Option<String>,
+    origin: Option<String>,
     header_len: usize,
 }
 
@@ -411,15 +431,13 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
     let method = request_parts.next()?.to_string();
     let raw_path = request_parts.next()?.to_string();
 
-    if method != "GET" && method != "HEAD" {
-        return None;
-    }
     let path = raw_path
         .split_once('?')
         .map(|(p, _)| p.to_string())
         .unwrap_or(raw_path);
 
     let mut request_id = None;
+    let mut origin = None;
     for line in lines {
         if line.is_empty() {
             break;
@@ -427,6 +445,8 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
         if let Some((name, value)) = line.split_once(':') {
             if name.eq_ignore_ascii_case("x-amz-request-id") {
                 request_id = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("origin") {
+                origin = Some(value.trim().to_string());
             }
         }
     }
@@ -435,6 +455,7 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
         method,
         path,
         request_id,
+        origin,
         header_len,
     })
 }
@@ -482,6 +503,37 @@ fn write_native_healthz_response(
         method == "HEAD",
         request_id,
     )
+}
+
+fn write_native_options_response(
+    stream: &mut TcpStream,
+    role: ListenerRole,
+    include_cors_headers: bool,
+) -> io::Result<()> {
+    let allow_methods = if role == ListenerRole::HttpPublic {
+        "GET, OPTIONS"
+    } else {
+        "PUT, POST, GET, DELETE, OPTIONS"
+    };
+
+    let mut response = String::new();
+    response.push_str("HTTP/1.1 200 OK\r\n");
+    response.push_str("Server: SeaweedFS Volume (rust-native-bootstrap)\r\n");
+    response.push_str("Connection: close\r\n");
+    response.push_str("Access-Control-Allow-Methods: ");
+    response.push_str(allow_methods);
+    response.push_str("\r\n");
+    response.push_str("Access-Control-Allow-Headers: *\r\n");
+    if include_cors_headers {
+        response.push_str("Access-Control-Allow-Origin: *\r\n");
+        response.push_str("Access-Control-Allow-Credentials: true\r\n");
+    }
+    response.push_str("Content-Length: 0\r\n");
+    response.push_str("\r\n");
+
+    stream.write_all(response.as_bytes())?;
+    stream.flush()?;
+    Ok(())
 }
 
 fn write_native_http_response(
