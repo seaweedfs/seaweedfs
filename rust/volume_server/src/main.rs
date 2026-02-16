@@ -83,8 +83,9 @@ fn run() -> Result<(), String> {
     match mode.as_str() {
         "exec" => run_exec_mode(&forwarded),
         "proxy" => run_proxy_mode(&forwarded),
+        "native" => run_native_mode(&forwarded),
         other => Err(format!(
-            "unsupported VOLUME_SERVER_RUST_MODE {:?} (supported: exec, proxy)",
+            "unsupported VOLUME_SERVER_RUST_MODE {:?} (supported: exec, proxy, native)",
             other
         )),
     }
@@ -187,6 +188,13 @@ fn run_proxy_mode(forwarded: &[String]) -> Result<(), String> {
             child_status
         ))
     }
+}
+
+fn run_native_mode(forwarded: &[String]) -> Result<(), String> {
+    eprintln!(
+        "weed-volume-rs: native mode bootstrap active; delegating to Go backend while Rust handlers are implemented"
+    );
+    run_proxy_mode(forwarded)
 }
 
 fn spawn_backend(weed_binary: &PathBuf, backend_args: &[String]) -> Result<Child, String> {
@@ -416,14 +424,16 @@ fn print_help() {
     println!("Modes:");
     println!("  - exec  (default): exec Go weed volume process directly");
     println!("  - proxy: run Rust TCP proxy front-end and supervise Go weed backend");
+    println!("  - native: bootstrap native mode entrypoint (currently supervises/proxies Go backend)");
     println!();
     println!("Environment:");
-    println!("  VOLUME_SERVER_RUST_MODE=exec|proxy");
+    println!("  VOLUME_SERVER_RUST_MODE=exec|proxy|native");
     println!("  WEED_BINARY=/path/to/weed");
     println!();
     println!("Examples:");
     println!("  weed-volume-rs -config_dir=/tmp/cfg volume -ip=127.0.0.1 -port=8080 ...");
     println!("  VOLUME_SERVER_RUST_MODE=proxy weed-volume-rs -config_dir=/tmp/cfg volume -ip=127.0.0.1 -port=8080 ...");
+    println!("  VOLUME_SERVER_RUST_MODE=native weed-volume-rs -config_dir=/tmp/cfg volume -ip=127.0.0.1 -port=8080 ...");
 }
 
 fn resolve_weed_binary() -> Result<PathBuf, String> {
