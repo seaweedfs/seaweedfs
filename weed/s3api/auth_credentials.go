@@ -1366,8 +1366,8 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 			return identity, s3err.ErrNotImplemented
 		}
 	case authTypeAnonymous:
-		// Anonymous users cannot use IAM API
-		return identity, s3err.ErrAccessDenied
+		// Anonymous users can be authenticated, but authorization is handled separately
+		return iam.identityAnonymous, s3err.ErrNone
 	default:
 		return identity, s3err.ErrNotImplemented
 	}
