@@ -16,7 +16,7 @@ import (
 // setupRoutingTestServer creates a minimal S3ApiServer for routing tests
 func setupRoutingTestServer(t *testing.T) *S3ApiServer {
 	opt := &S3ApiServerOption{EnableIam: true}
-	iam := NewIdentityAccessManagementWithStore(opt, "memory")
+	iam := NewIdentityAccessManagementWithStore(opt, nil, "memory")
 	iam.isAuthEnabled = true
 
 	if iam.credentialManager == nil {

@@ -206,3 +206,48 @@ func TestEvaluatePolicyWithConditions(t *testing.T) {
 		})
 	}
 }
+func TestCheckPermissionWithDefaultAllow(t *testing.T) {
+	tests := []struct {
+		name         string
+		defaultAllow bool
+		policy       string
+		expected     bool
+	}{
+		{
+			"default deny (no policy, DefaultAllow=false)",
+			false,
+			"",
+			false,
+		},
+		{
+			"default allow (no policy, DefaultAllow=true)",
+			true,
+			"",
+			true,
+		},
+		{
+			"explicit deny overrides DefaultAllow=true",
+			true,
+			`{"Statement":[{"Effect":"Deny","Principal":"*","Action":"s3tables:GetTable"}]}`,
+			false,
+		},
+		{
+			"explicit allow works with DefaultAllow=false",
+			false,
+			`{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3tables:GetTable"}]}`,
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &PolicyContext{
+				DefaultAllow: tt.defaultAllow,
+			}
+			result := CheckPermissionWithContext("s3tables:GetTable", "user123", "owner123", tt.policy, "", ctx)
+			if result != tt.expected {
+				t.Errorf("CheckPermissionWithContext() = %v, want %v (DefaultAllow=%v, Policy=%s)", result, tt.expected, tt.defaultAllow, tt.policy)
+			}
+		})
+	}
+}

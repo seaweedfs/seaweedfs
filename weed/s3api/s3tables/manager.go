@@ -20,7 +20,10 @@ type Manager struct {
 
 // NewManager creates a new Manager.
 func NewManager() *Manager {
-	return &Manager{handler: NewS3TablesHandler()}
+	m := &Manager{handler: NewS3TablesHandler()}
+	// Default to allowing access when IAM is not configured
+	m.handler.SetDefaultAllow(true)
+	return m
 }
 
 // SetRegion sets the AWS region for ARN generation.
@@ -31,6 +34,11 @@ func (m *Manager) SetRegion(region string) {
 // SetAccountID sets the AWS account ID for ARN generation.
 func (m *Manager) SetAccountID(accountID string) {
 	m.handler.SetAccountID(accountID)
+}
+
+// SetDefaultAllow sets whether to allow access by default.
+func (m *Manager) SetDefaultAllow(allow bool) {
+	m.handler.SetDefaultAllow(allow)
 }
 
 // Execute runs an S3 Tables operation and decodes the response into resp (if provided).

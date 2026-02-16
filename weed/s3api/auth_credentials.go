@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	// Import KMS providers to register them
 	_ "github.com/seaweedfs/seaweedfs/weed/kms/aws"
@@ -54,7 +55,7 @@ type IdentityAccessManagement struct {
 	domain            string
 	isAuthEnabled     bool
 	credentialManager *credential.CredentialManager
-	filerClient       filer_pb.SeaweedFilerClient
+	filerClient       *wdclient.FilerClient
 	grpcDialOption    grpc.DialOption
 
 	// IAM Integration for advanced features
@@ -132,15 +133,37 @@ func (c *Credential) isCredentialExpired() bool {
 	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
 }
 
-func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManagement {
-	return NewIdentityAccessManagementWithStore(option, "")
+// NewIdentityAccessManagement creates a new IAM manager
+// SetFilerClient updates the filer client and its associated credential store
+func (iam *IdentityAccessManagement) SetFilerClient(filerClient *wdclient.FilerClient) {
+	iam.m.Lock()
+	iam.filerClient = filerClient
+	iam.m.Unlock()
+
+	if iam.credentialManager == nil || filerClient == nil {
+		return
+	}
+
+	// Update credential store to use FilerClient's current filer for HA
+	if store := iam.credentialManager.GetStore(); store != nil {
+		if filerFuncSetter, ok := store.(interface {
+			SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+		}); ok {
+			filerFuncSetter.SetFilerAddressFunc(filerClient.GetCurrentFiler, iam.grpcDialOption)
+		}
+	}
 }
 
-func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitStore string) *IdentityAccessManagement {
+func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
+	return NewIdentityAccessManagementWithStore(option, filerClient, "")
+}
+
+func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient *wdclient.FilerClient, explicitStore string) *IdentityAccessManagement {
 	iam := &IdentityAccessManagement{
 		domain:       option.DomainName,
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
+		filerClient:  filerClient,
 	}
 
 	// Always initialize credential manager with fallback to defaults
@@ -172,6 +195,25 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, explicitSto
 
 	iam.credentialManager = credentialManager
 	iam.stopChan = make(chan struct{})
+	iam.grpcDialOption = option.GrpcDialOption
+
+	// Initialize default anonymous identity
+	// This ensures consistent behavior for anonymous access:
+	// 1. In simple auth mode (no IAM integration):
+	//    - lookupAnonymous returns this identity
+	//    - VerifyActionPermission checks actions (which are empty) -> Denies access
+	//    - This preserves the secure-by-default behavior for simple auth
+	// 2. In advanced IAM mode (with Policy Engine):
+	//    - lookupAnonymous returns this identity
+	//    - VerifyActionPermission proceeds to Policy Engine
+	//    - Policy Engine evaluates against policies (DefaultEffect=Allow if no config)
+	//    - This enables the flexible "Open by Default" for zero-config startup
+	iam.identityAnonymous = &Identity{
+		Name:     "anonymous",
+		Account:  &AccountAnonymous,
+		Actions:  []Action{},
+		IsStatic: true,
+	}
 
 	// First, try to load configurations from file or filer
 	startConfigFile := option.Config
@@ -552,6 +594,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 		}
 	}
 
+	// Ensure anonymous identity exists
+	if identityAnonymous == nil {
+		identityAnonymous = &Identity{
+			Name:     "anonymous",
+			Account:  accounts[AccountAnonymous.Id],
+			Actions:  []Action{},
+			IsStatic: true,
+		}
+	}
+
 	// atomically switch
 	iam.identities = identities
 	iam.identityAnonymous = identityAnonymous
@@ -572,6 +624,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 			}
 		}
 		if !exists {
+			if len(envIdent.Credentials) == 0 {
+				continue
+			}
 			iam.identities = append(iam.identities, envIdent)
 			iam.accessKeyIdent[envIdent.Credentials[0].AccessKey] = envIdent
 			iam.nameToIdentity[envIdent.Name] = envIdent
@@ -992,7 +1047,8 @@ func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identi
 	return iam.lookupByAccessKey(accessKey)
 }
 
-func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, found bool) {
+// LookupAnonymous returns the anonymous identity if it exists
+func (iam *IdentityAccessManagement) LookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	if iam.identityAnonymous != nil {
@@ -1112,6 +1168,9 @@ func (iam *IdentityAccessManagement) handleAuthResult(w http.ResponseWriter, r *
 // Wrapper to maintain backward compatibility
 func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action) (*Identity, s3err.ErrorCode) {
 	identity, err, _ := iam.authRequestWithAuthType(r, action)
+	if err != s3err.ErrNone {
+		return nil, err
+	}
 	return identity, err
 }
 
@@ -1173,7 +1232,7 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 		}
 	case authTypeAnonymous:
 		amzAuthType = "Anonymous"
-		if identity, found = iam.lookupAnonymous(); !found {
+		if identity, found = iam.LookupAnonymous(); !found {
 			r.Header.Set(s3_constants.AmzAuthType, amzAuthType)
 			return identity, s3err.ErrAccessDenied, reqAuthType
 		}
@@ -1212,8 +1271,8 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
 
-	if action == s3_constants.ACTION_LIST && bucket == "" {
-		// ListBuckets operation - authorization handled per-bucket in the handler
+	if action == s3_constants.ACTION_LIST && bucket == "" && identity.Name != s3_constants.AccountAnonymousId {
+		// ListBuckets operation for authenticated users - authorization handled per-bucket in the handler
 	} else {
 		// First check bucket policy if one exists
 		// Bucket policies can grant or deny access to specific users/principals
@@ -1307,8 +1366,8 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 			return identity, s3err.ErrNotImplemented
 		}
 	case authTypeAnonymous:
-		// Anonymous users cannot use IAM API
-		return identity, s3err.ErrAccessDenied
+		// Anonymous users can be authenticated, but authorization is handled separately
+		return iam.identityAnonymous, s3err.ErrNone
 	default:
 		return identity, s3err.ErrNotImplemented
 	}

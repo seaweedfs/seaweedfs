@@ -270,6 +270,9 @@ func (s *STSService) Initialize(config *STSConfig) error {
 		return fmt.Errorf(ErrConfigCannotBeNil)
 	}
 
+	// Apply defaults before validation
+	config.ApplyDefaults()
+
 	if err := s.validateConfig(config); err != nil {
 		return fmt.Errorf("invalid STS configuration: %w", err)
 	}
@@ -286,6 +289,21 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	s.initialized = true
 	return nil
+}
+
+// ApplyDefaults applies default values to the STS configuration
+func (c *STSConfig) ApplyDefaults() {
+	if c.TokenDuration.Duration <= 0 {
+		c.TokenDuration.Duration = time.Duration(DefaultTokenDuration) * time.Second
+	}
+
+	if c.MaxSessionLength.Duration <= 0 {
+		c.MaxSessionLength.Duration = time.Duration(DefaultMaxSessionLength) * time.Second
+	}
+
+	if c.Issuer == "" {
+		c.Issuer = DefaultIssuer
+	}
 }
 
 // validateConfig validates the STS configuration

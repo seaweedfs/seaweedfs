@@ -86,6 +86,7 @@ type PolicyContext struct {
 	SSEAlgorithm    string
 	KMSKeyArn       string
 	StorageClass    string
+	DefaultAllow    bool
 }
 
 // CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
@@ -117,17 +118,30 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 }
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+	fmt.Printf("DEBUG: checkPermission op=%s princ=%s owner=%s policyLen=%d defaultAllow=%v\n",
+		operation, principal, owner, len(resourcePolicy), ctx != nil && ctx.DefaultAllow)
+	if resourcePolicy != "" {
+		fmt.Printf("DEBUG: policy content: %s\n", resourcePolicy)
+	}
+
 	// Owner always has permission
 	if principal == owner {
+		fmt.Printf("DEBUG: Allowed by Owner check\n")
 		return true
 	}
 
 	if hasIdentityPermission(operation, ctx) {
+		fmt.Printf("DEBUG: Allowed by Identity check\n")
 		return true
 	}
 
-	// If no policy is provided, deny access (default deny)
+	// If no policy is provided, use default allow if enabled
 	if resourcePolicy == "" {
+		if ctx != nil && ctx.DefaultAllow {
+			fmt.Printf("DEBUG: Allowed by DefaultAllow\n")
+			return true
+		}
+		fmt.Printf("DEBUG: Denied by DefaultAllow=false (no policy)\n")
 		return false
 	}
 
@@ -177,7 +191,16 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		}
 	}
 
-	return hasAllow
+	if hasAllow {
+		return true
+	}
+
+	// If no statement matched, use default allow if enabled
+	if ctx != nil && ctx.DefaultAllow {
+		return true
+	}
+
+	return false
 }
 
 func hasIdentityPermission(operation string, ctx *PolicyContext) bool {

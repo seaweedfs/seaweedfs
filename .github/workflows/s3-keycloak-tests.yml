@@ -97,7 +97,7 @@ jobs:
           # Verify service accessibility
           echo "=== Verifying Service Accessibility ==="
           curl -f http://localhost:8080/realms/master
-          curl -s http://localhost:8333
+          curl -s http://localhost:8333/healthz
           echo "✅ SeaweedFS S3 API is responding (IAM-protected endpoint)"
           
           # Run Keycloak-specific tests

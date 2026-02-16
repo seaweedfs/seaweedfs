@@ -22,7 +22,7 @@ func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}
@@ -264,7 +264,7 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}
@@ -311,7 +311,7 @@ func TestSTSIdentityClaimsPopulation(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}

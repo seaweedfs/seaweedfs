@@ -355,6 +355,9 @@ func isFlagPassed(name string) bool {
 
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
 func isPortOpenOnIP(ip string, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
 		return false
@@ -366,6 +369,9 @@ func isPortOpenOnIP(ip string, port int) bool {
 // isPortAvailable checks if a port is available on any interface
 // This is more comprehensive than checking a single IP
 func isPortAvailable(port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
 	// Try to listen on all interfaces (0.0.0.0)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -381,6 +387,10 @@ func isPortAvailable(port int) bool {
 func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool) int {
 	for i := 0; i < maxAttempts; i++ {
 		port := startPort + i
+		if port > 65535 {
+			// Wrap around to a lower range if we exceed 65535
+			port = 10000 + (port % 65535)
+		}
 		// Skip ports reserved for gRPC calculation
 		if reservedPorts[port] {
 			continue
@@ -398,14 +408,14 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 // If the port is not available, it finds the next available port and updates the pointer
 // The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
 func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
-	if portPtr == nil {
+	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
+	isExplicitPort := explicitPortFlags[flagName]
+
+	if *portPtr == 0 {
 		return nil
 	}
 
 	original := *portPtr
-
-	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
-	isExplicitPort := explicitPortFlags[flagName]
 
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
