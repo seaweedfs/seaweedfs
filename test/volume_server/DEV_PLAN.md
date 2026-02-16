@@ -1190,3 +1190,10 @@ Update this section during implementation:
 - Profiles covered: P1 with EC shard generate/mount lifecycle; includes test-local gRPC offset proxy for EC internal dial-path parity.
 - Gaps introduced/remaining: EC `BatchDelete` success branch is now covered; deeper distributed failure-injection permutations remain pending.
 - Commit: `1bb40b6bc`
+
+- Date: 2026-02-15
+- Change: Expanded HTTP conditional-header matrix for `HEAD` requests with combined header scenarios.
+- APIs covered: `HEAD` now verifies `If-Modified-Since` precedence over mismatched `If-None-Match`, and `If-None-Match` precedence when IMS is stale but ETag matches.
+- Profiles covered: P1.
+- Gaps introduced/remaining: combined conditional-header precedence paths for `HEAD`/`GET` are now explicitly covered.
+- Commit: `ed23e290f`
