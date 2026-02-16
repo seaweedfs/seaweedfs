@@ -1204,3 +1204,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: multi-volume stream boundary coverage is now present for successful reads; transport interruption branches remain pending.
 - Commit: `ab95a6ef1`
+
+- Date: 2026-02-15
+- Change: Expanded split-port unsupported HTTP method matrix with `MKCOL` coverage.
+- APIs covered: admin/public parity for `MKCOL` (`400` on admin, passthrough `200` on public) with post-call data-integrity verification.
+- Profiles covered: P2.
+- Gaps introduced/remaining: unsupported-method sampling now covers `PATCH`, `TRACE`, `PROPFIND`, `CONNECT`, and `MKCOL`; cancellation/transport fault paths remain the main unaddressed area.
+- Commit: `2ab30900d`
