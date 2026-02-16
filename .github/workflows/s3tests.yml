@@ -479,10 +479,7 @@ jobs:
           " || echo "Cleanup completed with some errors (expected)"
           
           # Run versioning and object lock tests once (avoid duplicates)
-          # Note: Excluding test_object_lock_delete_object_with_retention_and_marker because it
-          # tests incorrect behavior (SeaweedFS now correctly implements AWS S3 behavior: delete
-          # under COMPLIANCE retention returns AccessDenied, not creating a delete marker)
-          tox -- s3tests/functional/test_s3.py -k "object_lock or versioning" --deselect="s3tests/functional/test_s3.py::test_object_lock_delete_object_with_retention_and_marker" --tb=short
+          tox -- s3tests/functional/test_s3.py -k "object_lock or versioning" --tb=short
           kill -9 $pid || true
           # Clean up data directory
           rm -rf "$WEED_DATA_DIR" || true
