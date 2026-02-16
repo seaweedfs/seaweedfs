@@ -1176,3 +1176,10 @@ Update this section during implementation:
 - Profiles covered: P1 with EC shard generation/mount lifecycle setup.
 - Gaps introduced/remaining: low-level read metadata fault-injection and transport interruption branches remain pending.
 - Commit: `37bf9b5eb`
+
+- Date: 2026-02-15
+- Change: Added deterministic replicated-write failure coverage for unmet replication requirements.
+- APIs covered: HTTP write path now verifies replication error handling (`500`) and no-local-commit outcome (`404` on follow-up read) when volume replication is configured (`001`) but replica set cannot be satisfied.
+- Profiles covered: P1-derived single-node profile with per-volume replication override.
+- Gaps introduced/remaining: replicated-write failure branch is now covered; cancellation (`499`) and deeper transport fault-injection branches remain pending.
+- Commit: `4835d3443`
