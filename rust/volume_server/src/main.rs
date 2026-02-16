@@ -470,6 +470,24 @@ fn try_handle_native_http(
         return Ok(true);
     }
 
+    if matches!(parsed.method.as_str(), "GET" | "HEAD" | "POST" | "PUT") {
+        if let Some((vid, fid)) = extract_fid_route_parts(&parsed.path) {
+            if !is_valid_volume_id_token(&vid) || !is_valid_fid_token(&fid) {
+                consume_bytes(stream, parsed.header_len + parsed.content_length)?;
+                write_native_http_response(
+                    stream,
+                    "400 Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"",
+                    parsed.method == "HEAD",
+                    parsed.request_id.as_deref(),
+                )?;
+                let _ = stream.shutdown(Shutdown::Both);
+                return Ok(true);
+            }
+        }
+    }
+
     let is_admin_control = role == ListenerRole::HttpAdmin
         && (parsed.path == "/status" || parsed.path == "/healthz")
         && (parsed.method == "GET" || parsed.method == "HEAD");
@@ -600,6 +618,72 @@ fn normalize_request_path(target: &str) -> String {
     raw.split_once('?')
         .map(|(p, _)| p.to_string())
         .unwrap_or(raw)
+}
+
+fn extract_fid_route_parts(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let segments: Vec<&str> = trimmed.split('/').collect();
+    if segments.len() == 1 {
+        if let Some((vid, fid_token)) = segments[0].rsplit_once(',') {
+            return Some((vid.to_string(), strip_optional_extension(fid_token)));
+        }
+        return None;
+    }
+
+    if (segments.len() == 2 || segments.len() == 3)
+        && !segments[0].is_empty()
+        && segments[0].bytes().all(|b| b.is_ascii_digit())
+    {
+        let fid = if segments.len() == 2 {
+            strip_optional_extension(segments[1])
+        } else {
+            segments[1].to_string()
+        };
+        return Some((segments[0].to_string(), fid));
+    }
+
+    None
+}
+
+fn strip_optional_extension(token: &str) -> String {
+    if let Some((base, _)) = token.rsplit_once('.') {
+        if !base.is_empty() {
+            return base.to_string();
+        }
+    }
+    token.to_string()
+}
+
+fn is_valid_volume_id_token(vid: &str) -> bool {
+    !vid.is_empty() && vid.parse::<u32>().is_ok()
+}
+
+fn is_valid_fid_token(fid: &str) -> bool {
+    if fid.is_empty() {
+        return false;
+    }
+
+    let (base, delta) = match fid.rsplit_once('_') {
+        Some((base, delta)) => (base, Some(delta)),
+        None => (fid, None),
+    };
+    if base.len() <= 8 || base.len() > 24 {
+        return false;
+    }
+    if !base.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    if let Some(delta_value) = delta {
+        if delta_value.is_empty() || !delta_value.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn is_public_read_method(method: &str) -> bool {
