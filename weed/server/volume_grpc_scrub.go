@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -95,7 +94,7 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		case volume_server_pb.VolumeScrubMode_LOCAL:
 			files, shardInfos, serrs = v.ScrubLocal()
 		case volume_server_pb.VolumeScrubMode_FULL:
-			files, shardInfos, serrs = scrubEcVolumeFull(ctx, v)
+			files, shardInfos, serrs = vs.store.ScrubEcVolume(v.VolumeId)
 		default:
 			return nil, fmt.Errorf("unsupported EC volume scrub mode %d", m)
 		}
@@ -119,8 +118,4 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		Details:          details,
 	}
 	return res, nil
-}
-
-func scrubEcVolumeFull(ctx context.Context, v *erasure_coding.EcVolume) (int64, []*volume_server_pb.EcShardInfo, []error) {
-	return 0, nil, []error{fmt.Errorf("scrubEcVolumeFull(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
 }
