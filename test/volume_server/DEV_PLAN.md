@@ -1287,3 +1287,10 @@ Update this section during implementation:
 - Profiles covered: full existing HTTP/gRPC matrix under native mode.
 - Gaps introduced/remaining: gRPC control/data APIs and most HTTP data/static/auth paths remain delegated and require incremental native replacement.
 - Commit: `7e6e0261a`
+
+- Date: 2026-02-16
+- Change: Implemented native Rust HTTP `OPTIONS` handling for admin/public listeners in `VOLUME_SERVER_RUST_MODE=native`.
+- APIs covered: admin/public `OPTIONS` method allow-list and CORS origin handling now served from Rust-native path; full HTTP and gRPC packages re-validated.
+- Profiles covered: P2 split-port CORS/OPTIONS profiles plus full existing matrix in native mode.
+- Gaps introduced/remaining: static/UI/auth and data-path HTTP handlers, plus gRPC control/data/stream handlers, remain delegated and pending native replacement.
+- Commit: `fbff2cb39`

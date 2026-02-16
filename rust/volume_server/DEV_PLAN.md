@@ -16,6 +16,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 - Rust launcher `proxy` mode has full-suite integration pass while delegating backend handlers to Go.
 - Rust launcher `native` mode is wired as the default Rust entrypoint and currently bootstraps via supervised Go backend delegation.
 - Native Rust HTTP control handlers now serve `/status` and `/healthz` directly in `native` mode.
+- Native Rust HTTP control handlers now serve `/status`, `/healthz`, and `OPTIONS` (admin/public method+CORS behavior) in `native` mode.
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -40,6 +41,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 - [ ] Admin/control endpoints:
   - [x] `GET /status` (native Rust in `native` mode)
   - [x] `GET /healthz` (native Rust in `native` mode)
+  - [x] `OPTIONS` admin/public method+CORS control behavior (native Rust in `native` mode)
   - [ ] static/UI endpoints currently exercised
 - [ ] Data read path parity:
   - [ ] fid parsing/path variants
@@ -164,3 +166,11 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
 - Commits: `7e6e0261a`
+
+- Date: 2026-02-16
+- Change: Implemented native Rust `OPTIONS` handling for admin and public listeners in `native` mode, including method allow-list and origin-driven CORS response parity used by integration tests.
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestOptionsMethodsByPort$|^TestOptionsWithOriginIncludesCorsHeaders$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
+- Commits: `fbff2cb39`
