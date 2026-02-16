@@ -685,6 +685,10 @@ fn normalize_request_path(target: &str) -> String {
 }
 
 fn extract_fid_route_parts(path: &str) -> Option<(String, String)> {
+    if is_non_fid_reserved_path(path) {
+        return None;
+    }
+
     let trimmed = path.trim_start_matches('/');
     if trimmed.is_empty() {
         return None;
@@ -698,10 +702,7 @@ fn extract_fid_route_parts(path: &str) -> Option<(String, String)> {
         return None;
     }
 
-    if (segments.len() == 2 || segments.len() == 3)
-        && !segments[0].is_empty()
-        && segments[0].bytes().all(|b| b.is_ascii_digit())
-    {
+    if (segments.len() == 2 || segments.len() == 3) && !segments[0].is_empty() {
         let fid = if segments.len() == 2 {
             strip_optional_extension(segments[1])
         } else {
@@ -711,6 +712,15 @@ fn extract_fid_route_parts(path: &str) -> Option<(String, String)> {
     }
 
     None
+}
+
+fn is_non_fid_reserved_path(path: &str) -> bool {
+    path == "/status"
+        || path == "/healthz"
+        || path == "/favicon.ico"
+        || path == "/ui/index.html"
+        || path.starts_with("/seaweedfsstatic/")
+        || path.starts_with("/stats/")
 }
 
 fn strip_optional_extension(token: &str) -> String {
