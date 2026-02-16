@@ -62,6 +62,13 @@ func (sa ServerAddress) ToHttpAddress() string {
 	return string(sa)
 }
 
+func (sa ServerAddress) Equals(other ServerAddress) bool {
+	if sa == other {
+		return true
+	}
+	return sa.ToHttpAddress() == other.ToHttpAddress()
+}
+
 func (sa ServerAddress) ToGrpcAddress() string {
 	portsSepIndex := strings.LastIndex(string(sa), ":")
 	if portsSepIndex < 0 {

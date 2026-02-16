@@ -144,7 +144,7 @@ func TestQueryInvalidAndMissingFileIDPaths(t *testing.T) {
 	}
 }
 
-func TestScrubVolumeAutoSelectAndNotImplementedModes(t *testing.T) {
+func TestScrubVolumeAutoSelectAndAllModes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -157,6 +157,11 @@ func TestScrubVolumeAutoSelectAndNotImplementedModes(t *testing.T) {
 	const volumeIDB = uint32(63)
 	framework.AllocateVolume(t, grpcClient, volumeIDA, "")
 	framework.AllocateVolume(t, grpcClient, volumeIDB, "")
+
+	// upload some data so index files are not zero-sized
+	httpClient := framework.NewHTTPClient()
+	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeIDA, 1, 1), []byte("test data A"))
+	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeIDB, 2, 2), []byte("test data B"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -181,11 +186,8 @@ func TestScrubVolumeAutoSelectAndNotImplementedModes(t *testing.T) {
 	if localResp.GetTotalVolumes() != 1 {
 		t.Fatalf("ScrubVolume local mode expected total_volumes=1, got %d", localResp.GetTotalVolumes())
 	}
-	if len(localResp.GetBrokenVolumeIds()) != 1 || localResp.GetBrokenVolumeIds()[0] != volumeIDA {
-		t.Fatalf("ScrubVolume local mode expected broken volume %d, got %v", volumeIDA, localResp.GetBrokenVolumeIds())
-	}
-	if len(localResp.GetDetails()) == 0 || !strings.Contains(strings.Join(localResp.GetDetails(), " "), "not implemented") {
-		t.Fatalf("ScrubVolume local mode expected not-implemented details, got %v", localResp.GetDetails())
+	if len(localResp.GetBrokenVolumeIds()) != 0 {
+		t.Fatalf("ScrubVolume local mode expected no broken volumes, got %v: %v", localResp.GetBrokenVolumeIds(), localResp.GetDetails())
 	}
 
 	fullResp, err := grpcClient.ScrubVolume(ctx, &volume_server_pb.ScrubVolumeRequest{
@@ -198,8 +200,8 @@ func TestScrubVolumeAutoSelectAndNotImplementedModes(t *testing.T) {
 	if fullResp.GetTotalVolumes() != 1 {
 		t.Fatalf("ScrubVolume full mode expected total_volumes=1, got %d", fullResp.GetTotalVolumes())
 	}
-	if len(fullResp.GetDetails()) == 0 || !strings.Contains(strings.Join(fullResp.GetDetails(), " "), "not implemented") {
-		t.Fatalf("ScrubVolume full mode expected not-implemented details, got %v", fullResp.GetDetails())
+	if len(fullResp.GetBrokenVolumeIds()) != 0 {
+		t.Fatalf("ScrubVolume full mode expected no broken volumes, got %v: %v", fullResp.GetBrokenVolumeIds(), fullResp.GetDetails())
 	}
 }
 

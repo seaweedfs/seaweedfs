@@ -474,6 +474,68 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 	return result, nil
 }
 
+// EvaluatePolicyDocument evaluates a single policy document without storing it.
+// defaultEffect controls the fallback result when no statements match.
+func (e *PolicyEngine) EvaluatePolicyDocument(ctx context.Context, evalCtx *EvaluationContext, policyName string, policyDoc *PolicyDocument, defaultEffect Effect) (*EvaluationResult, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if evalCtx == nil {
+		return nil, fmt.Errorf("evaluation context cannot be nil")
+	}
+
+	if policyDoc == nil {
+		return nil, fmt.Errorf("policy document cannot be nil")
+	}
+
+	if policyName == "" {
+		policyName = "inline-policy"
+	}
+
+	result := &EvaluationResult{
+		Effect: defaultEffect,
+		EvaluationDetails: &EvaluationDetails{
+			Principal:         evalCtx.Principal,
+			Action:            evalCtx.Action,
+			Resource:          evalCtx.Resource,
+			PoliciesEvaluated: []string{policyName},
+		},
+	}
+
+	var matchingStatements []StatementMatch
+	explicitDeny := false
+	hasAllow := false
+
+	for _, statement := range policyDoc.Statement {
+		if e.statementMatches(&statement, evalCtx) {
+			match := StatementMatch{
+				PolicyName:   policyName,
+				StatementSid: statement.Sid,
+				Effect:       Effect(statement.Effect),
+				Reason:       "Action, Resource, and Condition matched",
+			}
+			matchingStatements = append(matchingStatements, match)
+
+			if statement.Effect == "Deny" {
+				explicitDeny = true
+			} else if statement.Effect == "Allow" {
+				hasAllow = true
+			}
+		}
+	}
+
+	result.MatchingStatements = matchingStatements
+
+	if explicitDeny {
+		result.Effect = EffectDeny
+	} else if hasAllow {
+		result.Effect = EffectAllow
+	}
+
+	return result, nil
+}
+
 // statementMatches checks if a statement matches the evaluation context
 func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *EvaluationContext) bool {
 	// Check principal match (for trust policies)

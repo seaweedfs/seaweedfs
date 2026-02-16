@@ -36,6 +36,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -410,7 +411,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	cred := &Credential{
 		AccessKey:  sessionInfo.Credentials.AccessKeyId,
 		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
-		Status:     "Active",
+		Status:     weed_iam.AccessKeyStatusActive,
 		Expiration: sessionInfo.ExpiresAt.Unix(),
 	}
 
@@ -432,6 +433,11 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
+
+	// Restore admin privileges if the session was created by an admin
+	// if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
+	// 	identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
+	// }
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)

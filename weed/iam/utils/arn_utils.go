@@ -16,6 +16,9 @@ const (
 
 	// iamRoleMarker is the marker that identifies IAM role ARNs
 	iamRoleMarker = "role/"
+
+	// iamUserMarker is the marker that identifies IAM user ARNs
+	iamUserMarker = "user/"
 )
 
 // ARNInfo contains structured information about a parsed AWS ARN.
@@ -86,6 +89,36 @@ func ExtractRoleNameFromPrincipal(principal string) string {
 
 	// Handle IAM role format
 	return ExtractRoleNameFromArn(principal)
+}
+
+// ExtractUserNameFromPrincipal extracts the user name from an AWS IAM principal ARN.
+//
+// It handles both legacy and standard AWS IAM user ARN formats:
+//   - arn:aws:iam::user/UserName (legacy format without account ID)
+//   - arn:aws:iam::ACCOUNT:user/UserName (standard AWS format with account ID)
+//
+// Returns an empty string if the principal does not represent an IAM user.
+func ExtractUserNameFromPrincipal(principal string) string {
+	if !strings.HasPrefix(principal, iamPrefix) {
+		return ""
+	}
+
+	remainder := principal[len(iamPrefix):]
+	resourcePart := remainder
+	if colonIdx := strings.Index(remainder, ":"); colonIdx != -1 {
+		resourcePart = remainder[colonIdx+1:]
+	}
+
+	if !strings.HasPrefix(resourcePart, iamUserMarker) {
+		return ""
+	}
+
+	userName := resourcePart[len(iamUserMarker):]
+	if userName == "" {
+		return ""
+	}
+
+	return userName
 }
 
 // ExtractRoleNameFromArn extracts the role name from an AWS IAM role ARN.

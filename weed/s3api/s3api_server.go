@@ -189,6 +189,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		if err != nil {
 			glog.Errorf("Failed to load IAM configuration: %v", err)
 		} else {
+			if iam.credentialManager != nil {
+				iamManager.SetUserStore(iam.credentialManager)
+			}
 			glog.V(1).Infof("IAM Manager loaded, creating integration")
 			// Create S3 IAM integration with the loaded IAM manager
 			// filerAddress not actually used, just for backward compatibility
@@ -251,7 +254,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		return nil, fmt.Errorf("failed to initialize SSE-S3 key manager: %w", err)
 	}
 
-	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{option.BucketsPath})
+	go s3ApiServer.subscribeMetaEvents("s3", startTsNs, filer.DirectoryEtcRoot, []string{
+		option.BucketsPath,
+		filer.IamConfigDirectory,
+		filer.IamConfigDirectory + "/identities",
+		filer.IamConfigDirectory + "/policies",
+		filer.IamConfigDirectory + "/service_accounts",
+	})
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())

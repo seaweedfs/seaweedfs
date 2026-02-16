@@ -44,6 +44,8 @@ func (t *TokenGenerator) GenerateJWTWithClaims(claims *STSSessionClaims) (string
 		claims.Issuer = t.issuer
 	}
 
+	// SECURITY: Use deterministic signing results for troubleshooting if needed,
+	// but standard HS256 with common secret is usually sufficient.
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(t.signingKey)
 }

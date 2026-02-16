@@ -31,6 +31,8 @@ type STSSessionClaims struct {
 
 	// Authorization data
 	Policies []string `json:"pol,omitempty"` // policies (abbreviated)
+	// SessionPolicy contains inline session policy JSON (optional)
+	SessionPolicy string `json:"spol,omitempty"`
 
 	// Identity provider information
 	IdentityProvider string `json:"idp"`      // identity_provider
@@ -88,6 +90,7 @@ func (c *STSSessionClaims) ToSessionInfo() *SessionInfo {
 		AssumedRoleUser:  c.AssumedRole,
 		Principal:        c.Principal,
 		Policies:         c.Policies,
+		SessionPolicy:    c.SessionPolicy,
 		ExpiresAt:        expiresAt,
 		IdentityProvider: c.IdentityProvider,
 		ExternalUserId:   c.ExternalUserId,
@@ -145,6 +148,12 @@ func (c *STSSessionClaims) WithRoleInfo(roleArn, assumedRole, principal string) 
 // WithPolicies sets the policies associated with this session
 func (c *STSSessionClaims) WithPolicies(policies []string) *STSSessionClaims {
 	c.Policies = policies
+	return c
+}
+
+// WithSessionPolicy sets the inline session policy JSON for this session
+func (c *STSSessionClaims) WithSessionPolicy(policy string) *STSSessionClaims {
+	c.SessionPolicy = policy
 	return c
 }
 

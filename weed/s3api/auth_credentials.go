@@ -300,7 +300,8 @@ func (iam *IdentityAccessManagement) loadEnvironmentVariableCredentials() {
 		Actions: []Action{
 			s3_constants.ACTION_ADMIN,
 		},
-		IsStatic: true,
+		PrincipalArn: generatePrincipalArn(identityName),
+		IsStatic:     true,
 	}
 
 	iam.m.Lock()
@@ -1562,14 +1563,22 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	}
 
 	// Traditional identities (with Actions from -s3.config) use legacy auth,
-	// JWT/STS identities (no Actions) use IAM authorization
+	// JWT/STS identities (no Actions or having a session token) use IAM authorization.
+	// IMPORTANT: We MUST prioritize IAM authorization for any request with a session token
+	// to ensure that session policies are correctly enforced.
+	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
+		r.Header.Get("X-Amz-Security-Token") != "" ||
+		r.URL.Query().Get("X-Amz-Security-Token") != ""
+
+	if (len(identity.Actions) == 0 || hasSessionToken) && iam.iamIntegration != nil {
+		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+	}
+
 	if len(identity.Actions) > 0 {
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone
-	} else if iam.iamIntegration != nil {
-		return iam.authorizeWithIAM(r, identity, action, bucket, object)
 	}
 
 	return s3err.ErrAccessDenied

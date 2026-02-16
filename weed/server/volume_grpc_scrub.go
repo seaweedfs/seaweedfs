@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -35,11 +34,12 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		var serrs []error
 		switch m := req.GetMode(); m {
 		case volume_server_pb.VolumeScrubMode_INDEX:
-			files, serrs = v.CheckIndex()
+			files, serrs = v.ScrubIndex()
 		case volume_server_pb.VolumeScrubMode_LOCAL:
-			files, serrs = scrubVolumeLocal(ctx, v)
+			// LOCAL is equivalent to FULL for regular volumes
+			fallthrough
 		case volume_server_pb.VolumeScrubMode_FULL:
-			files, serrs = scrubVolumeFull(ctx, v)
+			files, serrs = v.Scrub()
 		default:
 			return nil, fmt.Errorf("unsupported volume scrub mode %d", m)
 		}
@@ -61,14 +61,6 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		Details:         details,
 	}
 	return res, nil
-}
-
-func scrubVolumeLocal(ctx context.Context, v *storage.Volume) (int64, []error) {
-	return 0, []error{fmt.Errorf("scrubVolumeLocal(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
-}
-
-func scrubVolumeFull(ctx context.Context, v *storage.Volume) (int64, []error) {
-	return 0, []error{fmt.Errorf("scrubVolumeFull(): not implemented, see https://github.com/seaweedfs/seaweedfs/issues/8018")}
 }
 
 func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb.ScrubEcVolumeRequest) (*volume_server_pb.ScrubEcVolumeResponse, error) {

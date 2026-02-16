@@ -19,6 +19,7 @@ type (
 	GetUserResponse              = iamlib.GetUserResponse
 	UpdateUserResponse           = iamlib.UpdateUserResponse
 	CreateAccessKeyResponse      = iamlib.CreateAccessKeyResponse
+	UpdateAccessKeyResponse      = iamlib.UpdateAccessKeyResponse
 	PutUserPolicyResponse        = iamlib.PutUserPolicyResponse
 	DeleteUserPolicyResponse     = iamlib.DeleteUserPolicyResponse
 	GetUserPolicyResponse        = iamlib.GetUserPolicyResponse
