@@ -22,6 +22,9 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `/favicon.ico` and `/seaweedfsstatic/*`
   - public non-read methods (`POST`/`PUT`/`DELETE`/unsupported verbs) as `200` no-op passthrough parity
   - admin unsupported verbs as `400` parity
+- Native Rust control-surface parity now also includes:
+  - `/healthz` status mirroring from backend state transitions (e.g. leave/stopping => `503`)
+  - absolute-form HTTP request-target normalization before native route matching
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -192,3 +195,13 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
 - Commits: `23e4497b2`
+
+- Date: 2026-02-16
+- Change: Hardened native Rust HTTP control-path parity:
+  - `/healthz` now mirrors backend health status (`200`/`503`) in native mode
+  - absolute-form request-target parsing (e.g. `GET http://host/path HTTP/1.1`) now normalizes to route path parity
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
+- Commits: `d6ff6ed6d`

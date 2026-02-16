@@ -1304,3 +1304,10 @@ Update this section during implementation:
 - Profiles covered: P1/P2/P3 variants touched by UI/static/CORS/method behavior, plus full matrix in native mode.
 - Gaps introduced/remaining: HTTP data-path handlers and all gRPC handlers remain delegated and still require native replacement.
 - Commit: `23e4497b2`
+
+- Date: 2026-02-16
+- Change: Improved native Rust control-path parity for health/status and request-target parsing.
+- APIs covered: native `/healthz` now mirrors backend service health transitions (`200`/`503`) and native route matching now handles absolute-form HTTP request targets before path dispatch.
+- Profiles covered: full existing HTTP/gRPC integration matrix in native mode (`VOLUME_SERVER_IMPL=rust`, `VOLUME_SERVER_RUST_MODE=native`).
+- Gaps introduced/remaining: core HTTP data handlers and all gRPC RPC handlers are still delegated and remain the primary native implementation gap.
+- Commit: `d6ff6ed6d`
