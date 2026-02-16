@@ -1318,3 +1318,10 @@ Update this section during implementation:
 - Profiles covered: full existing HTTP/gRPC integration matrix in native mode, plus targeted invalid-path parity runs.
 - Gaps introduced/remaining: data-path success branches and all gRPC handler bodies remain delegated; native replacement work continues on those core execution paths.
 - Commit: `1ce0174b2`
+
+- Date: 2026-02-16
+- Change: Added Rust-native write error prevalidation for delegated fid routes.
+- APIs covered: native path now rejects malformed multipart boundary requests, `Content-MD5` writes, and over-limit `Content-Length` writes (using `-fileSizeLimitMB`) with `400` parity behavior before delegation.
+- Profiles covered: P1 default and P1 with explicit file-size limit profile, plus full existing HTTP/gRPC native-mode matrix revalidation.
+- Gaps introduced/remaining: positive write/read/delete data handlers and all gRPC handler bodies are still delegated; native implementation continues incrementally.
+- Commit: `94cefd6f4`

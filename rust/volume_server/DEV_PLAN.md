@@ -27,6 +27,10 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - absolute-form HTTP request-target normalization before native route matching
 - Native Rust HTTP data-path prevalidation now includes:
   - early malformed vid/fid rejection (`400`) for GET/HEAD/POST/PUT fid-route shapes before delegation
+  - write-path error prevalidation for fid routes:
+    - malformed multipart form-data requests without a boundary => `400`
+    - requests containing `Content-MD5` header => `400` mismatch parity branch
+    - request bodies exceeding configured `-fileSizeLimitMB` (by `Content-Length`) => `400`
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -217,3 +221,14 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
 - Commits: `1ce0174b2`
+
+- Date: 2026-02-16
+- Change: Added native Rust write-path prevalidation branches for fid routes in `native` mode:
+  - multipart form uploads without boundary now return native `400`
+  - `Content-MD5` requests now return native `400` mismatch branch
+  - `Content-Length` over configured `-fileSizeLimitMB` now returns native `400` limit branch
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestUploadReadRangeHeadDeleteRoundTrip$|^TestWriteMalformedMultipartAndMD5Mismatch$|^TestWriteRejectsPayloadOverFileSizeLimit$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
+- Commits: `94cefd6f4`
