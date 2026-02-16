@@ -43,6 +43,11 @@ func (st *S3TablesApiServer) SetAccountID(accountID string) {
 	st.handler.SetAccountID(accountID)
 }
 
+// SetDefaultAllow sets whether to allow access by default
+func (st *S3TablesApiServer) SetDefaultAllow(allow bool) {
+	st.handler.SetDefaultAllow(allow)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -57,6 +62,9 @@ func (st *S3TablesApiServer) WithFilerClient(streamingMode bool, fn func(filer_p
 func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	// Create S3 Tables handler
 	s3TablesApi := NewS3TablesApiServer(s3a)
+	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
+		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
+	}
 
 	// Regex for S3 Tables Bucket ARN
 	const tableBucketARNRegex = "arn:aws:s3tables:[^/:]*:[^/:]*:bucket/[^/]+"
