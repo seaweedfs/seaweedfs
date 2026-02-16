@@ -1280,3 +1280,10 @@ Update this section during implementation:
 - Profiles covered: existing HTTP/gRPC matrix in native launcher mode; default-mode smoke checks on P1 control flows.
 - Gaps introduced/remaining: native Rust API/storage/RPC handlers still pending; current `native` mode remains a delegation bootstrap while parity replacement proceeds.
 - Commit: `70ddbee37`, `61befd10f`, `2e65966c0`
+
+- Date: 2026-02-16
+- Change: Implemented first native Rust HTTP control handlers in `native` mode for `/status` and `/healthz` (admin listener path), with proxy fallback retained for remaining endpoints.
+- APIs covered: `/status` and `/healthz` now served by Rust-native code path in `VOLUME_SERVER_RUST_MODE=native`; full HTTP and gRPC integration suites re-validated.
+- Profiles covered: full existing HTTP/gRPC matrix under native mode.
+- Gaps introduced/remaining: gRPC control/data APIs and most HTTP data/static/auth paths remain delegated and require incremental native replacement.
+- Commit: `7e6e0261a`

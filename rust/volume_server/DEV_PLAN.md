@@ -15,6 +15,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - Go master + Rust launcher (`VOLUME_SERVER_IMPL=rust`)
 - Rust launcher `proxy` mode has full-suite integration pass while delegating backend handlers to Go.
 - Rust launcher `native` mode is wired as the default Rust entrypoint and currently bootstraps via supervised Go backend delegation.
+- Native Rust HTTP control handlers now serve `/status` and `/healthz` directly in `native` mode.
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -37,8 +38,8 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 
 ### B. Native HTTP Surface
 - [ ] Admin/control endpoints:
-  - [ ] `GET /status`
-  - [ ] `GET /healthz`
+  - [x] `GET /status` (native Rust in `native` mode)
+  - [x] `GET /healthz` (native Rust in `native` mode)
   - [ ] static/UI endpoints currently exercised
 - [ ] Data read path parity:
   - [ ] fid parsing/path variants
@@ -89,7 +90,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 
 ### M1: Native Skeleton (Control Plane First)
 - [ ] `native` mode boots and serves:
-  - [ ] `/status`, `/healthz`
+  - [x] `/status`, `/healthz`
   - [ ] `GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`
 - Gate:
   - [x] targeted HTTP/grpc control tests pass in `native` mode (delegated backend path).
@@ -116,8 +117,8 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 - [ ] Keep `exec`/`proxy` only as explicit fallback modes during rollout.
 
 ## Immediate Next Steps
-1. Implement `/status` and `/healthz` with native Rust handlers and parity headers/payload fields.
-2. Implement minimal native gRPC state/ping RPC handlers (`GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`).
+1. Implement minimal native gRPC state/ping RPC handlers (`GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`).
+2. Expand native HTTP control surface beyond `/status` and `/healthz` (UI/static/auth-sensitive paths).
 3. Keep rerunning native-mode integration suites as each delegated branch is replaced.
 4. Add mismatch triage notes for each API moved from delegation to native implementation.
 
@@ -155,3 +156,11 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$'`
   - `env VOLUME_SERVER_IMPL=rust go test -count=1 ./test/volume_server/grpc -run '^TestStateAndStatusRPCs$'`
 - Commits: `70ddbee37`, `61befd10f`, `2e65966c0`
+
+- Date: 2026-02-16
+- Change: Implemented first native Rust HTTP handlers in `native` mode for `/status` and `/healthz` on the admin listener while preserving proxy delegation for other APIs.
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
+- Commits: `7e6e0261a`
