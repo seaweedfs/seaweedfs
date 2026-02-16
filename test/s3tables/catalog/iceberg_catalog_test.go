@@ -186,6 +186,14 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		}
 	}
 
+	// Set environment variables for admin credentials safely for this test
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+	}
+
 	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
 		"-master.port.grpc", fmt.Sprintf("%d", env.masterGrpcPort),
@@ -198,6 +206,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
 		"-ip.bind", "0.0.0.0",
 		"-dir", env.dataDir,
+		"-s3.iam.readOnly=false", // Enable IAM write operations for tests
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
