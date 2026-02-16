@@ -15,8 +15,13 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - Go master + Rust launcher (`VOLUME_SERVER_IMPL=rust`)
 - Rust launcher `proxy` mode has full-suite integration pass while delegating backend handlers to Go.
 - Rust launcher `native` mode is wired as the default Rust entrypoint and currently bootstraps via supervised Go backend delegation.
-- Native Rust HTTP control handlers now serve `/status` and `/healthz` directly in `native` mode.
-- Native Rust HTTP control handlers now serve `/status`, `/healthz`, and `OPTIONS` (admin/public method+CORS behavior) in `native` mode.
+- Native Rust HTTP handlers now serve control/surface paths in `native` mode:
+  - `/status`, `/healthz`
+  - `OPTIONS` admin/public behavior (method allow-list + CORS preflight headers)
+  - `/ui/index.html` with config-driven JWT/access-ui gating
+  - `/favicon.ico` and `/seaweedfsstatic/*`
+  - public non-read methods (`POST`/`PUT`/`DELETE`/unsupported verbs) as `200` no-op passthrough parity
+  - admin unsupported verbs as `400` parity
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -42,7 +47,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - [x] `GET /status` (native Rust in `native` mode)
   - [x] `GET /healthz` (native Rust in `native` mode)
   - [x] `OPTIONS` admin/public method+CORS control behavior (native Rust in `native` mode)
-  - [ ] static/UI endpoints currently exercised
+  - [x] static/UI endpoints currently exercised
 - [ ] Data read path parity:
   - [ ] fid parsing/path variants
   - [ ] conditional headers (`If-Modified-Since`, `If-None-Match`)
@@ -120,7 +125,7 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 
 ## Immediate Next Steps
 1. Implement minimal native gRPC state/ping RPC handlers (`GetState`, `SetState`, `VolumeServerStatus`, `Ping`, `VolumeServerLeave`).
-2. Expand native HTTP control surface beyond `/status` and `/healthz` (UI/static/auth-sensitive paths).
+2. Expand native HTTP parity from control/static surface into data-path handlers (read/write/delete variants) while preserving current native control behavior.
 3. Keep rerunning native-mode integration suites as each delegated branch is replaced.
 4. Add mismatch triage notes for each API moved from delegation to native implementation.
 
@@ -174,3 +179,16 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
 - Commits: `fbff2cb39`
+
+- Date: 2026-02-16
+- Change: Added native Rust UI/static/public-surface handlers in `native` mode:
+  - `/ui/index.html` with config-driven JWT/access-ui gating parity
+  - `/favicon.ico` and `/seaweedfsstatic/*` static endpoint parity
+  - public non-read methods as `200` no-op passthrough parity
+  - admin unsupported methods as `400` parity
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestAdminStatusAndHealthz$|^TestUiIndexNotExposedWhenJwtSigningEnabled$|^TestUiIndexExposedWhenJwtSigningEnabledAndAccessUITrue$|^TestStaticAssetEndpoints$|^TestStaticAssetEndpointsOnPublicPort$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestOptionsMethodsByPort$|^TestOptionsWithOriginIncludesCorsHeaders$|^TestPublicPortReadOnlyMethodBehavior$|^TestCorsAndUnsupportedMethodBehavior$|^TestUnsupportedMethodTraceParity$|^TestUnsupportedMethodPropfindParity$|^TestUnsupportedMethodConnectParity$|^TestUnsupportedMethodMkcolParity$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc`
+- Commits: `23e4497b2`

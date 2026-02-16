@@ -1294,3 +1294,13 @@ Update this section during implementation:
 - Profiles covered: P2 split-port CORS/OPTIONS profiles plus full existing matrix in native mode.
 - Gaps introduced/remaining: static/UI/auth and data-path HTTP handlers, plus gRPC control/data/stream handlers, remain delegated and pending native replacement.
 - Commit: `fbff2cb39`
+
+- Date: 2026-02-16
+- Change: Implemented broader native Rust HTTP surface in `native` mode:
+  - `/ui/index.html` auth-gating parity (JWT + access.ui handling)
+  - static asset paths (`/favicon.ico`, `/seaweedfsstatic/*`)
+  - public non-read method no-op parity (`200`) and admin unsupported-method rejection parity (`400`)
+- APIs covered: UI/static/admin/public control-surface behavior now served by Rust-native path; full `/test/volume_server/http` and `/test/volume_server/grpc` packages re-validated.
+- Profiles covered: P1/P2/P3 variants touched by UI/static/CORS/method behavior, plus full matrix in native mode.
+- Gaps introduced/remaining: HTTP data-path handlers and all gRPC handlers remain delegated and still require native replacement.
+- Commit: `23e4497b2`
