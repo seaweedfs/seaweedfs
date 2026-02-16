@@ -54,7 +54,7 @@ jobs:
       - name: Start Caddy
         run: |
           ./caddy start
-          until curl -fsS --insecure https://localhost:8443 > /dev/null; do sleep 1; done
+          until curl -fsS --insecure https://localhost:8443/healthz > /dev/null; do sleep 1; done
 
       - name: Create Bucket
         run: |
