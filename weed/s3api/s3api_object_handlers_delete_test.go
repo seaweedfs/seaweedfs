@@ -44,11 +44,18 @@ func TestObjectLockVersionToCheckForDelete(t *testing.T) {
 			expectedShouldCheck: true,
 		},
 		{
-			name:                "unknown versioning state without version id is skipped",
+			name:                "unknown versioning state without version id is checked (fail-closed for safety)",
 			versioningState:     "UnexpectedState",
 			requestedVersionID:  "",
 			expectedVersionID:   "",
-			expectedShouldCheck: false,
+			expectedShouldCheck: true,
+		},
+		{
+			name:                "suspended versioning with specific version id checks that version",
+			versioningState:     s3_constants.VersioningSuspended,
+			requestedVersionID:  "abc123",
+			expectedVersionID:   "abc123",
+			expectedShouldCheck: true,
 		},
 	}
 
