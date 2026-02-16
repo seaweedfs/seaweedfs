@@ -1183,3 +1183,10 @@ Update this section during implementation:
 - Profiles covered: P1-derived single-node profile with per-volume replication override.
 - Gaps introduced/remaining: replicated-write failure branch is now covered; cancellation (`499`) and deeper transport fault-injection branches remain pending.
 - Commit: `4835d3443`
+
+- Date: 2026-02-15
+- Change: Added EC-backed `BatchDelete` positive-path integration coverage.
+- APIs covered: `BatchDelete` now validates successful EC-needle deletion (`202`) with post-delete `VolumeEcShardRead` deleted-marker verification (`IsDeleted=true`).
+- Profiles covered: P1 with EC shard generate/mount lifecycle; includes test-local gRPC offset proxy for EC internal dial-path parity.
+- Gaps introduced/remaining: EC `BatchDelete` success branch is now covered; deeper distributed failure-injection permutations remain pending.
+- Commit: `1bb40b6bc`
