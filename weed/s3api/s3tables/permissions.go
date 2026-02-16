@@ -118,26 +118,30 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 }
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
-	glog.V(0).Infof("S3Tables: checkPermission operation=%s principal=%s owner=%s defaultAllow=%v", operation, principal, owner, ctx != nil && ctx.DefaultAllow)
+	fmt.Printf("DEBUG: checkPermission op=%s princ=%s owner=%s policyLen=%d defaultAllow=%v\n",
+		operation, principal, owner, len(resourcePolicy), ctx != nil && ctx.DefaultAllow)
+	if resourcePolicy != "" {
+		fmt.Printf("DEBUG: policy content: %s\n", resourcePolicy)
+	}
 
 	// Owner always has permission
 	if principal == owner {
-		glog.V(0).Infof("S3Tables: checkPermission allowing (principal == owner)")
+		fmt.Printf("DEBUG: Allowed by Owner check\n")
 		return true
 	}
 
 	if hasIdentityPermission(operation, ctx) {
-		glog.V(0).Infof("S3Tables: checkPermission allowing (identity permission)")
+		fmt.Printf("DEBUG: Allowed by Identity check\n")
 		return true
 	}
 
 	// If no policy is provided, use default allow if enabled
 	if resourcePolicy == "" {
 		if ctx != nil && ctx.DefaultAllow {
-			glog.V(0).Infof("S3Tables: checkPermission allowing (no policy, DefaultAllow=true)")
+			fmt.Printf("DEBUG: Allowed by DefaultAllow\n")
 			return true
 		}
-		glog.V(0).Infof("S3Tables: checkPermission denying (no policy, DefaultAllow=false)")
+		fmt.Printf("DEBUG: Denied by DefaultAllow=false (no policy)\n")
 		return false
 	}
 
