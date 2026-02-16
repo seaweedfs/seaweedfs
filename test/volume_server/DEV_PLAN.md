@@ -1232,3 +1232,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: tail transport interruption coverage is now partially closed; receiver-side interruption and deeper network fault injection remain pending.
 - Commit: `27a80f760`
+
+- Date: 2026-02-15
+- Change: Added receiver-side tail stream interruption coverage for unavailable source node.
+- APIs covered: `VolumeTailReceiver` now verifies source connect/dial failure branch when `SourceVolumeServer` is unreachable.
+- Profiles covered: P1.
+- Gaps introduced/remaining: both sender and receiver transport interruption branches are now covered at integration level; deeper injected network faults remain pending.
+- Commit: `a5864c3eb`
