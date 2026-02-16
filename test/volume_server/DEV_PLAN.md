@@ -1239,3 +1239,10 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: both sender and receiver transport interruption branches are now covered at integration level; deeper injected network faults remain pending.
 - Commit: `a5864c3eb`
+
+- Date: 2026-02-15
+- Change: Expanded query CSV matrix with explicit CSV-payload parity coverage.
+- APIs covered: `Query` now verifies current CSV-input behavior (no streamed rows / immediate EOF) even when source needle content is valid CSV text.
+- Profiles covered: P1.
+- Gaps introduced/remaining: CSV parsing/selection implementation still absent in current server behavior; integration parity now locks the current no-output semantics for both JSON and CSV payload shapes.
+- Commit: `a12dd5f8d`
