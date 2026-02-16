@@ -484,8 +484,10 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	now := uint64(time.Now().Unix())
 
 	opts.superBlock.CompactionRevision++
-	dstDatBackend.WriteAt(opts.superBlock.Bytes(), 0)
 	newOffset := int64(opts.superBlock.BlockSize())
+	if _, err := dstDatBackend.WriteAt(opts.superBlock.Bytes(), 0); err != nil {
+		return fmt.Errorf("failed to write superblock: %v", err)
+	}
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
