@@ -22,19 +22,16 @@ const (
 // objectLockVersionToCheckForDelete resolves which version should be validated for Object Lock protections.
 // For versioned delete without explicit versionId, this targets the latest version (empty versionId for enabled,
 // "null" for suspended) because DeleteObject affects that version's visibility.
-func objectLockVersionToCheckForDelete(versioningState, requestedVersionID string) (string, bool) {
+// This always returns a version ID to check; object lock protections are fail-closed.
+func objectLockVersionToCheckForDelete(versioningState, requestedVersionID string) string {
 	if requestedVersionID != "" {
-		return requestedVersionID, true
+		return requestedVersionID
 	}
 
-	switch versioningState {
-	case s3_constants.VersioningEnabled, "":
-		return "", true
-	case s3_constants.VersioningSuspended:
-		return "null", true
-	default:
-		return "", true
+	if versioningState == s3_constants.VersioningSuspended {
+		return "null"
 	}
+	return ""
 }
 
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -70,14 +67,12 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		auditLog = s3err.GetAccessLog(r, http.StatusNoContent, s3err.ErrNone)
 	}
 
-	lockCheckVersionID, shouldCheckObjectLock := objectLockVersionToCheckForDelete(versioningState, versionId)
-	if shouldCheckObjectLock {
-		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
-		if err := s3a.enforceObjectLockProtections(r, bucket, object, lockCheckVersionID, governanceBypassAllowed); err != nil {
-			glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object, lockCheckVersionID, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-			return
-		}
+	lockCheckVersionID := objectLockVersionToCheckForDelete(versioningState, versionId)
+	governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
+	if err := s3a.enforceObjectLockProtections(r, bucket, object, lockCheckVersionID, governanceBypassAllowed); err != nil {
+		glog.V(2).Infof("DeleteObjectHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object, lockCheckVersionID, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
 	}
 
 	if versioningConfigured {
@@ -252,20 +247,18 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			}
 
 			// Check object lock permissions before deletion (applies to all buckets: versioned or non-versioned)
-			lockCheckVersionID, shouldCheckObjectLock := objectLockVersionToCheckForDelete(versioningState, object.VersionId)
-			if shouldCheckObjectLock {
-				// Validate governance bypass for this specific object
-				governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
-				if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, lockCheckVersionID, governanceBypassAllowed); err != nil {
-					glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, lockCheckVersionID, err)
-					deleteErrors = append(deleteErrors, DeleteError{
-						Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
-						Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
-						Key:       object.Key,
-						VersionId: object.VersionId,
-					})
-					continue
-				}
+			lockCheckVersionID := objectLockVersionToCheckForDelete(versioningState, object.VersionId)
+			// Validate governance bypass for this specific object
+			governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object.Key)
+			if err := s3a.enforceObjectLockProtections(r, bucket, object.Key, lockCheckVersionID, governanceBypassAllowed); err != nil {
+				glog.V(2).Infof("DeleteMultipleObjectsHandler: object lock check failed for %s/%s (version: %s): %v", bucket, object.Key, lockCheckVersionID, err)
+				deleteErrors = append(deleteErrors, DeleteError{
+					Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
+					Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
+					Key:       object.Key,
+					VersionId: object.VersionId,
+				})
+				continue
 			}
 
 			var deleteVersionId string

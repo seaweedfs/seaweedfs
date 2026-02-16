@@ -9,61 +9,53 @@ import (
 
 func TestObjectLockVersionToCheckForDelete(t *testing.T) {
 	tests := []struct {
-		name                string
-		versioningState     string
-		requestedVersionID  string
-		expectedVersionID   string
-		expectedShouldCheck bool
+		name              string
+		versioningState   string
+		requestedVersionID string
+		expectedVersionID string
 	}{
 		{
-			name:                "enabled versioning without version id checks latest version",
-			versioningState:     s3_constants.VersioningEnabled,
-			requestedVersionID:  "",
-			expectedVersionID:   "",
-			expectedShouldCheck: true,
+			name:              "enabled versioning without version id checks latest version",
+			versioningState:   s3_constants.VersioningEnabled,
+			requestedVersionID: "",
+			expectedVersionID: "",
 		},
 		{
-			name:                "suspended versioning without version id checks null version",
-			versioningState:     s3_constants.VersioningSuspended,
-			requestedVersionID:  "",
-			expectedVersionID:   "null",
-			expectedShouldCheck: true,
+			name:              "suspended versioning without version id checks null version",
+			versioningState:   s3_constants.VersioningSuspended,
+			requestedVersionID: "",
+			expectedVersionID: "null",
 		},
 		{
-			name:                "specific version id is always checked",
-			versioningState:     s3_constants.VersioningEnabled,
-			requestedVersionID:  "3LgYQ7f7VxQ3",
-			expectedVersionID:   "3LgYQ7f7VxQ3",
-			expectedShouldCheck: true,
+			name:              "specific version id is always checked",
+			versioningState:   s3_constants.VersioningEnabled,
+			requestedVersionID: "3LgYQ7f7VxQ3",
+			expectedVersionID: "3LgYQ7f7VxQ3",
 		},
 		{
-			name:                "non-versioned buckets still check current object",
-			versioningState:     "",
-			requestedVersionID:  "",
-			expectedVersionID:   "",
-			expectedShouldCheck: true,
+			name:              "non-versioned buckets still check current object",
+			versioningState:   "",
+			requestedVersionID: "",
+			expectedVersionID: "",
 		},
 		{
-			name:                "unknown versioning state without version id is checked (fail-closed for safety)",
-			versioningState:     "UnexpectedState",
-			requestedVersionID:  "",
-			expectedVersionID:   "",
-			expectedShouldCheck: true,
+			name:              "unknown versioning state defaults to empty version",
+			versioningState:   "UnexpectedState",
+			requestedVersionID: "",
+			expectedVersionID: "",
 		},
 		{
-			name:                "suspended versioning with specific version id checks that version",
-			versioningState:     s3_constants.VersioningSuspended,
-			requestedVersionID:  "abc123",
-			expectedVersionID:   "abc123",
-			expectedShouldCheck: true,
+			name:              "suspended versioning with specific version id checks that version",
+			versioningState:   s3_constants.VersioningSuspended,
+			requestedVersionID: "abc123",
+			expectedVersionID: "abc123",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			versionID, shouldCheck := objectLockVersionToCheckForDelete(tc.versioningState, tc.requestedVersionID)
+			versionID := objectLockVersionToCheckForDelete(tc.versioningState, tc.requestedVersionID)
 			assert.Equal(t, tc.expectedVersionID, versionID)
-			assert.Equal(t, tc.expectedShouldCheck, shouldCheck)
 		})
 	}
 }
