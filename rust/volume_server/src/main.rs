@@ -66,6 +66,7 @@ enum ListenerRole {
 struct NativeHttpConfig {
     jwt_signing_enabled: bool,
     access_ui_enabled: bool,
+    file_size_limit_bytes: Option<usize>,
 }
 
 fn main() -> ExitCode {
@@ -470,8 +471,10 @@ fn try_handle_native_http(
         return Ok(true);
     }
 
+    let fid_route_parts = extract_fid_route_parts(&parsed.path);
+
     if matches!(parsed.method.as_str(), "GET" | "HEAD" | "POST" | "PUT") {
-        if let Some((vid, fid)) = extract_fid_route_parts(&parsed.path) {
+        if let Some((vid, fid)) = fid_route_parts.as_ref() {
             if !is_valid_volume_id_token(&vid) || !is_valid_fid_token(&fid) {
                 consume_bytes(stream, parsed.header_len + parsed.content_length)?;
                 write_native_http_response(
@@ -480,6 +483,57 @@ fn try_handle_native_http(
                     "text/plain; charset=utf-8",
                     b"",
                     parsed.method == "HEAD",
+                    parsed.request_id.as_deref(),
+                )?;
+                let _ = stream.shutdown(Shutdown::Both);
+                return Ok(true);
+            }
+        }
+    }
+
+    if role == ListenerRole::HttpAdmin
+        && matches!(parsed.method.as_str(), "POST" | "PUT")
+        && fid_route_parts.is_some()
+    {
+        if let Some(content_type) = parsed.content_type.as_deref() {
+            if is_multipart_form_without_boundary(content_type) {
+                consume_bytes(stream, parsed.header_len + parsed.content_length)?;
+                write_native_http_response(
+                    stream,
+                    "400 Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"multipart: boundary is missing\n",
+                    false,
+                    parsed.request_id.as_deref(),
+                )?;
+                let _ = stream.shutdown(Shutdown::Both);
+                return Ok(true);
+            }
+        }
+
+        if parsed.content_md5.is_some() {
+            consume_bytes(stream, parsed.header_len + parsed.content_length)?;
+            write_native_http_response(
+                stream,
+                "400 Bad Request",
+                "text/plain; charset=utf-8",
+                b"Content-MD5 mismatch\n",
+                false,
+                parsed.request_id.as_deref(),
+            )?;
+            let _ = stream.shutdown(Shutdown::Both);
+            return Ok(true);
+        }
+
+        if let Some(limit_bytes) = config.and_then(|c| c.file_size_limit_bytes) {
+            if parsed.content_length > limit_bytes {
+                consume_bytes(stream, parsed.header_len + parsed.content_length)?;
+                write_native_http_response(
+                    stream,
+                    "400 Bad Request",
+                    "text/plain; charset=utf-8",
+                    b"request body is limited by configured file size limit\n",
+                    false,
                     parsed.request_id.as_deref(),
                 )?;
                 let _ = stream.shutdown(Shutdown::Both);
@@ -517,6 +571,8 @@ struct ParsedHttpRequest {
     path: String,
     request_id: Option<String>,
     origin: Option<String>,
+    content_type: Option<String>,
+    content_md5: Option<String>,
     content_length: usize,
     header_len: usize,
 }
@@ -566,6 +622,8 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
 
     let mut request_id = None;
     let mut origin = None;
+    let mut content_type = None;
+    let mut content_md5 = None;
     let mut content_length = 0usize;
     for line in lines {
         if line.is_empty() {
@@ -576,6 +634,10 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
                 request_id = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("origin") {
                 origin = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("content-type") {
+                content_type = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("content-md5") {
+                content_md5 = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("content-length") {
                 if let Ok(v) = value.trim().parse::<usize>() {
                     content_length = v;
@@ -589,6 +651,8 @@ fn parse_http_request_headers(data: &[u8], header_len: usize) -> Option<ParsedHt
         path,
         request_id,
         origin,
+        content_type,
+        content_md5,
         content_length,
         header_len,
     })
@@ -683,6 +747,27 @@ fn is_valid_fid_token(fid: &str) -> bool {
         }
     }
 
+    true
+}
+
+fn is_multipart_form_without_boundary(content_type: &str) -> bool {
+    if !content_type
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("multipart/form-data")
+    {
+        return false;
+    }
+
+    for param in content_type.split(';').skip(1) {
+        if let Some((name, value)) = param.trim().split_once('=') {
+            if name.trim().eq_ignore_ascii_case("boundary")
+                && !value.trim().trim_matches('"').is_empty()
+            {
+                return false;
+            }
+        }
+    }
     true
 }
 
@@ -863,6 +948,11 @@ fn write_native_http_response(
 
 fn load_native_http_config(args: &[String]) -> NativeHttpConfig {
     let mut config = NativeHttpConfig::default();
+    if let Some(file_size_limit_mb) = extract_flag(args, "-fileSizeLimitMB") {
+        if let Ok(limit_mb) = file_size_limit_mb.parse::<usize>() {
+            config.file_size_limit_bytes = Some(limit_mb.saturating_mul(1024 * 1024));
+        }
+    }
 
     let config_dir = match extract_flag(args, "-config_dir") {
         Some(v) if !v.is_empty() => v,
