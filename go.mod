@@ -142,7 +142,7 @@ require (
 	github.com/jhump/protoreflect v1.18.0
 	github.com/lib/pq v1.11.1
 	github.com/linkedin/goavro/v2 v2.14.1
-	github.com/mattn/go-sqlite3 v1.14.33
+	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.26.4
