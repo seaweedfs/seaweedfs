@@ -150,7 +150,7 @@ require (
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.72.1
 	github.com/rdleal/intervalst v1.5.0
-	github.com/redis/go-redis/v9 v9.17.2
+	github.com/redis/go-redis/v9 v9.18.0
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.1
 	github.com/shirou/gopsutil/v4 v4.26.1
