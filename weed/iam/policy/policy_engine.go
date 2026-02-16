@@ -324,6 +324,14 @@ func (e *PolicyEngine) IsInitialized() bool {
 	return e.initialized
 }
 
+// DefaultAllow returns whether the default effect is Allow
+func (e *PolicyEngine) DefaultAllow() bool {
+	if e.config == nil {
+		return true // Default to Allow if not configured
+	}
+	return e.config.DefaultEffect == string(EffectAllow)
+}
+
 // AddPolicy adds a policy to the engine (filerAddress ignored for memory stores)
 func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *PolicyDocument) error {
 	if !e.initialized {

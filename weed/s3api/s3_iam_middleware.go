@@ -44,6 +44,7 @@ type IAMIntegration interface {
 	AuthorizeAction(ctx context.Context, identity *IAMIdentity, action Action, bucket string, objectKey string, r *http.Request) s3err.ErrorCode
 	ValidateSessionToken(ctx context.Context, token string) (*sts.SessionInfo, error)
 	ValidateTrustPolicyForPrincipal(ctx context.Context, roleArn, principalArn string) error
+	DefaultAllow() bool
 }
 
 // S3IAMIntegration provides IAM integration for S3 API
@@ -308,6 +309,14 @@ func (s3iam *S3IAMIntegration) ValidateTrustPolicyForPrincipal(ctx context.Conte
 		return fmt.Errorf("IAM manager not available")
 	}
 	return s3iam.iamManager.ValidateTrustPolicyForPrincipal(ctx, roleArn, principalArn)
+}
+
+// DefaultAllow returns whether access is allowed by default when no policy is found
+func (s3iam *S3IAMIntegration) DefaultAllow() bool {
+	if s3iam.iamManager == nil {
+		return true // Default to true if IAM is not enabled
+	}
+	return s3iam.iamManager.DefaultAllow()
 }
 
 // IAMIdentity represents an authenticated identity with session information

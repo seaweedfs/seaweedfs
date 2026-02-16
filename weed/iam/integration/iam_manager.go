@@ -654,6 +654,14 @@ func (m *IAMManager) GetSTSService() *sts.STSService {
 	return m.stsService
 }
 
+// DefaultAllow returns whether the default effect is Allow
+func (m *IAMManager) DefaultAllow() bool {
+	if !m.initialized || m.policyEngine == nil {
+		return true // Default to true if not initialized
+	}
+	return m.policyEngine.DefaultAllow()
+}
+
 // parseJWTTokenForTrustPolicy parses a JWT token to extract claims for trust policy evaluation
 func parseJWTTokenForTrustPolicy(tokenString string) (map[string]interface{}, error) {
 	// Simple JWT parsing without verification (for trust policy context only)
