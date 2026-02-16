@@ -1211,3 +1211,17 @@ Update this section during implementation:
 - Profiles covered: P2.
 - Gaps introduced/remaining: unsupported-method sampling now covers `PATCH`, `TRACE`, `PROPFIND`, `CONNECT`, and `MKCOL`; cancellation/transport fault paths remain the main unaddressed area.
 - Commit: `2ab30900d`
+
+- Date: 2026-02-15
+- Change: Hardened framework port allocation to keep volume ports within `10000..55535`.
+- APIs covered: test harness now guarantees valid `admin+10000` gRPC offset ranges, eliminating EC batch-delete flake scenarios that rely on offset dialing.
+- Profiles covered: all profiles using shared framework port allocation.
+- Gaps introduced/remaining: no new API gaps; transport cancellation/fault-injection branches remain the primary uncovered area.
+- Commit: `90e82b15c`
+
+- Date: 2026-02-15
+- Change: Re-validated full Rust proxy-mode integration suite after latest HTTP/gRPC coverage additions and framework hardening.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` packages.
+- Profiles covered: existing matrix in Rust proxy launcher mode.
+- Gaps introduced/remaining: native Rust endpoint/storage/RPC implementation remains pending (current Rust mode still delegates to Go backend handlers).
+- Commit: pending
