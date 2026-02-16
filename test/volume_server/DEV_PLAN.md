@@ -1311,3 +1311,10 @@ Update this section during implementation:
 - Profiles covered: full existing HTTP/gRPC integration matrix in native mode (`VOLUME_SERVER_IMPL=rust`, `VOLUME_SERVER_RUST_MODE=native`).
 - Gaps introduced/remaining: core HTTP data handlers and all gRPC RPC handlers are still delegated and remain the primary native implementation gap.
 - Commit: `d6ff6ed6d`
+
+- Date: 2026-02-16
+- Change: Added Rust-native malformed fid-route validation ahead of delegated data handlers.
+- APIs covered: GET/HEAD/POST/PUT fid-shaped paths now return native `400` for invalid vid/fid tokens (including invalid-read and invalid-write path variants) while valid routes continue through delegated storage handlers.
+- Profiles covered: full existing HTTP/gRPC integration matrix in native mode, plus targeted invalid-path parity runs.
+- Gaps introduced/remaining: data-path success branches and all gRPC handler bodies remain delegated; native replacement work continues on those core execution paths.
+- Commit: `1ce0174b2`

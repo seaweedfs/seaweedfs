@@ -25,6 +25,8 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
 - Native Rust control-surface parity now also includes:
   - `/healthz` status mirroring from backend state transitions (e.g. leave/stopping => `503`)
   - absolute-form HTTP request-target normalization before native route matching
+- Native Rust HTTP data-path prevalidation now includes:
+  - early malformed vid/fid rejection (`400`) for GET/HEAD/POST/PUT fid-route shapes before delegation
 - Native Rust API/storage handlers are not implemented yet.
 
 ## Parity Exit Criteria
@@ -205,3 +207,13 @@ Implement a native Rust volume server that replicates Go volume-server behavior 
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
   - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
 - Commits: `d6ff6ed6d`
+
+- Date: 2026-02-16
+- Change: Added native malformed fid-route validation in `native` mode:
+  - GET/HEAD/POST/PUT requests matching fid URL shapes now return Rust-native `400 Bad Request` for invalid vid/fid tokens
+  - valid fid-route requests still delegate to backend handlers for storage/data execution paths
+- Validation:
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http -run '^TestInvalidReadPathReturnsBadRequest$|^TestWriteInvalidVidAndFidReturnBadRequest$|^TestMalformedVidFidPathReturnsBadRequest$|^TestDownloadLimitInvalidVidWhileOverLimitReturnsBadRequest$'`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/http/...`
+  - `env VOLUME_SERVER_IMPL=rust VOLUME_SERVER_RUST_MODE=native go test -count=1 ./test/volume_server/grpc/...`
+- Commits: `1ce0174b2`
