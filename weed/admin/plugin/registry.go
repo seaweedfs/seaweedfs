@@ -105,6 +105,29 @@ func (r *Registry) List() []*WorkerSession {
 	return out
 }
 
+// DetectableJobTypes returns sorted job types that currently have at least one detect-capable worker.
+func (r *Registry) DetectableJobTypes() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	jobTypes := make(map[string]struct{})
+	for _, session := range r.sessions {
+		for jobType, capability := range session.Capabilities {
+			if capability == nil || !capability.CanDetect {
+				continue
+			}
+			jobTypes[jobType] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(jobTypes))
+	for jobType := range jobTypes {
+		out = append(out, jobType)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // PickSchemaProvider picks one worker for schema requests.
 // Preference order:
 // 1) workers that can detect this job type

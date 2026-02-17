@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
@@ -66,5 +67,31 @@ func TestRegistryPickExecutorAllowsSameWorker(t *testing.T) {
 
 	if detector.WorkerID != "worker-x" || executor.WorkerID != "worker-x" {
 		t.Fatalf("expected same worker for detect/execute, got detector=%s executor=%s", detector.WorkerID, executor.WorkerID)
+	}
+}
+
+func TestRegistryDetectableJobTypes(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+			{JobType: "balance", CanDetect: false, CanExecute: true},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "ec", CanDetect: true, CanExecute: false},
+			{JobType: "vacuum", CanDetect: true, CanExecute: false},
+		},
+	})
+
+	got := r.DetectableJobTypes()
+	want := []string{"ec", "vacuum"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected detectable job types: got=%v want=%v", got, want)
 	}
 }
