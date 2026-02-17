@@ -198,6 +198,7 @@ func (r *Runtime) WorkerStream(stream plugin_pb.PluginControlService_WorkerStrea
 	if err := r.sendAdminHello(workerID); err != nil {
 		glog.Warningf("failed to send plugin admin hello to %s: %v", workerID, err)
 	}
+	go r.prefetchDescriptorsFromHello(hello)
 
 	for {
 		select {
