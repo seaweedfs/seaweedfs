@@ -1,0 +1,558 @@
+syntax = "proto3";
+
+package seaweed_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// PluginService: Worker-to-Admin communication service
+// Workers establish bidirectional streaming connections to register and execute jobs
+service PluginService {
+  // Connect: Bidirectional stream for plugin registration, heartbeat, and lifecycle
+  rpc Connect(stream PluginMessage) returns (stream AdminMessage);
+  
+  // ExecuteJob: Bidirectional stream for job execution with progress updates
+  rpc ExecuteJob(stream JobExecutionMessage) returns (stream JobProgressMessage);
+}
+
+// AdminQueryService: Read-only queries for UI and monitoring
+service AdminQueryService {
+  // GetPluginStats: Get current plugin system statistics
+  rpc GetPluginStats(google.protobuf.Empty) returns (PluginStats);
+  
+  // ListPlugins: List all connected plugins with their capabilities
+  rpc ListPlugins(google.protobuf.Empty) returns (PluginList);
+  
+  // ListJobs: List jobs by type and status
+  rpc ListJobs(ListJobsRequest) returns (JobList);
+  
+  // GetJob: Get detailed job information
+  rpc GetJob(GetJobRequest) returns (JobDetail);
+  
+  // GetJobExecutionLog: Stream job execution logs
+  rpc GetJobExecutionLog(GetJobExecutionLogRequest) returns (stream ExecutionLogEntry);
+}
+
+// AdminCommandService: Write operations for job management
+service AdminCommandService {
+  // UpdateJobTypeConfig: Update configuration for a job type
+  rpc UpdateJobTypeConfig(UpdateJobTypeConfigRequest) returns (JobTypeConfig);
+  
+  // CreateJob: Manually create a job
+  rpc CreateJob(CreateJobRequest) returns (Job);
+  
+  // CancelJob: Cancel a running job
+  rpc CancelJob(CancelJobRequest) returns (google.protobuf.Empty);
+  
+  // RetryJob: Retry a failed job
+  rpc RetryJob(RetryJobRequest) returns (Job);
+}
+
+// ============================================================================
+// LIFECYCLE AND REGISTRATION MESSAGES
+// ============================================================================
+
+// PluginMessage: Messages sent by worker to admin
+message PluginMessage {
+  oneof content {
+    PluginRegister register = 1;
+    PluginHeartbeat heartbeat = 2;
+    ExecutionStatusUpdate status_update = 3;
+  }
+}
+
+// AdminMessage: Messages sent by admin to worker
+message AdminMessage {
+  oneof content {
+    JobRequest job_request = 1;
+    ConfigUpdate config_update = 2;
+    AdminCommand admin_command = 3;
+  }
+}
+
+// PluginRegister: Initial registration message from worker
+message PluginRegister {
+  string plugin_id = 1;          // Unique plugin identifier
+  string name = 2;               // Human-readable plugin name
+  string version = 3;            // Plugin version
+  string protocol_version = 4;   // Protocol version (e.g., "v1")
+  repeated JobTypeCapability capabilities = 5;  // Job types this plugin can handle
+}
+
+// JobTypeCapability: Declares what job type a plugin handles
+message JobTypeCapability {
+  string job_type = 1;           // Job type identifier (e.g., "erasure_coding", "vacuum")
+  bool can_detect = 2;           // Plugin can detect jobs of this type
+  bool can_execute = 3;          // Plugin can execute jobs of this type
+  string version = 4;            // Job type version
+}
+
+// PluginHeartbeat: Periodic heartbeat to keep connection alive
+message PluginHeartbeat {
+  string plugin_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  int64 uptime_seconds = 3;
+  int32 pending_jobs = 4;
+  float cpu_usage_percent = 5;
+  float memory_usage_mb = 6;
+}
+
+// ============================================================================
+// CONFIGURATION SCHEMA MESSAGES
+// ============================================================================
+
+// ConfigField: Declarative field definition for UI generation
+message ConfigField {
+  enum FieldType {
+    BOOL = 0;
+    INT = 1;
+    FLOAT = 2;
+    STRING = 3;
+    DURATION = 4;
+    SELECT = 5;
+    MULTISELECT = 6;
+    SECRET = 7;
+    TEXTAREA = 8;
+    JSON = 9;
+    PERCENTAGE = 10;
+    BYTES = 11;
+    CRON = 12;
+  }
+  
+  string name = 1;               // Field identifier
+  string label = 2;              // Display label
+  string description = 3;        // Help text
+  FieldType field_type = 4;      // UI control type
+  bool required = 5;             // Is required
+  string default_value = 6;      // Default value
+  repeated ValidationRule validation_rules = 7;  // Validation constraints
+  repeated ConfigOption options = 8;  // For SELECT/MULTISELECT
+  ConfigField.Options options_msg = 9;  // Additional options
+  
+  message Options {
+    string placeholder = 1;
+    repeated string suggestions = 2;
+    int32 min_length = 3;
+    int32 max_length = 4;
+    int32 min_value = 5;
+    int32 max_value = 6;
+    float min_float = 7;
+    float max_float = 8;
+  }
+}
+
+// ValidationRule: Constraint for field validation
+message ValidationRule {
+  enum RuleType {
+    MIN_VALUE = 0;
+    MAX_VALUE = 1;
+    PATTERN = 2;
+    MIN_LENGTH = 3;
+    MAX_LENGTH = 4;
+    CUSTOM = 5;
+  }
+  
+  RuleType rule_type = 1;
+  string value = 2;
+  string error_message = 3;
+}
+
+// ConfigOption: Selection option for SELECT/MULTISELECT
+message ConfigOption {
+  string value = 1;
+  string label = 2;
+  string description = 3;
+}
+
+// ConfigFieldValue: Value for a config field
+message ConfigFieldValue {
+  string field_name = 1;
+  string string_value = 2;      // For STRING, CRON
+  int64 int_value = 3;          // For INT, BYTES
+  float float_value = 4;        // For FLOAT, PERCENTAGE
+  bool bool_value = 5;          // For BOOL
+  google.protobuf.Duration duration_value = 6;  // For DURATION
+  repeated string multiselect_values = 7;  // For MULTISELECT
+  string json_value = 8;        // For JSON
+}
+
+// JobTypeConfig: Configuration for a job type
+message JobTypeConfig {
+  string job_type = 1;
+  bool enabled = 2;
+  repeated ConfigFieldValue admin_config = 3;  // Admin-managed settings
+  repeated ConfigFieldValue worker_config = 4; // Worker-managed settings
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  string created_by = 7;
+}
+
+// ConfigUpdateRequest: Request to update job type configuration
+message ConfigUpdateRequest {
+  string job_type = 1;
+  repeated ConfigFieldValue config_values = 2;
+}
+
+// ============================================================================
+// CONFIGURATION SCHEMA DISCOVERY
+// ============================================================================
+
+// GetConfigurationSchemaRequest: Request for config schema
+message GetConfigurationSchemaRequest {
+  string job_type = 1;
+}
+
+// JobTypeConfigSchema: Complete configuration schema for a job type
+message JobTypeConfigSchema {
+  string job_type = 1;
+  string version = 2;
+  string description = 3;
+  repeated ConfigField admin_fields = 4;   // Fields managed by admin UI
+  repeated ConfigField worker_fields = 5;  // Fields managed by worker
+  repeated ConfigGroup field_groups = 6;   // Field grouping for UI
+}
+
+// ConfigGroup: Grouping of related fields for UI organization
+message ConfigGroup {
+  string name = 1;
+  string label = 2;
+  string description = 3;
+  repeated string field_names = 4;
+}
+
+// ============================================================================
+// JOB DETECTION MESSAGES
+// ============================================================================
+
+// DetectionRequest: Request to detect jobs
+message DetectionRequest {
+  string job_type = 1;
+  JobTypeConfig config = 2;      // Current configuration
+  repeated string filter_tags = 3;  // Optional filtering
+}
+
+// DetectionResponse: Response from detection
+message DetectionResponse {
+  repeated DetectedJob detected_jobs = 1;
+  google.protobuf.Timestamp detection_time = 2;
+  string detector_plugin_id = 3;
+}
+
+// DetectedJob: A job candidate detected by worker
+message DetectedJob {
+  string job_key = 1;            // Unique key for deduplication
+  string job_type = 2;
+  string description = 3;        // Human-readable description
+  int64 priority = 4;            // Higher = higher priority
+  google.protobuf.Duration estimated_duration = 5;  // Estimated execution time
+  map<string, string> metadata = 6;  // Job-specific metadata
+  repeated ConfigFieldValue suggested_config = 7;  // Suggested overrides
+}
+
+// ============================================================================
+// JOB EXECUTION MESSAGES
+// ============================================================================
+
+// JobRequest: Request to execute a job
+message JobRequest {
+  string job_id = 1;
+  string job_type = 2;
+  string description = 3;
+  int64 priority = 4;
+  google.protobuf.Timestamp created_at = 5;
+  repeated ConfigFieldValue config = 6;  // Job-specific config
+  map<string, string> metadata = 7;      // Job metadata
+  string request_source = 8;             // admin | detection | retry
+}
+
+// JobExecutionMessage: Messages from worker during job execution
+message JobExecutionMessage {
+  string job_id = 1;
+  oneof content {
+    JobStarted job_started = 2;
+    JobProgress progress = 3;
+    JobCheckpoint checkpoint = 4;
+    JobCompleted job_completed = 5;
+    JobFailed job_failed = 6;
+    ExecutionLog log_entry = 7;
+  }
+}
+
+// JobStarted: Job execution started
+message JobStarted {
+  google.protobuf.Timestamp started_at = 1;
+  string executor_id = 2;        // Plugin executor ID
+}
+
+// JobProgress: Progress update during execution
+message JobProgress {
+  int32 progress_percent = 1;    // 0-100
+  string current_step = 2;
+  string status_message = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+// JobCheckpoint: Checkpoint for resuming jobs
+message JobCheckpoint {
+  string checkpoint_id = 1;
+  bytes checkpoint_data = 2;     // Serialized checkpoint
+  google.protobuf.Timestamp created_at = 3;
+}
+
+// JobCompleted: Job execution completed successfully
+message JobCompleted {
+  google.protobuf.Timestamp completed_at = 1;
+  string summary = 2;
+  map<string, string> output = 3;  // Job output data
+}
+
+// JobFailed: Job execution failed
+message JobFailed {
+  string error_code = 1;         // Error classification
+  string error_message = 2;      // Human-readable error
+  bytes error_details = 3;       // Detailed error data
+  bool retryable = 4;            // Can this job be retried
+  google.protobuf.Timestamp failed_at = 5;
+  int32 retry_count = 6;
+}
+
+// ExecutionLog: Log entry during job execution
+message ExecutionLog {
+  enum LogLevel {
+    DEBUG = 0;
+    INFO = 1;
+    WARNING = 2;
+    ERROR = 3;
+  }
+  
+  google.protobuf.Timestamp timestamp = 1;
+  LogLevel level = 2;
+  string message = 3;
+  map<string, string> context = 4;
+}
+
+// JobProgressMessage: Messages from admin to worker
+message JobProgressMessage {
+  string job_id = 1;
+  oneof content {
+    JobProgressUpdate update = 2;
+    ExecutionCommand command = 3;
+  }
+}
+
+// JobProgressUpdate: Status update for UI
+message JobProgressUpdate {
+  string job_id = 1;
+  int32 progress_percent = 2;
+  string current_step = 3;
+  string status_message = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// ExecutionCommand: Command from admin to worker
+message ExecutionCommand {
+  enum CommandType {
+    PAUSE = 0;
+    RESUME = 1;
+    CANCEL = 2;
+    GET_STATUS = 3;
+  }
+  
+  string job_id = 1;
+  CommandType command_type = 2;
+  map<string, string> parameters = 3;
+}
+
+// ============================================================================
+// STATUS UPDATE MESSAGES
+// ============================================================================
+
+// ExecutionStatusUpdate: Status update from worker
+message ExecutionStatusUpdate {
+  string plugin_id = 1;
+  string job_id = 2;
+  string status = 3;             // running | completed | failed | paused
+  int32 progress_percent = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// ConfigUpdate: Configuration update message
+message ConfigUpdate {
+  string job_type = 1;
+  repeated ConfigFieldValue config_values = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+// AdminCommand: Admin command to worker
+message AdminCommand {
+  enum CommandType {
+    RELOAD_CONFIG = 0;
+    ENABLE_JOB_TYPE = 1;
+    DISABLE_JOB_TYPE = 2;
+    SHUTDOWN = 3;
+  }
+  
+  CommandType command_type = 1;
+  map<string, string> parameters = 2;
+}
+
+// ============================================================================
+// QUERY/COMMAND REQUEST/RESPONSE MESSAGES
+// ============================================================================
+
+// ListJobsRequest: Request to list jobs
+message ListJobsRequest {
+  string job_type = 1;
+  enum StatusFilter {
+    ALL = 0;
+    PENDING = 1;
+    RUNNING = 2;
+    COMPLETED = 3;
+    FAILED = 4;
+  }
+  
+  StatusFilter status = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+// GetJobRequest: Request for specific job
+message GetJobRequest {
+  string job_id = 1;
+}
+
+// GetJobExecutionLogRequest: Request for job logs
+message GetJobExecutionLogRequest {
+  string job_id = 1;
+  enum LogLevel {
+    DEBUG = 0;
+    INFO = 1;
+    WARNING = 2;
+    ERROR = 3;
+    ALL = 4;
+  }
+  
+  LogLevel level = 2;
+  int32 tail_lines = 3;
+}
+
+// ============================================================================
+// RESPONSE MESSAGES
+// ============================================================================
+
+// Job: Job information
+message Job {
+  string job_id = 1;
+  string job_type = 2;
+  string description = 3;
+  int64 priority = 4;
+  enum Status {
+    PENDING = 0;
+    RUNNING = 1;
+    COMPLETED = 2;
+    FAILED = 3;
+    CANCELLED = 4;
+    PAUSED = 5;
+  }
+  
+  Status status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  string executor_plugin_id = 8;
+  int32 progress_percent = 9;
+  repeated ConfigFieldValue config = 10;
+}
+
+// JobDetail: Detailed job information with execution history
+message JobDetail {
+  Job job = 1;
+  repeated ExecutionLogEntry log_entries = 2;
+  JobCompleted completion_info = 3;
+  JobFailed failure_info = 4;
+  repeated string checkpoint_ids = 5;
+}
+
+// ExecutionLogEntry: Log entry with metadata
+message ExecutionLogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  ExecutionLog.LogLevel level = 2;
+  string message = 3;
+  map<string, string> context = 4;
+}
+
+// JobList: List of jobs
+message JobList {
+  repeated Job jobs = 1;
+  int32 total_count = 2;
+  int32 returned_count = 3;
+}
+
+// PluginStats: System-wide statistics
+message PluginStats {
+  int32 total_plugins = 1;
+  int32 active_plugins = 2;
+  int32 total_jobs = 3;
+  int32 pending_jobs = 4;
+  int32 running_jobs = 5;
+  int32 completed_jobs = 6;
+  int32 failed_jobs = 7;
+  google.protobuf.Timestamp last_update = 8;
+  map<string, JobTypeStats> job_type_stats = 9;
+}
+
+// JobTypeStats: Statistics for a job type
+message JobTypeStats {
+  string job_type = 1;
+  int32 total = 2;
+  int32 pending = 3;
+  int32 running = 4;
+  int32 completed = 5;
+  int32 failed = 6;
+  float success_rate = 7;
+  google.protobuf.Duration avg_execution_time = 8;
+}
+
+// PluginList: List of connected plugins
+message PluginList {
+  repeated PluginInfo plugins = 1;
+}
+
+// PluginInfo: Information about a connected plugin
+message PluginInfo {
+  string plugin_id = 1;
+  string name = 2;
+  string version = 3;
+  string protocol_version = 4;
+  google.protobuf.Timestamp connected_at = 5;
+  google.protobuf.Timestamp last_heartbeat = 6;
+  repeated JobTypeCapability capabilities = 7;
+  bool healthy = 8;
+  string status = 9;
+}
+
+// UpdateJobTypeConfigRequest: Request to update config
+message UpdateJobTypeConfigRequest {
+  JobTypeConfig config = 1;
+}
+
+// CreateJobRequest: Request to create a job
+message CreateJobRequest {
+  string job_type = 1;
+  string description = 2;
+  int64 priority = 3;
+  repeated ConfigFieldValue config = 4;
+  map<string, string> metadata = 5;
+}
+
+// CancelJobRequest: Request to cancel a job
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+// RetryJobRequest: Request to retry a job
+message RetryJobRequest {
+  string job_id = 1;
+}
