@@ -399,3 +399,144 @@ func (m *Manager) Close() error {
 	}
 	return nil
 }
+
+// ListConnectedPlugins returns the list of connected plugins
+func (m *Manager) ListConnectedPlugins() []*ConnectedPlugin {
+	return m.registry.ListPlugins()
+}
+
+// GetConfig retrieves configuration for a job type
+func (m *Manager) GetConfig(jobType string) (*JobTypeConfig, error) {
+	return m.configMgr.GetConfig(jobType)
+}
+
+// SaveConfig saves configuration for a job type
+func (m *Manager) SaveConfig(jobType string, enabled bool, adminConfig, workerConfig []*plugin_pb.ConfigFieldValue) error {
+	config := &JobTypeConfig{
+		JobType:      jobType,
+		Enabled:      enabled,
+		AdminConfig:  adminConfig,
+		WorkerConfig: workerConfig,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	return m.configMgr.SaveConfig(config)
+}
+
+// GetDetectionHistory returns detection history for a job type
+func (m *Manager) GetDetectionHistory(jobType string, limit int) []*DetectionRecord {
+	config, err := m.configMgr.GetConfig(jobType)
+	if err != nil || config == nil {
+		return []*DetectionRecord{}
+	}
+	
+	config.mu.RLock()
+	defer config.mu.RUnlock()
+	
+	// Return in reverse order (latest first)
+	var result []*DetectionRecord
+	start := len(config.DetectionHistory) - 1
+	if start < 0 {
+		return result
+	}
+	
+	for i := start; i >= 0 && len(result) < limit; i-- {
+		result = append(result, config.DetectionHistory[i])
+	}
+	return result
+}
+
+// GetExecutionHistory returns execution history for a job type
+func (m *Manager) GetExecutionHistory(jobType string, limit int) []*ExecutionRecord {
+	config, err := m.configMgr.GetConfig(jobType)
+	if err != nil || config == nil {
+		return []*ExecutionRecord{}
+	}
+	
+	config.mu.RLock()
+	defer config.mu.RUnlock()
+	
+	// Return in reverse order (latest first)
+	var result []*ExecutionRecord
+	start := len(config.ExecutionHistory) - 1
+	if start < 0 {
+		return result
+	}
+	
+	for i := start; i >= 0 && len(result) < limit; i-- {
+		result = append(result, config.ExecutionHistory[i])
+	}
+	return result
+}
+
+// TriggerDetection manually triggers detection for a job type
+func (m *Manager) TriggerDetection(jobType string) error {
+	detector, err := m.registry.GetDetectorForJobType(jobType)
+	if err != nil {
+		return fmt.Errorf("no detector for job type %s", jobType)
+	}
+
+	config, err := m.configMgr.GetConfig(jobType)
+	if err != nil || !config.Enabled {
+		return fmt.Errorf("job type %s not enabled", jobType)
+	}
+
+	// Call the dispatcher to run detection
+	return m.dispatcher.TriggerDetection(jobType, detector, config)
+}
+
+// ListJobTypes returns the list of registered job types
+func (m *Manager) ListJobTypes() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	var jobTypes []string
+	for jobType := range m.dispatcher.queues {
+		jobTypes = append(jobTypes, jobType)
+	}
+	return jobTypes
+}
+
+// GetDetectorForJobType retrieves a detector for a job type
+func (m *Manager) GetDetectorForJobType(jobType string) (interface{}, error) {
+	return m.registry.GetDetectorForJobType(jobType)
+}
+
+// RecordDetection records a detection event
+func (m *Manager) RecordDetection(jobType string, record *DetectionRecord) error {
+	config, err := m.configMgr.GetConfig(jobType)
+	if err != nil || config == nil {
+		return err
+	}
+	
+	config.mu.Lock()
+	defer config.mu.Unlock()
+	
+	// Keep last 50 detection records
+	config.DetectionHistory = append(config.DetectionHistory, record)
+	if len(config.DetectionHistory) > 50 {
+		config.DetectionHistory = config.DetectionHistory[len(config.DetectionHistory)-50:]
+	}
+	
+	return nil
+}
+
+// RecordExecution records a job execution event
+func (m *Manager) RecordExecution(jobType string, record *ExecutionRecord) error {
+	config, err := m.configMgr.GetConfig(jobType)
+	if err != nil || config == nil {
+		return err
+	}
+	
+	config.mu.Lock()
+	defer config.mu.Unlock()
+	
+	// Keep last 100 execution records
+	config.ExecutionHistory = append(config.ExecutionHistory, record)
+	if len(config.ExecutionHistory) > 100 {
+		config.ExecutionHistory = config.ExecutionHistory[len(config.ExecutionHistory)-100:]
+	}
+	
+	return nil
+}
+

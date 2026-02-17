@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -107,6 +108,9 @@ type AdminServer struct {
 
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
+
+	// Plugin system manager
+	PluginManager *plugin.Manager
 
 	// Collection statistics caching
 	collectionStatsCache          map[string]collectionStats

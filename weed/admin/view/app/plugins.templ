@@ -1,0 +1,118 @@
+package app
+
+import (
+	"fmt"
+)
+
+templ PluginsPage(data map[string]interface{}) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2"><i class="fas fa-puzzle-piece me-2"></i>Plugin System</h1>
+		<button type="button" class="btn btn-sm btn-primary" onclick="location.reload();"><i class="fas fa-sync me-1"></i>Refresh</button>
+	</div>
+
+	<div class="row mb-4">
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-primary shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Connected Plugins</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">{ fmt.Sprintf("%v", data["total_plugins"]) }</div>
+						</div>
+						<div class="col-auto"><i class="fas fa-plug fa-2x text-gray-300"></i></div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-success shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">Total Jobs</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">{ fmt.Sprintf("%v", data["total_jobs"]) }</div>
+						</div>
+						<div class="col-auto"><i class="fas fa-tasks fa-2x text-gray-300"></i></div>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="col-xl-3 col-md-6 mb-4">
+			<div class="card border-left-info shadow h-100 py-2">
+				<div class="card-body">
+					<div class="row no-gutters align-items-center">
+						<div class="col mr-2">
+							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">Job Types</div>
+							<div class="h5 mb-0 font-weight-bold text-gray-800">{ fmt.Sprintf("%v", len(data["job_types"].([]string))) }</div>
+						</div>
+						<div class="col-auto"><i class="fas fa-cubes fa-2x text-gray-300"></i></div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-plug me-2"></i>Connected Plugins</h6>
+		</div>
+		<div class="card-body">
+			if len(data["plugins"].([]map[string]interface{})) == 0 {
+				<div class="alert alert-info"><i class="fas fa-info-circle me-2"></i>No plugins connected</div>
+			} else {
+				<table class="table table-hover table-sm">
+					<thead><tr><th>Name</th><th>Version</th><th>State</th><th>Health</th><th>Jobs</th></tr></thead>
+					<tbody>
+						for _, p := range data["plugins"].([]map[string]interface{}) {
+							<tr>
+								<td>{ fmt.Sprintf("%v", p["name"]) }</td>
+								<td>{ fmt.Sprintf("%v", p["version"]) }</td>
+								<td><span class={ "badge", stateClass(fmt.Sprintf("%v", p["state"])) }>{ fmt.Sprintf("%v", p["state"]) }</span></td>
+								<td>
+									if p["healthy"].(bool) {
+										<span class="badge bg-success">Healthy</span>
+									} else {
+										<span class="badge bg-danger">Unhealthy</span>
+									}
+								</td>
+								<td>Running: { fmt.Sprintf("%v", p["running_jobs"]) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	</div>
+
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-cubes me-2"></i>Job Types</h6>
+		</div>
+		<div class="card-body">
+			if len(data["job_types"].([]string)) == 0 {
+				<div class="alert alert-info">No job types available</div>
+			} else {
+				<div class="row">
+					for _, jt := range data["job_types"].([]string) {
+						<div class="col-lg-4 mb-3">
+							<div class="card">
+								<div class="card-body">
+									<h5 class="card-title">{ jt }</h5>
+									<a href={ templ.SafeURL("/plugins/config/" + jt) } class="btn btn-sm btn-primary">Config</a>
+									<a href={ templ.SafeURL("/plugins/jobs/" + jt) } class="btn btn-sm btn-info">Jobs</a>
+								</div>
+							</div>
+						</div>
+					}
+				</div>
+			}
+		</div>
+	</div>
+}
+
+func stateClass(s string) string {
+	if s == "healthy" { return "bg-success" }
+	if s == "connected" { return "bg-info" }
+	if s == "unhealthy" { return "bg-warning" }
+	return "bg-danger"
+}

@@ -26,6 +26,7 @@ type AdminHandlers struct {
 	maintenanceHandlers    *MaintenanceHandlers
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
+	pluginHandlers         *PluginHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -38,6 +39,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
+	pluginHandlers := NewPluginHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		authHandlers:           authHandlers,
@@ -48,6 +50,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 		maintenanceHandlers:    maintenanceHandlers,
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
+		pluginHandlers:         pluginHandlers,
 	}
 }
 
@@ -127,6 +130,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
 		protected.POST("/maintenance/config/:taskType", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateTaskConfig)
 		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
+
+		// Plugin system routes
+		protected.GET("/plugins", h.pluginHandlers.ShowPlugins)
+		protected.GET("/plugins/jobs/:jobType", h.pluginHandlers.ShowPluginJobs)
+		protected.GET("/plugins/config/:jobType", h.pluginHandlers.ShowPluginConfig)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -240,6 +248,19 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
 				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
 				maintenanceApi.PUT("/config", dash.RequireWriteAccess(), h.adminServer.UpdateMaintenanceConfigAPI)
+			}
+
+			// Plugin system API routes
+			pluginApi := api.Group("/plugin")
+			{
+				pluginApi.GET("/list", h.pluginHandlers.ListPluginsAPI)
+				pluginApi.GET("/jobs/:jobType", h.pluginHandlers.ListJobsAPI)
+				pluginApi.GET("/config/:jobType", h.pluginHandlers.GetConfigAPI)
+				pluginApi.POST("/config/:jobType/apply", dash.RequireWriteAccess(), h.pluginHandlers.SaveConfigAPI)
+				pluginApi.GET("/detection/history/:jobType", h.pluginHandlers.GetDetectionHistoryAPI)
+				pluginApi.GET("/execution/history/:jobType", h.pluginHandlers.GetExecutionHistoryAPI)
+				pluginApi.POST("/jobs/:jobType/trigger-detection", dash.RequireWriteAccess(), h.pluginHandlers.TriggerDetectionAPI)
+				pluginApi.POST("/jobs/:jobID/cancel", dash.RequireWriteAccess(), h.pluginHandlers.CancelJobAPI)
 			}
 
 			// Message Queue API routes

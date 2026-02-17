@@ -332,9 +332,27 @@ templ Layout(c *gin.Context, content templ.Component) {
                         </li>
                     </ul>
                 </div>
-            </div>
 
-            <!-- Main content -->
+                <!-- PLUGIN SECTION -->
+                <div class="sidebar-menu-group">
+                    <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
+                        <span>PLUGINS</span>
+                    </h6>
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            if currentPath == "/plugins" {
+                                <a class="nav-link active" href="/plugins">
+                                    <i class="fas fa-puzzle-piece me-2"></i>Plugins
+                                </a>
+                            } else {
+                                <a class="nav-link" href="/plugins">
+                                    <i class="fas fa-puzzle-piece me-2"></i>Plugins
+                                </a>
+                            }
+                        </li>
+                    </ul>
+                </div>
+            </div>
             <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
                 <div class="pt-3">
                     @content

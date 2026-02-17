@@ -1,0 +1,60 @@
+package app
+
+import (
+	"fmt"
+)
+
+templ PluginJobsPage(data map[string]interface{}) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2"><i class="fas fa-list me-2"></i>{ fmt.Sprintf("%v", data["job_type"]) } Jobs</h1>
+		<div>
+			<a href="/plugins" class="btn btn-sm btn-secondary me-2">Back</a>
+			<button type="button" class="btn btn-sm btn-primary" onclick="location.reload();">Refresh</button>
+		</div>
+	</div>
+
+	<div class="row mb-4">
+		<div class="col-lg-3"><div class="card"><div class="card-body"><div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Pending</div><div class="h5 mb-0">{ fmt.Sprintf("%v", data["pending_count"]) }</div></div></div></div>
+		<div class="col-lg-3"><div class="card"><div class="card-body"><div class="text-xs font-weight-bold text-info text-uppercase mb-1">Running</div><div class="h5 mb-0">{ fmt.Sprintf("%v", data["running_count"]) }</div></div></div></div>
+		<div class="col-lg-3"><div class="card"><div class="card-body"><div class="text-xs font-weight-bold text-success text-uppercase mb-1">Completed</div><div class="h5 mb-0">{ fmt.Sprintf("%v", data["completed_count"]) }</div></div></div></div>
+		<div class="col-lg-3"><div class="card"><div class="card-body"><div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Failed</div><div class="h5 mb-0">{ fmt.Sprintf("%v", data["failed_count"]) }</div></div></div></div>
+	</div>
+
+	<div class="card shadow">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary">Job List</h6>
+		</div>
+		<div class="card-body">
+			if len(data["jobs"].([]map[string]interface{})) == 0 {
+				<div class="alert alert-info">No jobs found</div>
+			} else {
+				<table class="table table-sm table-hover">
+					<thead><tr><th>Job ID</th><th>Description</th><th>State</th><th>Progress</th><th>Created</th></tr></thead>
+					<tbody>
+						for _, job := range data["jobs"].([]map[string]interface{}) {
+							<tr>
+								<td><code>{ fmt.Sprintf("%v", job["id"]) }</code></td>
+								<td>{ fmt.Sprintf("%v", job["description"]) }</td>
+								<td><span class={ "badge", jobStateClass(fmt.Sprintf("%v", job["state"])) }>{ fmt.Sprintf("%v", job["state"]) }</span></td>
+								<td>
+									<div class="progress" style="height: 20px;">
+										<div class="progress-bar" style={ "width: " + fmt.Sprintf("%v%%", job["progress"]) }></div>
+									</div>
+								</td>
+								<td><small>{ fmt.Sprintf("%v", job["created_at"]) }</small></td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	</div>
+}
+
+func jobStateClass(s string) string {
+	if s == "pending" { return "bg-warning" }
+	if s == "running" { return "bg-info" }
+	if s == "completed" { return "bg-success" }
+	if s == "failed" { return "bg-danger" }
+	return "bg-secondary"
+}

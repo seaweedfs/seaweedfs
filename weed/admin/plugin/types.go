@@ -133,8 +133,37 @@ type JobTypeConfig struct {
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	CreatedBy      string
+	
+	// History tracking
+	DetectionHistory []*DetectionRecord
+	ExecutionHistory []*ExecutionRecord
 
 	mu sync.RWMutex
+}
+
+// DetectionRecord holds information about a detection run
+type DetectionRecord struct {
+	Timestamp    time.Time
+	DurationMs   int64
+	JobsDetected int
+	Status       string
+	Error        string
+	WorkerID     string
+	DetailedLogs []string
+}
+
+// ExecutionRecord holds information about a job execution
+type ExecutionRecord struct {
+	JobID            string
+	JobType          string
+	StartedAt        time.Time
+	CompletedAt      time.Time
+	DurationMs       int64
+	Success          bool
+	Error            string
+	WorkerID         string
+	ItemsProcessed   int
+	ExecutionLogs    []string
 }
 
 // GetState safely gets the job state

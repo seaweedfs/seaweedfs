@@ -487,7 +487,22 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</li></ul></div></div><!-- Main content --><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</li></ul></div><!-- PLUGIN SECTION --><div class=\"sidebar-menu-group\"><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>PLUGINS</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if currentPath == "/plugins" {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<a class=\"nav-link active\" href=\"/plugins\"><i class=\"fas fa-puzzle-piece me-2\"></i>Plugins</a>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		} else {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<a class=\"nav-link\" href=\"/plugins\"><i class=\"fas fa-puzzle-piece me-2\"></i>Plugins</a>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "</li></ul></div></div><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -495,43 +510,43 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "</div></main></div></div><!-- Footer --><footer class=\"footer mt-auto py-3 bg-light\"><div class=\"container-fluid text-center\"><small class=\"text-muted\">&copy; ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "</div></main></div></div><!-- Footer --><footer class=\"footer mt-auto py-3 bg-light\"><div class=\"container-fluid text-center\"><small class=\"text-muted\">&copy; ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", time.Now().Year()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 350, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 368, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, " SeaweedFS Admin v")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, " SeaweedFS Admin v")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(version.VERSION_NUMBER)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 350, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 368, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, " ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, " ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if !strings.Contains(version.VERSION, "enterprise") {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<span class=\"mx-2\">•</span> <a href=\"https://seaweedfs.com\" target=\"_blank\" class=\"text-decoration-none\"><i class=\"fas fa-star me-1\"></i>Enterprise Version Available</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<span class=\"mx-2\">•</span> <a href=\"https://seaweedfs.com\" target=\"_blank\" class=\"text-decoration-none\"><i class=\"fas fa-star me-1\"></i>Enterprise Version Available</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</small></div></footer><!-- Bootstrap JS --><script src=\"/static/js/bootstrap.bundle.min.js\"></script><!-- Modal Alerts JS (replaces native alert/confirm) --><script src=\"/static/js/modal-alerts.js\"></script><!-- Custom JS --><script src=\"/static/js/admin.js\"></script><script src=\"/static/js/iam-utils.js\"></script><script src=\"/static/js/s3tables.js\"></script></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "</small></div></footer><!-- Bootstrap JS --><script src=\"/static/js/bootstrap.bundle.min.js\"></script><!-- Modal Alerts JS (replaces native alert/confirm) --><script src=\"/static/js/modal-alerts.js\"></script><!-- Custom JS --><script src=\"/static/js/admin.js\"></script><script src=\"/static/js/iam-utils.js\"></script><script src=\"/static/js/s3tables.js\"></script></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -560,56 +575,56 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 			templ_7745c5c3_Var28 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 378, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 396, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, " - Login</title><link rel=\"icon\" href=\"/static/favicon.ico\" type=\"image/x-icon\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><link href=\"/static/css/bootstrap.min.css\" rel=\"stylesheet\"><link href=\"/static/css/fontawesome.min.css\" rel=\"stylesheet\"></head><body class=\"bg-light\"><div class=\"container\"><div class=\"row justify-content-center min-vh-100 align-items-center\"><div class=\"col-md-6 col-lg-4\"><div class=\"card shadow\"><div class=\"card-body p-5\"><div class=\"text-center mb-4\"><i class=\"fas fa-server fa-3x text-primary mb-3\"></i><h4 class=\"card-title\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, " - Login</title><link rel=\"icon\" href=\"/static/favicon.ico\" type=\"image/x-icon\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><link href=\"/static/css/bootstrap.min.css\" rel=\"stylesheet\"><link href=\"/static/css/fontawesome.min.css\" rel=\"stylesheet\"></head><body class=\"bg-light\"><div class=\"container\"><div class=\"row justify-content-center min-vh-100 align-items-center\"><div class=\"col-md-6 col-lg-4\"><div class=\"card shadow\"><div class=\"card-body p-5\"><div class=\"text-center mb-4\"><i class=\"fas fa-server fa-3x text-primary mb-3\"></i><h4 class=\"card-title\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var30 string
 		templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 392, Col: 57}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 410, Col: 57}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "</h4><p class=\"text-muted\">Please sign in to continue</p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "</h4><p class=\"text-muted\">Please sign in to continue</p></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if errorMessage != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "<div class=\"alert alert-danger\" role=\"alert\"><i class=\"fas fa-exclamation-triangle me-2\"></i> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "<div class=\"alert alert-danger\" role=\"alert\"><i class=\"fas fa-exclamation-triangle me-2\"></i> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(errorMessage)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 399, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 417, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "</div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 67, "</div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "<form method=\"POST\" action=\"/login\"><div class=\"mb-3\"><label for=\"username\" class=\"form-label\">Username</label><div class=\"input-group\"><span class=\"input-group-text\"><i class=\"fas fa-user\"></i></span> <input type=\"text\" class=\"form-control\" id=\"username\" name=\"username\" required></div></div><div class=\"mb-4\"><label for=\"password\" class=\"form-label\">Password</label><div class=\"input-group\"><span class=\"input-group-text\"><i class=\"fas fa-lock\"></i></span> <input type=\"password\" class=\"form-control\" id=\"password\" name=\"password\" required></div></div><button type=\"submit\" class=\"btn btn-primary w-100\"><i class=\"fas fa-sign-in-alt me-2\"></i>Sign In</button></form></div></div></div></div></div><script src=\"/static/js/bootstrap.bundle.min.js\"></script></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 68, "<form method=\"POST\" action=\"/login\"><div class=\"mb-3\"><label for=\"username\" class=\"form-label\">Username</label><div class=\"input-group\"><span class=\"input-group-text\"><i class=\"fas fa-user\"></i></span> <input type=\"text\" class=\"form-control\" id=\"username\" name=\"username\" required></div></div><div class=\"mb-4\"><label for=\"password\" class=\"form-label\">Password</label><div class=\"input-group\"><span class=\"input-group-text\"><i class=\"fas fa-lock\"></i></span> <input type=\"password\" class=\"form-control\" id=\"password\" name=\"password\" required></div></div><button type=\"submit\" class=\"btn btn-primary w-100\"><i class=\"fas fa-sign-in-alt me-2\"></i>Sign In</button></form></div></div></div></div></div><script src=\"/static/js/bootstrap.bundle.min.js\"></script></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

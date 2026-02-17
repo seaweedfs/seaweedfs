@@ -1,0 +1,102 @@
+package app
+
+import (
+	"fmt"
+)
+
+templ PluginConfigPage(data map[string]interface{}) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2"><i class="fas fa-cog me-2"></i>{ fmt.Sprintf("%v", data["job_type"]) } Config</h1>
+		<a href="/plugins" class="btn btn-sm btn-secondary">Back</a>
+	</div>
+
+	<ul class="nav nav-tabs mb-4" role="tablist">
+		<li class="nav-item"><button class="nav-link active" id="config-tab" data-bs-toggle="tab" data-bs-target="#config" type="button">Configuration</button></li>
+		<li class="nav-item"><button class="nav-link" id="detection-tab" data-bs-toggle="tab" data-bs-target="#detection" type="button">Detection History</button></li>
+		<li class="nav-item"><button class="nav-link" id="execution-tab" data-bs-toggle="tab" data-bs-target="#execution" type="button">Execution History</button></li>
+	</ul>
+
+	<div class="tab-content">
+		<div class="tab-pane fade show active" id="config" role="tabpanel">
+			<div class="card shadow">
+				<div class="card-header py-3">
+					<h6 class="m-0 font-weight-bold text-primary">Configuration</h6>
+				</div>
+				<div class="card-body">
+					<div class="mb-3">
+						<div class="form-check form-switch">
+							<input class="form-check-input" type="checkbox" id="enabled" checked?={ data["enabled"].(bool) }>
+							<label class="form-check-label" for="enabled">Enabled</label>
+						</div>
+					</div>
+					<div class="alert alert-info"><i class="fas fa-info-circle me-2"></i>Configuration UI coming soon</div>
+					<button type="button" class="btn btn-primary">Save</button>
+				</div>
+			</div>
+		</div>
+
+		<div class="tab-pane fade" id="detection" role="tabpanel">
+			<div class="card shadow">
+				<div class="card-header py-3">
+					<div class="d-flex justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">Detection History</h6>
+						<button type="button" class="btn btn-sm btn-primary">Run Detection</button>
+					</div>
+				</div>
+				<div class="card-body">
+					if len(data["detection_history"].([]map[string]interface{})) == 0 {
+						<div class="alert alert-info">No detection history</div>
+					} else {
+						<table class="table table-sm">
+							<thead><tr><th>Timestamp</th><th>Duration</th><th>Jobs Found</th><th>Status</th></tr></thead>
+							<tbody>
+								for _, rec := range data["detection_history"].([]map[string]interface{}) {
+									<tr>
+										<td>{ fmt.Sprintf("%v", rec["timestamp"]) }</td>
+										<td>{ fmt.Sprintf("%vms", rec["duration_ms"]) }</td>
+										<td>{ fmt.Sprintf("%v", rec["jobs_detected"]) }</td>
+										<td><span class="badge bg-success">{ fmt.Sprintf("%v", rec["status"]) }</span></td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					}
+				</div>
+			</div>
+		</div>
+
+		<div class="tab-pane fade" id="execution" role="tabpanel">
+			<div class="card shadow">
+				<div class="card-header py-3">
+					<h6 class="m-0 font-weight-bold text-primary">Execution History</h6>
+				</div>
+				<div class="card-body">
+					if len(data["execution_history"].([]map[string]interface{})) == 0 {
+						<div class="alert alert-info">No execution history</div>
+					} else {
+						<table class="table table-sm">
+							<thead><tr><th>Job ID</th><th>Started</th><th>Duration</th><th>Items</th><th>Status</th></tr></thead>
+							<tbody>
+								for _, rec := range data["execution_history"].([]map[string]interface{}) {
+									<tr>
+										<td><code>{ fmt.Sprintf("%v", rec["job_id"]) }</code></td>
+										<td>{ fmt.Sprintf("%v", rec["started_at"]) }</td>
+										<td>{ fmt.Sprintf("%vms", rec["duration_ms"]) }</td>
+										<td>{ fmt.Sprintf("%v", rec["items_processed"]) }</td>
+										<td>
+											if rec["success"].(bool) {
+												<span class="badge bg-success">Success</span>
+											} else {
+												<span class="badge bg-danger">Failed</span>
+											}
+										</td>
+									</tr>
+								}
+							</tbody>
+						</table>
+					}
+				</div>
+			</div>
+		</div>
+	</div>
+}

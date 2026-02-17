@@ -371,3 +371,20 @@ func (d *Dispatcher) GetStats() map[string]interface{} {
 		"registered_types": len(d.queues),
 	}
 }
+
+// TriggerDetection manually triggers detection for a job type
+func (d *Dispatcher) TriggerDetection(jobType string, detector interface{}, config *JobTypeConfig) error {
+	// Record the detection run
+	record := &DetectionRecord{
+		Timestamp:    time.Now(),
+		JobsDetected: 0,
+		Status:       "started",
+	}
+
+	// TODO: Call detector to run detection
+	// For now, mark as completed with no jobs detected
+	record.DurationMs = 0
+	record.Status = "completed"
+
+	return nil
+}
