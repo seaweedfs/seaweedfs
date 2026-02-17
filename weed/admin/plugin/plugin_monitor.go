@@ -126,6 +126,7 @@ func (r *Plugin) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
 	}
 
 	now := time.Now().UTC()
+	workerID := ""
 
 	r.jobsMu.Lock()
 	job := r.jobs[update.JobId]
@@ -150,16 +151,18 @@ func (r *Plugin) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
 	job.Stage = update.Stage
 	job.Message = update.Message
 	job.UpdatedAt = now
+	workerID = job.WorkerID
 	r.pruneTrackedJobsLocked()
 	r.jobsMu.Unlock()
 	r.persistTrackedJobsSnapshot()
 
-	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, "", update.Activities)
+	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, workerID, update.Activities)
 	if update.Message != "" || update.Stage != "" {
 		r.appendActivity(JobActivity{
 			JobID:      update.JobId,
 			JobType:    update.JobType,
 			RequestID:  update.RequestId,
+			WorkerID:   workerID,
 			Source:     "worker_progress",
 			Message:    update.Message,
 			Stage:      update.Stage,

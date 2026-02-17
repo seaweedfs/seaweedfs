@@ -855,7 +855,13 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 		}
 	}
 
-	r.trackWorkerActivities(completed.JobType, completed.JobId, completed.RequestId, "", completed.Activities)
+	tracked := r.trackExecutionCompletion(completed)
+	workerID := ""
+	if tracked != nil && tracked.WorkerID != "" {
+		workerID = tracked.WorkerID
+	}
+
+	r.trackWorkerActivities(completed.JobType, completed.JobId, completed.RequestId, workerID, completed.Activities)
 
 	record := &JobRunRecord{
 		RunID:       completed.RequestId,
@@ -880,9 +886,9 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 		record.Message = completed.ErrorMessage
 	}
 
-	if tracked := r.trackExecutionCompletion(completed); tracked != nil {
-		if tracked.WorkerID != "" {
-			record.WorkerID = tracked.WorkerID
+	if tracked != nil {
+		if workerID != "" {
+			record.WorkerID = workerID
 		}
 		if !tracked.CreatedAt.IsZero() && !record.CompletedAt.IsZero() && record.CompletedAt.After(tracked.CreatedAt) {
 			record.DurationMs = int64(record.CompletedAt.Sub(tracked.CreatedAt) / time.Millisecond)
