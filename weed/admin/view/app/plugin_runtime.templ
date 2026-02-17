@@ -1512,11 +1512,16 @@ templ PluginRuntime(enabled bool) {
                 summary.textContent = 'Loading descriptor and config...';
 
                 try {
-                    var schemaURL = '/api/plugin/job-types/' + encodePath(jobType) + '/schema';
                     if (forceRefresh) {
-                        schemaURL += '?force_refresh=true';
+                        var refreshURL = '/api/plugin/job-types/' + encodePath(jobType) + '/schema?force_refresh=true';
+                        state.descriptor = await pluginRequest('POST', refreshURL, null);
+                    } else {
+                        try {
+                            state.descriptor = await pluginRequest('GET', '/api/plugin/job-types/' + encodePath(jobType) + '/descriptor');
+                        } catch (descriptorLoadError) {
+                            state.descriptor = await pluginRequest('POST', '/api/plugin/job-types/' + encodePath(jobType) + '/schema', null);
+                        }
                     }
-                    state.descriptor = await pluginRequest('POST', schemaURL, null);
                 } catch (schemaError) {
                     state.descriptor = null;
                     summary.innerHTML = '<span class="text-danger">Failed to load descriptor: ' + escapeHtml(schemaError.message) + '</span>';

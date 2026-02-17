@@ -1687,6 +1687,14 @@ func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobTyp
 	return s.pluginRuntime.RequestConfigSchema(ctx, jobType, forceRefresh)
 }
 
+// LoadPluginJobTypeDescriptor loads persisted descriptor for one job type.
+func (s *AdminServer) LoadPluginJobTypeDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime is not enabled")
+	}
+	return s.pluginRuntime.LoadDescriptor(jobType)
+}
+
 // SavePluginJobTypeConfig persists plugin job type config in admin data dir.
 func (s *AdminServer) SavePluginJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
 	if s.pluginRuntime == nil {

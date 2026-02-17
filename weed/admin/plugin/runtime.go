@@ -306,6 +306,10 @@ func (r *Runtime) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) er
 	return r.store.SaveJobTypeConfig(config)
 }
 
+func (r *Runtime) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
+	return r.store.LoadDescriptor(jobType)
+}
+
 func (r *Runtime) LoadRunHistory(jobType string) (*JobTypeRunHistory, error) {
 	return r.store.LoadRunHistory(jobType)
 }

@@ -132,6 +132,27 @@ func (s *AdminServer) RequestPluginJobTypeSchemaAPI(c *gin.Context) {
 	renderProtoJSON(c, http.StatusOK, descriptor)
 }
 
+// GetPluginJobTypeDescriptorAPI returns persisted descriptor for a job type.
+func (s *AdminServer) GetPluginJobTypeDescriptorAPI(c *gin.Context) {
+	jobType := strings.TrimSpace(c.Param("jobType"))
+	if jobType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "jobType is required"})
+		return
+	}
+
+	descriptor, err := s.LoadPluginJobTypeDescriptor(jobType)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if descriptor == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "descriptor not found"})
+		return
+	}
+
+	renderProtoJSON(c, http.StatusOK, descriptor)
+}
+
 // GetPluginJobTypeConfigAPI loads persisted config for a job type.
 func (s *AdminServer) GetPluginJobTypeConfigAPI(c *gin.Context) {
 	jobType := strings.TrimSpace(c.Param("jobType"))
