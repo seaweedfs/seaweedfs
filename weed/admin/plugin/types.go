@@ -176,6 +176,8 @@ type JobTypeConfig struct {
 	MaxConcurrent     int
 	Parameters        map[string]string
 	RequiredDetections []string
+	DetectionHistory   []DetectionRecord
+	ExecutionHistory   []ExecutionRecord
 }
 
 // PluginConfig holds all configuration for a plugin
