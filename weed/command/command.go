@@ -38,6 +38,7 @@ var Commands = []*Command{
 	cmdMqBroker,
 	cmdMqKafkaGateway,
 	cmdDB,
+	cmdPluginWorker,
 	cmdS3,
 	cmdScaffold,
 	cmdServer,

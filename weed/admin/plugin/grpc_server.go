@@ -11,12 +11,12 @@ import (
 
 // GRPCServer implements the plugin service gRPC handlers
 type GRPCServer struct {
-	mu        sync.RWMutex
-	registry  *Registry
-	queue     *JobQueue
-	dispatcher *Dispatcher
-	configMgr *ConfigManager
-	streamMu  sync.RWMutex
+	mu            sync.RWMutex
+	registry      *Registry
+	queue         *JobQueue
+	dispatcher    *Dispatcher
+	configMgr     *ConfigManager
+	streamMu      sync.RWMutex
 	activeStreams map[string][]chan interface{}
 	plugin_pb.UnimplementedPluginServiceServer
 	plugin_pb.UnimplementedAdminQueryServiceServer
@@ -78,17 +78,17 @@ func (gs *GRPCServer) Connect(ctx context.Context, req *plugin_pb.PluginConnectR
 
 	// Build response
 	pbConfig := &plugin_pb.PluginConfig{
-		PluginId:            config.PluginID,
-		Properties:          config.Properties,
-		MaxRetries:          int32(config.MaxRetries),
-		Environment:         config.Environment,
+		PluginId:    config.PluginID,
+		Properties:  config.Properties,
+		MaxRetries:  int32(config.MaxRetries),
+		Environment: config.Environment,
 	}
 
 	response := &plugin_pb.PluginConnectResponse{
-		Success:     true,
-		Message:     "Plugin registered successfully",
-		MasterId:    "master-1",
-		Config:      pbConfig,
+		Success:       true,
+		Message:       "Plugin registered successfully",
+		MasterId:      "master-1",
+		Config:        pbConfig,
 		AssignedTypes: req.Capabilities,
 	}
 
@@ -102,8 +102,8 @@ func (gs *GRPCServer) ExecuteJob(ctx context.Context, req *plugin_pb.ExecuteJobR
 	}
 
 	response := &plugin_pb.ExecuteJobResponse{
-		JobId:  req.JobId,
-		Status: plugin_pb.ExecutionStatus_EXECUTION_STATUS_ACCEPTED,
+		JobId:   req.JobId,
+		Status:  plugin_pb.ExecutionStatus_EXECUTION_STATUS_ACCEPTED,
 		Message: "Job accepted for execution",
 	}
 
@@ -148,10 +148,10 @@ func (gs *GRPCServer) GetConfig(ctx context.Context, req *plugin_pb.GetConfigReq
 	}
 
 	pbConfig := &plugin_pb.PluginConfig{
-		PluginId:            config.PluginID,
-		Properties:          config.Properties,
-		MaxRetries:          int32(config.MaxRetries),
-		Environment:         config.Environment,
+		PluginId:    config.PluginID,
+		Properties:  config.Properties,
+		MaxRetries:  int32(config.MaxRetries),
+		Environment: config.Environment,
 	}
 
 	response := &plugin_pb.GetConfigResponse{
@@ -169,7 +169,7 @@ func (gs *GRPCServer) SubmitResult(ctx context.Context, req *plugin_pb.JobResult
 	}
 
 	actions := []string{}
-	
+
 	// Process results based on job status
 	switch req.Status {
 	case plugin_pb.ExecutionStatus_EXECUTION_STATUS_COMPLETED:
@@ -203,16 +203,16 @@ func (gs *GRPCServer) GetPluginStats(ctx context.Context, req *plugin_pb.GetPlug
 
 	for _, plugin := range plugins {
 		stat := &plugin_pb.PluginStats{
-			PluginId:            plugin.ID,
-			Status:              plugin.Status,
-			ActiveJobs:          int32(plugin.ActiveJobs),
-			CompletedJobs:       int32(plugin.CompletedJobs),
-			FailedJobs:          int32(plugin.FailedJobs),
-			TotalDetections:     plugin.TotalDetections,
-			AvgExecutionTimeMs:  float32(plugin.AvgExecutionTimeMs),
-			CpuUsagePercent:     float32(plugin.CPUUsagePercent),
-			MemoryUsageBytes:    plugin.MemoryUsageBytes,
-			UptimeSeconds:       int32(time.Since(plugin.ConnectedAt).Seconds()),
+			PluginId:           plugin.ID,
+			Status:             plugin.Status,
+			ActiveJobs:         int32(plugin.ActiveJobs),
+			CompletedJobs:      int32(plugin.CompletedJobs),
+			FailedJobs:         int32(plugin.FailedJobs),
+			TotalDetections:    plugin.TotalDetections,
+			AvgExecutionTimeMs: float32(plugin.AvgExecutionTimeMs),
+			CpuUsagePercent:    float32(plugin.CPUUsagePercent),
+			MemoryUsageBytes:   plugin.MemoryUsageBytes,
+			UptimeSeconds:      int32(time.Since(plugin.ConnectedAt).Seconds()),
 		}
 		response.Stats = append(response.Stats, stat)
 	}
@@ -249,14 +249,14 @@ func (gs *GRPCServer) ListPlugins(ctx context.Context, req *plugin_pb.ListPlugin
 		}
 
 		info := &plugin_pb.PluginInfo{
-			PluginId:         plugin.ID,
-			Name:             plugin.Name,
-			Version:          plugin.Version,
-			Status:           plugin.Status,
-			Capabilities:     plugin.Capabilities,
+			PluginId:          plugin.ID,
+			Name:              plugin.Name,
+			Version:           plugin.Version,
+			Status:            plugin.Status,
+			Capabilities:      plugin.Capabilities,
 			MaxConcurrentJobs: int32(plugin.MaxConcurrentJobs),
-			ActiveJobs:       int32(plugin.ActiveJobs),
-			Metadata:         plugin.Metadata,
+			ActiveJobs:        int32(plugin.ActiveJobs),
+			Metadata:          plugin.Metadata,
 		}
 		response.Plugins = append(response.Plugins, info)
 	}

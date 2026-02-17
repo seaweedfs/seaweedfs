@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -39,14 +40,14 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
-	
+
 	// Get plugin manager from admin server (may be nil)
 	var pluginMgr interface{}
 	if pm := adminServer.GetPluginManager(); pm != nil {
 		pluginMgr = pm
 	}
 	pluginHandlers := NewPluginHandlers(adminServer, pluginMgr)
-	
+
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		authHandlers:           authHandlers,
@@ -270,13 +271,13 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			pluginApi := api.Group("/plugin")
 			{
 				pluginApi.GET("/list", h.pluginHandlers.ListPluginsAPI)
-				pluginApi.GET("/jobs/:type", h.pluginHandlers.ListJobsAPI)
+				pluginApi.GET("/jobs/by-type/:type", h.pluginHandlers.ListJobsAPI)
 				pluginApi.GET("/config/:type", h.pluginHandlers.GetConfigAPI)
 				pluginApi.POST("/config/:type/apply", dash.RequireWriteAccess(), h.pluginHandlers.SaveConfigAPI)
 				pluginApi.GET("/detection/history/:type", h.pluginHandlers.GetDetectionHistoryAPI)
 				pluginApi.GET("/execution/history/:type", h.pluginHandlers.GetExecutionHistoryAPI)
-				pluginApi.POST("/jobs/:type/trigger-detection", dash.RequireWriteAccess(), h.pluginHandlers.TriggerDetectionAPI)
-				pluginApi.POST("/jobs/:id/cancel", dash.RequireWriteAccess(), h.pluginHandlers.CancelJobAPI)
+				pluginApi.POST("/trigger-detection/:type", dash.RequireWriteAccess(), h.pluginHandlers.TriggerDetectionAPI)
+				pluginApi.POST("/cancel-job/:id", dash.RequireWriteAccess(), h.pluginHandlers.CancelJobAPI)
 			}
 		}
 	} else {
@@ -319,6 +320,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		r.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
+
+		// Plugin management routes
+		r.GET("/plugins", h.ShowPlugins)
+		r.GET("/plugins/jobs/:jobType", h.ShowPluginJobs)
+		r.GET("/plugins/config/:jobType", h.ShowPluginConfig)
 
 		// Maintenance system routes
 		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
@@ -450,6 +456,19 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
 				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
 			}
+
+		// Plugin API routes
+		pluginApi := api.Group("/plugin")
+		{
+			pluginApi.GET("/list", h.pluginHandlers.ListPluginsAPI)
+			pluginApi.GET("/jobs/by-type/:type", h.pluginHandlers.ListJobsAPI)
+			pluginApi.GET("/config/:type", h.pluginHandlers.GetConfigAPI)
+			pluginApi.POST("/config/:type/apply", h.pluginHandlers.SaveConfigAPI)
+			pluginApi.GET("/detection/history/:type", h.pluginHandlers.GetDetectionHistoryAPI)
+			pluginApi.GET("/execution/history/:type", h.pluginHandlers.GetExecutionHistoryAPI)
+			pluginApi.POST("/trigger-detection/:type", h.pluginHandlers.TriggerDetectionAPI)
+			pluginApi.POST("/cancel-job/:id", h.pluginHandlers.CancelJobAPI)
+		}
 		}
 	}
 }
@@ -700,19 +719,52 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 
 // ShowPlugins displays the plugins overview page
 func (h *AdminHandlers) ShowPlugins(c *gin.Context) {
-	plugins := []interface{}{}
+	plugins := []map[string]interface{}{}
 	jobTypes := make(map[string]interface{})
-	
+
 	// Get plugin manager from server
 	if pm := h.adminServer.GetPluginManager(); pm != nil {
-		// TODO: Get actual plugins from plugin manager
+		// Cast to *plugin.Manager
+		if pluginMgr, ok := pm.(*plugin.Manager); ok {
+			// Get list of connected plugins
+			connectedPlugins := pluginMgr.ListPlugins(false)
+			for _, p := range connectedPlugins {
+				plugins = append(plugins, map[string]interface{}{
+					"id":            p.ID,
+					"name":          p.Name,
+					"version":       p.Version,
+					"status":        p.Status,
+					"capabilities":  p.Capabilities,
+					"activeJobs":    p.ActiveJobs,
+					"completedJobs": p.CompletedJobs,
+					"failedJobs":    p.FailedJobs,
+					"connectedAt":   p.ConnectedAt,
+					"lastHeartbeat": p.LastHeartbeat,
+				})
+				
+				// Build job types map
+				for _, cap := range p.Capabilities {
+					if _, exists := jobTypes[cap]; !exists {
+						jobTypes[cap] = map[string]interface{}{
+							"type":        cap,
+							"description": cap,
+							"pluginCount": 0,
+						}
+					}
+					// Increment plugin count for this capability
+					if capData, ok := jobTypes[cap].(map[string]interface{}); ok {
+						capData["pluginCount"] = capData["pluginCount"].(int) + 1
+					}
+				}
+			}
+		}
 	}
-	
+
 	component := app.PluginsOverview(app.PluginsPageData{
 		Plugins:  plugins,
 		JobTypes: jobTypes,
 	})
-	
+
 	htmlContent := layout.Layout(c, component)
 	htmlContent.Render(c.Request.Context(), c.Writer)
 }
@@ -722,13 +774,13 @@ func (h *AdminHandlers) ShowPluginJobs(c *gin.Context) {
 	jobType := c.Param("jobType")
 	jobs := []interface{}{}
 	stateFilter := c.Query("state")
-	
+
 	component := app.PluginJobsMonitoring(app.PluginJobsPageData{
 		JobType:     jobType,
 		Jobs:        jobs,
 		StateFilter: stateFilter,
 	})
-	
+
 	htmlContent := layout.Layout(c, component)
 	htmlContent.Render(c.Request.Context(), c.Writer)
 }
@@ -740,15 +792,15 @@ func (h *AdminHandlers) ShowPluginConfig(c *gin.Context) {
 	if activeTab == "" {
 		activeTab = "config"
 	}
-	
+
 	component := app.PluginConfiguration(app.PluginConfigPageData{
-		JobType:             jobType,
-		Config:              app.JobTypeConfig{},
-		DetectionHistory:    []interface{}{},
-		ExecutionHistory:    []interface{}{},
-		ActiveTab:           activeTab,
+		JobType:          jobType,
+		Config:           app.JobTypeConfig{},
+		DetectionHistory: []interface{}{},
+		ExecutionHistory: []interface{}{},
+		ActiveTab:        activeTab,
 	})
-	
+
 	htmlContent := layout.Layout(c, component)
 	htmlContent.Render(c.Request.Context(), c.Writer)
 }

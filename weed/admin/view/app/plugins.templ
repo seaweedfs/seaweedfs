@@ -1,8 +1,10 @@
 package app
 
+import "fmt"
+
 type PluginsPageData struct {
-Plugins  []interface{}
-JobTypes map[string]interface{}
+	Plugins  []map[string]interface{}
+	JobTypes map[string]interface{}
 }
 
 templ PluginsOverview(data PluginsPageData) {
@@ -26,7 +28,7 @@ templ PluginsOverview(data PluginsPageData) {
 <div class="row no-gutters align-items-center">
 <div class="col mr-2">
 <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Connected Plugins</div>
-<div class="h3 mb-0">0</div>
+<div class="h3 mb-0">{ fmt.Sprintf("%d", len(data.Plugins)) }</div>
 </div>
 <div class="col-auto">
 <i class="fas fa-plug fa-2x text-gray-300"></i>
@@ -49,23 +51,35 @@ if len(data.Plugins) == 0 {
 <table class="table table-hover table-sm">
 <thead>
 <tr>
-<th>Plugin</th>
+<th>Plugin ID</th>
+<th>Name</th>
 <th>Status</th>
+<th>Version</th>
+<th>Capabilities</th>
 <th>Actions</th>
 </tr>
 </thead>
 <tbody>
-for i := 0; i < len(data.Plugins); i++ {
+for _, p := range data.Plugins {
 <tr>
+<td><code>{ p["id"].(string) }</code></td>
+<td>{ p["name"].(string) }</td>
 <td>
-<strong>Plugin</strong><br/>
-<small class="text-muted">v1.0</small>
+if p["status"].(string) == "CONNECTED" {
+<span class="badge bg-success">Connected</span>
+} else {
+<span class="badge bg-warning">{ p["status"].(string) }</span>
+}
+</td>
+<td>{ p["version"].(string) }</td>
+<td>
+for _, cap := range p["capabilities"].([]string) {
+<span class="badge bg-info me-1">{ cap }</span>
+}
 </td>
 <td>
-<span class="badge bg-success">Healthy</span>
-</td>
-<td>
-<a href="/plugins/config/test" class="btn btn-sm btn-primary">Config</a>
+<a href={ templ.SafeURL("/plugins/jobs/" + p["id"].(string)) } class="btn btn-sm btn-primary">Jobs</a>
+<a href={ templ.SafeURL("/plugins/config/" + p["id"].(string)) } class="btn btn-sm btn-secondary">Config</a>
 </td>
 </tr>
 }

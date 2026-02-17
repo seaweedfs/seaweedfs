@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -93,6 +95,19 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
+
+	// Register plugin service if plugin manager is available
+	if s.adminServer.GetPluginManager() != nil {
+		// Cast the interface{} to *plugin.Manager
+		if pm, ok := s.adminServer.GetPluginManager().(*plugin.Manager); ok {
+			if pluginGrpcServer := pm.GetGRPCServer(); pluginGrpcServer != nil {
+				plugin_pb.RegisterPluginServiceServer(grpcServer, pluginGrpcServer)
+				plugin_pb.RegisterAdminQueryServiceServer(grpcServer, pluginGrpcServer)
+				plugin_pb.RegisterAdminCommandServiceServer(grpcServer, pluginGrpcServer)
+				glog.Infof("Registered plugin services on worker gRPC server")
+			}
+		}
+	}
 
 	s.grpcServer = grpcServer
 	s.listener = listener

@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -254,10 +257,24 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // initPluginManager initializes the plugin manager
 func (s *AdminServer) initPluginManager(dataDir string) {
-	// For now, keep pluginManager as interface{} to avoid circular imports
-	// This will be set later when handlers are initialized
-	// We'll check if it's nil when needed
-	glog.V(1).Infof("Plugin manager placeholder initialized")
+	// Create plugin configuration directory if it doesn't exist
+	pluginConfigDir := filepath.Join(dataDir, "plugins")
+	if err := os.MkdirAll(pluginConfigDir, 0755); err != nil {
+		glog.Warningf("Failed to create plugin config directory: %v", err)
+		return
+	}
+
+	// Create plugin manager with default configuration
+	config := plugin.DefaultManagerConfig(pluginConfigDir)
+	pm, err := plugin.NewManager(config)
+	if err != nil {
+		glog.Warningf("Failed to initialize plugin manager: %v", err)
+		return
+	}
+
+	// Store the plugin manager
+	s.pluginManager = pm
+	glog.Infof("Plugin manager initialized successfully")
 }
 
 // GetPluginManager returns the plugin manager
