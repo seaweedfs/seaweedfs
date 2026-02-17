@@ -1606,6 +1606,10 @@ templ PluginRuntime(enabled bool) {
                         initialJobType = String(select.value).trim();
                     }
                 }
+                if (!initialJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
+                    initialJobType = String(state.jobTypes[0] || '').trim();
+                    syncJobTypeControls(initialJobType);
+                }
 
                 if (initialJobType) {
                     try {
