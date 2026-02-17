@@ -55,6 +55,9 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 
 		// Detect if we're on a cluster page (but not storage page) to keep submenu expanded
 		isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
+
+		// Detect if we're on a plugins page to keep submenu expanded
+		isPluginsPage := strings.HasPrefix(currentPath, "/plugins")
 		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><title>SeaweedFS Admin</title><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"csrf-token\" content=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -62,7 +65,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(csrfToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 38, Col: 47}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 41, Col: 47}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -75,7 +78,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(username)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 69, Col: 73}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 72, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -110,7 +113,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", isClusterPage))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 96, Col: 207}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 99, Col: 207}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -167,7 +170,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", isStoragePage))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 121, Col: 207}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 124, Col: 207}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -285,7 +288,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 					var templ_7745c5c3_Var14 templ.SafeURL
 					templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(menuItem.URL))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 285, Col: 117}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 288, Col: 117}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 					if templ_7745c5c3_Err != nil {
@@ -320,7 +323,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 					var templ_7745c5c3_Var17 string
 					templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(menuItem.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 286, Col: 109}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 289, Col: 109}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 					if templ_7745c5c3_Err != nil {
@@ -338,7 +341,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 					var templ_7745c5c3_Var18 templ.SafeURL
 					templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(menuItem.URL))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 289, Col: 110}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 292, Col: 110}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 					if templ_7745c5c3_Err != nil {
@@ -373,7 +376,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 					var templ_7745c5c3_Var21 string
 					templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(menuItem.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 290, Col: 109}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 293, Col: 109}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 					if templ_7745c5c3_Err != nil {
@@ -406,7 +409,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 				var templ_7745c5c3_Var22 templ.SafeURL
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(menuItem.URL))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 302, Col: 106}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 305, Col: 106}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -441,7 +444,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 				var templ_7745c5c3_Var25 string
 				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(menuItem.Name)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 303, Col: 105}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 306, Col: 105}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -487,23 +490,23 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</li></ul></div><!-- Plugins Section --><li class=\"nav-item border-top pt-3 my-3\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</li><li class=\"nav-item border-top pt-3 my-3\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if strings.HasPrefix(currentPath, "/plugins") {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<a class=\"nav-link active\" href=\"#pluginsSubmenu\" data-bs-toggle=\"collapse\"><i class=\"fas fa-plug me-2\"></i>Plugins</a> ")
+		if isPluginsPage {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<a class=\"nav-link active\" href=\"#pluginsSubmenu\" data-bs-toggle=\"collapse\"><i class=\"fas fa-plug me-2\"></i>Plugins <i class=\"fas fa-chevron-down ms-auto\"></i></a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<a class=\"nav-link\" href=\"#pluginsSubmenu\" data-bs-toggle=\"collapse\"><i class=\"fas fa-plug me-2\"></i>Plugins</a> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "<a class=\"nav-link collapsed\" href=\"#pluginsSubmenu\" data-bs-toggle=\"collapse\"><i class=\"fas fa-plug me-2\"></i>Plugins <i class=\"fas fa-chevron-down ms-auto\"></i></a> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		if strings.HasPrefix(currentPath, "/plugins") {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<div class=\"collapse show\" id=\"pluginsSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2\" href=\"/plugins\"><i class=\"fas fa-home me-2\"></i>Overview</a></li></ul></div>")
+		if isPluginsPage {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<div class=\"collapse show\" id=\"pluginsSubmenu\"><ul class=\"nav flex-column ms-3\"><li class=\"nav-item\"><a class=\"nav-link py-2 active\" href=\"/plugins\"><i class=\"fas fa-home me-2\"></i>Overview</a></li></ul></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -513,7 +516,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</li></div><!-- Main content --><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</li></ul></div></div><!-- Main content --><main class=\"col-md-9 ms-sm-auto col-lg-10 px-md-4\"><div class=\"pt-3\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -528,7 +531,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", time.Now().Year()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 384, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 387, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 		if templ_7745c5c3_Err != nil {
@@ -541,7 +544,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(version.VERSION_NUMBER)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 384, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 387, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 		if templ_7745c5c3_Err != nil {
@@ -593,7 +596,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 412, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 415, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 		if templ_7745c5c3_Err != nil {
@@ -606,7 +609,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 		var templ_7745c5c3_Var30 string
 		templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 426, Col: 57}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 429, Col: 57}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 		if templ_7745c5c3_Err != nil {
@@ -624,7 +627,7 @@ func LoginForm(c *gin.Context, title string, errorMessage string) templ.Componen
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(errorMessage)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 433, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/layout/layout.templ`, Line: 436, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {

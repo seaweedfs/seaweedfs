@@ -28,6 +28,9 @@ templ Layout(c *gin.Context, content templ.Component) {
   
   // Detect if we're on a cluster page (but not storage page) to keep submenu expanded
   isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
+  
+  // Detect if we're on a plugins page to keep submenu expanded
+  isPluginsPage := strings.HasPrefix(currentPath, "/plugins")
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -330,42 +333,42 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 </a>
                             }
                         </li>
+                        <li class="nav-item border-top pt-3 my-3">
+                            if isPluginsPage {
+                                <a class="nav-link active" href="#pluginsSubmenu" data-bs-toggle="collapse">
+                                    <i class="fas fa-plug me-2"></i>Plugins
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                            } else {
+                                <a class="nav-link collapsed" href="#pluginsSubmenu" data-bs-toggle="collapse">
+                                    <i class="fas fa-plug me-2"></i>Plugins
+                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                </a>
+                            }
+                            if isPluginsPage {
+                                <div class="collapse show" id="pluginsSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2 active" href="/plugins">
+                                                <i class="fas fa-home me-2"></i>Overview
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            } else {
+                                <div class="collapse" id="pluginsSubmenu">
+                                    <ul class="nav flex-column ms-3">
+                                        <li class="nav-item">
+                                            <a class="nav-link py-2" href="/plugins">
+                                                <i class="fas fa-home me-2"></i>Overview
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            }
+                        </li>
                     </ul>
                 </div>
-
-                <!-- Plugins Section -->
-                <li class="nav-item border-top pt-3 my-3">
-                    if strings.HasPrefix(currentPath, "/plugins") {
-                        <a class="nav-link active" href="#pluginsSubmenu" data-bs-toggle="collapse">
-                            <i class="fas fa-plug me-2"></i>Plugins
-                        </a>
-                    } else {
-                        <a class="nav-link" href="#pluginsSubmenu" data-bs-toggle="collapse">
-                            <i class="fas fa-plug me-2"></i>Plugins
-                        </a>
-                    }
-                    if strings.HasPrefix(currentPath, "/plugins") {
-                        <div class="collapse show" id="pluginsSubmenu">
-                            <ul class="nav flex-column ms-3">
-                                <li class="nav-item">
-                                    <a class="nav-link py-2" href="/plugins">
-                                        <i class="fas fa-home me-2"></i>Overview
-                                    </a>
-                                </li>
-                            </ul>
-                        </div>
-                    } else {
-                        <div class="collapse" id="pluginsSubmenu">
-                            <ul class="nav flex-column ms-3">
-                                <li class="nav-item">
-                                    <a class="nav-link py-2" href="/plugins">
-                                        <i class="fas fa-home me-2"></i>Overview
-                                    </a>
-                                </li>
-                            </ul>
-                        </div>
-                    }
-                </li>
             </div>
 
             <!-- Main content -->
