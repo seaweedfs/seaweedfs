@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -93,6 +94,10 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
+	if runtime := s.adminServer.GetPluginRuntime(); runtime != nil {
+		plugin_pb.RegisterPluginControlServiceServer(grpcServer, runtime)
+		glog.V(0).Infof("Plugin V2 gRPC service registered on worker gRPC server")
+	}
 
 	s.grpcServer = grpcServer
 	s.listener = listener

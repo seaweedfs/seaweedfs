@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -17,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -101,6 +103,7 @@ type AdminServer struct {
 
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
+	pluginRuntime      *adminplugin.Runtime
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
@@ -119,7 +122,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, pluginEnabled bool) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -224,6 +227,18 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 				glog.Errorf("Failed to start maintenance manager: %v", err)
 			}
 		}()
+	}
+
+	if pluginEnabled {
+		pluginRuntime, err := adminplugin.NewRuntime(adminplugin.RuntimeOptions{
+			DataDir: dataDir,
+		})
+		if err != nil {
+			glog.Errorf("Failed to initialize plugin runtime v2: %v", err)
+		} else {
+			server.pluginRuntime = pluginRuntime
+			glog.V(0).Infof("Plugin runtime v2 enabled")
+		}
 	}
 
 	return server
@@ -1651,6 +1666,106 @@ func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 	return s.workerGrpcServer
 }
 
+// GetPluginRuntime returns the plugin runtime v2 instance when enabled.
+func (s *AdminServer) GetPluginRuntime() *adminplugin.Runtime {
+	return s.pluginRuntime
+}
+
+// IsPluginRuntimeEnabled reports whether plugin runtime v2 is enabled.
+func (s *AdminServer) IsPluginRuntimeEnabled() bool {
+	return s.pluginRuntime != nil
+}
+
+// RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
+func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.RequestConfigSchema(ctx, jobType, forceRefresh)
+}
+
+// SavePluginJobTypeConfig persists plugin job type config in admin data dir.
+func (s *AdminServer) SavePluginJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
+	if s.pluginRuntime == nil {
+		return fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.SaveJobTypeConfig(config)
+}
+
+// LoadPluginJobTypeConfig loads plugin job type config from persistence.
+func (s *AdminServer) LoadPluginJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.LoadJobTypeConfig(jobType)
+}
+
+// RunPluginDetection triggers one detection pass for a job type and returns proposed jobs.
+func (s *AdminServer) RunPluginDetection(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+) ([]*plugin_pb.JobProposal, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.RunDetection(ctx, jobType, clusterContext, maxResults)
+}
+
+// ExecutePluginJob dispatches one job to a capable worker and waits for completion.
+func (s *AdminServer) ExecutePluginJob(
+	ctx context.Context,
+	job *plugin_pb.JobSpec,
+	clusterContext *plugin_pb.ClusterContext,
+	attempt int32,
+) (*plugin_pb.JobCompleted, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.ExecuteJob(ctx, job, clusterContext, attempt)
+}
+
+// GetPluginRunHistory returns the bounded run history (last 10 success + last 10 error).
+func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeRunHistory, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime v2 is not enabled")
+	}
+	return s.pluginRuntime.LoadRunHistory(jobType)
+}
+
+// GetPluginWorkers returns currently connected plugin workers.
+func (s *AdminServer) GetPluginWorkers() []*adminplugin.WorkerSession {
+	if s.pluginRuntime == nil {
+		return nil
+	}
+	return s.pluginRuntime.ListWorkers()
+}
+
+// ListPluginJobs returns tracked plugin jobs for monitoring.
+func (s *AdminServer) ListPluginJobs(jobType, state string, limit int) []adminplugin.TrackedJob {
+	if s.pluginRuntime == nil {
+		return nil
+	}
+	return s.pluginRuntime.ListTrackedJobs(jobType, state, limit)
+}
+
+// GetPluginJob returns one tracked plugin job by ID.
+func (s *AdminServer) GetPluginJob(jobID string) (*adminplugin.TrackedJob, bool) {
+	if s.pluginRuntime == nil {
+		return nil, false
+	}
+	return s.pluginRuntime.GetTrackedJob(jobID)
+}
+
+// ListPluginActivities returns plugin job activities for monitoring.
+func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplugin.JobActivity {
+	if s.pluginRuntime == nil {
+		return nil
+	}
+	return s.pluginRuntime.ListActivities(jobType, limit)
+}
+
 // Maintenance system integration methods
 
 // InitMaintenanceManager initializes the maintenance manager
@@ -1851,6 +1966,10 @@ func (s *AdminServer) Shutdown() {
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+
+	if s.pluginRuntime != nil {
+		s.pluginRuntime.Shutdown()
+	}
 
 	// Stop worker gRPC server
 	if err := s.StopWorkerGrpcServer(); err != nil {
