@@ -1119,9 +1119,9 @@ func (x *WorkerAcknowledge) GetMessage() string {
 type RunningWork struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	WorkId          string                 `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	Kind            WorkKind               `protobuf:"varint,2,opt,name=kind,proto3,enum=plugin_pb.WorkKind" json:"kind,omitempty"`
+	Kind            WorkKind               `protobuf:"varint,2,opt,name=kind,proto3,enum=plugin.WorkKind" json:"kind,omitempty"`
 	JobType         string                 `protobuf:"bytes,3,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"`
-	State           JobState               `protobuf:"varint,4,opt,name=state,proto3,enum=plugin_pb.JobState" json:"state,omitempty"`
+	State           JobState               `protobuf:"varint,4,opt,name=state,proto3,enum=plugin.JobState" json:"state,omitempty"`
 	ProgressPercent float64                `protobuf:"fixed64,5,opt,name=progress_percent,json=progressPercent,proto3" json:"progress_percent,omitempty"`
 	Stage           string                 `protobuf:"bytes,6,opt,name=stage,proto3" json:"stage,omitempty"`
 	unknownFields   protoimpl.UnknownFields
@@ -1682,8 +1682,8 @@ type ConfigField struct {
 	Description     string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	HelpText        string                 `protobuf:"bytes,4,opt,name=help_text,json=helpText,proto3" json:"help_text,omitempty"`
 	Placeholder     string                 `protobuf:"bytes,5,opt,name=placeholder,proto3" json:"placeholder,omitempty"`
-	FieldType       ConfigFieldType        `protobuf:"varint,6,opt,name=field_type,json=fieldType,proto3,enum=plugin_pb.ConfigFieldType" json:"field_type,omitempty"`
-	Widget          ConfigWidget           `protobuf:"varint,7,opt,name=widget,proto3,enum=plugin_pb.ConfigWidget" json:"widget,omitempty"`
+	FieldType       ConfigFieldType        `protobuf:"varint,6,opt,name=field_type,json=fieldType,proto3,enum=plugin.ConfigFieldType" json:"field_type,omitempty"`
+	Widget          ConfigWidget           `protobuf:"varint,7,opt,name=widget,proto3,enum=plugin.ConfigWidget" json:"widget,omitempty"`
 	Required        bool                   `protobuf:"varint,8,opt,name=required,proto3" json:"required,omitempty"`
 	ReadOnly        bool                   `protobuf:"varint,9,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
 	Sensitive       bool                   `protobuf:"varint,10,opt,name=sensitive,proto3" json:"sensitive,omitempty"`
@@ -1910,7 +1910,7 @@ func (x *ConfigOption) GetDisabled() bool {
 
 type ValidationRule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          ValidationRuleType     `protobuf:"varint,1,opt,name=type,proto3,enum=plugin_pb.ValidationRuleType" json:"type,omitempty"`
+	Type          ValidationRuleType     `protobuf:"varint,1,opt,name=type,proto3,enum=plugin.ValidationRuleType" json:"type,omitempty"`
 	Expression    string                 `protobuf:"bytes,2,opt,name=expression,proto3" json:"expression,omitempty"`
 	ErrorMessage  string                 `protobuf:"bytes,3,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2931,7 +2931,7 @@ type JobProposal struct {
 	ProposalId    string                  `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
 	DedupeKey     string                  `protobuf:"bytes,2,opt,name=dedupe_key,json=dedupeKey,proto3" json:"dedupe_key,omitempty"`
 	JobType       string                  `protobuf:"bytes,3,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"`
-	Priority      JobPriority             `protobuf:"varint,4,opt,name=priority,proto3,enum=plugin_pb.JobPriority" json:"priority,omitempty"`
+	Priority      JobPriority             `protobuf:"varint,4,opt,name=priority,proto3,enum=plugin.JobPriority" json:"priority,omitempty"`
 	Summary       string                  `protobuf:"bytes,5,opt,name=summary,proto3" json:"summary,omitempty"`
 	Detail        string                  `protobuf:"bytes,6,opt,name=detail,proto3" json:"detail,omitempty"`
 	Parameters    map[string]*ConfigValue `protobuf:"bytes,7,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -3139,7 +3139,7 @@ type JobSpec struct {
 	JobId         string                  `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	JobType       string                  `protobuf:"bytes,2,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"`
 	DedupeKey     string                  `protobuf:"bytes,3,opt,name=dedupe_key,json=dedupeKey,proto3" json:"dedupe_key,omitempty"`
-	Priority      JobPriority             `protobuf:"varint,4,opt,name=priority,proto3,enum=plugin_pb.JobPriority" json:"priority,omitempty"`
+	Priority      JobPriority             `protobuf:"varint,4,opt,name=priority,proto3,enum=plugin.JobPriority" json:"priority,omitempty"`
 	Summary       string                  `protobuf:"bytes,5,opt,name=summary,proto3" json:"summary,omitempty"`
 	Detail        string                  `protobuf:"bytes,6,opt,name=detail,proto3" json:"detail,omitempty"`
 	Parameters    map[string]*ConfigValue `protobuf:"bytes,7,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -3255,7 +3255,7 @@ type JobProgressUpdate struct {
 	RequestId       string                  `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	JobId           string                  `protobuf:"bytes,2,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	JobType         string                  `protobuf:"bytes,3,opt,name=job_type,json=jobType,proto3" json:"job_type,omitempty"`
-	State           JobState                `protobuf:"varint,4,opt,name=state,proto3,enum=plugin_pb.JobState" json:"state,omitempty"`
+	State           JobState                `protobuf:"varint,4,opt,name=state,proto3,enum=plugin.JobState" json:"state,omitempty"`
 	ProgressPercent float64                 `protobuf:"fixed64,5,opt,name=progress_percent,json=progressPercent,proto3" json:"progress_percent,omitempty"`
 	Stage           string                  `protobuf:"bytes,6,opt,name=stage,proto3" json:"stage,omitempty"`
 	Message         string                  `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
@@ -3588,7 +3588,7 @@ func (x *ClusterContext) GetMetadata() map[string]string {
 
 type ActivityEvent struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Source        ActivitySource          `protobuf:"varint,1,opt,name=source,proto3,enum=plugin_pb.ActivitySource" json:"source,omitempty"`
+	Source        ActivitySource          `protobuf:"varint,1,opt,name=source,proto3,enum=plugin.ActivitySource" json:"source,omitempty"`
 	Message       string                  `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	Stage         string                  `protobuf:"bytes,3,opt,name=stage,proto3" json:"stage,omitempty"`
 	Details       map[string]*ConfigValue `protobuf:"bytes,4,rep,name=details,proto3" json:"details,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -3665,7 +3665,7 @@ func (x *ActivityEvent) GetCreatedAt() *timestamppb.Timestamp {
 type CancelRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	TargetId      string                 `protobuf:"bytes,1,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`
-	TargetKind    WorkKind               `protobuf:"varint,2,opt,name=target_kind,json=targetKind,proto3,enum=plugin_pb.WorkKind" json:"target_kind,omitempty"`
+	TargetKind    WorkKind               `protobuf:"varint,2,opt,name=target_kind,json=targetKind,proto3,enum=plugin.WorkKind" json:"target_kind,omitempty"`
 	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	Force         bool                   `protobuf:"varint,4,opt,name=force,proto3" json:"force,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -3879,40 +3879,40 @@ var File_plugin_proto protoreflect.FileDescriptor
 
 const file_plugin_proto_rawDesc = "" +
 	"\n" +
-	"\fplugin.proto\x12\tplugin_pb\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa8\x05\n" +
+	"\fplugin.proto\x12\x06plugin\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x90\x05\n" +
 	"\x14WorkerToAdminMessage\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x123\n" +
-	"\asent_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12.\n" +
+	"\asent_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12+\n" +
 	"\x05hello\x18\n" +
-	" \x01(\v2\x16.plugin_pb.WorkerHelloH\x00R\x05hello\x12:\n" +
-	"\theartbeat\x18\v \x01(\v2\x1a.plugin_pb.WorkerHeartbeatH\x00R\theartbeat\x12@\n" +
-	"\vacknowledge\x18\f \x01(\v2\x1c.plugin_pb.WorkerAcknowledgeH\x00R\vacknowledge\x12W\n" +
-	"\x16config_schema_response\x18\r \x01(\v2\x1f.plugin_pb.ConfigSchemaResponseH\x00R\x14configSchemaResponse\x12P\n" +
-	"\x13detection_proposals\x18\x0e \x01(\v2\x1d.plugin_pb.DetectionProposalsH\x00R\x12detectionProposals\x12M\n" +
-	"\x12detection_complete\x18\x0f \x01(\v2\x1c.plugin_pb.DetectionCompleteH\x00R\x11detectionComplete\x12N\n" +
-	"\x13job_progress_update\x18\x10 \x01(\v2\x1c.plugin_pb.JobProgressUpdateH\x00R\x11jobProgressUpdate\x12>\n" +
-	"\rjob_completed\x18\x11 \x01(\v2\x17.plugin_pb.JobCompletedH\x00R\fjobCompletedB\x06\n" +
-	"\x04body\"\x98\x04\n" +
+	" \x01(\v2\x13.plugin.WorkerHelloH\x00R\x05hello\x127\n" +
+	"\theartbeat\x18\v \x01(\v2\x17.plugin.WorkerHeartbeatH\x00R\theartbeat\x12=\n" +
+	"\vacknowledge\x18\f \x01(\v2\x19.plugin.WorkerAcknowledgeH\x00R\vacknowledge\x12T\n" +
+	"\x16config_schema_response\x18\r \x01(\v2\x1c.plugin.ConfigSchemaResponseH\x00R\x14configSchemaResponse\x12M\n" +
+	"\x13detection_proposals\x18\x0e \x01(\v2\x1a.plugin.DetectionProposalsH\x00R\x12detectionProposals\x12J\n" +
+	"\x12detection_complete\x18\x0f \x01(\v2\x19.plugin.DetectionCompleteH\x00R\x11detectionComplete\x12K\n" +
+	"\x13job_progress_update\x18\x10 \x01(\v2\x19.plugin.JobProgressUpdateH\x00R\x11jobProgressUpdate\x12;\n" +
+	"\rjob_completed\x18\x11 \x01(\v2\x14.plugin.JobCompletedH\x00R\fjobCompletedB\x06\n" +
+	"\x04body\"\x86\x04\n" +
 	"\x14AdminToWorkerMessage\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x123\n" +
-	"\asent_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12-\n" +
+	"\asent_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06sentAt\x12*\n" +
 	"\x05hello\x18\n" +
-	" \x01(\v2\x15.plugin_pb.AdminHelloH\x00R\x05hello\x12T\n" +
-	"\x15request_config_schema\x18\v \x01(\v2\x1e.plugin_pb.RequestConfigSchemaH\x00R\x13requestConfigSchema\x12T\n" +
-	"\x15run_detection_request\x18\f \x01(\v2\x1e.plugin_pb.RunDetectionRequestH\x00R\x13runDetectionRequest\x12N\n" +
-	"\x13execute_job_request\x18\r \x01(\v2\x1c.plugin_pb.ExecuteJobRequestH\x00R\x11executeJobRequest\x12A\n" +
-	"\x0ecancel_request\x18\x0e \x01(\v2\x18.plugin_pb.CancelRequestH\x00R\rcancelRequest\x126\n" +
-	"\bshutdown\x18\x0f \x01(\v2\x18.plugin_pb.AdminShutdownH\x00R\bshutdownB\x06\n" +
-	"\x04body\"\x85\x03\n" +
+	" \x01(\v2\x12.plugin.AdminHelloH\x00R\x05hello\x12Q\n" +
+	"\x15request_config_schema\x18\v \x01(\v2\x1b.plugin.RequestConfigSchemaH\x00R\x13requestConfigSchema\x12Q\n" +
+	"\x15run_detection_request\x18\f \x01(\v2\x1b.plugin.RunDetectionRequestH\x00R\x13runDetectionRequest\x12K\n" +
+	"\x13execute_job_request\x18\r \x01(\v2\x19.plugin.ExecuteJobRequestH\x00R\x11executeJobRequest\x12>\n" +
+	"\x0ecancel_request\x18\x0e \x01(\v2\x15.plugin.CancelRequestH\x00R\rcancelRequest\x123\n" +
+	"\bshutdown\x18\x0f \x01(\v2\x15.plugin.AdminShutdownH\x00R\bshutdownB\x06\n" +
+	"\x04body\"\xff\x02\n" +
 	"\vWorkerHello\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12,\n" +
 	"\x12worker_instance_id\x18\x02 \x01(\tR\x10workerInstanceId\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12%\n" +
 	"\x0eworker_version\x18\x04 \x01(\tR\rworkerVersion\x12)\n" +
-	"\x10protocol_version\x18\x05 \x01(\tR\x0fprotocolVersion\x12@\n" +
-	"\fcapabilities\x18\x06 \x03(\v2\x1c.plugin_pb.JobTypeCapabilityR\fcapabilities\x12@\n" +
-	"\bmetadata\x18\a \x03(\v2$.plugin_pb.WorkerHello.MetadataEntryR\bmetadata\x1a;\n" +
+	"\x10protocol_version\x18\x05 \x01(\tR\x0fprotocolVersion\x12=\n" +
+	"\fcapabilities\x18\x06 \x03(\v2\x19.plugin.JobTypeCapabilityR\fcapabilities\x12=\n" +
+	"\bmetadata\x18\a \x03(\v2!.plugin.WorkerHello.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb8\x01\n" +
@@ -3921,16 +3921,16 @@ const file_plugin_proto_rawDesc = "" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12<\n" +
 	"\x1aheartbeat_interval_seconds\x18\x03 \x01(\x05R\x18heartbeatIntervalSeconds\x126\n" +
-	"\x17reconnect_delay_seconds\x18\x04 \x01(\x05R\x15reconnectDelaySeconds\"\xde\x04\n" +
+	"\x17reconnect_delay_seconds\x18\x04 \x01(\x05R\x15reconnectDelaySeconds\"\xd5\x04\n" +
 	"\x0fWorkerHeartbeat\x12\x1b\n" +
-	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x129\n" +
-	"\frunning_work\x18\x02 \x03(\v2\x16.plugin_pb.RunningWorkR\vrunningWork\x120\n" +
+	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x126\n" +
+	"\frunning_work\x18\x02 \x03(\v2\x13.plugin.RunningWorkR\vrunningWork\x120\n" +
 	"\x14detection_slots_used\x18\x03 \x01(\x05R\x12detectionSlotsUsed\x122\n" +
 	"\x15detection_slots_total\x18\x04 \x01(\x05R\x13detectionSlotsTotal\x120\n" +
 	"\x14execution_slots_used\x18\x05 \x01(\x05R\x12executionSlotsUsed\x122\n" +
-	"\x15execution_slots_total\x18\x06 \x01(\x05R\x13executionSlotsTotal\x12_\n" +
-	"\x13queued_jobs_by_type\x18\a \x03(\v20.plugin_pb.WorkerHeartbeat.QueuedJobsByTypeEntryR\x10queuedJobsByType\x12D\n" +
-	"\bmetadata\x18\b \x03(\v2(.plugin_pb.WorkerHeartbeat.MetadataEntryR\bmetadata\x1aC\n" +
+	"\x15execution_slots_total\x18\x06 \x01(\x05R\x13executionSlotsTotal\x12\\\n" +
+	"\x13queued_jobs_by_type\x18\a \x03(\v2-.plugin.WorkerHeartbeat.QueuedJobsByTypeEntryR\x10queuedJobsByType\x12A\n" +
+	"\bmetadata\x18\b \x03(\v2%.plugin.WorkerHeartbeat.MetadataEntryR\bmetadata\x1aC\n" +
 	"\x15QueuedJobsByTypeEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\x1a;\n" +
@@ -3941,12 +3941,12 @@ const file_plugin_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1a\n" +
 	"\baccepted\x18\x02 \x01(\bR\baccepted\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xd6\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xd0\x01\n" +
 	"\vRunningWork\x12\x17\n" +
-	"\awork_id\x18\x01 \x01(\tR\x06workId\x12'\n" +
-	"\x04kind\x18\x02 \x01(\x0e2\x13.plugin_pb.WorkKindR\x04kind\x12\x19\n" +
-	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12)\n" +
-	"\x05state\x18\x04 \x01(\x0e2\x13.plugin_pb.JobStateR\x05state\x12)\n" +
+	"\awork_id\x18\x01 \x01(\tR\x06workId\x12$\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x10.plugin.WorkKindR\x04kind\x12\x19\n" +
+	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12&\n" +
+	"\x05state\x18\x04 \x01(\x0e2\x10.plugin.JobStateR\x05state\x12)\n" +
 	"\x10progress_percent\x18\x05 \x01(\x01R\x0fprogressPercent\x12\x14\n" +
 	"\x05stage\x18\x06 \x01(\tR\x05stage\"\xab\x02\n" +
 	"\x11JobTypeCapability\x12\x19\n" +
@@ -3961,73 +3961,73 @@ const file_plugin_proto_rawDesc = "" +
 	"\vdescription\x18\a \x01(\tR\vdescription\"U\n" +
 	"\x13RequestConfigSchema\x12\x19\n" +
 	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12#\n" +
-	"\rforce_refresh\x18\x02 \x01(\bR\fforceRefresh\"\xdd\x01\n" +
+	"\rforce_refresh\x18\x02 \x01(\bR\fforceRefresh\"\xda\x01\n" +
 	"\x14ConfigSchemaResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
 	"\bjob_type\x18\x02 \x01(\tR\ajobType\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x12L\n" +
-	"\x13job_type_descriptor\x18\x05 \x01(\v2\x1c.plugin_pb.JobTypeDescriptorR\x11jobTypeDescriptor\"\xe0\x04\n" +
+	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x12I\n" +
+	"\x13job_type_descriptor\x18\x05 \x01(\v2\x19.plugin.JobTypeDescriptorR\x11jobTypeDescriptor\"\xd1\x04\n" +
 	"\x11JobTypeDescriptor\x12\x19\n" +
 	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x12\n" +
 	"\x04icon\x18\x04 \x01(\tR\x04icon\x12-\n" +
-	"\x12descriptor_version\x18\x05 \x01(\rR\x11descriptorVersion\x12A\n" +
-	"\x11admin_config_form\x18\x06 \x01(\v2\x15.plugin_pb.ConfigFormR\x0fadminConfigForm\x12C\n" +
-	"\x12worker_config_form\x18\a \x01(\v2\x15.plugin_pb.ConfigFormR\x10workerConfigForm\x12U\n" +
-	"\x16admin_runtime_defaults\x18\b \x01(\v2\x1f.plugin_pb.AdminRuntimeDefaultsR\x14adminRuntimeDefaults\x12i\n" +
-	"\x15worker_default_values\x18\t \x03(\v25.plugin_pb.JobTypeDescriptor.WorkerDefaultValuesEntryR\x13workerDefaultValues\x1a^\n" +
+	"\x12descriptor_version\x18\x05 \x01(\rR\x11descriptorVersion\x12>\n" +
+	"\x11admin_config_form\x18\x06 \x01(\v2\x12.plugin.ConfigFormR\x0fadminConfigForm\x12@\n" +
+	"\x12worker_config_form\x18\a \x01(\v2\x12.plugin.ConfigFormR\x10workerConfigForm\x12R\n" +
+	"\x16admin_runtime_defaults\x18\b \x01(\v2\x1c.plugin.AdminRuntimeDefaultsR\x14adminRuntimeDefaults\x12f\n" +
+	"\x15worker_default_values\x18\t \x03(\v22.plugin.JobTypeDescriptor.WorkerDefaultValuesEntryR\x13workerDefaultValues\x1a[\n" +
 	"\x18WorkerDefaultValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\xbe\x02\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xb5\x02\n" +
 	"\n" +
 	"ConfigForm\x12\x17\n" +
 	"\aform_id\x18\x01 \x01(\tR\x06formId\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\x124\n" +
-	"\bsections\x18\x04 \x03(\v2\x18.plugin_pb.ConfigSectionR\bsections\x12O\n" +
-	"\x0edefault_values\x18\x05 \x03(\v2(.plugin_pb.ConfigForm.DefaultValuesEntryR\rdefaultValues\x1aX\n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x121\n" +
+	"\bsections\x18\x04 \x03(\v2\x15.plugin.ConfigSectionR\bsections\x12L\n" +
+	"\x0edefault_values\x18\x05 \x03(\v2%.plugin.ConfigForm.DefaultValuesEntryR\rdefaultValues\x1aU\n" +
 	"\x12DefaultValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\x96\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\x93\x01\n" +
 	"\rConfigSection\x12\x1d\n" +
 	"\n" +
 	"section_id\x18\x01 \x01(\tR\tsectionId\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\x12.\n" +
-	"\x06fields\x18\x04 \x03(\v2\x16.plugin_pb.ConfigFieldR\x06fields\"\xb4\x05\n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12+\n" +
+	"\x06fields\x18\x04 \x03(\v2\x13.plugin.ConfigFieldR\x06fields\"\x9f\x05\n" +
 	"\vConfigField\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1b\n" +
 	"\thelp_text\x18\x04 \x01(\tR\bhelpText\x12 \n" +
-	"\vplaceholder\x18\x05 \x01(\tR\vplaceholder\x129\n" +
+	"\vplaceholder\x18\x05 \x01(\tR\vplaceholder\x126\n" +
 	"\n" +
-	"field_type\x18\x06 \x01(\x0e2\x1a.plugin_pb.ConfigFieldTypeR\tfieldType\x12/\n" +
-	"\x06widget\x18\a \x01(\x0e2\x17.plugin_pb.ConfigWidgetR\x06widget\x12\x1a\n" +
+	"field_type\x18\x06 \x01(\x0e2\x17.plugin.ConfigFieldTypeR\tfieldType\x12,\n" +
+	"\x06widget\x18\a \x01(\x0e2\x14.plugin.ConfigWidgetR\x06widget\x12\x1a\n" +
 	"\brequired\x18\b \x01(\bR\brequired\x12\x1b\n" +
 	"\tread_only\x18\t \x01(\bR\breadOnly\x12\x1c\n" +
 	"\tsensitive\x18\n" +
-	" \x01(\bR\tsensitive\x123\n" +
-	"\tmin_value\x18\v \x01(\v2\x16.plugin_pb.ConfigValueR\bminValue\x123\n" +
-	"\tmax_value\x18\f \x01(\v2\x16.plugin_pb.ConfigValueR\bmaxValue\x121\n" +
-	"\aoptions\x18\r \x03(\v2\x17.plugin_pb.ConfigOptionR\aoptions\x12D\n" +
-	"\x10validation_rules\x18\x0e \x03(\v2\x19.plugin_pb.ValidationRuleR\x0fvalidationRules\x12,\n" +
-	"\x12visible_when_field\x18\x0f \x01(\tR\x10visibleWhenField\x12F\n" +
-	"\x13visible_when_equals\x18\x10 \x01(\v2\x16.plugin_pb.ConfigValueR\x11visibleWhenEquals\"x\n" +
+	" \x01(\bR\tsensitive\x120\n" +
+	"\tmin_value\x18\v \x01(\v2\x13.plugin.ConfigValueR\bminValue\x120\n" +
+	"\tmax_value\x18\f \x01(\v2\x13.plugin.ConfigValueR\bmaxValue\x12.\n" +
+	"\aoptions\x18\r \x03(\v2\x14.plugin.ConfigOptionR\aoptions\x12A\n" +
+	"\x10validation_rules\x18\x0e \x03(\v2\x16.plugin.ValidationRuleR\x0fvalidationRules\x12,\n" +
+	"\x12visible_when_field\x18\x0f \x01(\tR\x10visibleWhenField\x12C\n" +
+	"\x13visible_when_equals\x18\x10 \x01(\v2\x13.plugin.ConfigValueR\x11visibleWhenEquals\"x\n" +
 	"\fConfigOption\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\tR\x05value\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1a\n" +
-	"\bdisabled\x18\x04 \x01(\bR\bdisabled\"\x88\x01\n" +
-	"\x0eValidationRule\x121\n" +
-	"\x04type\x18\x01 \x01(\x0e2\x1d.plugin_pb.ValidationRuleTypeR\x04type\x12\x1e\n" +
+	"\bdisabled\x18\x04 \x01(\bR\bdisabled\"\x85\x01\n" +
+	"\x0eValidationRule\x12.\n" +
+	"\x04type\x18\x01 \x01(\x0e2\x1a.plugin.ValidationRuleTypeR\x04type\x12\x1e\n" +
 	"\n" +
 	"expression\x18\x02 \x01(\tR\n" +
 	"expression\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xd4\x04\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xc2\x04\n" +
 	"\vConfigValue\x12\x1f\n" +
 	"\n" +
 	"bool_value\x18\x01 \x01(\bH\x00R\tboolValue\x12!\n" +
@@ -4037,18 +4037,18 @@ const file_plugin_proto_rawDesc = "" +
 	"\fstring_value\x18\x04 \x01(\tH\x00R\vstringValue\x12!\n" +
 	"\vbytes_value\x18\x05 \x01(\fH\x00R\n" +
 	"bytesValue\x12B\n" +
-	"\x0eduration_value\x18\x06 \x01(\v2\x19.google.protobuf.DurationH\x00R\rdurationValue\x128\n" +
-	"\vstring_list\x18\a \x01(\v2\x15.plugin_pb.StringListH\x00R\n" +
-	"stringList\x125\n" +
+	"\x0eduration_value\x18\x06 \x01(\v2\x19.google.protobuf.DurationH\x00R\rdurationValue\x125\n" +
+	"\vstring_list\x18\a \x01(\v2\x12.plugin.StringListH\x00R\n" +
+	"stringList\x122\n" +
 	"\n" +
-	"int64_list\x18\b \x01(\v2\x14.plugin_pb.Int64ListH\x00R\tint64List\x128\n" +
-	"\vdouble_list\x18\t \x01(\v2\x15.plugin_pb.DoubleListH\x00R\n" +
-	"doubleList\x122\n" +
+	"int64_list\x18\b \x01(\v2\x11.plugin.Int64ListH\x00R\tint64List\x125\n" +
+	"\vdouble_list\x18\t \x01(\v2\x12.plugin.DoubleListH\x00R\n" +
+	"doubleList\x12/\n" +
 	"\tbool_list\x18\n" +
-	" \x01(\v2\x13.plugin_pb.BoolListH\x00R\bboolList\x125\n" +
+	" \x01(\v2\x10.plugin.BoolListH\x00R\bboolList\x122\n" +
 	"\n" +
-	"list_value\x18\v \x01(\v2\x14.plugin_pb.ValueListH\x00R\tlistValue\x122\n" +
-	"\tmap_value\x18\f \x01(\v2\x13.plugin_pb.ValueMapH\x00R\bmapValueB\x06\n" +
+	"list_value\x18\v \x01(\v2\x11.plugin.ValueListH\x00R\tlistValue\x12/\n" +
+	"\tmap_value\x18\f \x01(\v2\x10.plugin.ValueMapH\x00R\bmapValueB\x06\n" +
 	"\x04kind\"$\n" +
 	"\n" +
 	"StringList\x12\x16\n" +
@@ -4059,14 +4059,14 @@ const file_plugin_proto_rawDesc = "" +
 	"DoubleList\x12\x16\n" +
 	"\x06values\x18\x01 \x03(\x01R\x06values\"\"\n" +
 	"\bBoolList\x12\x16\n" +
-	"\x06values\x18\x01 \x03(\bR\x06values\";\n" +
-	"\tValueList\x12.\n" +
-	"\x06values\x18\x01 \x03(\v2\x16.plugin_pb.ConfigValueR\x06values\"\x96\x01\n" +
-	"\bValueMap\x127\n" +
-	"\x06fields\x18\x01 \x03(\v2\x1f.plugin_pb.ValueMap.FieldsEntryR\x06fields\x1aQ\n" +
+	"\x06values\x18\x01 \x03(\bR\x06values\"8\n" +
+	"\tValueList\x12+\n" +
+	"\x06values\x18\x01 \x03(\v2\x13.plugin.ConfigValueR\x06values\"\x90\x01\n" +
+	"\bValueMap\x124\n" +
+	"\x06fields\x18\x01 \x03(\v2\x1c.plugin.ValueMap.FieldsEntryR\x06fields\x1aN\n" +
 	"\vFieldsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\xbf\x03\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xbf\x03\n" +
 	"\x14AdminRuntimeDefaults\x12\x18\n" +
 	"\aenabled\x18\x01 \x01(\bR\aenabled\x12<\n" +
 	"\x1adetection_interval_seconds\x18\x02 \x01(\x05R\x18detectionIntervalSeconds\x12:\n" +
@@ -4086,30 +4086,30 @@ const file_plugin_proto_rawDesc = "" +
 	" per_worker_execution_concurrency\x18\x06 \x01(\x05R\x1dperWorkerExecutionConcurrency\x12\x1f\n" +
 	"\vretry_limit\x18\a \x01(\x05R\n" +
 	"retryLimit\x122\n" +
-	"\x15retry_backoff_seconds\x18\b \x01(\x05R\x13retryBackoffSeconds\"\x81\x06\n" +
+	"\x15retry_backoff_seconds\x18\b \x01(\x05R\x13retryBackoffSeconds\"\xef\x05\n" +
 	"\x13RunDetectionRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
 	"\bjob_type\x18\x02 \x01(\tR\ajobType\x12-\n" +
-	"\x12detection_sequence\x18\x03 \x01(\x03R\x11detectionSequence\x12B\n" +
-	"\radmin_runtime\x18\x04 \x01(\v2\x1d.plugin_pb.AdminRuntimeConfigR\fadminRuntime\x12e\n" +
-	"\x13admin_config_values\x18\x05 \x03(\v25.plugin_pb.RunDetectionRequest.AdminConfigValuesEntryR\x11adminConfigValues\x12h\n" +
-	"\x14worker_config_values\x18\x06 \x03(\v26.plugin_pb.RunDetectionRequest.WorkerConfigValuesEntryR\x12workerConfigValues\x12B\n" +
-	"\x0fcluster_context\x18\a \x01(\v2\x19.plugin_pb.ClusterContextR\x0eclusterContext\x12J\n" +
+	"\x12detection_sequence\x18\x03 \x01(\x03R\x11detectionSequence\x12?\n" +
+	"\radmin_runtime\x18\x04 \x01(\v2\x1a.plugin.AdminRuntimeConfigR\fadminRuntime\x12b\n" +
+	"\x13admin_config_values\x18\x05 \x03(\v22.plugin.RunDetectionRequest.AdminConfigValuesEntryR\x11adminConfigValues\x12e\n" +
+	"\x14worker_config_values\x18\x06 \x03(\v23.plugin.RunDetectionRequest.WorkerConfigValuesEntryR\x12workerConfigValues\x12?\n" +
+	"\x0fcluster_context\x18\a \x01(\v2\x16.plugin.ClusterContextR\x0eclusterContext\x12J\n" +
 	"\x13last_successful_run\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x11lastSuccessfulRun\x12\x1f\n" +
 	"\vmax_results\x18\t \x01(\x05R\n" +
-	"maxResults\x1a\\\n" +
+	"maxResults\x1aY\n" +
 	"\x16AdminConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\x1a]\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1aZ\n" +
 	"\x17WorkerConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\x9f\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\x9c\x01\n" +
 	"\x12DetectionProposals\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x19\n" +
-	"\bjob_type\x18\x02 \x01(\tR\ajobType\x124\n" +
-	"\tproposals\x18\x03 \x03(\v2\x16.plugin_pb.JobProposalR\tproposals\x12\x19\n" +
+	"\bjob_type\x18\x02 \x01(\tR\ajobType\x121\n" +
+	"\tproposals\x18\x03 \x03(\v2\x13.plugin.JobProposalR\tproposals\x12\x19\n" +
 	"\bhas_more\x18\x04 \x01(\bR\ahasMore\"\xb5\x01\n" +
 	"\x11DetectionComplete\x12\x1d\n" +
 	"\n" +
@@ -4117,148 +4117,148 @@ const file_plugin_proto_rawDesc = "" +
 	"\bjob_type\x18\x02 \x01(\tR\ajobType\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\x12'\n" +
-	"\x0ftotal_proposals\x18\x05 \x01(\x05R\x0etotalProposals\"\xda\x04\n" +
+	"\x0ftotal_proposals\x18\x05 \x01(\x05R\x0etotalProposals\"\xce\x04\n" +
 	"\vJobProposal\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12\x1d\n" +
 	"\n" +
 	"dedupe_key\x18\x02 \x01(\tR\tdedupeKey\x12\x19\n" +
-	"\bjob_type\x18\x03 \x01(\tR\ajobType\x122\n" +
-	"\bpriority\x18\x04 \x01(\x0e2\x16.plugin_pb.JobPriorityR\bpriority\x12\x18\n" +
+	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12/\n" +
+	"\bpriority\x18\x04 \x01(\x0e2\x13.plugin.JobPriorityR\bpriority\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\x12\x16\n" +
-	"\x06detail\x18\x06 \x01(\tR\x06detail\x12F\n" +
+	"\x06detail\x18\x06 \x01(\tR\x06detail\x12C\n" +
 	"\n" +
-	"parameters\x18\a \x03(\v2&.plugin_pb.JobProposal.ParametersEntryR\n" +
-	"parameters\x12:\n" +
-	"\x06labels\x18\b \x03(\v2\".plugin_pb.JobProposal.LabelsEntryR\x06labels\x129\n" +
+	"parameters\x18\a \x03(\v2#.plugin.JobProposal.ParametersEntryR\n" +
+	"parameters\x127\n" +
+	"\x06labels\x18\b \x03(\v2\x1f.plugin.JobProposal.LabelsEntryR\x06labels\x129\n" +
 	"\n" +
 	"not_before\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tnotBefore\x129\n" +
 	"\n" +
 	"expires_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1aU\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x1aR\n" +
 	"\x0fParametersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\x1a9\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xef\x04\n" +
 	"\x11ExecuteJobRequest\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\x12$\n" +
-	"\x03job\x18\x02 \x01(\v2\x12.plugin_pb.JobSpecR\x03job\x12B\n" +
-	"\radmin_runtime\x18\x03 \x01(\v2\x1d.plugin_pb.AdminRuntimeConfigR\fadminRuntime\x12c\n" +
-	"\x13admin_config_values\x18\x04 \x03(\v23.plugin_pb.ExecuteJobRequest.AdminConfigValuesEntryR\x11adminConfigValues\x12f\n" +
-	"\x14worker_config_values\x18\x05 \x03(\v24.plugin_pb.ExecuteJobRequest.WorkerConfigValuesEntryR\x12workerConfigValues\x12B\n" +
-	"\x0fcluster_context\x18\x06 \x01(\v2\x19.plugin_pb.ClusterContextR\x0eclusterContext\x12\x18\n" +
-	"\aattempt\x18\a \x01(\x05R\aattempt\x1a\\\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12!\n" +
+	"\x03job\x18\x02 \x01(\v2\x0f.plugin.JobSpecR\x03job\x12?\n" +
+	"\radmin_runtime\x18\x03 \x01(\v2\x1a.plugin.AdminRuntimeConfigR\fadminRuntime\x12`\n" +
+	"\x13admin_config_values\x18\x04 \x03(\v20.plugin.ExecuteJobRequest.AdminConfigValuesEntryR\x11adminConfigValues\x12c\n" +
+	"\x14worker_config_values\x18\x05 \x03(\v21.plugin.ExecuteJobRequest.WorkerConfigValuesEntryR\x12workerConfigValues\x12?\n" +
+	"\x0fcluster_context\x18\x06 \x01(\v2\x16.plugin.ClusterContextR\x0eclusterContext\x12\x18\n" +
+	"\aattempt\x18\a \x01(\x05R\aattempt\x1aY\n" +
 	"\x16AdminConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\x1a]\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1aZ\n" +
 	"\x17WorkerConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\xc8\x04\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xbc\x04\n" +
 	"\aJobSpec\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12\x19\n" +
 	"\bjob_type\x18\x02 \x01(\tR\ajobType\x12\x1d\n" +
 	"\n" +
-	"dedupe_key\x18\x03 \x01(\tR\tdedupeKey\x122\n" +
-	"\bpriority\x18\x04 \x01(\x0e2\x16.plugin_pb.JobPriorityR\bpriority\x12\x18\n" +
+	"dedupe_key\x18\x03 \x01(\tR\tdedupeKey\x12/\n" +
+	"\bpriority\x18\x04 \x01(\x0e2\x13.plugin.JobPriorityR\bpriority\x12\x18\n" +
 	"\asummary\x18\x05 \x01(\tR\asummary\x12\x16\n" +
-	"\x06detail\x18\x06 \x01(\tR\x06detail\x12B\n" +
+	"\x06detail\x18\x06 \x01(\tR\x06detail\x12?\n" +
 	"\n" +
-	"parameters\x18\a \x03(\v2\".plugin_pb.JobSpec.ParametersEntryR\n" +
-	"parameters\x126\n" +
-	"\x06labels\x18\b \x03(\v2\x1e.plugin_pb.JobSpec.LabelsEntryR\x06labels\x129\n" +
+	"parameters\x18\a \x03(\v2\x1f.plugin.JobSpec.ParametersEntryR\n" +
+	"parameters\x123\n" +
+	"\x06labels\x18\b \x03(\v2\x1b.plugin.JobSpec.LabelsEntryR\x06labels\x129\n" +
 	"\n" +
 	"created_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12=\n" +
 	"\fscheduled_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\vscheduledAt\x1aU\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\vscheduledAt\x1aR\n" +
 	"\x0fParametersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\x1a9\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf8\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xec\x03\n" +
 	"\x11JobProgressUpdate\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x19\n" +
-	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12)\n" +
-	"\x05state\x18\x04 \x01(\x0e2\x13.plugin_pb.JobStateR\x05state\x12)\n" +
+	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12&\n" +
+	"\x05state\x18\x04 \x01(\x0e2\x10.plugin.JobStateR\x05state\x12)\n" +
 	"\x10progress_percent\x18\x05 \x01(\x01R\x0fprogressPercent\x12\x14\n" +
 	"\x05stage\x18\x06 \x01(\tR\x05stage\x12\x18\n" +
-	"\amessage\x18\a \x01(\tR\amessage\x12C\n" +
-	"\ametrics\x18\b \x03(\v2).plugin_pb.JobProgressUpdate.MetricsEntryR\ametrics\x128\n" +
+	"\amessage\x18\a \x01(\tR\amessage\x12@\n" +
+	"\ametrics\x18\b \x03(\v2&.plugin.JobProgressUpdate.MetricsEntryR\ametrics\x125\n" +
 	"\n" +
-	"activities\x18\t \x03(\v2\x18.plugin_pb.ActivityEventR\n" +
+	"activities\x18\t \x03(\v2\x15.plugin.ActivityEventR\n" +
 	"activities\x129\n" +
 	"\n" +
 	"updated_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1aR\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1aO\n" +
 	"\fMetricsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\xc5\x02\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xbf\x02\n" +
 	"\fJobCompleted\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x15\n" +
 	"\x06job_id\x18\x02 \x01(\tR\x05jobId\x12\x19\n" +
 	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12\x18\n" +
 	"\asuccess\x18\x04 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\x12,\n" +
-	"\x06result\x18\x06 \x01(\v2\x14.plugin_pb.JobResultR\x06result\x128\n" +
+	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\x12)\n" +
+	"\x06result\x18\x06 \x01(\v2\x11.plugin.JobResultR\x06result\x125\n" +
 	"\n" +
-	"activities\x18\a \x03(\v2\x18.plugin_pb.ActivityEventR\n" +
+	"activities\x18\a \x03(\v2\x15.plugin.ActivityEventR\n" +
 	"activities\x12=\n" +
-	"\fcompleted_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\"\xcb\x01\n" +
-	"\tJobResult\x12K\n" +
-	"\routput_values\x18\x01 \x03(\v2&.plugin_pb.JobResult.OutputValuesEntryR\foutputValues\x12\x18\n" +
-	"\asummary\x18\x02 \x01(\tR\asummary\x1aW\n" +
+	"\fcompleted_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\"\xc5\x01\n" +
+	"\tJobResult\x12H\n" +
+	"\routput_values\x18\x01 \x03(\v2#.plugin.JobResult.OutputValuesEntryR\foutputValues\x12\x18\n" +
+	"\asummary\x18\x02 \x01(\tR\asummary\x1aT\n" +
 	"\x11OutputValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\xac\x02\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xa9\x02\n" +
 	"\x0eClusterContext\x122\n" +
 	"\x15master_grpc_addresses\x18\x01 \x03(\tR\x13masterGrpcAddresses\x120\n" +
 	"\x14filer_grpc_addresses\x18\x02 \x03(\tR\x12filerGrpcAddresses\x122\n" +
-	"\x15volume_grpc_addresses\x18\x03 \x03(\tR\x13volumeGrpcAddresses\x12C\n" +
-	"\bmetadata\x18\x04 \x03(\v2'.plugin_pb.ClusterContext.MetadataEntryR\bmetadata\x1a;\n" +
+	"\x15volume_grpc_addresses\x18\x03 \x03(\tR\x13volumeGrpcAddresses\x12@\n" +
+	"\bmetadata\x18\x04 \x03(\v2$.plugin.ClusterContext.MetadataEntryR\bmetadata\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc2\x02\n" +
-	"\rActivityEvent\x121\n" +
-	"\x06source\x18\x01 \x01(\x0e2\x19.plugin_pb.ActivitySourceR\x06source\x12\x18\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x02\n" +
+	"\rActivityEvent\x12.\n" +
+	"\x06source\x18\x01 \x01(\x0e2\x16.plugin.ActivitySourceR\x06source\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x14\n" +
-	"\x05stage\x18\x03 \x01(\tR\x05stage\x12?\n" +
-	"\adetails\x18\x04 \x03(\v2%.plugin_pb.ActivityEvent.DetailsEntryR\adetails\x129\n" +
+	"\x05stage\x18\x03 \x01(\tR\x05stage\x12<\n" +
+	"\adetails\x18\x04 \x03(\v2\".plugin.ActivityEvent.DetailsEntryR\adetails\x129\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1aR\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1aO\n" +
 	"\fDetailsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\"\x90\x01\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\x8d\x01\n" +
 	"\rCancelRequest\x12\x1b\n" +
-	"\ttarget_id\x18\x01 \x01(\tR\btargetId\x124\n" +
-	"\vtarget_kind\x18\x02 \x01(\x0e2\x13.plugin_pb.WorkKindR\n" +
+	"\ttarget_id\x18\x01 \x01(\tR\btargetId\x121\n" +
+	"\vtarget_kind\x18\x02 \x01(\x0e2\x10.plugin.WorkKindR\n" +
 	"targetKind\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12\x14\n" +
 	"\x05force\x18\x04 \x01(\bR\x05force\"Y\n" +
 	"\rAdminShutdown\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x120\n" +
-	"\x14grace_period_seconds\x18\x02 \x01(\x05R\x12gracePeriodSeconds\"\x94\x05\n" +
+	"\x14grace_period_seconds\x18\x02 \x01(\x05R\x12gracePeriodSeconds\"\x85\x05\n" +
 	"\x16PersistedJobTypeConfig\x12\x19\n" +
 	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12-\n" +
-	"\x12descriptor_version\x18\x02 \x01(\rR\x11descriptorVersion\x12h\n" +
-	"\x13admin_config_values\x18\x03 \x03(\v28.plugin_pb.PersistedJobTypeConfig.AdminConfigValuesEntryR\x11adminConfigValues\x12k\n" +
-	"\x14worker_config_values\x18\x04 \x03(\v29.plugin_pb.PersistedJobTypeConfig.WorkerConfigValuesEntryR\x12workerConfigValues\x12B\n" +
-	"\radmin_runtime\x18\x05 \x01(\v2\x1d.plugin_pb.AdminRuntimeConfigR\fadminRuntime\x129\n" +
+	"\x12descriptor_version\x18\x02 \x01(\rR\x11descriptorVersion\x12e\n" +
+	"\x13admin_config_values\x18\x03 \x03(\v25.plugin.PersistedJobTypeConfig.AdminConfigValuesEntryR\x11adminConfigValues\x12h\n" +
+	"\x14worker_config_values\x18\x04 \x03(\v26.plugin.PersistedJobTypeConfig.WorkerConfigValuesEntryR\x12workerConfigValues\x12?\n" +
+	"\radmin_runtime\x18\x05 \x01(\v2\x1a.plugin.AdminRuntimeConfigR\fadminRuntime\x129\n" +
 	"\n" +
 	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_by\x18\a \x01(\tR\tupdatedBy\x1a\\\n" +
+	"updated_by\x18\a \x01(\tR\tupdatedBy\x1aY\n" +
 	"\x16AdminConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01\x1a]\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\x1aZ\n" +
 	"\x17WorkerConfigValuesEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
-	"\x05value\x18\x02 \x01(\v2\x16.plugin_pb.ConfigValueR\x05value:\x028\x01*W\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01*W\n" +
 	"\bWorkKind\x12\x19\n" +
 	"\x15WORK_KIND_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13WORK_KIND_DETECTION\x10\x01\x12\x17\n" +
@@ -4310,9 +4310,9 @@ const file_plugin_proto_rawDesc = "" +
 	"\x1bACTIVITY_SOURCE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15ACTIVITY_SOURCE_ADMIN\x10\x01\x12\x1c\n" +
 	"\x18ACTIVITY_SOURCE_DETECTOR\x10\x02\x12\x1c\n" +
-	"\x18ACTIVITY_SOURCE_EXECUTOR\x10\x032l\n" +
-	"\x14PluginControlService\x12T\n" +
-	"\fWorkerStream\x12\x1f.plugin_pb.WorkerToAdminMessage\x1a\x1f.plugin_pb.AdminToWorkerMessage(\x010\x01B2Z0github.com/seaweedfs/seaweedfs/weed/pb/plugin_pbb\x06proto3"
+	"\x18ACTIVITY_SOURCE_EXECUTOR\x10\x032f\n" +
+	"\x14PluginControlService\x12N\n" +
+	"\fWorkerStream\x12\x1c.plugin.WorkerToAdminMessage\x1a\x1c.plugin.AdminToWorkerMessage(\x010\x01B2Z0github.com/seaweedfs/seaweedfs/weed/pb/plugin_pbb\x06proto3"
 
 var (
 	file_plugin_proto_rawDescOnce sync.Once
@@ -4329,178 +4329,178 @@ func file_plugin_proto_rawDescGZIP() []byte {
 var file_plugin_proto_enumTypes = make([]protoimpl.EnumInfo, 7)
 var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
 var file_plugin_proto_goTypes = []any{
-	(WorkKind)(0),                  // 0: plugin_pb.WorkKind
-	(JobPriority)(0),               // 1: plugin_pb.JobPriority
-	(JobState)(0),                  // 2: plugin_pb.JobState
-	(ConfigFieldType)(0),           // 3: plugin_pb.ConfigFieldType
-	(ConfigWidget)(0),              // 4: plugin_pb.ConfigWidget
-	(ValidationRuleType)(0),        // 5: plugin_pb.ValidationRuleType
-	(ActivitySource)(0),            // 6: plugin_pb.ActivitySource
-	(*WorkerToAdminMessage)(nil),   // 7: plugin_pb.WorkerToAdminMessage
-	(*AdminToWorkerMessage)(nil),   // 8: plugin_pb.AdminToWorkerMessage
-	(*WorkerHello)(nil),            // 9: plugin_pb.WorkerHello
-	(*AdminHello)(nil),             // 10: plugin_pb.AdminHello
-	(*WorkerHeartbeat)(nil),        // 11: plugin_pb.WorkerHeartbeat
-	(*WorkerAcknowledge)(nil),      // 12: plugin_pb.WorkerAcknowledge
-	(*RunningWork)(nil),            // 13: plugin_pb.RunningWork
-	(*JobTypeCapability)(nil),      // 14: plugin_pb.JobTypeCapability
-	(*RequestConfigSchema)(nil),    // 15: plugin_pb.RequestConfigSchema
-	(*ConfigSchemaResponse)(nil),   // 16: plugin_pb.ConfigSchemaResponse
-	(*JobTypeDescriptor)(nil),      // 17: plugin_pb.JobTypeDescriptor
-	(*ConfigForm)(nil),             // 18: plugin_pb.ConfigForm
-	(*ConfigSection)(nil),          // 19: plugin_pb.ConfigSection
-	(*ConfigField)(nil),            // 20: plugin_pb.ConfigField
-	(*ConfigOption)(nil),           // 21: plugin_pb.ConfigOption
-	(*ValidationRule)(nil),         // 22: plugin_pb.ValidationRule
-	(*ConfigValue)(nil),            // 23: plugin_pb.ConfigValue
-	(*StringList)(nil),             // 24: plugin_pb.StringList
-	(*Int64List)(nil),              // 25: plugin_pb.Int64List
-	(*DoubleList)(nil),             // 26: plugin_pb.DoubleList
-	(*BoolList)(nil),               // 27: plugin_pb.BoolList
-	(*ValueList)(nil),              // 28: plugin_pb.ValueList
-	(*ValueMap)(nil),               // 29: plugin_pb.ValueMap
-	(*AdminRuntimeDefaults)(nil),   // 30: plugin_pb.AdminRuntimeDefaults
-	(*AdminRuntimeConfig)(nil),     // 31: plugin_pb.AdminRuntimeConfig
-	(*RunDetectionRequest)(nil),    // 32: plugin_pb.RunDetectionRequest
-	(*DetectionProposals)(nil),     // 33: plugin_pb.DetectionProposals
-	(*DetectionComplete)(nil),      // 34: plugin_pb.DetectionComplete
-	(*JobProposal)(nil),            // 35: plugin_pb.JobProposal
-	(*ExecuteJobRequest)(nil),      // 36: plugin_pb.ExecuteJobRequest
-	(*JobSpec)(nil),                // 37: plugin_pb.JobSpec
-	(*JobProgressUpdate)(nil),      // 38: plugin_pb.JobProgressUpdate
-	(*JobCompleted)(nil),           // 39: plugin_pb.JobCompleted
-	(*JobResult)(nil),              // 40: plugin_pb.JobResult
-	(*ClusterContext)(nil),         // 41: plugin_pb.ClusterContext
-	(*ActivityEvent)(nil),          // 42: plugin_pb.ActivityEvent
-	(*CancelRequest)(nil),          // 43: plugin_pb.CancelRequest
-	(*AdminShutdown)(nil),          // 44: plugin_pb.AdminShutdown
-	(*PersistedJobTypeConfig)(nil), // 45: plugin_pb.PersistedJobTypeConfig
-	nil,                            // 46: plugin_pb.WorkerHello.MetadataEntry
-	nil,                            // 47: plugin_pb.WorkerHeartbeat.QueuedJobsByTypeEntry
-	nil,                            // 48: plugin_pb.WorkerHeartbeat.MetadataEntry
-	nil,                            // 49: plugin_pb.JobTypeDescriptor.WorkerDefaultValuesEntry
-	nil,                            // 50: plugin_pb.ConfigForm.DefaultValuesEntry
-	nil,                            // 51: plugin_pb.ValueMap.FieldsEntry
-	nil,                            // 52: plugin_pb.RunDetectionRequest.AdminConfigValuesEntry
-	nil,                            // 53: plugin_pb.RunDetectionRequest.WorkerConfigValuesEntry
-	nil,                            // 54: plugin_pb.JobProposal.ParametersEntry
-	nil,                            // 55: plugin_pb.JobProposal.LabelsEntry
-	nil,                            // 56: plugin_pb.ExecuteJobRequest.AdminConfigValuesEntry
-	nil,                            // 57: plugin_pb.ExecuteJobRequest.WorkerConfigValuesEntry
-	nil,                            // 58: plugin_pb.JobSpec.ParametersEntry
-	nil,                            // 59: plugin_pb.JobSpec.LabelsEntry
-	nil,                            // 60: plugin_pb.JobProgressUpdate.MetricsEntry
-	nil,                            // 61: plugin_pb.JobResult.OutputValuesEntry
-	nil,                            // 62: plugin_pb.ClusterContext.MetadataEntry
-	nil,                            // 63: plugin_pb.ActivityEvent.DetailsEntry
-	nil,                            // 64: plugin_pb.PersistedJobTypeConfig.AdminConfigValuesEntry
-	nil,                            // 65: plugin_pb.PersistedJobTypeConfig.WorkerConfigValuesEntry
+	(WorkKind)(0),                  // 0: plugin.WorkKind
+	(JobPriority)(0),               // 1: plugin.JobPriority
+	(JobState)(0),                  // 2: plugin.JobState
+	(ConfigFieldType)(0),           // 3: plugin.ConfigFieldType
+	(ConfigWidget)(0),              // 4: plugin.ConfigWidget
+	(ValidationRuleType)(0),        // 5: plugin.ValidationRuleType
+	(ActivitySource)(0),            // 6: plugin.ActivitySource
+	(*WorkerToAdminMessage)(nil),   // 7: plugin.WorkerToAdminMessage
+	(*AdminToWorkerMessage)(nil),   // 8: plugin.AdminToWorkerMessage
+	(*WorkerHello)(nil),            // 9: plugin.WorkerHello
+	(*AdminHello)(nil),             // 10: plugin.AdminHello
+	(*WorkerHeartbeat)(nil),        // 11: plugin.WorkerHeartbeat
+	(*WorkerAcknowledge)(nil),      // 12: plugin.WorkerAcknowledge
+	(*RunningWork)(nil),            // 13: plugin.RunningWork
+	(*JobTypeCapability)(nil),      // 14: plugin.JobTypeCapability
+	(*RequestConfigSchema)(nil),    // 15: plugin.RequestConfigSchema
+	(*ConfigSchemaResponse)(nil),   // 16: plugin.ConfigSchemaResponse
+	(*JobTypeDescriptor)(nil),      // 17: plugin.JobTypeDescriptor
+	(*ConfigForm)(nil),             // 18: plugin.ConfigForm
+	(*ConfigSection)(nil),          // 19: plugin.ConfigSection
+	(*ConfigField)(nil),            // 20: plugin.ConfigField
+	(*ConfigOption)(nil),           // 21: plugin.ConfigOption
+	(*ValidationRule)(nil),         // 22: plugin.ValidationRule
+	(*ConfigValue)(nil),            // 23: plugin.ConfigValue
+	(*StringList)(nil),             // 24: plugin.StringList
+	(*Int64List)(nil),              // 25: plugin.Int64List
+	(*DoubleList)(nil),             // 26: plugin.DoubleList
+	(*BoolList)(nil),               // 27: plugin.BoolList
+	(*ValueList)(nil),              // 28: plugin.ValueList
+	(*ValueMap)(nil),               // 29: plugin.ValueMap
+	(*AdminRuntimeDefaults)(nil),   // 30: plugin.AdminRuntimeDefaults
+	(*AdminRuntimeConfig)(nil),     // 31: plugin.AdminRuntimeConfig
+	(*RunDetectionRequest)(nil),    // 32: plugin.RunDetectionRequest
+	(*DetectionProposals)(nil),     // 33: plugin.DetectionProposals
+	(*DetectionComplete)(nil),      // 34: plugin.DetectionComplete
+	(*JobProposal)(nil),            // 35: plugin.JobProposal
+	(*ExecuteJobRequest)(nil),      // 36: plugin.ExecuteJobRequest
+	(*JobSpec)(nil),                // 37: plugin.JobSpec
+	(*JobProgressUpdate)(nil),      // 38: plugin.JobProgressUpdate
+	(*JobCompleted)(nil),           // 39: plugin.JobCompleted
+	(*JobResult)(nil),              // 40: plugin.JobResult
+	(*ClusterContext)(nil),         // 41: plugin.ClusterContext
+	(*ActivityEvent)(nil),          // 42: plugin.ActivityEvent
+	(*CancelRequest)(nil),          // 43: plugin.CancelRequest
+	(*AdminShutdown)(nil),          // 44: plugin.AdminShutdown
+	(*PersistedJobTypeConfig)(nil), // 45: plugin.PersistedJobTypeConfig
+	nil,                            // 46: plugin.WorkerHello.MetadataEntry
+	nil,                            // 47: plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
+	nil,                            // 48: plugin.WorkerHeartbeat.MetadataEntry
+	nil,                            // 49: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
+	nil,                            // 50: plugin.ConfigForm.DefaultValuesEntry
+	nil,                            // 51: plugin.ValueMap.FieldsEntry
+	nil,                            // 52: plugin.RunDetectionRequest.AdminConfigValuesEntry
+	nil,                            // 53: plugin.RunDetectionRequest.WorkerConfigValuesEntry
+	nil,                            // 54: plugin.JobProposal.ParametersEntry
+	nil,                            // 55: plugin.JobProposal.LabelsEntry
+	nil,                            // 56: plugin.ExecuteJobRequest.AdminConfigValuesEntry
+	nil,                            // 57: plugin.ExecuteJobRequest.WorkerConfigValuesEntry
+	nil,                            // 58: plugin.JobSpec.ParametersEntry
+	nil,                            // 59: plugin.JobSpec.LabelsEntry
+	nil,                            // 60: plugin.JobProgressUpdate.MetricsEntry
+	nil,                            // 61: plugin.JobResult.OutputValuesEntry
+	nil,                            // 62: plugin.ClusterContext.MetadataEntry
+	nil,                            // 63: plugin.ActivityEvent.DetailsEntry
+	nil,                            // 64: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
+	nil,                            // 65: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
 	(*timestamppb.Timestamp)(nil),  // 66: google.protobuf.Timestamp
 	(*durationpb.Duration)(nil),    // 67: google.protobuf.Duration
 }
 var file_plugin_proto_depIdxs = []int32{
-	66,  // 0: plugin_pb.WorkerToAdminMessage.sent_at:type_name -> google.protobuf.Timestamp
-	9,   // 1: plugin_pb.WorkerToAdminMessage.hello:type_name -> plugin_pb.WorkerHello
-	11,  // 2: plugin_pb.WorkerToAdminMessage.heartbeat:type_name -> plugin_pb.WorkerHeartbeat
-	12,  // 3: plugin_pb.WorkerToAdminMessage.acknowledge:type_name -> plugin_pb.WorkerAcknowledge
-	16,  // 4: plugin_pb.WorkerToAdminMessage.config_schema_response:type_name -> plugin_pb.ConfigSchemaResponse
-	33,  // 5: plugin_pb.WorkerToAdminMessage.detection_proposals:type_name -> plugin_pb.DetectionProposals
-	34,  // 6: plugin_pb.WorkerToAdminMessage.detection_complete:type_name -> plugin_pb.DetectionComplete
-	38,  // 7: plugin_pb.WorkerToAdminMessage.job_progress_update:type_name -> plugin_pb.JobProgressUpdate
-	39,  // 8: plugin_pb.WorkerToAdminMessage.job_completed:type_name -> plugin_pb.JobCompleted
-	66,  // 9: plugin_pb.AdminToWorkerMessage.sent_at:type_name -> google.protobuf.Timestamp
-	10,  // 10: plugin_pb.AdminToWorkerMessage.hello:type_name -> plugin_pb.AdminHello
-	15,  // 11: plugin_pb.AdminToWorkerMessage.request_config_schema:type_name -> plugin_pb.RequestConfigSchema
-	32,  // 12: plugin_pb.AdminToWorkerMessage.run_detection_request:type_name -> plugin_pb.RunDetectionRequest
-	36,  // 13: plugin_pb.AdminToWorkerMessage.execute_job_request:type_name -> plugin_pb.ExecuteJobRequest
-	43,  // 14: plugin_pb.AdminToWorkerMessage.cancel_request:type_name -> plugin_pb.CancelRequest
-	44,  // 15: plugin_pb.AdminToWorkerMessage.shutdown:type_name -> plugin_pb.AdminShutdown
-	14,  // 16: plugin_pb.WorkerHello.capabilities:type_name -> plugin_pb.JobTypeCapability
-	46,  // 17: plugin_pb.WorkerHello.metadata:type_name -> plugin_pb.WorkerHello.MetadataEntry
-	13,  // 18: plugin_pb.WorkerHeartbeat.running_work:type_name -> plugin_pb.RunningWork
-	47,  // 19: plugin_pb.WorkerHeartbeat.queued_jobs_by_type:type_name -> plugin_pb.WorkerHeartbeat.QueuedJobsByTypeEntry
-	48,  // 20: plugin_pb.WorkerHeartbeat.metadata:type_name -> plugin_pb.WorkerHeartbeat.MetadataEntry
-	0,   // 21: plugin_pb.RunningWork.kind:type_name -> plugin_pb.WorkKind
-	2,   // 22: plugin_pb.RunningWork.state:type_name -> plugin_pb.JobState
-	17,  // 23: plugin_pb.ConfigSchemaResponse.job_type_descriptor:type_name -> plugin_pb.JobTypeDescriptor
-	18,  // 24: plugin_pb.JobTypeDescriptor.admin_config_form:type_name -> plugin_pb.ConfigForm
-	18,  // 25: plugin_pb.JobTypeDescriptor.worker_config_form:type_name -> plugin_pb.ConfigForm
-	30,  // 26: plugin_pb.JobTypeDescriptor.admin_runtime_defaults:type_name -> plugin_pb.AdminRuntimeDefaults
-	49,  // 27: plugin_pb.JobTypeDescriptor.worker_default_values:type_name -> plugin_pb.JobTypeDescriptor.WorkerDefaultValuesEntry
-	19,  // 28: plugin_pb.ConfigForm.sections:type_name -> plugin_pb.ConfigSection
-	50,  // 29: plugin_pb.ConfigForm.default_values:type_name -> plugin_pb.ConfigForm.DefaultValuesEntry
-	20,  // 30: plugin_pb.ConfigSection.fields:type_name -> plugin_pb.ConfigField
-	3,   // 31: plugin_pb.ConfigField.field_type:type_name -> plugin_pb.ConfigFieldType
-	4,   // 32: plugin_pb.ConfigField.widget:type_name -> plugin_pb.ConfigWidget
-	23,  // 33: plugin_pb.ConfigField.min_value:type_name -> plugin_pb.ConfigValue
-	23,  // 34: plugin_pb.ConfigField.max_value:type_name -> plugin_pb.ConfigValue
-	21,  // 35: plugin_pb.ConfigField.options:type_name -> plugin_pb.ConfigOption
-	22,  // 36: plugin_pb.ConfigField.validation_rules:type_name -> plugin_pb.ValidationRule
-	23,  // 37: plugin_pb.ConfigField.visible_when_equals:type_name -> plugin_pb.ConfigValue
-	5,   // 38: plugin_pb.ValidationRule.type:type_name -> plugin_pb.ValidationRuleType
-	67,  // 39: plugin_pb.ConfigValue.duration_value:type_name -> google.protobuf.Duration
-	24,  // 40: plugin_pb.ConfigValue.string_list:type_name -> plugin_pb.StringList
-	25,  // 41: plugin_pb.ConfigValue.int64_list:type_name -> plugin_pb.Int64List
-	26,  // 42: plugin_pb.ConfigValue.double_list:type_name -> plugin_pb.DoubleList
-	27,  // 43: plugin_pb.ConfigValue.bool_list:type_name -> plugin_pb.BoolList
-	28,  // 44: plugin_pb.ConfigValue.list_value:type_name -> plugin_pb.ValueList
-	29,  // 45: plugin_pb.ConfigValue.map_value:type_name -> plugin_pb.ValueMap
-	23,  // 46: plugin_pb.ValueList.values:type_name -> plugin_pb.ConfigValue
-	51,  // 47: plugin_pb.ValueMap.fields:type_name -> plugin_pb.ValueMap.FieldsEntry
-	31,  // 48: plugin_pb.RunDetectionRequest.admin_runtime:type_name -> plugin_pb.AdminRuntimeConfig
-	52,  // 49: plugin_pb.RunDetectionRequest.admin_config_values:type_name -> plugin_pb.RunDetectionRequest.AdminConfigValuesEntry
-	53,  // 50: plugin_pb.RunDetectionRequest.worker_config_values:type_name -> plugin_pb.RunDetectionRequest.WorkerConfigValuesEntry
-	41,  // 51: plugin_pb.RunDetectionRequest.cluster_context:type_name -> plugin_pb.ClusterContext
-	66,  // 52: plugin_pb.RunDetectionRequest.last_successful_run:type_name -> google.protobuf.Timestamp
-	35,  // 53: plugin_pb.DetectionProposals.proposals:type_name -> plugin_pb.JobProposal
-	1,   // 54: plugin_pb.JobProposal.priority:type_name -> plugin_pb.JobPriority
-	54,  // 55: plugin_pb.JobProposal.parameters:type_name -> plugin_pb.JobProposal.ParametersEntry
-	55,  // 56: plugin_pb.JobProposal.labels:type_name -> plugin_pb.JobProposal.LabelsEntry
-	66,  // 57: plugin_pb.JobProposal.not_before:type_name -> google.protobuf.Timestamp
-	66,  // 58: plugin_pb.JobProposal.expires_at:type_name -> google.protobuf.Timestamp
-	37,  // 59: plugin_pb.ExecuteJobRequest.job:type_name -> plugin_pb.JobSpec
-	31,  // 60: plugin_pb.ExecuteJobRequest.admin_runtime:type_name -> plugin_pb.AdminRuntimeConfig
-	56,  // 61: plugin_pb.ExecuteJobRequest.admin_config_values:type_name -> plugin_pb.ExecuteJobRequest.AdminConfigValuesEntry
-	57,  // 62: plugin_pb.ExecuteJobRequest.worker_config_values:type_name -> plugin_pb.ExecuteJobRequest.WorkerConfigValuesEntry
-	41,  // 63: plugin_pb.ExecuteJobRequest.cluster_context:type_name -> plugin_pb.ClusterContext
-	1,   // 64: plugin_pb.JobSpec.priority:type_name -> plugin_pb.JobPriority
-	58,  // 65: plugin_pb.JobSpec.parameters:type_name -> plugin_pb.JobSpec.ParametersEntry
-	59,  // 66: plugin_pb.JobSpec.labels:type_name -> plugin_pb.JobSpec.LabelsEntry
-	66,  // 67: plugin_pb.JobSpec.created_at:type_name -> google.protobuf.Timestamp
-	66,  // 68: plugin_pb.JobSpec.scheduled_at:type_name -> google.protobuf.Timestamp
-	2,   // 69: plugin_pb.JobProgressUpdate.state:type_name -> plugin_pb.JobState
-	60,  // 70: plugin_pb.JobProgressUpdate.metrics:type_name -> plugin_pb.JobProgressUpdate.MetricsEntry
-	42,  // 71: plugin_pb.JobProgressUpdate.activities:type_name -> plugin_pb.ActivityEvent
-	66,  // 72: plugin_pb.JobProgressUpdate.updated_at:type_name -> google.protobuf.Timestamp
-	40,  // 73: plugin_pb.JobCompleted.result:type_name -> plugin_pb.JobResult
-	42,  // 74: plugin_pb.JobCompleted.activities:type_name -> plugin_pb.ActivityEvent
-	66,  // 75: plugin_pb.JobCompleted.completed_at:type_name -> google.protobuf.Timestamp
-	61,  // 76: plugin_pb.JobResult.output_values:type_name -> plugin_pb.JobResult.OutputValuesEntry
-	62,  // 77: plugin_pb.ClusterContext.metadata:type_name -> plugin_pb.ClusterContext.MetadataEntry
-	6,   // 78: plugin_pb.ActivityEvent.source:type_name -> plugin_pb.ActivitySource
-	63,  // 79: plugin_pb.ActivityEvent.details:type_name -> plugin_pb.ActivityEvent.DetailsEntry
-	66,  // 80: plugin_pb.ActivityEvent.created_at:type_name -> google.protobuf.Timestamp
-	0,   // 81: plugin_pb.CancelRequest.target_kind:type_name -> plugin_pb.WorkKind
-	64,  // 82: plugin_pb.PersistedJobTypeConfig.admin_config_values:type_name -> plugin_pb.PersistedJobTypeConfig.AdminConfigValuesEntry
-	65,  // 83: plugin_pb.PersistedJobTypeConfig.worker_config_values:type_name -> plugin_pb.PersistedJobTypeConfig.WorkerConfigValuesEntry
-	31,  // 84: plugin_pb.PersistedJobTypeConfig.admin_runtime:type_name -> plugin_pb.AdminRuntimeConfig
-	66,  // 85: plugin_pb.PersistedJobTypeConfig.updated_at:type_name -> google.protobuf.Timestamp
-	23,  // 86: plugin_pb.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 87: plugin_pb.ConfigForm.DefaultValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 88: plugin_pb.ValueMap.FieldsEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 89: plugin_pb.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 90: plugin_pb.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 91: plugin_pb.JobProposal.ParametersEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 92: plugin_pb.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 93: plugin_pb.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 94: plugin_pb.JobSpec.ParametersEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 95: plugin_pb.JobProgressUpdate.MetricsEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 96: plugin_pb.JobResult.OutputValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 97: plugin_pb.ActivityEvent.DetailsEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 98: plugin_pb.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	23,  // 99: plugin_pb.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin_pb.ConfigValue
-	7,   // 100: plugin_pb.PluginControlService.WorkerStream:input_type -> plugin_pb.WorkerToAdminMessage
-	8,   // 101: plugin_pb.PluginControlService.WorkerStream:output_type -> plugin_pb.AdminToWorkerMessage
+	66,  // 0: plugin.WorkerToAdminMessage.sent_at:type_name -> google.protobuf.Timestamp
+	9,   // 1: plugin.WorkerToAdminMessage.hello:type_name -> plugin.WorkerHello
+	11,  // 2: plugin.WorkerToAdminMessage.heartbeat:type_name -> plugin.WorkerHeartbeat
+	12,  // 3: plugin.WorkerToAdminMessage.acknowledge:type_name -> plugin.WorkerAcknowledge
+	16,  // 4: plugin.WorkerToAdminMessage.config_schema_response:type_name -> plugin.ConfigSchemaResponse
+	33,  // 5: plugin.WorkerToAdminMessage.detection_proposals:type_name -> plugin.DetectionProposals
+	34,  // 6: plugin.WorkerToAdminMessage.detection_complete:type_name -> plugin.DetectionComplete
+	38,  // 7: plugin.WorkerToAdminMessage.job_progress_update:type_name -> plugin.JobProgressUpdate
+	39,  // 8: plugin.WorkerToAdminMessage.job_completed:type_name -> plugin.JobCompleted
+	66,  // 9: plugin.AdminToWorkerMessage.sent_at:type_name -> google.protobuf.Timestamp
+	10,  // 10: plugin.AdminToWorkerMessage.hello:type_name -> plugin.AdminHello
+	15,  // 11: plugin.AdminToWorkerMessage.request_config_schema:type_name -> plugin.RequestConfigSchema
+	32,  // 12: plugin.AdminToWorkerMessage.run_detection_request:type_name -> plugin.RunDetectionRequest
+	36,  // 13: plugin.AdminToWorkerMessage.execute_job_request:type_name -> plugin.ExecuteJobRequest
+	43,  // 14: plugin.AdminToWorkerMessage.cancel_request:type_name -> plugin.CancelRequest
+	44,  // 15: plugin.AdminToWorkerMessage.shutdown:type_name -> plugin.AdminShutdown
+	14,  // 16: plugin.WorkerHello.capabilities:type_name -> plugin.JobTypeCapability
+	46,  // 17: plugin.WorkerHello.metadata:type_name -> plugin.WorkerHello.MetadataEntry
+	13,  // 18: plugin.WorkerHeartbeat.running_work:type_name -> plugin.RunningWork
+	47,  // 19: plugin.WorkerHeartbeat.queued_jobs_by_type:type_name -> plugin.WorkerHeartbeat.QueuedJobsByTypeEntry
+	48,  // 20: plugin.WorkerHeartbeat.metadata:type_name -> plugin.WorkerHeartbeat.MetadataEntry
+	0,   // 21: plugin.RunningWork.kind:type_name -> plugin.WorkKind
+	2,   // 22: plugin.RunningWork.state:type_name -> plugin.JobState
+	17,  // 23: plugin.ConfigSchemaResponse.job_type_descriptor:type_name -> plugin.JobTypeDescriptor
+	18,  // 24: plugin.JobTypeDescriptor.admin_config_form:type_name -> plugin.ConfigForm
+	18,  // 25: plugin.JobTypeDescriptor.worker_config_form:type_name -> plugin.ConfigForm
+	30,  // 26: plugin.JobTypeDescriptor.admin_runtime_defaults:type_name -> plugin.AdminRuntimeDefaults
+	49,  // 27: plugin.JobTypeDescriptor.worker_default_values:type_name -> plugin.JobTypeDescriptor.WorkerDefaultValuesEntry
+	19,  // 28: plugin.ConfigForm.sections:type_name -> plugin.ConfigSection
+	50,  // 29: plugin.ConfigForm.default_values:type_name -> plugin.ConfigForm.DefaultValuesEntry
+	20,  // 30: plugin.ConfigSection.fields:type_name -> plugin.ConfigField
+	3,   // 31: plugin.ConfigField.field_type:type_name -> plugin.ConfigFieldType
+	4,   // 32: plugin.ConfigField.widget:type_name -> plugin.ConfigWidget
+	23,  // 33: plugin.ConfigField.min_value:type_name -> plugin.ConfigValue
+	23,  // 34: plugin.ConfigField.max_value:type_name -> plugin.ConfigValue
+	21,  // 35: plugin.ConfigField.options:type_name -> plugin.ConfigOption
+	22,  // 36: plugin.ConfigField.validation_rules:type_name -> plugin.ValidationRule
+	23,  // 37: plugin.ConfigField.visible_when_equals:type_name -> plugin.ConfigValue
+	5,   // 38: plugin.ValidationRule.type:type_name -> plugin.ValidationRuleType
+	67,  // 39: plugin.ConfigValue.duration_value:type_name -> google.protobuf.Duration
+	24,  // 40: plugin.ConfigValue.string_list:type_name -> plugin.StringList
+	25,  // 41: plugin.ConfigValue.int64_list:type_name -> plugin.Int64List
+	26,  // 42: plugin.ConfigValue.double_list:type_name -> plugin.DoubleList
+	27,  // 43: plugin.ConfigValue.bool_list:type_name -> plugin.BoolList
+	28,  // 44: plugin.ConfigValue.list_value:type_name -> plugin.ValueList
+	29,  // 45: plugin.ConfigValue.map_value:type_name -> plugin.ValueMap
+	23,  // 46: plugin.ValueList.values:type_name -> plugin.ConfigValue
+	51,  // 47: plugin.ValueMap.fields:type_name -> plugin.ValueMap.FieldsEntry
+	31,  // 48: plugin.RunDetectionRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	52,  // 49: plugin.RunDetectionRequest.admin_config_values:type_name -> plugin.RunDetectionRequest.AdminConfigValuesEntry
+	53,  // 50: plugin.RunDetectionRequest.worker_config_values:type_name -> plugin.RunDetectionRequest.WorkerConfigValuesEntry
+	41,  // 51: plugin.RunDetectionRequest.cluster_context:type_name -> plugin.ClusterContext
+	66,  // 52: plugin.RunDetectionRequest.last_successful_run:type_name -> google.protobuf.Timestamp
+	35,  // 53: plugin.DetectionProposals.proposals:type_name -> plugin.JobProposal
+	1,   // 54: plugin.JobProposal.priority:type_name -> plugin.JobPriority
+	54,  // 55: plugin.JobProposal.parameters:type_name -> plugin.JobProposal.ParametersEntry
+	55,  // 56: plugin.JobProposal.labels:type_name -> plugin.JobProposal.LabelsEntry
+	66,  // 57: plugin.JobProposal.not_before:type_name -> google.protobuf.Timestamp
+	66,  // 58: plugin.JobProposal.expires_at:type_name -> google.protobuf.Timestamp
+	37,  // 59: plugin.ExecuteJobRequest.job:type_name -> plugin.JobSpec
+	31,  // 60: plugin.ExecuteJobRequest.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	56,  // 61: plugin.ExecuteJobRequest.admin_config_values:type_name -> plugin.ExecuteJobRequest.AdminConfigValuesEntry
+	57,  // 62: plugin.ExecuteJobRequest.worker_config_values:type_name -> plugin.ExecuteJobRequest.WorkerConfigValuesEntry
+	41,  // 63: plugin.ExecuteJobRequest.cluster_context:type_name -> plugin.ClusterContext
+	1,   // 64: plugin.JobSpec.priority:type_name -> plugin.JobPriority
+	58,  // 65: plugin.JobSpec.parameters:type_name -> plugin.JobSpec.ParametersEntry
+	59,  // 66: plugin.JobSpec.labels:type_name -> plugin.JobSpec.LabelsEntry
+	66,  // 67: plugin.JobSpec.created_at:type_name -> google.protobuf.Timestamp
+	66,  // 68: plugin.JobSpec.scheduled_at:type_name -> google.protobuf.Timestamp
+	2,   // 69: plugin.JobProgressUpdate.state:type_name -> plugin.JobState
+	60,  // 70: plugin.JobProgressUpdate.metrics:type_name -> plugin.JobProgressUpdate.MetricsEntry
+	42,  // 71: plugin.JobProgressUpdate.activities:type_name -> plugin.ActivityEvent
+	66,  // 72: plugin.JobProgressUpdate.updated_at:type_name -> google.protobuf.Timestamp
+	40,  // 73: plugin.JobCompleted.result:type_name -> plugin.JobResult
+	42,  // 74: plugin.JobCompleted.activities:type_name -> plugin.ActivityEvent
+	66,  // 75: plugin.JobCompleted.completed_at:type_name -> google.protobuf.Timestamp
+	61,  // 76: plugin.JobResult.output_values:type_name -> plugin.JobResult.OutputValuesEntry
+	62,  // 77: plugin.ClusterContext.metadata:type_name -> plugin.ClusterContext.MetadataEntry
+	6,   // 78: plugin.ActivityEvent.source:type_name -> plugin.ActivitySource
+	63,  // 79: plugin.ActivityEvent.details:type_name -> plugin.ActivityEvent.DetailsEntry
+	66,  // 80: plugin.ActivityEvent.created_at:type_name -> google.protobuf.Timestamp
+	0,   // 81: plugin.CancelRequest.target_kind:type_name -> plugin.WorkKind
+	64,  // 82: plugin.PersistedJobTypeConfig.admin_config_values:type_name -> plugin.PersistedJobTypeConfig.AdminConfigValuesEntry
+	65,  // 83: plugin.PersistedJobTypeConfig.worker_config_values:type_name -> plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry
+	31,  // 84: plugin.PersistedJobTypeConfig.admin_runtime:type_name -> plugin.AdminRuntimeConfig
+	66,  // 85: plugin.PersistedJobTypeConfig.updated_at:type_name -> google.protobuf.Timestamp
+	23,  // 86: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 87: plugin.ConfigForm.DefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 88: plugin.ValueMap.FieldsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 89: plugin.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 90: plugin.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 91: plugin.JobProposal.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 92: plugin.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 93: plugin.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 94: plugin.JobSpec.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 95: plugin.JobProgressUpdate.MetricsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 96: plugin.JobResult.OutputValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 97: plugin.ActivityEvent.DetailsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 98: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 99: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	7,   // 100: plugin.PluginControlService.WorkerStream:input_type -> plugin.WorkerToAdminMessage
+	8,   // 101: plugin.PluginControlService.WorkerStream:output_type -> plugin.AdminToWorkerMessage
 	101, // [101:102] is the sub-list for method output_type
 	100, // [100:101] is the sub-list for method input_type
 	100, // [100:100] is the sub-list for extension type_name

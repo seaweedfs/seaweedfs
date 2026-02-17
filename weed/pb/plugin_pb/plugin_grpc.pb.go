@@ -19,7 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PluginControlService_WorkerStream_FullMethodName = "/plugin_pb.PluginControlService/WorkerStream"
+	PluginControlService_WorkerStream_FullMethodName = "/plugin.PluginControlService/WorkerStream"
 )
 
 // PluginControlServiceClient is the client API for PluginControlService service.
@@ -106,7 +106,7 @@ type PluginControlService_WorkerStreamServer = grpc.BidiStreamingServer[WorkerTo
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var PluginControlService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "plugin_pb.PluginControlService",
+	ServiceName: "plugin.PluginControlService",
 	HandlerType: (*PluginControlServiceServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
