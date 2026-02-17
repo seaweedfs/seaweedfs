@@ -312,6 +312,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 
 func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
+	v.SetDefault("master.maintenance.scripts", "fs.log.purge -daysAgo=7")
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
