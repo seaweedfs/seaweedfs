@@ -420,3 +420,79 @@ func (m *Manager) GetDispatcher() *Dispatcher {
 func (m *Manager) GetGRPCServer() *GRPCServer {
 	return m.grpcServer
 }
+
+// GetDetectionHistory returns detection history for a job type
+func (m *Manager) GetDetectionHistory(jobType string) []DetectionRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	configs := m.configMgr.ListConfigs()
+	for _, cfg := range configs {
+		if jobCfg, ok := cfg.GetJobTypeConfig(jobType); ok {
+			cfg.mu.RLock()
+			defer cfg.mu.RUnlock()
+			history := make([]DetectionRecord, len(jobCfg.DetectionHistory))
+			copy(history, jobCfg.DetectionHistory)
+			return history
+		}
+	}
+	return []DetectionRecord{}
+}
+
+// GetExecutionHistory returns execution history for a job type
+func (m *Manager) GetExecutionHistory(jobType string) []ExecutionRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	configs := m.configMgr.ListConfigs()
+	for _, cfg := range configs {
+		if jobCfg, ok := cfg.GetJobTypeConfig(jobType); ok {
+			cfg.mu.RLock()
+			defer cfg.mu.RUnlock()
+			history := make([]ExecutionRecord, len(jobCfg.ExecutionHistory))
+			copy(history, jobCfg.ExecutionHistory)
+			return history
+		}
+	}
+	return []ExecutionRecord{}
+}
+
+// RecordDetection adds a detection record to history
+func (m *Manager) RecordDetection(jobType string, record *DetectionRecord) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	configs := m.configMgr.ListConfigs()
+	for _, cfg := range configs {
+		if jobCfg, ok := cfg.GetJobTypeConfig(jobType); ok {
+			cfg.mu.Lock()
+			maxSize := 50
+			jobCfg.DetectionHistory = append([]DetectionRecord{*record}, jobCfg.DetectionHistory...)
+			if len(jobCfg.DetectionHistory) > maxSize {
+				jobCfg.DetectionHistory = jobCfg.DetectionHistory[:maxSize]
+			}
+			cfg.mu.Unlock()
+			break
+		}
+	}
+}
+
+// RecordExecution adds an execution record to history
+func (m *Manager) RecordExecution(jobType string, record *ExecutionRecord) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	configs := m.configMgr.ListConfigs()
+	for _, cfg := range configs {
+		if jobCfg, ok := cfg.GetJobTypeConfig(jobType); ok {
+			cfg.mu.Lock()
+			maxSize := 100
+			jobCfg.ExecutionHistory = append([]ExecutionRecord{*record}, jobCfg.ExecutionHistory...)
+			if len(jobCfg.ExecutionHistory) > maxSize {
+				jobCfg.ExecutionHistory = jobCfg.ExecutionHistory[:maxSize]
+			}
+			cfg.mu.Unlock()
+			break
+		}
+	}
+}
