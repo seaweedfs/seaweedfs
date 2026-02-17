@@ -67,6 +67,32 @@ templ PluginRuntime(enabled bool) {
             </div>
 
             <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i>Per Job Type Summary</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Job Type</th>
+                                            <th>Active Jobs</th>
+                                            <th>Recent Activities</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-jobtype-summary-body">
+                                        <tr><td colspan="3" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
                 <div class="col-lg-8 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
@@ -522,6 +548,89 @@ templ PluginRuntime(enabled bool) {
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
                 document.getElementById('plugin-status-active-jobs').textContent = String(activeCount);
                 document.getElementById('plugin-status-activities').textContent = String(state.activities.length);
+            }
+
+            function renderJobTypeSummary() {
+                var tbody = document.getElementById('plugin-jobtype-summary-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var activeByType = {};
+                var activityByType = {};
+
+                for (var i = 0; i < state.jobs.length; i++) {
+                    var job = state.jobs[i] || {};
+                    var jobType = String(job.job_type || '').trim();
+                    if (!jobType) {
+                        continue;
+                    }
+                    var st = String(job.state || '').toLowerCase();
+                    var isActive = st === 'job_state_assigned' || st === 'job_state_running' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    if (!isActive) {
+                        continue;
+                    }
+                    if (!activeByType[jobType]) {
+                        activeByType[jobType] = 0;
+                    }
+                    activeByType[jobType]++;
+                }
+
+                for (var j = 0; j < state.activities.length; j++) {
+                    var activity = state.activities[j] || {};
+                    var activityJobType = String(activity.job_type || '').trim();
+                    if (!activityJobType) {
+                        continue;
+                    }
+                    if (!activityByType[activityJobType]) {
+                        activityByType[activityJobType] = 0;
+                    }
+                    activityByType[activityJobType]++;
+                }
+
+                var known = Array.isArray(state.jobTypes) ? state.jobTypes.slice() : [];
+                var seen = {};
+                var jobTypes = [];
+
+                for (var k = 0; k < known.length; k++) {
+                    var knownType = String(known[k] || '').trim();
+                    if (!knownType || seen[knownType]) {
+                        continue;
+                    }
+                    seen[knownType] = true;
+                    jobTypes.push(knownType);
+                }
+
+                Object.keys(activeByType).forEach(function(jobType) {
+                    if (!seen[jobType]) {
+                        seen[jobType] = true;
+                        jobTypes.push(jobType);
+                    }
+                });
+                Object.keys(activityByType).forEach(function(jobType) {
+                    if (!seen[jobType]) {
+                        seen[jobType] = true;
+                        jobTypes.push(jobType);
+                    }
+                });
+
+                jobTypes.sort();
+
+                if (jobTypes.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan=\"3\" class=\"text-muted text-center py-3\">No job types discovered</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var m = 0; m < jobTypes.length; m++) {
+                    var rowType = jobTypes[m];
+                    rows += '<tr>' +
+                        '<td>' + escapeHtml(rowType) + '</td>' +
+                        '<td><span class=\"badge bg-warning text-dark\">' + escapeHtml(String(activeByType[rowType] || 0)) + '</span></td>' +
+                        '<td><span class=\"badge bg-info\">' + escapeHtml(String(activityByType[rowType] || 0)) + '</span></td>' +
+                        '</tr>';
+                }
+                tbody.innerHTML = rows;
             }
 
             function renderWorkers() {
@@ -1570,6 +1679,7 @@ templ PluginRuntime(enabled bool) {
                 renderJobs();
                 renderActivities();
                 renderStatus();
+                renderJobTypeSummary();
             }
 
             async function refreshAll() {
