@@ -33,16 +33,18 @@ func (s *AdminServer) GetPluginStatusAPI(c *gin.Context) {
 	plugin := s.GetPlugin()
 	if plugin == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"enabled": false,
+			"enabled":          false,
+			"worker_grpc_port": s.GetWorkerGrpcPort(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"enabled":      true,
-		"configured":   plugin.IsConfigured(),
-		"base_dir":     plugin.BaseDir(),
-		"worker_count": len(plugin.ListWorkers()),
+		"enabled":          true,
+		"configured":       plugin.IsConfigured(),
+		"base_dir":         plugin.BaseDir(),
+		"worker_count":     len(plugin.ListWorkers()),
+		"worker_grpc_port": s.GetWorkerGrpcPort(),
 	})
 }
 

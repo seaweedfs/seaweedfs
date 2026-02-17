@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -117,6 +118,25 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	}()
 
 	return nil
+}
+
+// ListenPort returns the currently bound worker gRPC listen port.
+func (s *WorkerGrpcServer) ListenPort() int {
+	if s == nil || s.listener == nil {
+		return 0
+	}
+	if tcpAddr, ok := s.listener.Addr().(*net.TCPAddr); ok {
+		return tcpAddr.Port
+	}
+	_, portStr, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // Stop stops the gRPC server

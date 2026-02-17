@@ -1676,6 +1676,14 @@ func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 	return s.workerGrpcServer
 }
 
+// GetWorkerGrpcPort returns the worker gRPC listen port, or 0 when unavailable.
+func (s *AdminServer) GetWorkerGrpcPort() int {
+	if s.workerGrpcServer == nil {
+		return 0
+	}
+	return s.workerGrpcServer.ListenPort()
+}
+
 // GetPlugin returns the plugin instance when enabled.
 func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
