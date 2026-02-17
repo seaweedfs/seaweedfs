@@ -26,6 +26,10 @@ var cmdPluginWorker = &Command{
 This command currently provides the vacuum job type contract and stream runtime,
 including descriptor delivery, heartbeat/load reporting, detection, and execution.
 
+Behavior:
+  - Use -jobType to choose which plugin job handler to serve (currently: vacuum)
+  - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
+
 Examples:
   weed plugin.worker -admin=localhost:23646
   weed plugin.worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
