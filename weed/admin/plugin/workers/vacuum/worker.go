@@ -15,19 +15,18 @@ import (
 
 // WorkerConfig holds worker-specific configuration
 type WorkerConfig struct {
-	WorkerID            string
-	AdminHost           string
-	AdminPort           int
-	PluginPort          int
-	MinVolumeSize       uint64
-	MaxVolumeSize       uint64
-	TargetUtilization   int
-	BatchSize           int
-	VacuumInterval      time.Duration
-	MaxConcurrentJobs   int
-	HealthCheckInterval time.Duration
-	JobTimeout          time.Duration
-	DeadSpaceThreshold  int
+	WorkerID             string
+	AdminHost            string
+	AdminPort            int
+	PluginPort           int
+	MinVolumeSize        uint64
+	MaxVolumeSize        uint64
+	TargetUtilization    int
+	BatchSize            int
+	VacuumInterval       time.Duration
+	MaxConcurrentJobs    int
+	HealthCheckInterval  time.Duration
+	DeadSpaceThreshold   int
 }
 
 // Worker represents the vacuum plugin worker
@@ -55,31 +54,34 @@ func NewWorker(config *WorkerConfig) *Worker {
 func (w *Worker) Start(ctx context.Context) error {
 	log.Printf("Starting vacuum worker: %s", w.config.WorkerID)
 
+	// Connect to admin server
 	if err := w.connectToAdmin(ctx); err != nil {
 		return fmt.Errorf("failed to connect to admin: %v", err)
 	}
 
+	// Initialize detector
 	w.detector = NewDetector(DetectionOptions{
 		MinVolumeSize:      w.config.MinVolumeSize,
 		MaxVolumeSize:      w.config.MaxVolumeSize,
-		DeadSpaceThreshold: w.config.DeadSpaceThreshold,
-		TargetUtilization:  w.config.TargetUtilization,
+		DeadSpaceThreshold: float32(w.config.DeadSpaceThreshold),
 	})
 
+	// Initialize executor
 	w.executor = NewExecutor(&ExecutorConfig{
-		MinVolumeSize:     w.config.MinVolumeSize,
-		MaxVolumeSize:     w.config.MaxVolumeSize,
-		TargetUtilization: w.config.TargetUtilization,
-		TimeoutPerStep:    w.config.JobTimeout / 4,
-		MaxRetries:        2,
+		MinVolumeSize:  w.config.MinVolumeSize,
+		MaxVolumeSize:  w.config.MaxVolumeSize,
+		TimeoutPerStep: 3 * time.Minute,
+		MaxRetries:     3,
 	})
 
+	// Register with admin
 	if err := w.registerPlugin(ctx); err != nil {
 		return fmt.Errorf("failed to register: %v", err)
 	}
 
 	w.isRunning = true
 
+	// Start background goroutines
 	go w.heartbeatLoop(ctx)
 
 	log.Printf("Vacuum worker started successfully")
@@ -100,6 +102,7 @@ func (w *Worker) connectToAdmin(ctx context.Context) error {
 
 	w.conn = conn
 	w.pluginClient = plugin_pb.NewPluginServiceClient(conn)
+
 	return nil
 }
 
@@ -117,25 +120,27 @@ func (w *Worker) registerPlugin(ctx context.Context) error {
 		Port:              int32(w.config.PluginPort),
 	}
 
+	// Add capabilities detail
 	req.CapabilitiesDetail = &plugin_pb.PluginCapabilities{
 		Detection: []*plugin_pb.DetectionCapability{
 			{
 				Type:               "vacuum_candidates",
-				Description:        "Detect volumes eligible for vacuuming",
+				Description:        "Detect volumes eligible for vacuum",
 				MinIntervalSeconds: int32(w.config.VacuumInterval.Seconds()),
-				RequiresFullScan:   true,
+				RequiresFullScan:   false,
 			},
 		},
 		Maintenance: []*plugin_pb.MaintenanceCapability{
 			{
-				Type:                     "vacuum_volume",
-				Description:              "Vacuum and defragment a volume",
-				RequiredDetectionTypes:   []string{"vacuum_candidates"},
-				EstimatedDurationSeconds: int32(w.config.JobTimeout.Seconds()),
+				Type:                    "vacuum_volume",
+				Description:             "Vacuum a volume to free dead space",
+				RequiredDetectionTypes:  []string{"vacuum_candidates"},
+				EstimatedDurationSeconds: 1800,
 			},
 		},
 	}
 
+	// Add schema to metadata
 	if schema != nil {
 		if req.Metadata == nil {
 			req.Metadata = make(map[string]string)
@@ -198,16 +203,7 @@ func (w *Worker) sendHealthReport(ctx context.Context) {
 
 // ExecuteDetection performs detection for vacuum candidates
 func (w *Worker) ExecuteDetection(ctx context.Context, volumeMetrics map[uint32]*VolumeMetric) ([]*VacuumCandidate, error) {
-	candidates, err := w.detector.DetectJobs(volumeMetrics)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(candidates) > w.config.BatchSize {
-		candidates = candidates[:w.config.BatchSize]
-	}
-
-	return candidates, nil
+	return w.detector.DetectJobs(volumeMetrics)
 }
 
 // ExecuteJob executes a vacuum job
@@ -223,10 +219,8 @@ func (w *Worker) ExecuteJob(ctx context.Context, jobID string, payload *plugin_p
 
 	defer delete(w.activeJobs, jobID)
 
-	jobCtx, cancel := context.WithTimeout(ctx, w.config.JobTimeout)
-	defer cancel()
-
-	result, err := w.executeJobWithContext(jobCtx, req)
+	// Execute the job
+	result, err := w.executor.ExecuteJob(req)
 	if err != nil {
 		log.Printf("Job execution failed: %v", err)
 		return err
@@ -241,30 +235,6 @@ func (w *Worker) ExecuteJob(ctx context.Context, jobID string, payload *plugin_p
 	return fmt.Errorf(result.ErrorMessage)
 }
 
-// executeJobWithContext executes a job with context
-func (w *Worker) executeJobWithContext(ctx context.Context, req *plugin_pb.ExecuteJobRequest) (*VacuumExecutionResult, error) {
-	done := make(chan *VacuumExecutionResult, 1)
-	errChan := make(chan error, 1)
-
-	go func() {
-		result, err := w.executor.ExecuteJob(req)
-		if err != nil {
-			errChan <- err
-		} else {
-			done <- result
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-done:
-		return result, nil
-	case err := <-errChan:
-		return nil, err
-	}
-}
-
 // submitResult submits job results to admin
 func (w *Worker) submitResult(ctx context.Context, jobID string, result *VacuumExecutionResult) error {
 	jobResult := &plugin_pb.JobResult{
@@ -273,12 +243,12 @@ func (w *Worker) submitResult(ctx context.Context, jobID string, result *VacuumE
 	}
 
 	req := &plugin_pb.JobResultRequest{
-		JobId:          jobID,
-		JobType:        "vacuum_volume",
-		Status:         plugin_pb.ExecutionStatus_EXECUTION_STATUS_COMPLETED,
-		Message:        "Vacuum completed successfully",
-		Result:         jobResult,
-		RetryCountUsed: 0,
+		JobId:            jobID,
+		JobType:          "vacuum_volume",
+		Status:           plugin_pb.ExecutionStatus_EXECUTION_STATUS_COMPLETED,
+		Message:          "Vacuum completed successfully",
+		Result:           jobResult,
+		RetryCountUsed:   0,
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -314,19 +284,18 @@ func (w *Worker) GetStatus() map[string]interface{} {
 // ParseFlags parses command line flags for vacuum worker
 func ParseFlags() *WorkerConfig {
 	config := &WorkerConfig{
-		WorkerID:            "vacuum-worker-1",
-		AdminHost:           "localhost",
-		AdminPort:           50051,
-		PluginPort:          50053,
-		MinVolumeSize:       500,
-		MaxVolumeSize:       20000,
-		TargetUtilization:   80,
-		BatchSize:           5,
-		VacuumInterval:      6 * time.Hour,
-		MaxConcurrentJobs:   3,
-		HealthCheckInterval: 1 * time.Minute,
-		JobTimeout:          8 * time.Hour,
-		DeadSpaceThreshold:  30,
+		WorkerID:             "vacuum-worker-1",
+		AdminHost:            "localhost",
+		AdminPort:            50051,
+		PluginPort:           50053,
+		MinVolumeSize:        500,
+		MaxVolumeSize:        5000,
+		TargetUtilization:    80,
+		BatchSize:            10,
+		VacuumInterval:       4 * time.Hour,
+		MaxConcurrentJobs:    3,
+		HealthCheckInterval:  30 * time.Second,
+		DeadSpaceThreshold:   30,
 	}
 
 	flag.StringVar(&config.WorkerID, "worker-id", config.WorkerID, "Worker ID")
@@ -335,13 +304,12 @@ func ParseFlags() *WorkerConfig {
 	flag.IntVar(&config.PluginPort, "plugin-port", config.PluginPort, "Plugin server port")
 	flag.Uint64Var(&config.MinVolumeSize, "min-volume-size", config.MinVolumeSize, "Minimum volume size in MB")
 	flag.Uint64Var(&config.MaxVolumeSize, "max-volume-size", config.MaxVolumeSize, "Maximum volume size in MB")
-	flag.IntVar(&config.TargetUtilization, "target-utilization", config.TargetUtilization, "Target utilization percent")
-	flag.IntVar(&config.BatchSize, "batch-size", config.BatchSize, "Batch size for vacuum jobs")
+	flag.IntVar(&config.TargetUtilization, "target-utilization", config.TargetUtilization, "Target utilization percentage")
+	flag.IntVar(&config.BatchSize, "batch-size", config.BatchSize, "Batch size")
 	flag.DurationVar(&config.VacuumInterval, "vacuum-interval", config.VacuumInterval, "Vacuum interval")
 	flag.IntVar(&config.MaxConcurrentJobs, "max-concurrent-jobs", config.MaxConcurrentJobs, "Max concurrent jobs")
 	flag.DurationVar(&config.HealthCheckInterval, "health-check-interval", config.HealthCheckInterval, "Health check interval")
-	flag.DurationVar(&config.JobTimeout, "job-timeout", config.JobTimeout, "Job timeout")
-	flag.IntVar(&config.DeadSpaceThreshold, "dead-space-threshold", config.DeadSpaceThreshold, "Dead space threshold percent")
+	flag.IntVar(&config.DeadSpaceThreshold, "dead-space-threshold", config.DeadSpaceThreshold, "Dead space threshold percentage")
 
 	flag.Parse()
 
@@ -360,9 +328,3 @@ func (w *Worker) ListenAndServe(port int) error {
 	log.Printf("Worker listening on port %d", port)
 	return server.Serve(listener)
 }
-
-// GetActiveJobIDs returns a list of active job IDs
-func (w *Worker) GetActiveJobIDs() []string {
-	ids := make([]string, 0, len(w.activeJobs))
-	for id := range w.activeJobs {
-		ids = append(ids, id)
