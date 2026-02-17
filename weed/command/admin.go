@@ -303,7 +303,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Create admin server (plugin is always enabled)
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort, true)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

@@ -122,7 +122,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, _ bool) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
