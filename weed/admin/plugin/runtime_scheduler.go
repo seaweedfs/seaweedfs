@@ -405,6 +405,8 @@ func (r *Runtime) reserveScheduledExecutor(
 	limiterMu *sync.Mutex,
 	policy schedulerPolicy,
 ) (*WorkerSession, func(), error) {
+	reserveDeadline := time.Now().Add(policy.ExecutionTimeout)
+
 	for {
 		select {
 		case <-r.shutdownCh:
@@ -414,7 +416,13 @@ func (r *Runtime) reserveScheduledExecutor(
 
 		executors, err := r.registry.ListExecutors(jobType)
 		if err != nil {
-			return nil, nil, err
+			if time.Now().After(reserveDeadline) {
+				return nil, nil, err
+			}
+			if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+				return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+			}
+			continue
 		}
 
 		limiterMu.Lock()
@@ -435,6 +443,9 @@ func (r *Runtime) reserveScheduledExecutor(
 		}
 		limiterMu.Unlock()
 
+		if time.Now().After(reserveDeadline) {
+			return nil, nil, fmt.Errorf("no executor slot became available for job_type=%s", jobType)
+		}
 		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
 			return nil, nil, fmt.Errorf("plugin runtime is shutting down")
 		}

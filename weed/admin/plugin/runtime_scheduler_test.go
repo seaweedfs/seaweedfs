@@ -174,3 +174,28 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 		t.Fatalf("expected second run to be fully deduped, got=%d", len(filtered2))
 	}
 }
+
+func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := NewRuntime(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer runtime.Shutdown()
+
+	policy := schedulerPolicy{
+		ExecutionTimeout:       30 * time.Millisecond,
+		ExecutorReserveBackoff: 5 * time.Millisecond,
+		PerWorkerConcurrency:   1,
+	}
+
+	start := time.Now()
+	_, _, err = runtime.reserveScheduledExecutor("missing-job-type", map[string]chan struct{}{}, &sync.Mutex{}, policy)
+	if err == nil {
+		t.Fatalf("expected reservation timeout error")
+	}
+	if time.Since(start) < 20*time.Millisecond {
+		t.Fatalf("reservation returned too early: duration=%v", time.Since(start))
+	}
+}
