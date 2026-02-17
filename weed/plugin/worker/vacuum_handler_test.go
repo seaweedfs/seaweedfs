@@ -178,6 +178,25 @@ func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
 	}
 }
 
+func TestBuildExecutorActivity(t *testing.T) {
+	activity := buildExecutorActivity("running", "vacuum in progress")
+	if activity == nil {
+		t.Fatalf("expected non-nil activity")
+	}
+	if activity.Source != plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR {
+		t.Fatalf("unexpected source: %v", activity.Source)
+	}
+	if activity.Stage != "running" {
+		t.Fatalf("unexpected stage: %q", activity.Stage)
+	}
+	if activity.Message != "vacuum in progress" {
+		t.Fatalf("unexpected message: %q", activity.Message)
+	}
+	if activity.CreatedAt == nil {
+		t.Fatalf("expected created_at timestamp")
+	}
+}
+
 type noopDetectionSender struct{}
 
 func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
