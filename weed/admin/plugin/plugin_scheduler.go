@@ -82,6 +82,7 @@ func (r *Plugin) runSchedulerTick() {
 	}
 
 	r.pruneSchedulerState(active)
+	r.pruneDetectorLeases(active)
 }
 
 func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, error) {
@@ -192,10 +193,21 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 			}
 		}
 
-		detector, detectorErr := r.registry.PickDetector(jobType)
-		if detectorErr == nil && detector != nil {
-			state.DetectorAvailable = true
-			state.DetectorWorkerID = detector.WorkerID
+		leasedWorkerID := r.getDetectorLease(jobType)
+		if leasedWorkerID != "" {
+			state.DetectorWorkerID = leasedWorkerID
+			if worker, ok := r.registry.Get(leasedWorkerID); ok {
+				if capability := worker.Capabilities[jobType]; capability != nil && capability.CanDetect {
+					state.DetectorAvailable = true
+				}
+			}
+		}
+		if state.DetectorWorkerID == "" {
+			detector, detectorErr := r.registry.PickDetector(jobType)
+			if detectorErr == nil && detector != nil {
+				state.DetectorAvailable = true
+				state.DetectorWorkerID = detector.WorkerID
+			}
 		}
 
 		executors, executorErr := r.registry.ListExecutors(jobType)
@@ -278,6 +290,18 @@ func (r *Plugin) clearSchedulerJobType(jobType string) {
 	delete(r.nextDetectionAt, jobType)
 	delete(r.detectionInFlight, jobType)
 	r.schedulerMu.Unlock()
+	r.clearDetectorLease(jobType, "")
+}
+
+func (r *Plugin) pruneDetectorLeases(activeJobTypes map[string]struct{}) {
+	r.detectorLeaseMu.Lock()
+	defer r.detectorLeaseMu.Unlock()
+
+	for jobType := range r.detectorLeases {
+		if _, ok := activeJobTypes[jobType]; !ok {
+			delete(r.detectorLeases, jobType)
+		}
+	}
 }
 
 func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {

@@ -49,6 +49,9 @@ type Plugin struct {
 	nextDetectionAt   map[string]time.Time
 	detectionInFlight map[string]bool
 
+	detectorLeaseMu sync.Mutex
+	detectorLeases  map[string]string
+
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
 
@@ -116,6 +119,7 @@ func New(options Options) (*Plugin, error) {
 		pendingExecution:       make(map[string]chan *plugin_pb.JobCompleted),
 		nextDetectionAt:        make(map[string]time.Time),
 		detectionInFlight:      make(map[string]bool),
+		detectorLeases:         make(map[string]string),
 		recentDedupeByType:     make(map[string]map[string]time.Time),
 		jobs:                   make(map[string]*TrackedJob),
 		activities:             make([]JobActivity, 0, 256),
@@ -333,7 +337,7 @@ func (r *Plugin) RunDetection(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) ([]*plugin_pb.JobProposal, error) {
-	detector, err := r.registry.PickDetector(jobType)
+	detector, err := r.pickDetector(jobType)
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +382,7 @@ func (r *Plugin) RunDetection(
 	}
 
 	if err := r.sendToWorker(detector.WorkerID, message); err != nil {
+		r.clearDetectorLease(jobType, detector.WorkerID)
 		return nil, err
 	}
 
@@ -533,11 +538,60 @@ func (r *Plugin) ListKnownJobTypes() ([]string, error) {
 }
 
 func (r *Plugin) PickDetectorWorker(jobType string) (*WorkerSession, error) {
-	return r.registry.PickDetector(jobType)
+	return r.pickDetector(jobType)
 }
 
 func (r *Plugin) PickExecutorWorker(jobType string) (*WorkerSession, error) {
 	return r.registry.PickExecutor(jobType)
+}
+
+func (r *Plugin) pickDetector(jobType string) (*WorkerSession, error) {
+	leasedWorkerID := r.getDetectorLease(jobType)
+	if leasedWorkerID != "" {
+		if worker, ok := r.registry.Get(leasedWorkerID); ok {
+			if capability := worker.Capabilities[jobType]; capability != nil && capability.CanDetect {
+				return worker, nil
+			}
+		}
+		r.clearDetectorLease(jobType, leasedWorkerID)
+	}
+
+	detector, err := r.registry.PickDetector(jobType)
+	if err != nil {
+		return nil, err
+	}
+
+	r.setDetectorLease(jobType, detector.WorkerID)
+	return detector, nil
+}
+
+func (r *Plugin) getDetectorLease(jobType string) string {
+	r.detectorLeaseMu.Lock()
+	defer r.detectorLeaseMu.Unlock()
+	return r.detectorLeases[jobType]
+}
+
+func (r *Plugin) setDetectorLease(jobType string, workerID string) {
+	r.detectorLeaseMu.Lock()
+	defer r.detectorLeaseMu.Unlock()
+	if jobType == "" || workerID == "" {
+		return
+	}
+	r.detectorLeases[jobType] = workerID
+}
+
+func (r *Plugin) clearDetectorLease(jobType string, workerID string) {
+	r.detectorLeaseMu.Lock()
+	defer r.detectorLeaseMu.Unlock()
+
+	current := r.detectorLeases[jobType]
+	if current == "" {
+		return
+	}
+	if workerID != "" && current != workerID {
+		return
+	}
+	delete(r.detectorLeases, jobType)
 }
 
 func (r *Plugin) sendAdminHello(workerID string) error {

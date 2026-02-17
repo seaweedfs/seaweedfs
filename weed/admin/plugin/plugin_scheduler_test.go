@@ -344,3 +344,67 @@ func findSchedulerState(states []SchedulerJobTypeState, jobType string) *Schedul
 	}
 	return nil
 }
+
+func TestPickDetectorPrefersLeasedWorker(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+
+	pluginSvc.setDetectorLease("vacuum", "worker-b")
+
+	detector, err := pluginSvc.pickDetector("vacuum")
+	if err != nil {
+		t.Fatalf("pickDetector: %v", err)
+	}
+	if detector.WorkerID != "worker-b" {
+		t.Fatalf("expected leased detector worker-b, got=%s", detector.WorkerID)
+	}
+}
+
+func TestPickDetectorReassignsWhenLeaseIsStale(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+	pluginSvc.setDetectorLease("vacuum", "worker-stale")
+
+	detector, err := pluginSvc.pickDetector("vacuum")
+	if err != nil {
+		t.Fatalf("pickDetector: %v", err)
+	}
+	if detector.WorkerID != "worker-a" {
+		t.Fatalf("expected reassigned detector worker-a, got=%s", detector.WorkerID)
+	}
+
+	lease := pluginSvc.getDetectorLease("vacuum")
+	if lease != "worker-a" {
+		t.Fatalf("expected detector lease to be updated to worker-a, got=%s", lease)
+	}
+}
