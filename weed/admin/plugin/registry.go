@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
+const defaultWorkerStaleTimeout = 2 * time.Minute
+
 // WorkerSession contains tracked worker metadata and plugin status.
 type WorkerSession struct {
 	WorkerID        string
@@ -24,12 +26,16 @@ type WorkerSession struct {
 
 // Registry tracks connected plugin workers and capability-based selection.
 type Registry struct {
-	mu       sync.RWMutex
-	sessions map[string]*WorkerSession
+	mu         sync.RWMutex
+	sessions   map[string]*WorkerSession
+	staleAfter time.Duration
 }
 
 func NewRegistry() *Registry {
-	return &Registry{sessions: make(map[string]*WorkerSession)}
+	return &Registry{
+		sessions:   make(map[string]*WorkerSession),
+		staleAfter: defaultWorkerStaleTimeout,
+	}
 }
 
 func (r *Registry) UpsertFromHello(hello *plugin_pb.WorkerHello) *WorkerSession {
@@ -86,7 +92,7 @@ func (r *Registry) Get(workerID string) (*WorkerSession, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	session, ok := r.sessions[workerID]
-	if !ok {
+	if !ok || r.isSessionStaleLocked(session, time.Now()) {
 		return nil, false
 	}
 	return cloneWorkerSession(session), true
@@ -96,7 +102,11 @@ func (r *Registry) List() []*WorkerSession {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]*WorkerSession, 0, len(r.sessions))
+	now := time.Now()
 	for _, s := range r.sessions {
+		if r.isSessionStaleLocked(s, now) {
+			continue
+		}
 		out = append(out, cloneWorkerSession(s))
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -111,7 +121,11 @@ func (r *Registry) DetectableJobTypes() []string {
 	defer r.mu.RUnlock()
 
 	jobTypes := make(map[string]struct{})
+	now := time.Now()
 	for _, session := range r.sessions {
+		if r.isSessionStaleLocked(session, now) {
+			continue
+		}
 		for jobType, capability := range session.Capabilities {
 			if capability == nil || !capability.CanDetect {
 				continue
@@ -134,7 +148,11 @@ func (r *Registry) JobTypes() []string {
 	defer r.mu.RUnlock()
 
 	jobTypes := make(map[string]struct{})
+	now := time.Now()
 	for _, session := range r.sessions {
+		if r.isSessionStaleLocked(session, now) {
+			continue
+		}
 		for jobType := range session.Capabilities {
 			if jobType == "" {
 				continue
@@ -161,7 +179,11 @@ func (r *Registry) PickSchemaProvider(jobType string) (*WorkerSession, error) {
 	defer r.mu.RUnlock()
 
 	var candidates []*WorkerSession
+	now := time.Now()
 	for _, s := range r.sessions {
+		if r.isSessionStaleLocked(s, now) {
+			continue
+		}
 		capability := s.Capabilities[jobType]
 		if capability == nil {
 			continue
@@ -213,7 +235,7 @@ func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	candidates := r.collectByKindLocked(jobType, false)
+	candidates := r.collectByKindLocked(jobType, false, time.Now())
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no executor worker available for job_type=%s", jobType)
 	}
@@ -231,7 +253,7 @@ func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, erro
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	candidates := r.collectByKindLocked(jobType, detect)
+	candidates := r.collectByKindLocked(jobType, detect, time.Now())
 
 	if len(candidates) == 0 {
 		kind := "executor"
@@ -246,9 +268,12 @@ func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, erro
 	return cloneWorkerSession(candidates[0]), nil
 }
 
-func (r *Registry) collectByKindLocked(jobType string, detect bool) []*WorkerSession {
+func (r *Registry) collectByKindLocked(jobType string, detect bool, now time.Time) []*WorkerSession {
 	var candidates []*WorkerSession
 	for _, session := range r.sessions {
+		if r.isSessionStaleLocked(session, now) {
+			continue
+		}
 		capability := session.Capabilities[jobType]
 		if capability == nil {
 			continue
@@ -261,6 +286,24 @@ func (r *Registry) collectByKindLocked(jobType string, detect bool) []*WorkerSes
 		}
 	}
 	return candidates
+}
+
+func (r *Registry) isSessionStaleLocked(session *WorkerSession, now time.Time) bool {
+	if session == nil {
+		return true
+	}
+	if r.staleAfter <= 0 {
+		return false
+	}
+
+	lastSeen := session.LastSeenAt
+	if lastSeen.IsZero() {
+		lastSeen = session.ConnectedAt
+	}
+	if lastSeen.IsZero() {
+		return false
+	}
+	return now.Sub(lastSeen) > r.staleAfter
 }
 
 func sortByKind(candidates []*WorkerSession, jobType string, detect bool) {

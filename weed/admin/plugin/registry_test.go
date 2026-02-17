@@ -3,6 +3,7 @@ package plugin
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
@@ -158,5 +159,72 @@ func TestRegistryListExecutorsSortedBySlots(t *testing.T) {
 	}
 	if executors[0].WorkerID != "worker-b" || executors[1].WorkerID != "worker-a" {
 		t.Fatalf("unexpected executor order: got=%s,%s", executors[0].WorkerID, executors[1].WorkerID)
+	}
+}
+
+func TestRegistrySkipsStaleWorkersForSelectionAndListing(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.staleAfter = 2 * time.Second
+
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-stale",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-fresh",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+		},
+	})
+
+	r.mu.Lock()
+	r.sessions["worker-stale"].LastSeenAt = time.Now().Add(-10 * time.Second)
+	r.sessions["worker-fresh"].LastSeenAt = time.Now()
+	r.mu.Unlock()
+
+	picked, err := r.PickDetector("vacuum")
+	if err != nil {
+		t.Fatalf("PickDetector: %v", err)
+	}
+	if picked.WorkerID != "worker-fresh" {
+		t.Fatalf("unexpected detector: got=%s want=worker-fresh", picked.WorkerID)
+	}
+
+	if _, ok := r.Get("worker-stale"); ok {
+		t.Fatalf("expected stale worker to be hidden from Get")
+	}
+	if _, ok := r.Get("worker-fresh"); !ok {
+		t.Fatalf("expected fresh worker from Get")
+	}
+
+	listed := r.List()
+	if len(listed) != 1 || listed[0].WorkerID != "worker-fresh" {
+		t.Fatalf("unexpected listed workers: %+v", listed)
+	}
+}
+
+func TestRegistryReturnsNoDetectorWhenAllWorkersStale(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.staleAfter = 2 * time.Second
+
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+		},
+	})
+
+	r.mu.Lock()
+	r.sessions["worker-a"].LastSeenAt = time.Now().Add(-10 * time.Second)
+	r.mu.Unlock()
+
+	if _, err := r.PickDetector("vacuum"); err == nil {
+		t.Fatalf("expected no detector when all workers are stale")
 	}
 }
