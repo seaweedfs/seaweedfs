@@ -55,6 +55,50 @@ func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
 	}
 }
 
+func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := NewRuntime(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer runtime.Shutdown()
+
+	err = runtime.store.SaveDescriptor("ec", &plugin_pb.JobTypeDescriptor{
+		JobType: "ec",
+		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
+			Enabled:                       true,
+			DetectionIntervalSeconds:      60,
+			DetectionTimeoutSeconds:       25,
+			MaxJobsPerDetection:           30,
+			GlobalExecutionConcurrency:    4,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    3,
+			RetryBackoffSeconds:           6,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveDescriptor: %v", err)
+	}
+
+	policy, enabled, err := runtime.loadSchedulerPolicy("ec")
+	if err != nil {
+		t.Fatalf("loadSchedulerPolicy: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected enabled policy from descriptor defaults")
+	}
+	if policy.MaxResults != 30 {
+		t.Fatalf("unexpected max results: got=%d", policy.MaxResults)
+	}
+	if policy.ExecutionConcurrency != 4 {
+		t.Fatalf("unexpected global concurrency: got=%d", policy.ExecutionConcurrency)
+	}
+	if policy.PerWorkerConcurrency != 2 {
+		t.Fatalf("unexpected per-worker concurrency: got=%d", policy.PerWorkerConcurrency)
+	}
+}
+
 func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 	t.Parallel()
 

@@ -88,11 +88,15 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	if err != nil {
 		return schedulerPolicy{}, false, err
 	}
-	if cfg == nil || cfg.AdminRuntime == nil {
-		return schedulerPolicy{}, false, nil
+	descriptor, err := r.store.LoadDescriptor(jobType)
+	if err != nil {
+		return schedulerPolicy{}, false, err
 	}
 
-	adminRuntime := cfg.AdminRuntime
+	adminRuntime := deriveSchedulerAdminRuntime(cfg, descriptor)
+	if adminRuntime == nil {
+		return schedulerPolicy{}, false, nil
+	}
 	if !adminRuntime.Enabled {
 		return schedulerPolicy{}, false, nil
 	}
@@ -139,6 +143,32 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	policy.ExecutionTimeout = execTimeout
 
 	return policy, true, nil
+}
+
+func deriveSchedulerAdminRuntime(
+	cfg *plugin_pb.PersistedJobTypeConfig,
+	descriptor *plugin_pb.JobTypeDescriptor,
+) *plugin_pb.AdminRuntimeConfig {
+	if cfg != nil && cfg.AdminRuntime != nil {
+		runtime := *cfg.AdminRuntime
+		return &runtime
+	}
+
+	if descriptor == nil || descriptor.AdminRuntimeDefaults == nil {
+		return nil
+	}
+
+	defaults := descriptor.AdminRuntimeDefaults
+	return &plugin_pb.AdminRuntimeConfig{
+		Enabled:                       defaults.Enabled,
+		DetectionIntervalSeconds:      defaults.DetectionIntervalSeconds,
+		DetectionTimeoutSeconds:       defaults.DetectionTimeoutSeconds,
+		MaxJobsPerDetection:           defaults.MaxJobsPerDetection,
+		GlobalExecutionConcurrency:    defaults.GlobalExecutionConcurrency,
+		PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
+		RetryLimit:                    defaults.RetryLimit,
+		RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+	}
 }
 
 func (r *Runtime) markDetectionDue(jobType string, interval time.Duration) bool {
