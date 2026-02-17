@@ -93,6 +93,37 @@ templ PluginRuntime(enabled bool) {
             </div>
 
             <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
+                            <small class="text-muted">Per job type detection schedule and detector availability</small>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Job Type</th>
+                                            <th>Enabled</th>
+                                            <th>Detector</th>
+                                            <th>In Flight</th>
+                                            <th>Next Detection</th>
+                                            <th>Interval</th>
+                                            <th>Exec Concurrency</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-scheduler-table-body">
+                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
                 <div class="col-lg-8 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
@@ -402,6 +433,7 @@ templ PluginRuntime(enabled bool) {
                 workers: [],
                 jobs: [],
                 activities: [],
+                schedulerStates: [],
                 allJobs: [],
                 allActivities: [],
                 descriptor: null,
@@ -638,6 +670,56 @@ templ PluginRuntime(enabled bool) {
                         '<td><span class=\"badge bg-info\">' + escapeHtml(String(activityByType[rowType] || 0)) + '</span></td>' +
                         '</tr>';
                 }
+                tbody.innerHTML = rows;
+            }
+
+            function renderSchedulerStates() {
+                var tbody = document.getElementById('plugin-scheduler-table-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var states = Array.isArray(state.schedulerStates) ? state.schedulerStates : [];
+                if (!states.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No scheduler state available</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var i = 0; i < states.length; i++) {
+                    var item = states[i] || {};
+                    var enabled = !!item.enabled;
+                    var inFlight = !!item.detection_in_flight;
+                    var detector = item.detector_available ? textOrDash(item.detector_worker_id) : 'No detector';
+                    var intervalSeconds = Number(item.detection_interval_seconds || 0);
+                    var intervalText = intervalSeconds > 0 ? (String(intervalSeconds) + 's') : '-';
+                    var concurrencyText = '-';
+
+                    if (enabled) {
+                        var globalExec = Number(item.global_execution_concurrency || 0);
+                        var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
+                        var executorWorkers = Number(item.executor_worker_count || 0);
+                        concurrencyText = 'G:' + String(globalExec) + ' / W:' + String(perWorkerExec) + ' / E:' + String(executorWorkers);
+                    }
+
+                    var enabledBadge = enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>';
+                    var inFlightBadge = inFlight ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="badge bg-light text-dark">No</span>';
+                    var policyErrorHtml = '';
+                    if (item.policy_error) {
+                        policyErrorHtml = '<div><small class="text-danger">' + escapeHtml(String(item.policy_error)) + '</small></div>';
+                    }
+
+                    rows += '<tr>' +
+                        '<td>' + escapeHtml(textOrDash(item.job_type)) + policyErrorHtml + '</td>' +
+                        '<td>' + enabledBadge + '</td>' +
+                        '<td><small>' + escapeHtml(detector) + '</small></td>' +
+                        '<td>' + inFlightBadge + '</td>' +
+                        '<td><small>' + escapeHtml(parseTime(item.next_detection_at) || '-') + '</small></td>' +
+                        '<td><small>' + escapeHtml(intervalText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(concurrencyText) + '</small></td>' +
+                        '</tr>';
+                }
+
                 tbody.innerHTML = rows;
             }
 
@@ -1684,22 +1766,31 @@ templ PluginRuntime(enabled bool) {
                     activitiesURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
                 }
 
+                var schedulerURL = '/api/plugin/scheduler-states';
+                if (state.monitorJobType) {
+                    schedulerURL += '?job_type=' + encodeURIComponent(state.monitorJobType);
+                }
+
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
                 var jobsPromise = pluginRequest('GET', jobsURL);
                 var activitiesPromise = pluginRequest('GET', activitiesURL);
+                var schedulerPromise = pluginRequest('GET', schedulerURL);
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var jobs = await jobsPromise;
                 var activities = await activitiesPromise;
+                var schedulerStates = await schedulerPromise;
 
                 state.jobs = Array.isArray(jobs) ? jobs : [];
                 state.activities = Array.isArray(activities) ? activities : [];
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
+                state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 renderJobs();
                 renderActivities();
+                renderSchedulerStates();
                 renderStatus();
                 renderJobTypeSummary();
             }
