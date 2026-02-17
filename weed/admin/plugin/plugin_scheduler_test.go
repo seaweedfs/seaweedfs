@@ -8,16 +8,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
-func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
+func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
-	err = runtime.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
 		JobType: "vacuum",
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                       true,
@@ -34,7 +34,7 @@ func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
 		t.Fatalf("SaveJobTypeConfig: %v", err)
 	}
 
-	policy, enabled, err := runtime.loadSchedulerPolicy("vacuum")
+	policy, enabled, err := pluginSvc.loadSchedulerPolicy("vacuum")
 	if err != nil {
 		t.Fatalf("loadSchedulerPolicy: %v", err)
 	}
@@ -58,13 +58,13 @@ func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
-	err = runtime.store.SaveDescriptor("ec", &plugin_pb.JobTypeDescriptor{
+	err = pluginSvc.store.SaveDescriptor("ec", &plugin_pb.JobTypeDescriptor{
 		JobType: "ec",
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
@@ -81,7 +81,7 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 		t.Fatalf("SaveDescriptor: %v", err)
 	}
 
-	policy, enabled, err := runtime.loadSchedulerPolicy("ec")
+	policy, enabled, err := pluginSvc.loadSchedulerPolicy("ec")
 	if err != nil {
 		t.Fatalf("loadSchedulerPolicy: %v", err)
 	}
@@ -102,19 +102,19 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
-	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
 		WorkerId: "worker-a",
 		Capabilities: []*plugin_pb.JobTypeCapability{
 			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 4},
 		},
 	})
-	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
 		WorkerId: "worker-b",
 		Capabilities: []*plugin_pb.JobTypeCapability{
 			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 2},
@@ -129,13 +129,13 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 	limiters := make(map[string]chan struct{})
 	var limiterMu sync.Mutex
 
-	executor1, release1, err := runtime.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
 	defer release1()
 
-	executor2, release2, err := runtime.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
 	if err != nil {
 		t.Fatalf("reserve executor 2: %v", err)
 	}
@@ -149,11 +149,11 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 func TestFilterScheduledProposalsDedupe(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
 	proposals := []*plugin_pb.JobProposal{
 		{ProposalId: "p1", DedupeKey: "d1"},
@@ -164,12 +164,12 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 		{ProposalId: "p4"}, // same proposal id, no dedupe key
 	}
 
-	filtered := runtime.filterScheduledProposals("vacuum", proposals, time.Hour)
+	filtered := pluginSvc.filterScheduledProposals("vacuum", proposals, time.Hour)
 	if len(filtered) != 4 {
 		t.Fatalf("unexpected filtered size: got=%d want=4", len(filtered))
 	}
 
-	filtered2 := runtime.filterScheduledProposals("vacuum", proposals, time.Hour)
+	filtered2 := pluginSvc.filterScheduledProposals("vacuum", proposals, time.Hour)
 	if len(filtered2) != 0 {
 		t.Fatalf("expected second run to be fully deduped, got=%d", len(filtered2))
 	}
@@ -178,11 +178,11 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
 	policy := schedulerPolicy{
 		ExecutionTimeout:       30 * time.Millisecond,
@@ -191,7 +191,7 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, _, err = runtime.reserveScheduledExecutor("missing-job-type", map[string]chan struct{}{}, &sync.Mutex{}, policy)
+	_, _, err = pluginSvc.reserveScheduledExecutor("missing-job-type", map[string]chan struct{}{}, &sync.Mutex{}, policy)
 	if err == nil {
 		t.Fatalf("expected reservation timeout error")
 	}
@@ -200,17 +200,17 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	}
 }
 
-func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
+func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
 	const jobType = "vacuum"
-	err = runtime.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
 		JobType: jobType,
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                       true,
@@ -227,7 +227,7 @@ func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
 		t.Fatalf("SaveJobTypeConfig: %v", err)
 	}
 
-	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
 		WorkerId: "worker-a",
 		Capabilities: []*plugin_pb.JobTypeCapability{
 			{JobType: jobType, CanDetect: true, CanExecute: true},
@@ -235,12 +235,12 @@ func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
 	})
 
 	nextDetectionAt := time.Now().UTC().Add(2 * time.Minute).Round(time.Second)
-	runtime.schedulerMu.Lock()
-	runtime.nextDetectionAt[jobType] = nextDetectionAt
-	runtime.detectionInFlight[jobType] = true
-	runtime.schedulerMu.Unlock()
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.nextDetectionAt[jobType] = nextDetectionAt
+	pluginSvc.detectionInFlight[jobType] = true
+	pluginSvc.schedulerMu.Unlock()
 
-	states, err := runtime.ListSchedulerStates()
+	states, err := pluginSvc.ListSchedulerStates()
 	if err != nil {
 		t.Fatalf("ListSchedulerStates: %v", err)
 	}
@@ -299,21 +299,21 @@ func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
 func TestListSchedulerStatesShowsDisabledWhenNoPolicy(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
 	const jobType = "balance"
-	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
 		WorkerId: "worker-b",
 		Capabilities: []*plugin_pb.JobTypeCapability{
 			{JobType: jobType, CanDetect: true, CanExecute: true},
 		},
 	})
 
-	states, err := runtime.ListSchedulerStates()
+	states, err := pluginSvc.ListSchedulerStates()
 	if err != nil {
 		t.Fatalf("ListSchedulerStates: %v", err)
 	}

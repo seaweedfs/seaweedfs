@@ -1745,7 +1745,7 @@ func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeR
 	return s.plugin.LoadRunHistory(jobType)
 }
 
-// ListPluginJobTypes returns known plugin job types from runtime registry and persisted data.
+// ListPluginJobTypes returns known plugin job types from connected worker registry and persisted data.
 func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")

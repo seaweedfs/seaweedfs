@@ -136,7 +136,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		policy.RetryLimit = 0
 	}
 
-	// Plugin protocol currently has only detection timeout in runtime config.
+	// Plugin protocol currently has only detection timeout in admin settings.
 	execTimeout := time.Duration(adminRuntime.DetectionTimeoutSeconds*2) * time.Second
 	if execTimeout < defaultScheduledExecutionTimeout {
 		execTimeout = defaultScheduledExecutionTimeout
@@ -214,8 +214,8 @@ func deriveSchedulerAdminRuntime(
 	descriptor *plugin_pb.JobTypeDescriptor,
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
-		runtime := *cfg.AdminRuntime
-		return &runtime
+		adminConfig := *cfg.AdminRuntime
+		return &adminConfig
 	}
 
 	if descriptor == nil || descriptor.AdminRuntimeDefaults == nil {

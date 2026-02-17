@@ -9,11 +9,11 @@ import (
 func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
 	descriptor := &plugin_pb.JobTypeDescriptor{
 		JobType:           "vacuum",
@@ -40,11 +40,11 @@ func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 		},
 	}
 
-	if err := runtime.ensureJobTypeConfigFromDescriptor("vacuum", descriptor); err != nil {
+	if err := pluginSvc.ensureJobTypeConfigFromDescriptor("vacuum", descriptor); err != nil {
 		t.Fatalf("ensureJobTypeConfigFromDescriptor: %v", err)
 	}
 
-	cfg, err := runtime.LoadJobTypeConfig("vacuum")
+	cfg, err := pluginSvc.LoadJobTypeConfig("vacuum")
 	if err != nil {
 		t.Fatalf("LoadJobTypeConfig: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 		t.Fatalf("unexpected descriptor version: got=%d", cfg.DescriptorVersion)
 	}
 	if cfg.AdminRuntime == nil || !cfg.AdminRuntime.Enabled {
-		t.Fatalf("expected enabled admin runtime")
+		t.Fatalf("expected enabled admin settings")
 	}
 	if cfg.AdminRuntime.GlobalExecutionConcurrency != 4 {
 		t.Fatalf("unexpected global execution concurrency: %d", cfg.AdminRuntime.GlobalExecutionConcurrency)
@@ -71,13 +71,13 @@ func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 func TestEnsureJobTypeConfigFromDescriptorDoesNotOverwriteExisting(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := New(Options{})
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer runtime.Shutdown()
+	defer pluginSvc.Shutdown()
 
-	if err := runtime.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+	if err := pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
 		JobType: "balance",
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
 			Enabled:                    true,
@@ -104,11 +104,11 @@ func TestEnsureJobTypeConfigFromDescriptorDoesNotOverwriteExisting(t *testing.T)
 		},
 	}
 
-	if err := runtime.ensureJobTypeConfigFromDescriptor("balance", descriptor); err != nil {
+	if err := pluginSvc.ensureJobTypeConfigFromDescriptor("balance", descriptor); err != nil {
 		t.Fatalf("ensureJobTypeConfigFromDescriptor: %v", err)
 	}
 
-	cfg, err := runtime.LoadJobTypeConfig("balance")
+	cfg, err := pluginSvc.LoadJobTypeConfig("balance")
 	if err != nil {
 		t.Fatalf("LoadJobTypeConfig: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestEnsureJobTypeConfigFromDescriptorDoesNotOverwriteExisting(t *testing.T)
 		t.Fatalf("expected config")
 	}
 	if cfg.AdminRuntime == nil || cfg.AdminRuntime.GlobalExecutionConcurrency != 9 {
-		t.Fatalf("existing runtime config should be preserved, got=%v", cfg.AdminRuntime)
+		t.Fatalf("existing admin settings should be preserved, got=%v", cfg.AdminRuntime)
 	}
 	custom := cfg.AdminConfigValues["custom"]
 	if custom == nil || custom.GetStringValue() != "keep" {

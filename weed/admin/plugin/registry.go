@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
-// WorkerSession contains tracked worker metadata and runtime status.
+// WorkerSession contains tracked worker metadata and plugin status.
 type WorkerSession struct {
 	WorkerID        string
 	WorkerInstance  string
