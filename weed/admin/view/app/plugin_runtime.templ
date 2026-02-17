@@ -261,8 +261,21 @@ templ PluginRuntime(enabled bool) {
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card shadow-sm">
-                        <div class="card-header">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Jobs</h5>
+                            <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <select class="form-select form-select-sm" id="plugin-monitor-job-type-filter" style="min-width: 180px;">
+                                    <option value="">All Job Types</option>
+                                </select>
+                                <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
+                                    <option value="">All States</option>
+                                    <option value="assigned">Assigned</option>
+                                    <option value="running">Running</option>
+                                    <option value="succeeded">Succeeded</option>
+                                    <option value="failed">Failed</option>
+                                    <option value="canceled">Canceled</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -291,8 +304,9 @@ templ PluginRuntime(enabled bool) {
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card shadow-sm">
-                        <div class="card-header">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Activities</h5>
+                            <small class="text-muted">Filtered by selected job type</small>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
@@ -357,6 +371,8 @@ templ PluginRuntime(enabled bool) {
             var state = {
                 selectedJobType: '',
                 jobTypes: [],
+                monitorJobType: '',
+                monitorJobState: '',
                 workers: [],
                 jobs: [],
                 activities: [],
@@ -1354,6 +1370,25 @@ templ PluginRuntime(enabled bool) {
                 if (previous) {
                     syncJobTypeControls(previous);
                 }
+
+                renderMonitorFilterOptions();
+            }
+
+            function renderMonitorFilterOptions() {
+                var select = document.getElementById('plugin-monitor-job-type-filter');
+                if (!select) {
+                    return;
+                }
+                var current = state.monitorJobType || String(select.value || '');
+                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
+
+                var html = '<option value=\"\">All Job Types</option>';
+                for (var i = 0; i < jobTypes.length; i++) {
+                    html += '<option value=\"' + escapeHtml(jobTypes[i]) + '\">' + escapeHtml(jobTypes[i]) + '</option>';
+                }
+                select.innerHTML = html;
+                select.value = current;
+                state.monitorJobType = String(select.value || '');
             }
 
             async function loadDescriptorAndConfig(jobType, forceRefresh) {
@@ -1508,8 +1543,27 @@ templ PluginRuntime(enabled bool) {
             }
 
             async function refreshJobsAndActivities() {
-                var jobs = await pluginRequest('GET', '/api/plugin/jobs?limit=200');
-                var activities = await pluginRequest('GET', '/api/plugin/activities?limit=200');
+                var typeFilterSelect = document.getElementById('plugin-monitor-job-type-filter');
+                var stateFilterSelect = document.getElementById('plugin-monitor-job-state-filter');
+
+                state.monitorJobType = typeFilterSelect ? String(typeFilterSelect.value || '').trim() : '';
+                state.monitorJobState = stateFilterSelect ? String(stateFilterSelect.value || '').trim() : '';
+
+                var jobsURL = '/api/plugin/jobs?limit=200';
+                if (state.monitorJobType) {
+                    jobsURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
+                }
+                if (state.monitorJobState) {
+                    jobsURL += '&state=' + encodeURIComponent(state.monitorJobState);
+                }
+
+                var activitiesURL = '/api/plugin/activities?limit=200';
+                if (state.monitorJobType) {
+                    activitiesURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
+                }
+
+                var jobs = await pluginRequest('GET', jobsURL);
+                var activities = await pluginRequest('GET', activitiesURL);
 
                 state.jobs = Array.isArray(jobs) ? jobs : [];
                 state.activities = Array.isArray(activities) ? activities : [];
@@ -1538,6 +1592,20 @@ templ PluginRuntime(enabled bool) {
             }
 
             function bindActions() {
+                var monitorTypeFilter = document.getElementById('plugin-monitor-job-type-filter');
+                if (monitorTypeFilter) {
+                    monitorTypeFilter.addEventListener('change', function() {
+                        refreshJobsAndActivities();
+                    });
+                }
+
+                var monitorStateFilter = document.getElementById('plugin-monitor-job-state-filter');
+                if (monitorStateFilter) {
+                    monitorStateFilter.addEventListener('change', function() {
+                        refreshJobsAndActivities();
+                    });
+                }
+
                 document.getElementById('plugin-refresh-all-btn').addEventListener('click', function() {
                     refreshAll();
                 });
