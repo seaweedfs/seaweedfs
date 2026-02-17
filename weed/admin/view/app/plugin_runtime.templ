@@ -1,0 +1,1643 @@
+package app
+
+import "fmt"
+
+templ PluginRuntime(enabled bool) {
+    <div class="container-fluid" id="plugin-runtime-page" data-plugin-enabled={ fmt.Sprintf("%t", enabled) }>
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Plugin Runtime</h2>
+                        <p class="text-muted mb-0">Monitor workers, configure job types, and run detection/execution workflows.</p>
+                    </div>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-outline-secondary" id="plugin-refresh-all-btn">
+                            <i class="fas fa-sync-alt me-1"></i>Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        if !enabled {
+            <div class="row">
+                <div class="col-12">
+                    <div class="alert alert-warning">
+                        <h5 class="alert-heading mb-2"><i class="fas fa-exclamation-triangle me-2"></i>Plugin Runtime Disabled</h5>
+                        <p class="mb-2">Start admin server with plugin runtime enabled to use this page.</p>
+                        <code>weed admin -plugin.enabled=true</code>
+                    </div>
+                </div>
+            </div>
+        } else {
+            <div class="row mb-4">
+                <div class="col-md-3 mb-3">
+                    <div class="card border-primary h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Runtime</div>
+                            <h4 class="mb-0" id="plugin-status-enabled">-</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-info h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Workers</div>
+                            <h4 class="mb-0" id="plugin-status-workers">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-warning h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
+                            <h4 class="mb-0" id="plugin-status-active-jobs">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-success h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
+                            <h4 class="mb-0" id="plugin-status-activities">0</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
+                <div class="col-lg-8 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Job Type Configuration</h5>
+                            <small class="text-muted" id="plugin-config-updated-at">Not loaded</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-5">
+                                    <label class="form-label mb-1" for="plugin-job-type-select">Job Type</label>
+                                    <select class="form-select" id="plugin-job-type-select">
+                                        <option value="">Select from connected workers</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label mb-1" for="plugin-job-type-input">Or Enter Job Type</label>
+                                    <input type="text" class="form-control" id="plugin-job-type-input" placeholder="job_type"/>
+                                </div>
+                                <div class="col-md-3 d-flex align-items-end gap-2">
+                                    <button type="button" class="btn btn-outline-primary w-100" id="plugin-load-job-type-btn">
+                                        <i class="fas fa-folder-open me-1"></i>Load
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6 class="mb-0">Descriptor</h6>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="plugin-refresh-schema-btn">
+                                        <i class="fas fa-cloud-download-alt me-1"></i>Refresh Schema
+                                    </button>
+                                </div>
+                                <div class="alert alert-light border" id="plugin-descriptor-summary">Select a job type to load schema and config.</div>
+                            </div>
+
+                            <div class="mb-3">
+                                <h6>Admin Runtime Settings</h6>
+                                <div class="row g-2" id="plugin-runtime-config-form">
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-enabled">Enabled</label>
+                                        <div class="form-check form-switch mt-2">
+                                            <input class="form-check-input" type="checkbox" id="plugin-runtime-enabled"/>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-detection-interval">Detection Interval (s)</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-detection-interval" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-detection-timeout">Detection Timeout (s)</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-detection-timeout" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-max-results">Max Jobs / Detection</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-max-results" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-global-exec">Global Execution Concurrency</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-global-exec" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-per-worker-exec">Per Worker Concurrency</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-per-worker-exec" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-retry-limit">Retry Limit</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-retry-limit" min="0"/>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label" for="plugin-runtime-retry-backoff">Retry Backoff (s)</label>
+                                        <input type="number" class="form-control" id="plugin-runtime-retry-backoff" min="0"/>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <h6>Admin Config Form</h6>
+                                <div id="plugin-admin-config-form" class="plugin-form-root">
+                                    <div class="text-muted">No admin form loaded.</div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <h6>Worker Config Form</h6>
+                                <div id="plugin-worker-config-form" class="plugin-form-root">
+                                    <div class="text-muted">No worker form loaded.</div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-primary" id="plugin-save-config-btn">
+                                    <i class="fas fa-save me-1"></i>Save Config
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" id="plugin-trigger-detection-btn">
+                                    <i class="fas fa-search me-1"></i>Run Detection
+                                </button>
+                                <button type="button" class="btn btn-outline-success" id="plugin-run-workflow-btn">
+                                    <i class="fas fa-play me-1"></i>Run Detect + Execute
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-4 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-users me-2"></i>Workers</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Worker</th>
+                                            <th>Address</th>
+                                            <th>Capabilities</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-workers-table-body">
+                                        <tr><td colspan="3" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
+                <div class="col-lg-6 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>Run History</h5>
+                            <small class="text-muted">Keep last 10 success + last 10 errors</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <h6 class="text-success">Successful Runs</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>Time</th>
+                                                    <th>Job ID</th>
+                                                    <th>Worker</th>
+                                                    <th>Duration</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="plugin-runs-success-body">
+                                                <tr><td colspan="4" class="text-muted">No data</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <h6 class="text-danger">Error Runs</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>Time</th>
+                                                    <th>Job ID</th>
+                                                    <th>Worker</th>
+                                                    <th>Error</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="plugin-runs-error-body">
+                                                <tr><td colspan="4" class="text-muted">No data</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-6 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-lightbulb me-2"></i>Detection Results</h5>
+                        </div>
+                        <div class="card-body" id="plugin-detection-results">
+                            <div class="text-muted">Run detection to see proposals.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Jobs</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Job ID</th>
+                                            <th>Type</th>
+                                            <th>State</th>
+                                            <th>Progress</th>
+                                            <th>Worker</th>
+                                            <th>Updated</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-jobs-table-body">
+                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Activities</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Job Type</th>
+                                            <th>Job ID</th>
+                                            <th>Source</th>
+                                            <th>Stage</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-activities-table-body">
+                                        <tr><td colspan="6" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    if enabled {
+        <style>
+        .plugin-form-root .card {
+            border: 1px solid #dee2e6;
+        }
+
+        .plugin-field-hidden {
+            display: none;
+        }
+
+        .plugin-capability-badge {
+            font-size: 0.72rem;
+            margin-right: 0.25rem;
+        }
+
+        .plugin-job-progress {
+            min-width: 120px;
+        }
+
+        .plugin-detection-item {
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.5rem;
+            background: #fbfcfd;
+        }
+        </style>
+
+        <script>
+        (function() {
+            var page = document.getElementById('plugin-runtime-page');
+            if (!page) {
+                return;
+            }
+
+            var state = {
+                selectedJobType: '',
+                workers: [],
+                jobs: [],
+                activities: [],
+                descriptor: null,
+                config: null,
+                refreshTimer: null,
+            };
+
+            function getCSRFToken() {
+                var meta = document.querySelector('meta[name="csrf-token"]');
+                if (!meta) {
+                    return '';
+                }
+                return meta.getAttribute('content') || '';
+            }
+
+            function notify(message, level) {
+                if (typeof window.showAlert === 'function') {
+                    window.showAlert(message, level || 'info');
+                    return;
+                }
+                if (level === 'error') {
+                    console.error(message);
+                }
+                alert(message);
+            }
+
+            async function readResponseJSON(response) {
+                var bodyText = await response.text();
+                if (!bodyText) {
+                    return {};
+                }
+                try {
+                    return JSON.parse(bodyText);
+                } catch (e) {
+                    return { error: bodyText };
+                }
+            }
+
+            async function pluginRequest(method, url, payload) {
+                var headers = {};
+                var requestOptions = {
+                    method: method,
+                    headers: headers,
+                };
+
+                if (payload !== undefined && payload !== null) {
+                    headers['Content-Type'] = 'application/json';
+                    requestOptions.body = JSON.stringify(payload);
+                }
+
+                if (method !== 'GET') {
+                    var csrf = getCSRFToken();
+                    if (csrf) {
+                        headers['X-CSRF-Token'] = csrf;
+                    }
+                }
+
+                var response = await fetch(url, requestOptions);
+                var data = await readResponseJSON(response);
+                if (!response.ok) {
+                    var message = (data && (data.error || data.message)) ? (data.error || data.message) : ('Request failed: ' + response.status);
+                    throw new Error(message);
+                }
+                return data;
+            }
+
+            function textOrDash(value) {
+                if (value === null || value === undefined || value === '') {
+                    return '-';
+                }
+                return String(value);
+            }
+
+            function escapeHtml(value) {
+                if (value === null || value === undefined) {
+                    return '';
+                }
+                return String(value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
+            function encodePath(value) {
+                return encodeURIComponent(value || '');
+            }
+
+            function normalizeEnum(value) {
+                if (value === undefined || value === null) {
+                    return '';
+                }
+                return String(value).toUpperCase();
+            }
+
+            function parseTime(value) {
+                if (!value) {
+                    return '';
+                }
+                var date = new Date(value);
+                if (Number.isNaN(date.getTime())) {
+                    return '';
+                }
+                return date.toLocaleString();
+            }
+
+            function formatDurationMs(value) {
+                var ms = Number(value || 0);
+                if (!Number.isFinite(ms) || ms <= 0) {
+                    return '-';
+                }
+                if (ms < 1000) {
+                    return ms + 'ms';
+                }
+                var sec = Math.floor(ms / 1000);
+                var remainMs = ms % 1000;
+                if (sec < 60) {
+                    return sec + '.' + String(Math.floor(remainMs / 100)) + 's';
+                }
+                var min = Math.floor(sec / 60);
+                var remainSec = sec % 60;
+                return min + 'm ' + remainSec + 's';
+            }
+
+            function getWorkerField(worker, name) {
+                if (!worker) {
+                    return null;
+                }
+                if (worker[name] !== undefined) {
+                    return worker[name];
+                }
+                var camel = name.charAt(0).toUpperCase() + name.slice(1);
+                if (worker[camel] !== undefined) {
+                    return worker[camel];
+                }
+                return null;
+            }
+
+            function deriveJobTypesFromWorkers(workers) {
+                var set = {};
+                for (var i = 0; i < workers.length; i++) {
+                    var caps = getWorkerField(workers[i], 'capabilities') || {};
+                    Object.keys(caps).forEach(function(jobType) {
+                        if (jobType) {
+                            set[jobType] = true;
+                        }
+                    });
+                }
+                return Object.keys(set).sort();
+            }
+
+            function renderStatus() {
+                var activeCount = state.jobs.filter(function(job) {
+                    var st = String(job.state || '').toLowerCase();
+                    return st === 'job_state_assigned' || st === 'job_state_running' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                }).length;
+
+                document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
+                document.getElementById('plugin-status-active-jobs').textContent = String(activeCount);
+                document.getElementById('plugin-status-activities').textContent = String(state.activities.length);
+            }
+
+            function renderWorkers() {
+                var tbody = document.getElementById('plugin-workers-table-body');
+                if (!state.workers.length) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center py-3">No connected workers</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var i = 0; i < state.workers.length; i++) {
+                    var worker = state.workers[i];
+                    var workerID = textOrDash(getWorkerField(worker, 'workerID'));
+                    var address = textOrDash(getWorkerField(worker, 'address'));
+                    var caps = getWorkerField(worker, 'capabilities') || {};
+                    var capBadges = [];
+
+                    Object.keys(caps).sort().forEach(function(jobType) {
+                        var cap = caps[jobType] || {};
+                        var labels = [];
+                        if (cap.can_detect) {
+                            labels.push('D');
+                        }
+                        if (cap.can_execute) {
+                            labels.push('E');
+                        }
+                        var text = jobType;
+                        if (labels.length) {
+                            text += ' (' + labels.join('/') + ')';
+                        }
+                        capBadges.push('<span class="badge bg-secondary plugin-capability-badge">' + escapeHtml(text) + '</span>');
+                    });
+
+                    if (!capBadges.length) {
+                        capBadges.push('<span class="text-muted">-</span>');
+                    }
+
+                    rows += '<tr>' +
+                        '<td><div class="fw-semibold">' + escapeHtml(workerID) + '</div></td>' +
+                        '<td><small>' + escapeHtml(address) + '</small></td>' +
+                        '<td>' + capBadges.join('') + '</td>' +
+                        '</tr>';
+                }
+
+                tbody.innerHTML = rows;
+            }
+
+            function renderJobs() {
+                var tbody = document.getElementById('plugin-jobs-table-body');
+                if (!state.jobs.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No jobs tracked yet</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var i = 0; i < state.jobs.length; i++) {
+                    var job = state.jobs[i] || {};
+                    var progress = Number(job.progress || 0);
+                    if (!Number.isFinite(progress) || progress < 0) {
+                        progress = 0;
+                    }
+                    if (progress > 100) {
+                        progress = 100;
+                    }
+
+                    var barClass = 'bg-info';
+                    var stateText = String(job.state || 'unknown').toLowerCase();
+                    if (stateText.indexOf('failed') >= 0) {
+                        barClass = 'bg-danger';
+                    } else if (stateText.indexOf('succeed') >= 0 || stateText.indexOf('complete') >= 0) {
+                        barClass = 'bg-success';
+                    } else if (stateText.indexOf('run') >= 0 || stateText.indexOf('progress') >= 0) {
+                        barClass = 'bg-warning';
+                    }
+
+                    rows += '<tr>' +
+                        '<td><small>' + escapeHtml(textOrDash(job.job_id)) + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(job.job_type)) + '</td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(job.state)) + '</span></td>' +
+                        '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(job.worker_id)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(parseTime(job.updated_at) || '-') + '</small></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(job.message)) + '</small></td>' +
+                        '</tr>';
+                }
+
+                tbody.innerHTML = rows;
+            }
+
+            function renderActivities() {
+                var tbody = document.getElementById('plugin-activities-table-body');
+                if (!state.activities.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No activities yet</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var i = 0; i < state.activities.length; i++) {
+                    var act = state.activities[i] || {};
+                    rows += '<tr>' +
+                        '<td><small>' + escapeHtml(parseTime(act.occurred_at) || '-') + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(act.job_type)) + '</td>' +
+                        '<td><small>' + escapeHtml(textOrDash(act.job_id)) + '</small></td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(act.source)) + '</span></td>' +
+                        '<td>' + escapeHtml(textOrDash(act.stage)) + '</td>' +
+                        '<td><small>' + escapeHtml(textOrDash(act.message)) + '</small></td>' +
+                        '</tr>';
+                }
+
+                tbody.innerHTML = rows;
+            }
+
+            function getSelectValueArray(selectEl) {
+                if (!selectEl) {
+                    return [];
+                }
+                var values = [];
+                for (var i = 0; i < selectEl.options.length; i++) {
+                    if (selectEl.options[i].selected) {
+                        values.push(selectEl.options[i].value);
+                    }
+                }
+                return values;
+            }
+
+            function configValueToNative(configValue) {
+                if (!configValue || typeof configValue !== 'object') {
+                    return null;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'bool_value')) {
+                    return !!configValue.bool_value;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'int64_value')) {
+                    return configValue.int64_value;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'double_value')) {
+                    return configValue.double_value;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'string_value')) {
+                    return configValue.string_value;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'bytes_value')) {
+                    return configValue.bytes_value;
+                }
+                if (Object.prototype.hasOwnProperty.call(configValue, 'duration_value')) {
+                    return configValue.duration_value;
+                }
+                if (configValue.string_list && Array.isArray(configValue.string_list.values)) {
+                    return configValue.string_list.values.slice();
+                }
+                if (configValue.int64_list && Array.isArray(configValue.int64_list.values)) {
+                    return configValue.int64_list.values.slice();
+                }
+                if (configValue.double_list && Array.isArray(configValue.double_list.values)) {
+                    return configValue.double_list.values.slice();
+                }
+                if (configValue.bool_list && Array.isArray(configValue.bool_list.values)) {
+                    return configValue.bool_list.values.slice();
+                }
+                if (configValue.list_value && Array.isArray(configValue.list_value.values)) {
+                    return configValue.list_value.values.map(function(v) {
+                        return configValueToNative(v);
+                    });
+                }
+                if (configValue.map_value && configValue.map_value.fields) {
+                    var out = {};
+                    Object.keys(configValue.map_value.fields).forEach(function(k) {
+                        out[k] = configValueToNative(configValue.map_value.fields[k]);
+                    });
+                    return out;
+                }
+                return null;
+            }
+
+            function inferConfigValue(value) {
+                if (value === null || value === undefined) {
+                    return { string_value: '' };
+                }
+                if (typeof value === 'boolean') {
+                    return { bool_value: value };
+                }
+                if (typeof value === 'number') {
+                    if (Number.isInteger(value)) {
+                        return { int64_value: String(value) };
+                    }
+                    return { double_value: value };
+                }
+                if (typeof value === 'string') {
+                    return { string_value: value };
+                }
+                if (Array.isArray(value)) {
+                    var listValues = value.map(function(item) {
+                        return inferConfigValue(item);
+                    });
+                    return { list_value: { values: listValues } };
+                }
+                if (typeof value === 'object') {
+                    var fields = {};
+                    Object.keys(value).forEach(function(key) {
+                        fields[key] = inferConfigValue(value[key]);
+                    });
+                    return { map_value: { fields: fields } };
+                }
+                return { string_value: String(value) };
+            }
+
+            function nativeToConfigValue(value, fieldType, widget, field) {
+                var normalizedFieldType = normalizeEnum(fieldType);
+                var normalizedWidget = normalizeEnum(widget);
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_BOOL') {
+                    return { bool_value: !!value };
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_INT64') {
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+                    var intValue = parseInt(value, 10);
+                    if (Number.isNaN(intValue)) {
+                        throw new Error('Invalid int64 value for field ' + field.name);
+                    }
+                    return { int64_value: String(intValue) };
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_DOUBLE') {
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+                    var doubleValue = parseFloat(value);
+                    if (Number.isNaN(doubleValue)) {
+                        throw new Error('Invalid number for field ' + field.name);
+                    }
+                    return { double_value: doubleValue };
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_DURATION') {
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+                    var text = String(value).trim();
+                    if (!text) {
+                        return null;
+                    }
+                    if (/^\d+$/.test(text)) {
+                        text += 's';
+                    }
+                    return { duration_value: text };
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_LIST') {
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+
+                    if (normalizedWidget === 'CONFIG_WIDGET_MULTI_SELECT' && Array.isArray(value)) {
+                        return { string_list: { values: value } };
+                    }
+
+                    if (typeof value === 'string') {
+                        try {
+                            var parsed = JSON.parse(value);
+                            if (!Array.isArray(parsed)) {
+                                throw new Error('Expected JSON array');
+                            }
+                            return inferConfigValue(parsed);
+                        } catch (e) {
+                            throw new Error('Invalid JSON list for field ' + field.name + ': ' + e.message);
+                        }
+                    }
+                    return inferConfigValue(value);
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_OBJECT') {
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+                    if (typeof value === 'string') {
+                        try {
+                            var parsedObject = JSON.parse(value);
+                            if (!parsedObject || typeof parsedObject !== 'object' || Array.isArray(parsedObject)) {
+                                throw new Error('Expected JSON object');
+                            }
+                            return inferConfigValue(parsedObject);
+                        } catch (e) {
+                            throw new Error('Invalid JSON object for field ' + field.name + ': ' + e.message);
+                        }
+                    }
+                    return inferConfigValue(value);
+                }
+
+                if (normalizedFieldType === 'CONFIG_FIELD_TYPE_ENUM') {
+                    if (normalizedWidget === 'CONFIG_WIDGET_MULTI_SELECT') {
+                        if (!value || !value.length) {
+                            return null;
+                        }
+                        return { string_list: { values: value } };
+                    }
+                    if (value === '' || value === null || value === undefined) {
+                        return null;
+                    }
+                    return { string_value: String(value) };
+                }
+
+                if (value === '' || value === null || value === undefined) {
+                    return null;
+                }
+
+                return { string_value: String(value) };
+            }
+
+            function toInputID(scope, fieldName) {
+                return 'plugin-' + scope + '-field-' + String(fieldName || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+            }
+
+            function resolveFieldConfigValue(scope, field) {
+                if (!field || !field.name) {
+                    return null;
+                }
+                var fromConfig = null;
+                if (state.config) {
+                    if (scope === 'admin' && state.config.admin_config_values) {
+                        fromConfig = state.config.admin_config_values[field.name];
+                    }
+                    if (scope === 'worker' && state.config.worker_config_values) {
+                        fromConfig = state.config.worker_config_values[field.name];
+                    }
+                }
+                if (fromConfig) {
+                    return fromConfig;
+                }
+
+                var formDefaults = null;
+                if (scope === 'admin' && state.descriptor && state.descriptor.admin_config_form && state.descriptor.admin_config_form.default_values) {
+                    formDefaults = state.descriptor.admin_config_form.default_values[field.name];
+                }
+                if (scope === 'worker' && state.descriptor && state.descriptor.worker_config_form && state.descriptor.worker_config_form.default_values) {
+                    formDefaults = state.descriptor.worker_config_form.default_values[field.name];
+                }
+                if (formDefaults) {
+                    return formDefaults;
+                }
+
+                if (scope === 'worker' && state.descriptor && state.descriptor.worker_default_values) {
+                    return state.descriptor.worker_default_values[field.name] || null;
+                }
+
+                return null;
+            }
+
+            function renderFieldInput(scope, field, value) {
+                var inputID = toInputID(scope, field.name);
+                var normalizedType = normalizeEnum(field.field_type);
+                var normalizedWidget = normalizeEnum(field.widget);
+                var input;
+
+                if (normalizedType === 'CONFIG_FIELD_TYPE_BOOL' || normalizedWidget === 'CONFIG_WIDGET_TOGGLE') {
+                    input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.className = 'form-check-input';
+                    input.id = inputID;
+                    input.checked = !!value;
+                } else if ((normalizedType === 'CONFIG_FIELD_TYPE_ENUM' && normalizedWidget === 'CONFIG_WIDGET_MULTI_SELECT') || normalizedWidget === 'CONFIG_WIDGET_MULTI_SELECT') {
+                    input = document.createElement('select');
+                    input.className = 'form-select';
+                    input.id = inputID;
+                    input.multiple = true;
+                    var selected = Array.isArray(value) ? value : [];
+                    var options = Array.isArray(field.options) ? field.options : [];
+                    for (var i = 0; i < options.length; i++) {
+                        var option = document.createElement('option');
+                        option.value = options[i].value || '';
+                        option.textContent = options[i].label || options[i].value || '';
+                        if (selected.indexOf(option.value) >= 0) {
+                            option.selected = true;
+                        }
+                        input.appendChild(option);
+                    }
+                } else if (normalizedType === 'CONFIG_FIELD_TYPE_ENUM' || normalizedWidget === 'CONFIG_WIDGET_SELECT') {
+                    input = document.createElement('select');
+                    input.className = 'form-select';
+                    input.id = inputID;
+                    var blankOption = document.createElement('option');
+                    blankOption.value = '';
+                    blankOption.textContent = '-- select --';
+                    input.appendChild(blankOption);
+                    var enumOptions = Array.isArray(field.options) ? field.options : [];
+                    for (var j = 0; j < enumOptions.length; j++) {
+                        var enumOption = document.createElement('option');
+                        enumOption.value = enumOptions[j].value || '';
+                        enumOption.textContent = enumOptions[j].label || enumOptions[j].value || '';
+                        if (String(value) === enumOption.value) {
+                            enumOption.selected = true;
+                        }
+                        input.appendChild(enumOption);
+                    }
+                } else if (normalizedType === 'CONFIG_FIELD_TYPE_INT64' || normalizedType === 'CONFIG_FIELD_TYPE_DOUBLE' || normalizedWidget === 'CONFIG_WIDGET_NUMBER') {
+                    input = document.createElement('input');
+                    input.type = 'number';
+                    if (normalizedType === 'CONFIG_FIELD_TYPE_DOUBLE') {
+                        input.step = 'any';
+                    }
+                    input.className = 'form-control';
+                    input.id = inputID;
+                    if (value !== null && value !== undefined && value !== '') {
+                        input.value = String(value);
+                    }
+                } else if (normalizedType === 'CONFIG_FIELD_TYPE_LIST' || normalizedType === 'CONFIG_FIELD_TYPE_OBJECT' || normalizedWidget === 'CONFIG_WIDGET_TEXTAREA') {
+                    input = document.createElement('textarea');
+                    input.className = 'form-control';
+                    input.id = inputID;
+                    input.rows = 4;
+                    if (normalizedType === 'CONFIG_FIELD_TYPE_LIST' || normalizedType === 'CONFIG_FIELD_TYPE_OBJECT') {
+                        input.placeholder = normalizedType === 'CONFIG_FIELD_TYPE_LIST' ? '[...]' : '{...}';
+                    }
+                    if (value !== null && value !== undefined && value !== '') {
+                        if (typeof value === 'object') {
+                            input.value = JSON.stringify(value, null, 2);
+                        } else {
+                            input.value = String(value);
+                        }
+                    }
+                } else {
+                    input = document.createElement('input');
+                    input.className = 'form-control';
+                    input.id = inputID;
+                    if (normalizedWidget === 'CONFIG_WIDGET_PASSWORD' || field.sensitive) {
+                        input.type = 'password';
+                    } else {
+                        input.type = 'text';
+                    }
+                    if (value !== null && value !== undefined && value !== '') {
+                        input.value = String(value);
+                    }
+                }
+
+                if (field.placeholder && input.tagName === 'INPUT') {
+                    input.placeholder = field.placeholder;
+                }
+                if (field.placeholder && input.tagName === 'TEXTAREA') {
+                    input.placeholder = field.placeholder;
+                }
+
+                if (field.required) {
+                    input.required = true;
+                }
+                if (field.read_only) {
+                    input.disabled = true;
+                }
+
+                return input;
+            }
+
+            function renderConfigForm(scope, rootID, form) {
+                var root = document.getElementById(rootID);
+                if (!root) {
+                    return;
+                }
+
+                root.innerHTML = '';
+                if (!form || !Array.isArray(form.sections) || form.sections.length === 0) {
+                    root.innerHTML = '<div class="text-muted">No fields provided by descriptor.</div>';
+                    return;
+                }
+
+                for (var s = 0; s < form.sections.length; s++) {
+                    var section = form.sections[s] || {};
+                    var sectionCard = document.createElement('div');
+                    sectionCard.className = 'card mb-3';
+
+                    var sectionHeader = document.createElement('div');
+                    sectionHeader.className = 'card-header py-2';
+                    sectionHeader.innerHTML = '<strong>' + escapeHtml(textOrDash(section.title || section.section_id)) + '</strong>';
+                    sectionCard.appendChild(sectionHeader);
+
+                    var sectionBody = document.createElement('div');
+                    sectionBody.className = 'card-body';
+
+                    if (section.description) {
+                        var sectionDescription = document.createElement('p');
+                        sectionDescription.className = 'text-muted small';
+                        sectionDescription.textContent = section.description;
+                        sectionBody.appendChild(sectionDescription);
+                    }
+
+                    var fields = Array.isArray(section.fields) ? section.fields : [];
+                    if (!fields.length) {
+                        var noFields = document.createElement('div');
+                        noFields.className = 'text-muted';
+                        noFields.textContent = 'No fields in this section.';
+                        sectionBody.appendChild(noFields);
+                    }
+
+                    for (var f = 0; f < fields.length; f++) {
+                        var field = fields[f] || {};
+                        if (!field.name) {
+                            continue;
+                        }
+
+                        var configValue = resolveFieldConfigValue(scope, field);
+                        var nativeValue = configValueToNative(configValue);
+
+                        var wrapper = document.createElement('div');
+                        wrapper.className = 'mb-3 plugin-field';
+                        wrapper.dataset.scope = scope;
+                        wrapper.dataset.fieldName = field.name;
+                        wrapper.dataset.fieldType = normalizeEnum(field.field_type);
+                        wrapper.dataset.widget = normalizeEnum(field.widget);
+                        wrapper.dataset.visibleWhenField = field.visible_when_field || '';
+                        wrapper.dataset.visibleWhenEquals = JSON.stringify(field.visible_when_equals || null);
+
+                        var label = document.createElement('label');
+                        label.className = 'form-label';
+                        label.setAttribute('for', toInputID(scope, field.name));
+                        label.innerHTML = escapeHtml(field.label || field.name) + (field.required ? ' <span class="text-danger">*</span>' : '');
+                        wrapper.appendChild(label);
+
+                        var input = renderFieldInput(scope, field, nativeValue);
+                        wrapper.appendChild(input);
+
+                        if (field.description || field.help_text) {
+                            var help = document.createElement('div');
+                            help.className = 'form-text';
+                            help.textContent = field.help_text || field.description || '';
+                            wrapper.appendChild(help);
+                        }
+
+                        sectionBody.appendChild(wrapper);
+                    }
+
+                    sectionCard.appendChild(sectionBody);
+                    root.appendChild(sectionCard);
+                }
+
+                root.addEventListener('change', function() {
+                    applyVisibility(scope);
+                });
+                root.addEventListener('input', function() {
+                    applyVisibility(scope);
+                });
+
+                applyVisibility(scope);
+            }
+
+            function readRawFieldValue(scope, fieldName) {
+                var input = document.getElementById(toInputID(scope, fieldName));
+                if (!input) {
+                    return null;
+                }
+                if (input.tagName === 'SELECT' && input.multiple) {
+                    return getSelectValueArray(input);
+                }
+                if (input.type === 'checkbox') {
+                    return !!input.checked;
+                }
+                return input.value;
+            }
+
+            function compareVisibleValue(currentValue, expectedValueObject) {
+                if (!expectedValueObject) {
+                    return true;
+                }
+                var expectedNative = configValueToNative(expectedValueObject);
+                if (Array.isArray(expectedNative)) {
+                    if (!Array.isArray(currentValue)) {
+                        return false;
+                    }
+                    if (expectedNative.length !== currentValue.length) {
+                        return false;
+                    }
+                    for (var i = 0; i < expectedNative.length; i++) {
+                        if (String(expectedNative[i]) !== String(currentValue[i])) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                return String(currentValue) === String(expectedNative);
+            }
+
+            function applyVisibility(scope) {
+                var fields = document.querySelectorAll('.plugin-field[data-scope="' + scope + '"]');
+                for (var i = 0; i < fields.length; i++) {
+                    var wrapper = fields[i];
+                    var dependsOn = wrapper.dataset.visibleWhenField;
+                    if (!dependsOn) {
+                        wrapper.classList.remove('plugin-field-hidden');
+                        continue;
+                    }
+
+                    var expectedRaw = null;
+                    try {
+                        expectedRaw = JSON.parse(wrapper.dataset.visibleWhenEquals || 'null');
+                    } catch (e) {
+                        expectedRaw = null;
+                    }
+                    var current = readRawFieldValue(scope, dependsOn);
+                    var visible = compareVisibleValue(current, expectedRaw);
+                    if (visible) {
+                        wrapper.classList.remove('plugin-field-hidden');
+                    } else {
+                        wrapper.classList.add('plugin-field-hidden');
+                    }
+                }
+            }
+
+            function collectConfigValues(scope, form) {
+                var out = {};
+                if (!form || !Array.isArray(form.sections)) {
+                    return out;
+                }
+
+                for (var s = 0; s < form.sections.length; s++) {
+                    var section = form.sections[s] || {};
+                    var fields = Array.isArray(section.fields) ? section.fields : [];
+                    for (var f = 0; f < fields.length; f++) {
+                        var field = fields[f] || {};
+                        if (!field.name) {
+                            continue;
+                        }
+
+                        var wrapper = document.querySelector('.plugin-field[data-scope="' + scope + '"][data-field-name="' + field.name + '"]');
+                        if (wrapper && wrapper.classList.contains('plugin-field-hidden')) {
+                            continue;
+                        }
+
+                        var input = document.getElementById(toInputID(scope, field.name));
+                        if (!input) {
+                            continue;
+                        }
+
+                        var rawValue;
+                        if (input.tagName === 'SELECT' && input.multiple) {
+                            rawValue = getSelectValueArray(input);
+                        } else if (input.type === 'checkbox') {
+                            rawValue = !!input.checked;
+                        } else {
+                            rawValue = input.value;
+                        }
+
+                        if (field.required) {
+                            var missing = false;
+                            if (input.type === 'checkbox') {
+                                missing = false;
+                            } else if (Array.isArray(rawValue)) {
+                                missing = rawValue.length === 0;
+                            } else {
+                                missing = String(rawValue || '').trim() === '';
+                            }
+                            if (missing) {
+                                throw new Error('Missing required field: ' + (field.label || field.name));
+                            }
+                        }
+
+                        var converted = nativeToConfigValue(rawValue, field.field_type, field.widget, field);
+                        if (converted !== null) {
+                            out[field.name] = converted;
+                        }
+                    }
+                }
+
+                return out;
+            }
+
+            function renderDescriptorSummary() {
+                var summary = document.getElementById('plugin-descriptor-summary');
+                if (!state.descriptor) {
+                    summary.innerHTML = 'No descriptor loaded.';
+                    return;
+                }
+
+                var descriptor = state.descriptor;
+                var html = '';
+                html += '<div><strong>' + escapeHtml(textOrDash(descriptor.display_name || descriptor.job_type)) + '</strong></div>';
+                html += '<div><small>Job Type: ' + escapeHtml(textOrDash(descriptor.job_type)) + '</small></div>';
+                html += '<div><small>Descriptor Version: ' + escapeHtml(textOrDash(descriptor.descriptor_version)) + '</small></div>';
+                if (descriptor.description) {
+                    html += '<div class="mt-1">' + escapeHtml(descriptor.description) + '</div>';
+                }
+                summary.innerHTML = html;
+            }
+
+            function fillRuntimeConfig() {
+                var runtimeConfig = (state.config && state.config.admin_runtime) ? state.config.admin_runtime : {};
+                var defaults = (state.descriptor && state.descriptor.admin_runtime_defaults) ? state.descriptor.admin_runtime_defaults : {};
+
+                function pickNumber(key) {
+                    if (runtimeConfig && runtimeConfig[key] !== undefined && runtimeConfig[key] !== null) {
+                        return runtimeConfig[key];
+                    }
+                    if (defaults && defaults[key] !== undefined && defaults[key] !== null) {
+                        return defaults[key];
+                    }
+                    return 0;
+                }
+
+                function pickBool(key) {
+                    if (runtimeConfig && runtimeConfig[key] !== undefined && runtimeConfig[key] !== null) {
+                        return !!runtimeConfig[key];
+                    }
+                    if (defaults && defaults[key] !== undefined && defaults[key] !== null) {
+                        return !!defaults[key];
+                    }
+                    return true;
+                }
+
+                document.getElementById('plugin-runtime-enabled').checked = pickBool('enabled');
+                document.getElementById('plugin-runtime-detection-interval').value = String(pickNumber('detection_interval_seconds'));
+                document.getElementById('plugin-runtime-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
+                document.getElementById('plugin-runtime-max-results').value = String(pickNumber('max_jobs_per_detection'));
+                document.getElementById('plugin-runtime-global-exec').value = String(pickNumber('global_execution_concurrency'));
+                document.getElementById('plugin-runtime-per-worker-exec').value = String(pickNumber('per_worker_execution_concurrency'));
+                document.getElementById('plugin-runtime-retry-limit').value = String(pickNumber('retry_limit'));
+                document.getElementById('plugin-runtime-retry-backoff').value = String(pickNumber('retry_backoff_seconds'));
+            }
+
+            function collectRuntimeConfig() {
+                function getInt(id) {
+                    var raw = String(document.getElementById(id).value || '').trim();
+                    if (!raw) {
+                        return 0;
+                    }
+                    var parsed = parseInt(raw, 10);
+                    if (Number.isNaN(parsed) || parsed < 0) {
+                        throw new Error('Invalid number for ' + id);
+                    }
+                    return parsed;
+                }
+
+                return {
+                    enabled: !!document.getElementById('plugin-runtime-enabled').checked,
+                    detection_interval_seconds: getInt('plugin-runtime-detection-interval'),
+                    detection_timeout_seconds: getInt('plugin-runtime-detection-timeout'),
+                    max_jobs_per_detection: getInt('plugin-runtime-max-results'),
+                    global_execution_concurrency: getInt('plugin-runtime-global-exec'),
+                    per_worker_execution_concurrency: getInt('plugin-runtime-per-worker-exec'),
+                    retry_limit: getInt('plugin-runtime-retry-limit'),
+                    retry_backoff_seconds: getInt('plugin-runtime-retry-backoff'),
+                };
+            }
+
+            function renderRunHistory(history) {
+                var successBody = document.getElementById('plugin-runs-success-body');
+                var errorBody = document.getElementById('plugin-runs-error-body');
+
+                var successRuns = (history && Array.isArray(history.successful_runs)) ? history.successful_runs : [];
+                var errorRuns = (history && Array.isArray(history.error_runs)) ? history.error_runs : [];
+
+                if (!successRuns.length) {
+                    successBody.innerHTML = '<tr><td colspan="4" class="text-muted">No successful runs</td></tr>';
+                } else {
+                    var successRows = '';
+                    for (var i = 0; i < successRuns.length; i++) {
+                        var run = successRuns[i] || {};
+                        successRows += '<tr>' +
+                            '<td><small>' + escapeHtml(parseTime(run.completed_at) || '-') + '</small></td>' +
+                            '<td><small>' + escapeHtml(textOrDash(run.job_id)) + '</small></td>' +
+                            '<td><small>' + escapeHtml(textOrDash(run.worker_id)) + '</small></td>' +
+                            '<td><small>' + escapeHtml(formatDurationMs(run.duration_ms)) + '</small></td>' +
+                            '</tr>';
+                    }
+                    successBody.innerHTML = successRows;
+                }
+
+                if (!errorRuns.length) {
+                    errorBody.innerHTML = '<tr><td colspan="4" class="text-muted">No error runs</td></tr>';
+                } else {
+                    var errorRows = '';
+                    for (var j = 0; j < errorRuns.length; j++) {
+                        var errorRun = errorRuns[j] || {};
+                        errorRows += '<tr>' +
+                            '<td><small>' + escapeHtml(parseTime(errorRun.completed_at) || '-') + '</small></td>' +
+                            '<td><small>' + escapeHtml(textOrDash(errorRun.job_id)) + '</small></td>' +
+                            '<td><small>' + escapeHtml(textOrDash(errorRun.worker_id)) + '</small></td>' +
+                            '<td><small class="text-danger">' + escapeHtml(textOrDash(errorRun.message)) + '</small></td>' +
+                            '</tr>';
+                    }
+                    errorBody.innerHTML = errorRows;
+                }
+            }
+
+            function renderDetectionResult(data) {
+                var root = document.getElementById('plugin-detection-results');
+                if (!data) {
+                    root.innerHTML = '<div class="text-muted">No results.</div>';
+                    return;
+                }
+
+                var proposals = Array.isArray(data.proposals) ? data.proposals : [];
+                if (!proposals.length) {
+                    root.innerHTML = '<div class="text-muted">No proposals returned.</div>';
+                    return;
+                }
+
+                var html = '<div class="mb-2"><strong>' + escapeHtml(String(proposals.length)) + '</strong> proposal(s)</div>';
+                for (var i = 0; i < proposals.length; i++) {
+                    var proposal = proposals[i] || {};
+                    html += '<div class="plugin-detection-item">' +
+                        '<div class="fw-semibold">' + escapeHtml(textOrDash(proposal.summary || proposal.proposal_id)) + '</div>' +
+                        '<div><small>proposal_id: ' + escapeHtml(textOrDash(proposal.proposal_id)) + '</small></div>' +
+                        '<div><small>priority: ' + escapeHtml(textOrDash(proposal.priority)) + '</small></div>' +
+                        '<div><small>detail: ' + escapeHtml(textOrDash(proposal.detail)) + '</small></div>' +
+                        '</div>';
+                }
+                root.innerHTML = html;
+            }
+
+            function syncJobTypeControls(jobType) {
+                var input = document.getElementById('plugin-job-type-input');
+                var select = document.getElementById('plugin-job-type-select');
+                input.value = jobType || '';
+
+                var matched = false;
+                for (var i = 0; i < select.options.length; i++) {
+                    if (select.options[i].value === jobType) {
+                        select.value = jobType;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    select.value = '';
+                }
+            }
+
+            function getSelectedJobType() {
+                var inputValue = String(document.getElementById('plugin-job-type-input').value || '').trim();
+                if (inputValue) {
+                    return inputValue;
+                }
+                var selectValue = String(document.getElementById('plugin-job-type-select').value || '').trim();
+                return selectValue;
+            }
+
+            function renderJobTypeOptions() {
+                var select = document.getElementById('plugin-job-type-select');
+                var previous = state.selectedJobType;
+                var jobTypes = deriveJobTypesFromWorkers(state.workers);
+
+                var html = '<option value="">Select from connected workers</option>';
+                for (var i = 0; i < jobTypes.length; i++) {
+                    html += '<option value="' + escapeHtml(jobTypes[i]) + '">' + escapeHtml(jobTypes[i]) + '</option>';
+                }
+                select.innerHTML = html;
+
+                if (previous) {
+                    syncJobTypeControls(previous);
+                }
+            }
+
+            async function loadDescriptorAndConfig(jobType, forceRefresh) {
+                if (!jobType) {
+                    return;
+                }
+
+                state.selectedJobType = jobType;
+                syncJobTypeControls(jobType);
+
+                var summary = document.getElementById('plugin-descriptor-summary');
+                summary.textContent = 'Loading descriptor and config...';
+
+                try {
+                    var schemaURL = '/api/plugin/job-types/' + encodePath(jobType) + '/schema';
+                    if (forceRefresh) {
+                        schemaURL += '?force_refresh=true';
+                    }
+                    state.descriptor = await pluginRequest('POST', schemaURL, null);
+                } catch (schemaError) {
+                    state.descriptor = null;
+                    summary.innerHTML = '<span class="text-danger">Failed to load descriptor: ' + escapeHtml(schemaError.message) + '</span>';
+                    document.getElementById('plugin-admin-config-form').innerHTML = '<div class="text-muted">No admin form loaded.</div>';
+                    document.getElementById('plugin-worker-config-form').innerHTML = '<div class="text-muted">No worker form loaded.</div>';
+                    throw schemaError;
+                }
+
+                try {
+                    state.config = await pluginRequest('GET', '/api/plugin/job-types/' + encodePath(jobType) + '/config');
+                } catch (configError) {
+                    state.config = null;
+                    notify('Failed to load config: ' + configError.message, 'error');
+                }
+
+                renderDescriptorSummary();
+                fillRuntimeConfig();
+
+                if (state.descriptor) {
+                    renderConfigForm('admin', 'plugin-admin-config-form', state.descriptor.admin_config_form || {});
+                    renderConfigForm('worker', 'plugin-worker-config-form', state.descriptor.worker_config_form || {});
+                }
+
+                if (state.config && state.config.updated_at) {
+                    document.getElementById('plugin-config-updated-at').textContent = 'Updated: ' + (parseTime(state.config.updated_at) || state.config.updated_at);
+                } else {
+                    document.getElementById('plugin-config-updated-at').textContent = 'Not saved yet';
+                }
+
+                await loadRunHistory(jobType);
+            }
+
+            async function loadRunHistory(jobType) {
+                if (!jobType) {
+                    renderRunHistory(null);
+                    return;
+                }
+                try {
+                    var history = await pluginRequest('GET', '/api/plugin/job-types/' + encodePath(jobType) + '/runs');
+                    renderRunHistory(history);
+                } catch (e) {
+                    renderRunHistory(null);
+                    notify('Failed to load run history: ' + e.message, 'error');
+                }
+            }
+
+            async function saveConfig() {
+                var jobType = state.selectedJobType || getSelectedJobType();
+                if (!jobType) {
+                    notify('Select a job type first.', 'error');
+                    return;
+                }
+                if (!state.descriptor) {
+                    notify('Load descriptor before saving config.', 'error');
+                    return;
+                }
+
+                var payload;
+                try {
+                    payload = {
+                        job_type: jobType,
+                        descriptor_version: state.descriptor.descriptor_version || 0,
+                        admin_runtime: collectRuntimeConfig(),
+                        admin_config_values: collectConfigValues('admin', state.descriptor.admin_config_form || {}),
+                        worker_config_values: collectConfigValues('worker', state.descriptor.worker_config_form || {}),
+                    };
+                } catch (err) {
+                    notify(err.message, 'error');
+                    return;
+                }
+
+                try {
+                    state.config = await pluginRequest('PUT', '/api/plugin/job-types/' + encodePath(jobType) + '/config', payload);
+                    document.getElementById('plugin-config-updated-at').textContent = 'Updated: ' + (parseTime(state.config.updated_at) || state.config.updated_at || 'just now');
+                    notify('Config saved for ' + jobType, 'success');
+                } catch (e) {
+                    notify('Failed to save config: ' + e.message, 'error');
+                }
+            }
+
+            function getMaxResults() {
+                var raw = String(document.getElementById('plugin-runtime-max-results').value || '').trim();
+                if (!raw) {
+                    return 0;
+                }
+                var parsed = parseInt(raw, 10);
+                if (Number.isNaN(parsed) || parsed < 0) {
+                    return 0;
+                }
+                return parsed;
+            }
+
+            async function runDetection() {
+                var jobType = state.selectedJobType || getSelectedJobType();
+                if (!jobType) {
+                    notify('Select a job type first.', 'error');
+                    return;
+                }
+
+                try {
+                    var data = await pluginRequest('POST', '/api/plugin/job-types/' + encodePath(jobType) + '/detect', {
+                        max_results: getMaxResults(),
+                    });
+                    renderDetectionResult(data);
+                    await refreshJobsAndActivities();
+                } catch (e) {
+                    notify('Detection failed: ' + e.message, 'error');
+                }
+            }
+
+            async function runWorkflow() {
+                var jobType = state.selectedJobType || getSelectedJobType();
+                if (!jobType) {
+                    notify('Select a job type first.', 'error');
+                    return;
+                }
+
+                try {
+                    var data = await pluginRequest('POST', '/api/plugin/job-types/' + encodePath(jobType) + '/run', {
+                        max_results: getMaxResults(),
+                    });
+                    var resultRoot = document.getElementById('plugin-detection-results');
+                    resultRoot.innerHTML = '<div class="mb-2"><strong>Workflow completed</strong></div>' +
+                        '<div>Detected: <strong>' + escapeHtml(String(data.detected_count || 0)) + '</strong></div>' +
+                        '<div>Executed: <strong>' + escapeHtml(String(data.executed_count || 0)) + '</strong></div>' +
+                        '<div class="text-success">Success: ' + escapeHtml(String(data.success_count || 0)) + '</div>' +
+                        '<div class="text-danger">Errors: ' + escapeHtml(String(data.error_count || 0)) + '</div>';
+                    await loadRunHistory(jobType);
+                    await refreshJobsAndActivities();
+                } catch (e) {
+                    notify('Workflow run failed: ' + e.message, 'error');
+                }
+            }
+
+            async function refreshJobsAndActivities() {
+                var jobs = await pluginRequest('GET', '/api/plugin/jobs?limit=200');
+                var activities = await pluginRequest('GET', '/api/plugin/activities?limit=200');
+
+                state.jobs = Array.isArray(jobs) ? jobs : [];
+                state.activities = Array.isArray(activities) ? activities : [];
+                renderJobs();
+                renderActivities();
+                renderStatus();
+            }
+
+            async function refreshAll() {
+                try {
+                    var status = await pluginRequest('GET', '/api/plugin/status');
+                    document.getElementById('plugin-status-enabled').textContent = status.enabled ? 'Enabled' : 'Disabled';
+
+                    var workers = await pluginRequest('GET', '/api/plugin/workers');
+                    state.workers = Array.isArray(workers) ? workers : [];
+                    renderWorkers();
+                    renderJobTypeOptions();
+
+                    await refreshJobsAndActivities();
+                } catch (e) {
+                    notify('Refresh failed: ' + e.message, 'error');
+                }
+            }
+
+            function bindActions() {
+                document.getElementById('plugin-refresh-all-btn').addEventListener('click', function() {
+                    refreshAll();
+                });
+
+                document.getElementById('plugin-load-job-type-btn').addEventListener('click', async function() {
+                    var jobType = getSelectedJobType();
+                    if (!jobType) {
+                        notify('Enter or select a job type.', 'error');
+                        return;
+                    }
+                    try {
+                        await loadDescriptorAndConfig(jobType, false);
+                    } catch (e) {
+                        // Already shown in UI.
+                    }
+                });
+
+                document.getElementById('plugin-job-type-select').addEventListener('change', async function() {
+                    var value = String(this.value || '').trim();
+                    if (!value) {
+                        return;
+                    }
+                    document.getElementById('plugin-job-type-input').value = value;
+                    try {
+                        await loadDescriptorAndConfig(value, false);
+                    } catch (e) {
+                        // Already shown in UI.
+                    }
+                });
+
+                document.getElementById('plugin-refresh-schema-btn').addEventListener('click', async function() {
+                    var jobType = state.selectedJobType || getSelectedJobType();
+                    if (!jobType) {
+                        notify('Select a job type first.', 'error');
+                        return;
+                    }
+                    try {
+                        await loadDescriptorAndConfig(jobType, true);
+                        notify('Schema refreshed for ' + jobType, 'success');
+                    } catch (e) {
+                        notify('Schema refresh failed: ' + e.message, 'error');
+                    }
+                });
+
+                document.getElementById('plugin-save-config-btn').addEventListener('click', function() {
+                    saveConfig();
+                });
+
+                document.getElementById('plugin-trigger-detection-btn').addEventListener('click', function() {
+                    runDetection();
+                });
+
+                document.getElementById('plugin-run-workflow-btn').addEventListener('click', function() {
+                    runWorkflow();
+                });
+            }
+
+            async function init() {
+                bindActions();
+                await refreshAll();
+
+                var initialJobType = getSelectedJobType();
+                if (!initialJobType) {
+                    var select = document.getElementById('plugin-job-type-select');
+                    if (select && select.value) {
+                        initialJobType = String(select.value).trim();
+                    }
+                }
+
+                if (initialJobType) {
+                    try {
+                        await loadDescriptorAndConfig(initialJobType, false);
+                    } catch (e) {
+                        // Already shown in UI.
+                    }
+                }
+
+                state.refreshTimer = setInterval(function() {
+                    refreshAll();
+                }, 10000);
+            }
+
+            window.addEventListener('beforeunload', function() {
+                if (state.refreshTimer) {
+                    clearInterval(state.refreshTimer);
+                    state.refreshTimer = null;
+                }
+            });
+
+            init();
+        })();
+        </script>
+    }
+}
