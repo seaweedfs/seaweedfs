@@ -122,6 +122,7 @@ var cmdAdmin = &Command{
   Plugin:
     - Disabled by default and enabled via -plugin.enabled=true
     - Registers plugin.proto gRPC service on the same worker gRPC port
+    - External workers connect with: weed plugin.worker -admin=<admin_host:admin_port>
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
 
   Configuration File:
