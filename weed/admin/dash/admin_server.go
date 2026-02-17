@@ -1672,11 +1672,6 @@ func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
 }
 
-// IsPluginEnabled reports whether plugin is enabled.
-func (s *AdminServer) IsPluginEnabled() bool {
-	return s.plugin != nil
-}
-
 // RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
 func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
 	if s.plugin == nil {
