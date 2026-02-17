@@ -627,6 +627,9 @@ func (r *Runtime) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaRes
 			if err := r.store.SaveDescriptor(jobType, response.GetJobTypeDescriptor()); err != nil {
 				glog.Warningf("Plugin failed to persist descriptor for %s: %v", jobType, err)
 			}
+			if err := r.ensureJobTypeConfigFromDescriptor(jobType, response.GetJobTypeDescriptor()); err != nil {
+				glog.Warningf("Plugin failed to bootstrap config for %s: %v", jobType, err)
+			}
 		}
 	}
 
@@ -645,6 +648,57 @@ func (r *Runtime) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaRes
 	case ch <- response:
 	default:
 	}
+}
+
+func (r *Runtime) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *plugin_pb.JobTypeDescriptor) error {
+	if descriptor == nil || strings.TrimSpace(jobType) == "" {
+		return nil
+	}
+
+	existing, err := r.store.LoadJobTypeConfig(jobType)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	workerDefaults := cloneConfigValueMap(descriptor.WorkerDefaultValues)
+	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
+		workerDefaults = cloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
+	}
+
+	adminDefaults := map[string]*plugin_pb.ConfigValue{}
+	if descriptor.AdminConfigForm != nil {
+		adminDefaults = cloneConfigValueMap(descriptor.AdminConfigForm.DefaultValues)
+	}
+
+	adminRuntime := &plugin_pb.AdminRuntimeConfig{}
+	if descriptor.AdminRuntimeDefaults != nil {
+		defaults := descriptor.AdminRuntimeDefaults
+		adminRuntime = &plugin_pb.AdminRuntimeConfig{
+			Enabled:                       defaults.Enabled,
+			DetectionIntervalSeconds:      defaults.DetectionIntervalSeconds,
+			DetectionTimeoutSeconds:       defaults.DetectionTimeoutSeconds,
+			MaxJobsPerDetection:           defaults.MaxJobsPerDetection,
+			GlobalExecutionConcurrency:    defaults.GlobalExecutionConcurrency,
+			PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
+			RetryLimit:                    defaults.RetryLimit,
+			RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+		}
+	}
+
+	cfg := &plugin_pb.PersistedJobTypeConfig{
+		JobType:            jobType,
+		DescriptorVersion:  descriptor.DescriptorVersion,
+		AdminConfigValues:  adminDefaults,
+		WorkerConfigValues: workerDefaults,
+		AdminRuntime:       adminRuntime,
+		UpdatedAt:          timestamppb.Now(),
+		UpdatedBy:          "plugin-runtime",
+	}
+
+	return r.store.SaveJobTypeConfig(cfg)
 }
 
 func (r *Runtime) handleDetectionProposals(message *plugin_pb.DetectionProposals) {
