@@ -120,3 +120,43 @@ func TestRegistryJobTypes(t *testing.T) {
 		t.Fatalf("unexpected job types: got=%v want=%v", got, want)
 	}
 }
+
+func TestRegistryListExecutorsSortedBySlots(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 2},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 4},
+		},
+	})
+
+	r.UpdateHeartbeat("worker-a", &plugin_pb.WorkerHeartbeat{
+		WorkerId:            "worker-a",
+		ExecutionSlotsUsed:  1,
+		ExecutionSlotsTotal: 2,
+	})
+	r.UpdateHeartbeat("worker-b", &plugin_pb.WorkerHeartbeat{
+		WorkerId:            "worker-b",
+		ExecutionSlotsUsed:  1,
+		ExecutionSlotsTotal: 4,
+	})
+
+	executors, err := r.ListExecutors("balance")
+	if err != nil {
+		t.Fatalf("ListExecutors: %v", err)
+	}
+	if len(executors) != 2 {
+		t.Fatalf("unexpected candidate count: got=%d", len(executors))
+	}
+	if executors[0].WorkerID != "worker-b" || executors[1].WorkerID != "worker-a" {
+		t.Fatalf("unexpected executor order: got=%s,%s", executors[0].WorkerID, executors[1].WorkerID)
+	}
+}

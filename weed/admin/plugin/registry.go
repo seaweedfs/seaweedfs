@@ -207,23 +207,31 @@ func (r *Registry) PickExecutor(jobType string) (*WorkerSession, error) {
 	return r.pickByKind(jobType, false)
 }
 
+// ListExecutors returns sorted executor candidates for one job type.
+// Ordering is by most available execution slots, then lexical worker ID.
+func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	candidates := r.collectByKindLocked(jobType, false)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no executor worker available for job_type=%s", jobType)
+	}
+
+	sortByKind(candidates, jobType, false)
+
+	out := make([]*WorkerSession, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, cloneWorkerSession(candidate))
+	}
+	return out, nil
+}
+
 func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var candidates []*WorkerSession
-	for _, s := range r.sessions {
-		capability := s.Capabilities[jobType]
-		if capability == nil {
-			continue
-		}
-		if detect && capability.CanDetect {
-			candidates = append(candidates, s)
-		}
-		if !detect && capability.CanExecute {
-			candidates = append(candidates, s)
-		}
-	}
+	candidates := r.collectByKindLocked(jobType, detect)
 
 	if len(candidates) == 0 {
 		kind := "executor"
@@ -233,6 +241,29 @@ func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, erro
 		return nil, fmt.Errorf("no %s worker available for job_type=%s", kind, jobType)
 	}
 
+	sortByKind(candidates, jobType, detect)
+
+	return cloneWorkerSession(candidates[0]), nil
+}
+
+func (r *Registry) collectByKindLocked(jobType string, detect bool) []*WorkerSession {
+	var candidates []*WorkerSession
+	for _, session := range r.sessions {
+		capability := session.Capabilities[jobType]
+		if capability == nil {
+			continue
+		}
+		if detect && capability.CanDetect {
+			candidates = append(candidates, session)
+		}
+		if !detect && capability.CanExecute {
+			candidates = append(candidates, session)
+		}
+	}
+	return candidates
+}
+
+func sortByKind(candidates []*WorkerSession, jobType string, detect bool) {
 	sort.Slice(candidates, func(i, j int) bool {
 		a := candidates[i]
 		b := candidates[j]
@@ -253,8 +284,6 @@ func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, erro
 		}
 		return a.WorkerID < b.WorkerID
 	})
-
-	return cloneWorkerSession(candidates[0]), nil
 }
 
 func availableDetectionSlots(session *WorkerSession, capability *plugin_pb.JobTypeCapability) int {

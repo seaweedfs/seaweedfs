@@ -18,19 +18,22 @@ const (
 	defaultScheduledExecutionTimeout           = 90 * time.Second
 	defaultScheduledMaxResults           int32 = 200
 	defaultScheduledExecutionConcurrency       = 1
+	defaultScheduledPerWorkerConcurrency       = 1
 	maxScheduledExecutionConcurrency           = 32
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
 )
 
 type schedulerPolicy struct {
-	DetectionInterval    time.Duration
-	DetectionTimeout     time.Duration
-	ExecutionTimeout     time.Duration
-	RetryBackoff         time.Duration
-	MaxResults           int32
-	ExecutionConcurrency int
-	RetryLimit           int
+	DetectionInterval      time.Duration
+	DetectionTimeout       time.Duration
+	ExecutionTimeout       time.Duration
+	RetryBackoff           time.Duration
+	MaxResults             int32
+	ExecutionConcurrency   int
+	PerWorkerConcurrency   int
+	RetryLimit             int
+	ExecutorReserveBackoff time.Duration
 }
 
 func (r *Runtime) schedulerLoop() {
@@ -95,13 +98,15 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	}
 
 	policy := schedulerPolicy{
-		DetectionInterval:    durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
-		DetectionTimeout:     durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
-		ExecutionTimeout:     defaultScheduledExecutionTimeout,
-		RetryBackoff:         durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
-		MaxResults:           adminRuntime.MaxJobsPerDetection,
-		ExecutionConcurrency: int(adminRuntime.GlobalExecutionConcurrency),
-		RetryLimit:           int(adminRuntime.RetryLimit),
+		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
+		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
+		ExecutionTimeout:       defaultScheduledExecutionTimeout,
+		RetryBackoff:           durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
+		MaxResults:             adminRuntime.MaxJobsPerDetection,
+		ExecutionConcurrency:   int(adminRuntime.GlobalExecutionConcurrency),
+		PerWorkerConcurrency:   int(adminRuntime.PerWorkerExecutionConcurrency),
+		RetryLimit:             int(adminRuntime.RetryLimit),
+		ExecutorReserveBackoff: 200 * time.Millisecond,
 	}
 
 	if policy.DetectionInterval < r.schedulerTick {
@@ -115,6 +120,12 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	}
 	if policy.ExecutionConcurrency > maxScheduledExecutionConcurrency {
 		policy.ExecutionConcurrency = maxScheduledExecutionConcurrency
+	}
+	if policy.PerWorkerConcurrency <= 0 {
+		policy.PerWorkerConcurrency = defaultScheduledPerWorkerConcurrency
+	}
+	if policy.PerWorkerConcurrency > policy.ExecutionConcurrency {
+		policy.PerWorkerConcurrency = policy.ExecutionConcurrency
 	}
 	if policy.RetryLimit < 0 {
 		policy.RetryLimit = 0
@@ -252,46 +263,87 @@ func (r *Runtime) dispatchScheduledProposals(
 	clusterContext *plugin_pb.ClusterContext,
 	policy schedulerPolicy,
 ) {
-	semaphore := make(chan struct{}, policy.ExecutionConcurrency)
+	type scheduledProposal struct {
+		index    int
+		proposal *plugin_pb.JobProposal
+	}
+
+	jobQueue := make(chan scheduledProposal, len(proposals))
+	for index, proposal := range proposals {
+		select {
+		case <-r.shutdownCh:
+			close(jobQueue)
+			return
+		default:
+			jobQueue <- scheduledProposal{index: index, proposal: proposal}
+		}
+	}
+	close(jobQueue)
+
+	var limiterMu sync.Mutex
+	workerLimiters := make(map[string]chan struct{})
+
 	var wg sync.WaitGroup
 	var statsMu sync.Mutex
 	successCount := 0
 	errorCount := 0
 
-loop:
-	for index, proposal := range proposals {
-		select {
-		case <-r.shutdownCh:
-			break loop
-		default:
-		}
+	workerCount := policy.ExecutionConcurrency
+	if workerCount < 1 {
+		workerCount = 1
+	}
 
-		semaphore <- struct{}{}
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func(idx int, p *plugin_pb.JobProposal) {
+		go func() {
 			defer wg.Done()
-			defer func() { <-semaphore }()
 
-			job := buildScheduledJobSpec(jobType, p, idx)
-			if err := r.executeScheduledJob(job, clusterContext, policy); err != nil {
+			for item := range jobQueue {
+				select {
+				case <-r.shutdownCh:
+					return
+				default:
+				}
+
+				executor, release, reserveErr := r.reserveScheduledExecutor(jobType, workerLimiters, &limiterMu, policy)
+				if reserveErr != nil {
+					statsMu.Lock()
+					errorCount++
+					statsMu.Unlock()
+					r.appendActivity(JobActivity{
+						JobType:    jobType,
+						Source:     "admin_scheduler",
+						Message:    fmt.Sprintf("scheduled execution reservation failed: %v", reserveErr),
+						Stage:      "failed",
+						OccurredAt: time.Now().UTC(),
+					})
+					continue
+				}
+
+				job := buildScheduledJobSpec(jobType, item.proposal, item.index)
+				err := r.executeScheduledJobWithExecutor(executor, job, clusterContext, policy)
+				release()
+
+				if err != nil {
+					statsMu.Lock()
+					errorCount++
+					statsMu.Unlock()
+					r.appendActivity(JobActivity{
+						JobID:      job.JobId,
+						JobType:    job.JobType,
+						Source:     "admin_scheduler",
+						Message:    fmt.Sprintf("scheduled execution failed: %v", err),
+						Stage:      "failed",
+						OccurredAt: time.Now().UTC(),
+					})
+					continue
+				}
+
 				statsMu.Lock()
-				errorCount++
+				successCount++
 				statsMu.Unlock()
-				r.appendActivity(JobActivity{
-					JobID:      job.JobId,
-					JobType:    job.JobType,
-					Source:     "admin_scheduler",
-					Message:    fmt.Sprintf("scheduled execution failed: %v", err),
-					Stage:      "failed",
-					OccurredAt: time.Now().UTC(),
-				})
-				return
 			}
-
-			statsMu.Lock()
-			successCount++
-			statsMu.Unlock()
-		}(index, proposal)
+		}()
 	}
 
 	wg.Wait()
@@ -305,7 +357,50 @@ loop:
 	})
 }
 
-func (r *Runtime) executeScheduledJob(
+func (r *Runtime) reserveScheduledExecutor(
+	jobType string,
+	workerLimiters map[string]chan struct{},
+	limiterMu *sync.Mutex,
+	policy schedulerPolicy,
+) (*WorkerSession, func(), error) {
+	for {
+		select {
+		case <-r.shutdownCh:
+			return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+		default:
+		}
+
+		executors, err := r.registry.ListExecutors(jobType)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		limiterMu.Lock()
+		for _, executor := range executors {
+			workerLimiter := workerLimiters[executor.WorkerID]
+			if workerLimiter == nil {
+				workerLimiter = make(chan struct{}, policy.PerWorkerConcurrency)
+				workerLimiters[executor.WorkerID] = workerLimiter
+			}
+
+			select {
+			case workerLimiter <- struct{}{}:
+				limiterMu.Unlock()
+				release := func() { <-workerLimiter }
+				return executor, release, nil
+			default:
+			}
+		}
+		limiterMu.Unlock()
+
+		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+			return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+		}
+	}
+}
+
+func (r *Runtime) executeScheduledJobWithExecutor(
+	executor *WorkerSession,
 	job *plugin_pb.JobSpec,
 	clusterContext *plugin_pb.ClusterContext,
 	policy schedulerPolicy,
@@ -324,7 +419,7 @@ func (r *Runtime) executeScheduledJob(
 		}
 
 		execCtx, cancel := context.WithTimeout(context.Background(), policy.ExecutionTimeout)
-		_, err := r.ExecuteJob(execCtx, job, clusterContext, int32(attempt))
+		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {
 			return nil

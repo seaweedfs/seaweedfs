@@ -406,7 +406,28 @@ func (r *Runtime) ExecuteJob(
 		return nil, err
 	}
 
+	return r.executeJobWithExecutor(ctx, executor, job, clusterContext, attempt)
+}
+
+func (r *Runtime) executeJobWithExecutor(
+	ctx context.Context,
+	executor *WorkerSession,
+	job *plugin_pb.JobSpec,
+	clusterContext *plugin_pb.ClusterContext,
+	attempt int32,
+) (*plugin_pb.JobCompleted, error) {
+	if executor == nil {
+		return nil, fmt.Errorf("executor is nil")
+	}
+	if job == nil {
+		return nil, fmt.Errorf("job is nil")
+	}
+	if strings.TrimSpace(job.JobType) == "" {
+		return nil, fmt.Errorf("job_type is required")
+	}
+
 	if strings.TrimSpace(job.JobId) == "" {
+		var err error
 		job.JobId, err = newRequestID("job")
 		if err != nil {
 			return nil, err
