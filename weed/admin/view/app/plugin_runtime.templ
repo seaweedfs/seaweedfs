@@ -356,6 +356,7 @@ templ PluginRuntime(enabled bool) {
 
             var state = {
                 selectedJobType: '',
+                jobTypes: [],
                 workers: [],
                 jobs: [],
                 activities: [],
@@ -494,19 +495,6 @@ templ PluginRuntime(enabled bool) {
                     return worker[camel];
                 }
                 return null;
-            }
-
-            function deriveJobTypesFromWorkers(workers) {
-                var set = {};
-                for (var i = 0; i < workers.length; i++) {
-                    var caps = getWorkerField(workers[i], 'capabilities') || {};
-                    Object.keys(caps).forEach(function(jobType) {
-                        if (jobType) {
-                            set[jobType] = true;
-                        }
-                    });
-                }
-                return Object.keys(set).sort();
             }
 
             function renderStatus() {
@@ -1355,9 +1343,9 @@ templ PluginRuntime(enabled bool) {
             function renderJobTypeOptions() {
                 var select = document.getElementById('plugin-job-type-select');
                 var previous = state.selectedJobType;
-                var jobTypes = deriveJobTypesFromWorkers(state.workers);
+                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
 
-                var html = '<option value="">Select from connected workers</option>';
+                var html = '<option value="">Select known job type</option>';
                 for (var i = 0; i < jobTypes.length; i++) {
                     html += '<option value="' + escapeHtml(jobTypes[i]) + '">' + escapeHtml(jobTypes[i]) + '</option>';
                 }
@@ -1538,6 +1526,9 @@ templ PluginRuntime(enabled bool) {
                     var workers = await pluginRequest('GET', '/api/plugin/workers');
                     state.workers = Array.isArray(workers) ? workers : [];
                     renderWorkers();
+
+                    var jobTypes = await pluginRequest('GET', '/api/plugin/job-types');
+                    state.jobTypes = Array.isArray(jobTypes) ? jobTypes : [];
                     renderJobTypeOptions();
 
                     await refreshJobsAndActivities();

@@ -271,6 +271,51 @@ func (s *ConfigStore) LoadRunHistory(jobType string) (*JobTypeRunHistory, error)
 	return cloneRunHistory(history), nil
 }
 
+func (s *ConfigStore) ListJobTypes() ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	jobTypeSet := make(map[string]struct{})
+
+	if !s.configured {
+		for jobType := range s.memDescriptors {
+			jobTypeSet[jobType] = struct{}{}
+		}
+		for jobType := range s.memConfigs {
+			jobTypeSet[jobType] = struct{}{}
+		}
+		for jobType := range s.memRunHistory {
+			jobTypeSet[jobType] = struct{}{}
+		}
+	} else {
+		jobTypesPath := filepath.Join(s.baseDir, jobTypesDirName)
+		entries, err := os.ReadDir(jobTypesPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return []string{}, nil
+			}
+			return nil, fmt.Errorf("list job types: %w", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			jobType := strings.TrimSpace(entry.Name())
+			if _, err := sanitizeJobType(jobType); err != nil {
+				continue
+			}
+			jobTypeSet[jobType] = struct{}{}
+		}
+	}
+
+	jobTypes := make([]string, 0, len(jobTypeSet))
+	for jobType := range jobTypeSet {
+		jobTypes = append(jobTypes, jobType)
+	}
+	sort.Strings(jobTypes)
+	return jobTypes, nil
+}
+
 func (s *ConfigStore) loadRunHistoryLocked(jobType string) (*JobTypeRunHistory, error) {
 	if !s.configured {
 		history, ok := s.memRunHistory[jobType]

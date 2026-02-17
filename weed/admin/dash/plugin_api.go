@@ -56,6 +56,20 @@ func (s *AdminServer) GetPluginWorkersAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, workers)
 }
 
+// GetPluginJobTypesAPI returns known plugin job types from workers and persisted data.
+func (s *AdminServer) GetPluginJobTypesAPI(c *gin.Context) {
+	jobTypes, err := s.ListPluginJobTypes()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if jobTypes == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+	c.JSON(http.StatusOK, jobTypes)
+}
+
 // GetPluginJobsAPI returns tracked jobs for monitoring.
 func (s *AdminServer) GetPluginJobsAPI(c *gin.Context) {
 	jobType := strings.TrimSpace(c.Query("job_type"))

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -97,5 +98,36 @@ func TestConfigStoreRunHistoryRetention(t *testing.T) {
 		if history.ErrorRuns[i-1].CompletedAt.Before(history.ErrorRuns[i].CompletedAt) {
 			t.Fatalf("error run order not descending at %d", i)
 		}
+	}
+}
+
+func TestConfigStoreListJobTypes(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewConfigStore("")
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+
+	if err := store.SaveDescriptor("vacuum", &plugin_pb.JobTypeDescriptor{JobType: "vacuum"}); err != nil {
+		t.Fatalf("SaveDescriptor: %v", err)
+	}
+	if err := store.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType:      "balance",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}); err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+	if err := store.AppendRunRecord("ec", &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("AppendRunRecord: %v", err)
+	}
+
+	got, err := store.ListJobTypes()
+	if err != nil {
+		t.Fatalf("ListJobTypes: %v", err)
+	}
+	want := []string{"balance", "ec", "vacuum"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected job types: got=%v want=%v", got, want)
 	}
 }

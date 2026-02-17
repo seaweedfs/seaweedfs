@@ -1737,6 +1737,14 @@ func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeR
 	return s.pluginRuntime.LoadRunHistory(jobType)
 }
 
+// ListPluginJobTypes returns known plugin job types from runtime registry and persisted data.
+func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime is not enabled")
+	}
+	return s.pluginRuntime.ListKnownJobTypes()
+}
+
 // GetPluginWorkers returns currently connected plugin workers.
 func (s *AdminServer) GetPluginWorkers() []*adminplugin.WorkerSession {
 	if s.pluginRuntime == nil {

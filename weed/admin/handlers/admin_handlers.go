@@ -251,6 +251,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			{
 				pluginApi.GET("/status", h.adminServer.GetPluginStatusAPI)
 				pluginApi.GET("/workers", h.adminServer.GetPluginWorkersAPI)
+				pluginApi.GET("/job-types", h.adminServer.GetPluginJobTypesAPI)
 				pluginApi.GET("/jobs", h.adminServer.GetPluginJobsAPI)
 				pluginApi.GET("/jobs/:jobId", h.adminServer.GetPluginJobAPI)
 				pluginApi.GET("/activities", h.adminServer.GetPluginActivitiesAPI)
@@ -441,6 +442,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 			{
 				pluginApi.GET("/status", h.adminServer.GetPluginStatusAPI)
 				pluginApi.GET("/workers", h.adminServer.GetPluginWorkersAPI)
+				pluginApi.GET("/job-types", h.adminServer.GetPluginJobTypesAPI)
 				pluginApi.GET("/jobs", h.adminServer.GetPluginJobsAPI)
 				pluginApi.GET("/jobs/:jobId", h.adminServer.GetPluginJobAPI)
 				pluginApi.GET("/activities", h.adminServer.GetPluginActivitiesAPI)

@@ -128,6 +128,29 @@ func (r *Registry) DetectableJobTypes() []string {
 	return out
 }
 
+// JobTypes returns sorted job types known by connected workers regardless of capability kind.
+func (r *Registry) JobTypes() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	jobTypes := make(map[string]struct{})
+	for _, session := range r.sessions {
+		for jobType := range session.Capabilities {
+			if jobType == "" {
+				continue
+			}
+			jobTypes[jobType] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(jobTypes))
+	for jobType := range jobTypes {
+		out = append(out, jobType)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // PickSchemaProvider picks one worker for schema requests.
 // Preference order:
 // 1) workers that can detect this job type

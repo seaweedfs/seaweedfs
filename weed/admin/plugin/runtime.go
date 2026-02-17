@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -473,6 +474,29 @@ func (r *Runtime) ExecuteJob(
 
 func (r *Runtime) ListWorkers() []*WorkerSession {
 	return r.registry.List()
+}
+
+func (r *Runtime) ListKnownJobTypes() ([]string, error) {
+	registryJobTypes := r.registry.JobTypes()
+	storedJobTypes, err := r.store.ListJobTypes()
+	if err != nil {
+		return nil, err
+	}
+
+	jobTypeSet := make(map[string]struct{}, len(registryJobTypes)+len(storedJobTypes))
+	for _, jobType := range registryJobTypes {
+		jobTypeSet[jobType] = struct{}{}
+	}
+	for _, jobType := range storedJobTypes {
+		jobTypeSet[jobType] = struct{}{}
+	}
+
+	out := make([]string, 0, len(jobTypeSet))
+	for jobType := range jobTypeSet {
+		out = append(out, jobType)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (r *Runtime) PickDetectorWorker(jobType string) (*WorkerSession, error) {

@@ -95,3 +95,28 @@ func TestRegistryDetectableJobTypes(t *testing.T) {
 		t.Fatalf("unexpected detectable job types: got=%v want=%v", got, want)
 	}
 }
+
+func TestRegistryJobTypes(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true},
+			{JobType: "balance", CanExecute: true},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "ec", CanDetect: true},
+		},
+	})
+
+	got := r.JobTypes()
+	want := []string{"balance", "ec", "vacuum"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected job types: got=%v want=%v", got, want)
+	}
+}
