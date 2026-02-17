@@ -1,325 +1,187 @@
 package balance
 
 import (
-	"math"
-	"sort"
+"fmt"
+"math"
 )
 
-// NodeDiskMetric contains disk usage information for a data node
-type NodeDiskMetric struct {
-	NodeID      string
-	TotalSpace  uint64
-	UsedSpace   uint64
-	FreeSpace   uint64
-	VolumeCount int
-}
-
-// RebalanceCandidate represents a candidate volume for rebalancing
+// RebalanceCandidate represents a rebalance opportunity
 type RebalanceCandidate struct {
-	VolumeID          uint32
-	SourceNodeID      string
-	DestinationNodeID string
-	VolumeSize        uint64
-	CurrentNodeUsage  float64
-	DestinationUsage  float64
-	ExpectedBenefit   float64
-	ImbalanceScore    float64
-	Priority          int
-	CanRelocate       bool
-	Reason            string
+VolumeID              uint32
+SourceNodeID          string
+DestinationNodeID     string
+SourceUsagePercent    float32
+DestinationUsagePercent float32
+ImbalanceScore        float32
+DataToMove            uint64
+ExpectedBenefit       float32
+Priority              int
+CanExecute            bool
+Reason                string
 }
 
-// DetectionOptions contains options for rebalancing detection
+// DetectionOptions contains options for detection
 type DetectionOptions struct {
-	MinVolumeSize              uint64
-	MaxVolumeSize              uint64
-	DiskUsageThreshold         float64
-	AcceptableImbalancePercent float64
-	PreferBalancedDistribution bool
-	DataNodeCount              int
+AcceptableImbalance     float32
+DiskUsageThreshold      float32
+MinVolumeSize           uint64
+MaxVolumeSize           uint64
+PreferBalancedDist      bool
+PreferredNodes          []string
+ExcludeNodes            []string
 }
 
-// Detector identifies imbalanced data distribution
+// Detector scans for rebalance opportunities
 type Detector struct {
-	config DetectionOptions
+config DetectionOptions
 }
 
 // NewDetector creates a new balance detector
 func NewDetector(opts DetectionOptions) *Detector {
-	return &Detector{
-		config: opts,
-	}
+return &Detector{
+config: opts,
+}
 }
 
-// DetectJobs analyzes disk usage across nodes and identifies rebalance opportunities
-func (d *Detector) DetectJobs(nodeMetrics map[string]*NodeDiskMetric) ([]*RebalanceCandidate, error) {
-	candidates := make([]*RebalanceCandidate, 0)
+// DetectJobs analyzes disk usage and identifies rebalance opportunities
+func (d *Detector) DetectJobs(nodeMetrics map[string]*NodeMetric) ([]*RebalanceCandidate, error) {
+candidates := make([]*RebalanceCandidate, 0)
 
-	if len(nodeMetrics) == 0 {
-		return candidates, nil
-	}
+// Calculate cluster statistics
+avgUsage, stdDev := d.calculateClusterStats(nodeMetrics)
 
-	// Calculate statistics
-	avgUsage := d.calculateAverageUsage(nodeMetrics)
-	stdDev := d.calculateUsageStdDev(nodeMetrics, avgUsage)
-	imbalanceScore := stdDev / avgUsage
-
-	// Check if imbalance exceeds threshold
-	threshold := d.config.AcceptableImbalancePercent / 100.0
-	if imbalanceScore < threshold {
-		return candidates, nil
-	}
-
-	// Find source and destination nodes
-	sourceNodes := d.findSourceNodes(nodeMetrics, avgUsage)
-	destNodes := d.findDestinationNodes(nodeMetrics, avgUsage)
-
-	// Generate rebalance candidates
-	for _, sourceNode := range sourceNodes {
-		for _, destNode := range destNodes {
-			candidate := d.evaluateRebalanceOpportunity(sourceNode, destNode, nodeMetrics, imbalanceScore)
-			if candidate.CanRelocate {
-				candidates = append(candidates, candidate)
-			}
-		}
-	}
-
-	// Sort by priority
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Priority > candidates[j].Priority
-	})
-
-	return candidates, nil
+// Find imbalanced nodes
+for sourceID, sourceMetric := range nodeMetrics {
+if d.isNodeExcluded(sourceID) {
+continue
 }
 
-// calculateAverageUsage calculates average disk usage across nodes
-func (d *Detector) calculateAverageUsage(nodeMetrics map[string]*NodeDiskMetric) float64 {
-	if len(nodeMetrics) == 0 {
-		return 0
-	}
-
-	var totalUsage float64
-	for _, node := range nodeMetrics {
-		if node.TotalSpace > 0 {
-			totalUsage += float64(node.UsedSpace) / float64(node.TotalSpace)
-		}
-	}
-
-	return totalUsage / float64(len(nodeMetrics))
+if sourceMetric.UsagePercent > avgUsage+stdDev {
+// Source node is above average
+for destID, destMetric := range nodeMetrics {
+if sourceID == destID || d.isNodeExcluded(destID) {
+continue
 }
 
-// calculateUsageStdDev calculates standard deviation of disk usage
-func (d *Detector) calculateUsageStdDev(nodeMetrics map[string]*NodeDiskMetric, avgUsage float64) float64 {
-	if len(nodeMetrics) <= 1 {
-		return 0
-	}
-
-	var sumSquaredDiff float64
-	for _, node := range nodeMetrics {
-		var nodeUsage float64
-		if node.TotalSpace > 0 {
-			nodeUsage = float64(node.UsedSpace) / float64(node.TotalSpace)
-		}
-		diff := nodeUsage - avgUsage
-		sumSquaredDiff += diff * diff
-	}
-
-	variance := sumSquaredDiff / float64(len(nodeMetrics))
-	return math.Sqrt(variance)
+if destMetric.UsagePercent < avgUsage-stdDev {
+// Found a destination below average
+candidate := d.evaluateRebalanceOpportunity(
+sourceID, sourceMetric,
+destID, destMetric,
+)
+if candidate.CanExecute {
+candidates = append(candidates, candidate)
+}
+}
+}
+}
 }
 
-// findSourceNodes identifies nodes with high disk usage
-func (d *Detector) findSourceNodes(nodeMetrics map[string]*NodeDiskMetric, avgUsage float64) []*NodeDiskMetric {
-	sources := make([]*NodeDiskMetric, 0)
-
-	threshold := avgUsage * 1.2 // 20% above average
-	for _, node := range nodeMetrics {
-		if node.TotalSpace == 0 {
-			continue
-		}
-
-		nodeUsage := float64(node.UsedSpace) / float64(node.TotalSpace)
-		if nodeUsage > threshold && float64(node.UsedSpace) > 0 {
-			sources = append(sources, node)
-		}
-	}
-
-	// Sort by usage (highest first)
-	sort.Slice(sources, func(i, j int) bool {
-		usageI := float64(sources[i].UsedSpace) / float64(sources[i].TotalSpace)
-		usageJ := float64(sources[j].UsedSpace) / float64(sources[j].TotalSpace)
-		return usageI > usageJ
-	})
-
-	return sources
+SortByImbalance(candidates)
+return candidates, nil
 }
 
-// findDestinationNodes identifies nodes with low disk usage
-func (d *Detector) findDestinationNodes(nodeMetrics map[string]*NodeDiskMetric, avgUsage float64) []*NodeDiskMetric {
-	destinations := make([]*NodeDiskMetric, 0)
-
-	threshold := avgUsage * 0.8 // 20% below average
-	for _, node := range nodeMetrics {
-		if node.TotalSpace == 0 {
-			continue
-		}
-
-		nodeUsage := float64(node.UsedSpace) / float64(node.TotalSpace)
-		if nodeUsage < threshold && node.FreeSpace > 0 {
-			destinations = append(destinations, node)
-		}
-	}
-
-	// Sort by free space (most available first)
-	sort.Slice(destinations, func(i, j int) bool {
-		return destinations[i].FreeSpace > destinations[j].FreeSpace
-	})
-
-	return destinations
-}
-
-// evaluateRebalanceOpportunity evaluates if rebalancing between two nodes is beneficial
+// evaluateRebalanceOpportunity evaluates a single rebalance opportunity
 func (d *Detector) evaluateRebalanceOpportunity(
-	sourceNode, destNode *NodeDiskMetric,
-	allNodes map[string]*NodeDiskMetric,
-	currentImbalanceScore float64,
+sourceID string, sourceMetric *NodeMetric,
+destID string, destMetric *NodeMetric,
 ) *RebalanceCandidate {
-	candidate := &RebalanceCandidate{
-		SourceNodeID:      sourceNode.NodeID,
-		DestinationNodeID: destNode.NodeID,
-		CanRelocate:       false,
-	}
-
-	// Check if destination node has sufficient capacity
-	if !d.checkNodeCapacity(destNode) {
-		candidate.Reason = "destination node insufficient capacity"
-		return candidate
-	}
-
-	// Calculate current usage
-	sourceUsage := float64(sourceNode.UsedSpace) / float64(sourceNode.TotalSpace)
-	destUsage := float64(destNode.UsedSpace) / float64(destNode.TotalSpace)
-
-	candidate.CurrentNodeUsage = sourceUsage
-	candidate.DestinationUsage = destUsage
-	candidate.VolumeSize = 1000 // Default volume size
-
-	// Estimate benefit
-	benefit := d.estimateRebalanceBenefit(sourceUsage, destUsage)
-	candidate.ExpectedBenefit = benefit
-
-	// Calculate imbalance score for this candidate
-	candidate.ImbalanceScore = currentImbalanceScore
-
-	// Determine priority
-	candidate.Priority = int(benefit * 100)
-	if candidate.Priority < 0 {
-		candidate.Priority = 0
-	}
-
-	// Check if rebalancing is worthwhile
-	if benefit > 0.01 { // 1% improvement threshold
-		candidate.CanRelocate = true
-		candidate.Reason = "beneficial rebalancing opportunity"
-	} else {
-		candidate.Reason = "insufficient benefit from rebalancing"
-	}
-
-	return candidate
+candidate := &RebalanceCandidate{
+SourceNodeID:            sourceID,
+DestinationNodeID:       destID,
+SourceUsagePercent:      sourceMetric.UsagePercent,
+DestinationUsagePercent: destMetric.UsagePercent,
 }
 
-// checkNodeCapacity validates if destination node can accept data
-func (d *Detector) checkNodeCapacity(node *NodeDiskMetric) bool {
-	if node.TotalSpace == 0 {
-		return false
-	}
-
-	// Check if node has at least 10% free space
-	freePercentage := float64(node.FreeSpace) / float64(node.TotalSpace)
-	if freePercentage < 0.1 {
-		return false
-	}
-
-	// Check if node doesn't exceed disk usage threshold
-	usagePercentage := float64(node.UsedSpace) / float64(node.TotalSpace)
-	if usagePercentage > d.config.DiskUsageThreshold/100.0 {
-		return false
-	}
-
-	return true
+// Check destination capacity
+if !d.checkNodeCapacity(destMetric) {
+candidate.CanExecute = false
+candidate.Reason = "destination node insufficient free space"
+return candidate
 }
 
-// estimateRebalanceBenefit estimates the benefit of moving data from source to destination
-func (d *Detector) estimateRebalanceBenefit(sourceUsage, destUsage float64) float64 {
-	// Simple calculation: difference between source and destination usage
-	return sourceUsage - destUsage
+// Calculate imbalance score
+imbalance := math.Abs(float64(sourceMetric.UsagePercent - destMetric.UsagePercent))
+candidate.ImbalanceScore = float32(imbalance)
+
+// Check if imbalance exceeds acceptable level
+if candidate.ImbalanceScore < d.config.AcceptableImbalance {
+candidate.CanExecute = false
+candidate.Reason = fmt.Sprintf("imbalance below threshold: %.2f < %.2f", candidate.ImbalanceScore, d.config.AcceptableImbalance)
+return candidate
 }
 
-// SortByImbalance sorts candidates by imbalance impact
+// Calculate data to move (simplified)
+candidate.DataToMove = uint64(sourceMetric.UsedSpace / 10)
+candidate.ExpectedBenefit = candidate.ImbalanceScore / 2
+
+candidate.CanExecute = true
+candidate.Priority = int(candidate.ImbalanceScore)
+candidate.Reason = "eligible for rebalancing"
+
+return candidate
+}
+
+// checkNodeCapacity checks if destination node has sufficient capacity
+func (d *Detector) checkNodeCapacity(metric *NodeMetric) bool {
+freeSpacePercent := 100 - metric.UsagePercent
+return freeSpacePercent > 20 // Need at least 20% free
+}
+
+// calculateClusterStats calculates average usage and standard deviation
+func (d *Detector) calculateClusterStats(nodeMetrics map[string]*NodeMetric) (float32, float32) {
+if len(nodeMetrics) == 0 {
+return 0, 0
+}
+
+var sum float32
+for _, metric := range nodeMetrics {
+sum += metric.UsagePercent
+}
+
+avg := sum / float32(len(nodeMetrics))
+
+var sumDiffSq float32
+for _, metric := range nodeMetrics {
+diff := metric.UsagePercent - avg
+sumDiffSq += diff * diff
+}
+
+variance := sumDiffSq / float32(len(nodeMetrics))
+stdDev := float32(math.Sqrt(float64(variance)))
+
+return avg, stdDev
+}
+
+// isNodeExcluded checks if a node is in the exclusion list
+func (d *Detector) isNodeExcluded(nodeID string) bool {
+for _, excluded := range d.config.ExcludeNodes {
+if excluded == nodeID {
+return true
+}
+}
+return false
+}
+
+// NodeMetric contains node statistics
+type NodeMetric struct {
+NodeID        string
+TotalSpace    uint64
+UsedSpace     uint64
+FreeSpace     uint64
+UsagePercent  float32
+VolumeCount   int
+LastUpdated   int64
+IsHealthy     bool
+}
+
+// SortByImbalance sorts candidates by imbalance score
 func SortByImbalance(candidates []*RebalanceCandidate) {
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].ExpectedBenefit != candidates[j].ExpectedBenefit {
-			return candidates[i].ExpectedBenefit > candidates[j].ExpectedBenefit
-		}
-		return candidates[i].Priority > candidates[j].Priority
-	})
+for i := 0; i < len(candidates); i++ {
+for j := i + 1; j < len(candidates); j++ {
+if candidates[j].ImbalanceScore > candidates[i].ImbalanceScore {
+candidates[i], candidates[j] = candidates[j], candidates[i]
 }
-
-// VolumeMetric contains volume statistics
-type VolumeMetric struct {
-	VolumeID     uint32
-	DataNodeID   string
-	Size         uint64
-	FreeSpace    uint64
-	ReplicaCount int
-	RackID       string
-	DataCenterID string
-	FileCount    int64
-	LastModified int64
-	Collection   string
 }
-
-// FilterByCriteria filters rebalance candidates by specific criteria
-func FilterByCriteria(candidates []*RebalanceCandidate, criteria map[string]string) []*RebalanceCandidate {
-	filtered := make([]*RebalanceCandidate, 0)
-
-	for _, candidate := range candidates {
-		if !candidate.CanRelocate {
-			continue
-		}
-
-		// Apply source node filter if specified
-		if sourceNode, ok := criteria["source_node"]; ok && sourceNode != "" && candidate.SourceNodeID != sourceNode {
-			continue
-		}
-
-		// Apply destination node filter if specified
-		if destNode, ok := criteria["dest_node"]; ok && destNode != "" && candidate.DestinationNodeID != destNode {
-			continue
-		}
-
-		// Apply minimum benefit filter if specified
-		if minBenefit, ok := criteria["min_benefit"]; ok && minBenefit != "" {
-			// Would parse minBenefit and filter
-		}
-
-		filtered = append(filtered, candidate)
-	}
-
-	return filtered
 }
-
-// GroupBySourceNode groups candidates by source node for parallel execution
-func GroupBySourceNode(candidates []*RebalanceCandidate) map[string][]*RebalanceCandidate {
-	grouped := make(map[string][]*RebalanceCandidate)
-
-	for _, candidate := range candidates {
-		sourceID := candidate.SourceNodeID
-		if sourceID == "" {
-			sourceID = "unknown"
-		}
-		grouped[sourceID] = append(grouped[sourceID], candidate)
-	}
-
-	return grouped
 }
