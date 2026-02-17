@@ -1785,6 +1785,14 @@ func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplu
 	return s.pluginRuntime.ListActivities(jobType, limit)
 }
 
+// ListPluginSchedulerStates returns per-job-type scheduler runtime state.
+func (s *AdminServer) ListPluginSchedulerStates() ([]adminplugin.SchedulerJobTypeState, error) {
+	if s.pluginRuntime == nil {
+		return nil, fmt.Errorf("plugin runtime is not enabled")
+	}
+	return s.pluginRuntime.ListSchedulerStates()
+}
+
 // Maintenance system integration methods
 
 // InitMaintenanceManager initializes the maintenance manager

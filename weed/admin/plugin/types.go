@@ -63,3 +63,22 @@ type JobActivity struct {
 	Details    map[string]interface{} `json:"details,omitempty"`
 	OccurredAt time.Time              `json:"occurred_at"`
 }
+
+type SchedulerJobTypeState struct {
+	JobType                       string     `json:"job_type"`
+	Enabled                       bool       `json:"enabled"`
+	PolicyError                   string     `json:"policy_error,omitempty"`
+	DetectionInFlight             bool       `json:"detection_in_flight"`
+	NextDetectionAt               *time.Time `json:"next_detection_at,omitempty"`
+	DetectionIntervalSeconds      int32      `json:"detection_interval_seconds,omitempty"`
+	DetectionTimeoutSeconds       int32      `json:"detection_timeout_seconds,omitempty"`
+	ExecutionTimeoutSeconds       int32      `json:"execution_timeout_seconds,omitempty"`
+	MaxJobsPerDetection           int32      `json:"max_jobs_per_detection,omitempty"`
+	GlobalExecutionConcurrency    int        `json:"global_execution_concurrency,omitempty"`
+	PerWorkerExecutionConcurrency int        `json:"per_worker_execution_concurrency,omitempty"`
+	RetryLimit                    int        `json:"retry_limit,omitempty"`
+	RetryBackoffSeconds           int32      `json:"retry_backoff_seconds,omitempty"`
+	DetectorAvailable             bool       `json:"detector_available"`
+	DetectorWorkerID              string     `json:"detector_worker_id,omitempty"`
+	ExecutorWorkerCount           int        `json:"executor_worker_count"`
+}

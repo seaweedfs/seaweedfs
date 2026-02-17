@@ -199,3 +199,148 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 		t.Fatalf("reservation returned too early: duration=%v", time.Since(start))
 	}
 }
+
+func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := NewRuntime(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer runtime.Shutdown()
+
+	const jobType = "vacuum"
+	err = runtime.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: jobType,
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                       true,
+			DetectionIntervalSeconds:      45,
+			DetectionTimeoutSeconds:       30,
+			MaxJobsPerDetection:           80,
+			GlobalExecutionConcurrency:    3,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    1,
+			RetryBackoffSeconds:           9,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+
+	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanDetect: true, CanExecute: true},
+		},
+	})
+
+	nextDetectionAt := time.Now().UTC().Add(2 * time.Minute).Round(time.Second)
+	runtime.schedulerMu.Lock()
+	runtime.nextDetectionAt[jobType] = nextDetectionAt
+	runtime.detectionInFlight[jobType] = true
+	runtime.schedulerMu.Unlock()
+
+	states, err := runtime.ListSchedulerStates()
+	if err != nil {
+		t.Fatalf("ListSchedulerStates: %v", err)
+	}
+
+	state := findSchedulerState(states, jobType)
+	if state == nil {
+		t.Fatalf("missing scheduler state for %s", jobType)
+	}
+	if !state.Enabled {
+		t.Fatalf("expected enabled scheduler state")
+	}
+	if state.PolicyError != "" {
+		t.Fatalf("unexpected policy error: %s", state.PolicyError)
+	}
+	if !state.DetectionInFlight {
+		t.Fatalf("expected detection in flight")
+	}
+	if state.NextDetectionAt == nil {
+		t.Fatalf("expected next detection time")
+	}
+	if state.NextDetectionAt.Unix() != nextDetectionAt.Unix() {
+		t.Fatalf("unexpected next detection time: got=%v want=%v", state.NextDetectionAt, nextDetectionAt)
+	}
+	if state.DetectionIntervalSeconds != 45 {
+		t.Fatalf("unexpected detection interval: got=%d", state.DetectionIntervalSeconds)
+	}
+	if state.DetectionTimeoutSeconds != 30 {
+		t.Fatalf("unexpected detection timeout: got=%d", state.DetectionTimeoutSeconds)
+	}
+	if state.ExecutionTimeoutSeconds != 90 {
+		t.Fatalf("unexpected execution timeout: got=%d", state.ExecutionTimeoutSeconds)
+	}
+	if state.MaxJobsPerDetection != 80 {
+		t.Fatalf("unexpected max jobs per detection: got=%d", state.MaxJobsPerDetection)
+	}
+	if state.GlobalExecutionConcurrency != 3 {
+		t.Fatalf("unexpected global execution concurrency: got=%d", state.GlobalExecutionConcurrency)
+	}
+	if state.PerWorkerExecutionConcurrency != 2 {
+		t.Fatalf("unexpected per worker execution concurrency: got=%d", state.PerWorkerExecutionConcurrency)
+	}
+	if state.RetryLimit != 1 {
+		t.Fatalf("unexpected retry limit: got=%d", state.RetryLimit)
+	}
+	if state.RetryBackoffSeconds != 9 {
+		t.Fatalf("unexpected retry backoff: got=%d", state.RetryBackoffSeconds)
+	}
+	if !state.DetectorAvailable || state.DetectorWorkerID != "worker-a" {
+		t.Fatalf("unexpected detector assignment: available=%v worker=%s", state.DetectorAvailable, state.DetectorWorkerID)
+	}
+	if state.ExecutorWorkerCount != 1 {
+		t.Fatalf("unexpected executor worker count: got=%d", state.ExecutorWorkerCount)
+	}
+}
+
+func TestListSchedulerStatesShowsDisabledWhenNoPolicy(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := NewRuntime(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer runtime.Shutdown()
+
+	const jobType = "balance"
+	runtime.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanDetect: true, CanExecute: true},
+		},
+	})
+
+	states, err := runtime.ListSchedulerStates()
+	if err != nil {
+		t.Fatalf("ListSchedulerStates: %v", err)
+	}
+
+	state := findSchedulerState(states, jobType)
+	if state == nil {
+		t.Fatalf("missing scheduler state for %s", jobType)
+	}
+	if state.Enabled {
+		t.Fatalf("expected disabled scheduler state")
+	}
+	if state.PolicyError != "" {
+		t.Fatalf("unexpected policy error: %s", state.PolicyError)
+	}
+	if !state.DetectorAvailable || state.DetectorWorkerID != "worker-b" {
+		t.Fatalf("unexpected detector details: available=%v worker=%s", state.DetectorAvailable, state.DetectorWorkerID)
+	}
+	if state.ExecutorWorkerCount != 1 {
+		t.Fatalf("unexpected executor worker count: got=%d", state.ExecutorWorkerCount)
+	}
+}
+
+func findSchedulerState(states []SchedulerJobTypeState, jobType string) *SchedulerJobTypeState {
+	for i := range states {
+		if states[i].JobType == jobType {
+			return &states[i]
+		}
+	}
+	return nil
+}

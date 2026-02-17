@@ -146,6 +146,69 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	return policy, true, nil
 }
 
+func (r *Runtime) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
+	jobTypes, err := r.ListKnownJobTypes()
+	if err != nil {
+		return nil, err
+	}
+
+	r.schedulerMu.Lock()
+	nextDetectionAt := make(map[string]time.Time, len(r.nextDetectionAt))
+	for jobType, nextRun := range r.nextDetectionAt {
+		nextDetectionAt[jobType] = nextRun
+	}
+	detectionInFlight := make(map[string]bool, len(r.detectionInFlight))
+	for jobType, inFlight := range r.detectionInFlight {
+		detectionInFlight[jobType] = inFlight
+	}
+	r.schedulerMu.Unlock()
+
+	states := make([]SchedulerJobTypeState, 0, len(jobTypes))
+	for _, jobType := range jobTypes {
+		state := SchedulerJobTypeState{
+			JobType:           jobType,
+			DetectionInFlight: detectionInFlight[jobType],
+		}
+
+		if nextRun, ok := nextDetectionAt[jobType]; ok && !nextRun.IsZero() {
+			nextRunUTC := nextRun.UTC()
+			state.NextDetectionAt = &nextRunUTC
+		}
+
+		policy, enabled, loadErr := r.loadSchedulerPolicy(jobType)
+		if loadErr != nil {
+			state.PolicyError = loadErr.Error()
+		} else {
+			state.Enabled = enabled
+			if enabled {
+				state.DetectionIntervalSeconds = secondsFromDuration(policy.DetectionInterval)
+				state.DetectionTimeoutSeconds = secondsFromDuration(policy.DetectionTimeout)
+				state.ExecutionTimeoutSeconds = secondsFromDuration(policy.ExecutionTimeout)
+				state.MaxJobsPerDetection = policy.MaxResults
+				state.GlobalExecutionConcurrency = policy.ExecutionConcurrency
+				state.PerWorkerExecutionConcurrency = policy.PerWorkerConcurrency
+				state.RetryLimit = policy.RetryLimit
+				state.RetryBackoffSeconds = secondsFromDuration(policy.RetryBackoff)
+			}
+		}
+
+		detector, detectorErr := r.registry.PickDetector(jobType)
+		if detectorErr == nil && detector != nil {
+			state.DetectorAvailable = true
+			state.DetectorWorkerID = detector.WorkerID
+		}
+
+		executors, executorErr := r.registry.ListExecutors(jobType)
+		if executorErr == nil {
+			state.ExecutorWorkerCount = len(executors)
+		}
+
+		states = append(states, state)
+	}
+
+	return states, nil
+}
+
 func deriveSchedulerAdminRuntime(
 	cfg *plugin_pb.PersistedJobTypeConfig,
 	descriptor *plugin_pb.JobTypeDescriptor,
@@ -551,6 +614,13 @@ func durationFromSeconds(seconds int32, defaultValue time.Duration) time.Duratio
 		return defaultValue
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func secondsFromDuration(duration time.Duration) int32 {
+	if duration <= 0 {
+		return 0
+	}
+	return int32(duration / time.Second)
 }
 
 func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bool {

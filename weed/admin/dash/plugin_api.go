@@ -111,6 +111,35 @@ func (s *AdminServer) GetPluginActivitiesAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, activities)
 }
 
+// GetPluginSchedulerStatesAPI returns per-job-type scheduler status for monitoring.
+func (s *AdminServer) GetPluginSchedulerStatesAPI(c *gin.Context) {
+	jobTypeFilter := strings.TrimSpace(c.Query("job_type"))
+
+	states, err := s.ListPluginSchedulerStates()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if jobTypeFilter != "" {
+		filtered := make([]interface{}, 0, len(states))
+		for _, state := range states {
+			if state.JobType == jobTypeFilter {
+				filtered = append(filtered, state)
+			}
+		}
+		c.JSON(http.StatusOK, filtered)
+		return
+	}
+
+	if states == nil {
+		c.JSON(http.StatusOK, []interface{}{})
+		return
+	}
+
+	c.JSON(http.StatusOK, states)
+}
+
 // RequestPluginJobTypeSchemaAPI asks a worker for one job type schema.
 func (s *AdminServer) RequestPluginJobTypeSchemaAPI(c *gin.Context) {
 	jobType := strings.TrimSpace(c.Param("jobType"))

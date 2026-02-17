@@ -255,6 +255,7 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				pluginApi.GET("/jobs", h.adminServer.GetPluginJobsAPI)
 				pluginApi.GET("/jobs/:jobId", h.adminServer.GetPluginJobAPI)
 				pluginApi.GET("/activities", h.adminServer.GetPluginActivitiesAPI)
+				pluginApi.GET("/scheduler-states", h.adminServer.GetPluginSchedulerStatesAPI)
 				pluginApi.GET("/job-types/:jobType/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI)
 				pluginApi.POST("/job-types/:jobType/schema", h.adminServer.RequestPluginJobTypeSchemaAPI)
 				pluginApi.GET("/job-types/:jobType/config", h.adminServer.GetPluginJobTypeConfigAPI)
