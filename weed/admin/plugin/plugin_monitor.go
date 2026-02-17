@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -14,6 +15,42 @@ const (
 	maxTrackedJobsTotal = 1000
 	maxActivityRecords  = 4000
 )
+
+func (r *Plugin) loadPersistedMonitorState() error {
+	trackedJobs, err := r.store.LoadTrackedJobs()
+	if err != nil {
+		return err
+	}
+	activities, err := r.store.LoadActivities()
+	if err != nil {
+		return err
+	}
+
+	if len(trackedJobs) > 0 {
+		r.jobsMu.Lock()
+		for i := range trackedJobs {
+			job := trackedJobs[i]
+			if strings.TrimSpace(job.JobID) == "" {
+				continue
+			}
+			jobCopy := job
+			r.jobs[job.JobID] = &jobCopy
+		}
+		r.pruneTrackedJobsLocked()
+		r.jobsMu.Unlock()
+	}
+
+	if len(activities) > maxActivityRecords {
+		activities = activities[len(activities)-maxActivityRecords:]
+	}
+	if len(activities) > 0 {
+		r.activitiesMu.Lock()
+		r.activities = append([]JobActivity(nil), activities...)
+		r.activitiesMu.Unlock()
+	}
+
+	return nil
+}
 
 func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []TrackedJob {
 	r.jobsMu.RLock()
@@ -115,6 +152,7 @@ func (r *Plugin) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
 	job.UpdatedAt = now
 	r.pruneTrackedJobsLocked()
 	r.jobsMu.Unlock()
+	r.persistTrackedJobsSnapshot()
 
 	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, "", update.Activities)
 	if update.Message != "" || update.Stage != "" {
@@ -163,6 +201,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	tracked.UpdatedAt = now
 	r.pruneTrackedJobsLocked()
 	r.jobsMu.Unlock()
+	r.persistTrackedJobsSnapshot()
 
 	r.appendActivity(JobActivity{
 		JobID:      job.JobId,
@@ -226,6 +265,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	r.pruneTrackedJobsLocked()
 	clone := *tracked
 	r.jobsMu.Unlock()
+	r.persistTrackedJobsSnapshot()
 
 	r.appendActivity(JobActivity{
 		JobID:      completed.JobId,
@@ -278,6 +318,7 @@ func (r *Plugin) appendActivity(activity JobActivity) {
 		r.activities = r.activities[len(r.activities)-maxActivityRecords:]
 	}
 	r.activitiesMu.Unlock()
+	r.persistActivitiesSnapshot()
 }
 
 func (r *Plugin) pruneTrackedJobsLocked() {
@@ -343,4 +384,44 @@ func configValueMapToPlain(values map[string]*plugin_pb.ConfigValue) map[string]
 		return nil
 	}
 	return fields
+}
+
+func (r *Plugin) persistTrackedJobsSnapshot() {
+	r.jobsMu.RLock()
+	jobs := make([]TrackedJob, 0, len(r.jobs))
+	for _, job := range r.jobs {
+		if job == nil || strings.TrimSpace(job.JobID) == "" {
+			continue
+		}
+		jobs = append(jobs, *job)
+	}
+	r.jobsMu.RUnlock()
+
+	sort.Slice(jobs, func(i, j int) bool {
+		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
+			return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt)
+		}
+		return jobs[i].JobID < jobs[j].JobID
+	})
+	if len(jobs) > maxTrackedJobsTotal {
+		jobs = jobs[:maxTrackedJobsTotal]
+	}
+
+	if err := r.store.SaveTrackedJobs(jobs); err != nil {
+		glog.Warningf("Plugin failed to persist tracked jobs: %v", err)
+	}
+}
+
+func (r *Plugin) persistActivitiesSnapshot() {
+	r.activitiesMu.RLock()
+	activities := append([]JobActivity(nil), r.activities...)
+	r.activitiesMu.RUnlock()
+
+	if len(activities) > maxActivityRecords {
+		activities = activities[len(activities)-maxActivityRecords:]
+	}
+
+	if err := r.store.SaveActivities(activities); err != nil {
+		glog.Warningf("Plugin failed to persist activities: %v", err)
+	}
 }

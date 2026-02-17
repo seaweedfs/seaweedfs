@@ -122,6 +122,10 @@ func New(options Options) (*Plugin, error) {
 		shutdownCh:             make(chan struct{}),
 	}
 
+	if err := plugin.loadPersistedMonitorState(); err != nil {
+		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
+	}
+
 	if plugin.clusterContextProvider != nil {
 		go plugin.schedulerLoop()
 	}

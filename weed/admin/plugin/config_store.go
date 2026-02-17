@@ -17,17 +17,19 @@ import (
 )
 
 const (
-	pluginDirName          = "plugin"
-	jobTypesDirName        = "job_types"
-	jobsDirName            = "jobs"
-	activitiesDirName      = "activities"
-	descriptorPBFileName   = "descriptor.pb"
-	descriptorJSONFileName = "descriptor.json"
-	configPBFileName       = "config.pb"
-	configJSONFileName     = "config.json"
-	runsJSONFileName       = "runs.json"
-	defaultDirPerm         = 0o755
-	defaultFilePerm        = 0o644
+	pluginDirName           = "plugin"
+	jobTypesDirName         = "job_types"
+	jobsDirName             = "jobs"
+	activitiesDirName       = "activities"
+	descriptorPBFileName    = "descriptor.pb"
+	descriptorJSONFileName  = "descriptor.json"
+	configPBFileName        = "config.pb"
+	configJSONFileName      = "config.json"
+	runsJSONFileName        = "runs.json"
+	trackedJobsJSONFileName = "tracked_jobs.json"
+	activitiesJSONFileName  = "activities.json"
+	defaultDirPerm          = 0o755
+	defaultFilePerm         = 0o644
 )
 
 var validJobTypePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
@@ -43,6 +45,8 @@ type ConfigStore struct {
 	memDescriptors map[string]*plugin_pb.JobTypeDescriptor
 	memConfigs     map[string]*plugin_pb.PersistedJobTypeConfig
 	memRunHistory  map[string]*JobTypeRunHistory
+	memTrackedJobs []TrackedJob
+	memActivities  []JobActivity
 }
 
 func NewConfigStore(adminDataDir string) (*ConfigStore, error) {
@@ -271,6 +275,102 @@ func (s *ConfigStore) LoadRunHistory(jobType string) (*JobTypeRunHistory, error)
 	return cloneRunHistory(history), nil
 }
 
+func (s *ConfigStore) SaveTrackedJobs(jobs []TrackedJob) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clone := cloneTrackedJobs(jobs)
+
+	if !s.configured {
+		s.memTrackedJobs = clone
+		return nil
+	}
+
+	encoded, err := json.MarshalIndent(clone, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode tracked jobs: %w", err)
+	}
+
+	path := filepath.Join(s.baseDir, jobsDirName, trackedJobsJSONFileName)
+	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+		return fmt.Errorf("write tracked jobs: %w", err)
+	}
+	return nil
+}
+
+func (s *ConfigStore) LoadTrackedJobs() ([]TrackedJob, error) {
+	s.mu.RLock()
+	if !s.configured {
+		out := cloneTrackedJobs(s.memTrackedJobs)
+		s.mu.RUnlock()
+		return out, nil
+	}
+	s.mu.RUnlock()
+
+	path := filepath.Join(s.baseDir, jobsDirName, trackedJobsJSONFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read tracked jobs: %w", err)
+	}
+
+	var jobs []TrackedJob
+	if err := json.Unmarshal(data, &jobs); err != nil {
+		return nil, fmt.Errorf("parse tracked jobs: %w", err)
+	}
+	return cloneTrackedJobs(jobs), nil
+}
+
+func (s *ConfigStore) SaveActivities(activities []JobActivity) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clone := cloneActivities(activities)
+
+	if !s.configured {
+		s.memActivities = clone
+		return nil
+	}
+
+	encoded, err := json.MarshalIndent(clone, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode activities: %w", err)
+	}
+
+	path := filepath.Join(s.baseDir, activitiesDirName, activitiesJSONFileName)
+	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+		return fmt.Errorf("write activities: %w", err)
+	}
+	return nil
+}
+
+func (s *ConfigStore) LoadActivities() ([]JobActivity, error) {
+	s.mu.RLock()
+	if !s.configured {
+		out := cloneActivities(s.memActivities)
+		s.mu.RUnlock()
+		return out, nil
+	}
+	s.mu.RUnlock()
+
+	path := filepath.Join(s.baseDir, activitiesDirName, activitiesJSONFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read activities: %w", err)
+	}
+
+	var activities []JobActivity
+	if err := json.Unmarshal(data, &activities); err != nil {
+		return nil, fmt.Errorf("parse activities: %w", err)
+	}
+	return cloneActivities(activities), nil
+}
+
 func (s *ConfigStore) ListJobTypes() ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -415,6 +515,34 @@ func cloneRunHistory(in *JobTypeRunHistory) *JobTypeRunHistory {
 		out.ErrorRuns = append([]JobRunRecord(nil), in.ErrorRuns...)
 	}
 	return &out
+}
+
+func cloneTrackedJobs(in []TrackedJob) []TrackedJob {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]TrackedJob, len(in))
+	copy(out, in)
+	return out
+}
+
+func cloneActivities(in []JobActivity) []JobActivity {
+	if len(in) == 0 {
+		return nil
+	}
+
+	out := make([]JobActivity, len(in))
+	for i := range in {
+		out[i] = in[i]
+		if in[i].Details != nil {
+			out[i].Details = make(map[string]interface{}, len(in[i].Details))
+			for key, value := range in[i].Details {
+				out[i].Details[key] = value
+			}
+		}
+	}
+	return out
 }
 
 func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) error {

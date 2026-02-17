@@ -112,8 +112,8 @@ Current layout under `<admin-data-dir>/plugin/`:
 - `job_types/<job_type>/config.pb`
 - `job_types/<job_type>/config.json`
 - `job_types/<job_type>/runs.json`
-
-`jobs/` and `activities/` directories are reserved for future persisted execution/event logs.
+- `jobs/tracked_jobs.json`
+- `activities/activities.json`
 
 `config.pb` should use `PersistedJobTypeConfig` from `plugin.proto`.
 

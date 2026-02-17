@@ -131,3 +131,63 @@ func TestConfigStoreListJobTypes(t *testing.T) {
 		t.Fatalf("unexpected job types: got=%v want=%v", got, want)
 	}
 }
+
+func TestConfigStoreMonitorStateRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewConfigStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+
+	tracked := []TrackedJob{
+		{
+			JobID:     "job-1",
+			JobType:   "vacuum",
+			State:     "running",
+			Progress:  55,
+			WorkerID:  "worker-a",
+			CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
+			UpdatedAt: time.Now().UTC().Add(-1 * time.Minute),
+		},
+	}
+	activities := []JobActivity{
+		{
+			JobID:      "job-1",
+			JobType:    "vacuum",
+			Source:     "worker_progress",
+			Message:    "processing",
+			Stage:      "running",
+			OccurredAt: time.Now().UTC(),
+			Details: map[string]interface{}{
+				"step": "scan",
+			},
+		},
+	}
+
+	if err := store.SaveTrackedJobs(tracked); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	if err := store.SaveActivities(activities); err != nil {
+		t.Fatalf("SaveActivities: %v", err)
+	}
+
+	gotTracked, err := store.LoadTrackedJobs()
+	if err != nil {
+		t.Fatalf("LoadTrackedJobs: %v", err)
+	}
+	if len(gotTracked) != 1 || gotTracked[0].JobID != tracked[0].JobID {
+		t.Fatalf("unexpected tracked jobs: %+v", gotTracked)
+	}
+
+	gotActivities, err := store.LoadActivities()
+	if err != nil {
+		t.Fatalf("LoadActivities: %v", err)
+	}
+	if len(gotActivities) != 1 || gotActivities[0].Message != activities[0].Message {
+		t.Fatalf("unexpected activities: %+v", gotActivities)
+	}
+	if gotActivities[0].Details["step"] != "scan" {
+		t.Fatalf("unexpected activity details: %+v", gotActivities[0].Details)
+	}
+}
