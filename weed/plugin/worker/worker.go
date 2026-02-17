@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -481,7 +482,11 @@ func (w *Worker) buildHello() *plugin_pb.WorkerHello {
 	capability := w.opts.Handler.Capability()
 	if capability == nil {
 		capability = &plugin_pb.JobTypeCapability{}
+	} else {
+		capability = proto.Clone(capability).(*plugin_pb.JobTypeCapability)
 	}
+	capability.MaxDetectionConcurrency = int32(cap(w.detectSlots))
+	capability.MaxExecutionConcurrency = int32(cap(w.execSlots))
 
 	instanceID := generateWorkerID()
 	return &plugin_pb.WorkerHello{
