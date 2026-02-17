@@ -351,6 +351,7 @@ func (r *Plugin) RunDetection(
 	if err != nil {
 		return nil, err
 	}
+	lastSuccessfulRun := r.loadLastSuccessfulRun(jobType)
 
 	state := &pendingDetectionState{
 		complete: make(chan *plugin_pb.DetectionComplete, 1),
@@ -376,6 +377,7 @@ func (r *Plugin) RunDetection(
 				AdminConfigValues:  adminConfigValues,
 				WorkerConfigValues: workerConfigValues,
 				ClusterContext:     clusterContext,
+				LastSuccessfulRun:  lastSuccessfulRun,
 				MaxResults:         maxResults,
 			},
 		},
@@ -939,6 +941,32 @@ func cloneJobProposals(in []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {
 		out = append(out, &clone)
 	}
 	return out
+}
+
+func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
+	history, err := r.store.LoadRunHistory(jobType)
+	if err != nil {
+		glog.Warningf("Plugin failed to load run history for %s: %v", jobType, err)
+		return nil
+	}
+	if history == nil || len(history.SuccessfulRuns) == 0 {
+		return nil
+	}
+
+	var latest time.Time
+	for i := range history.SuccessfulRuns {
+		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = completedAt
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return timestamppb.New(latest.UTC())
 }
 
 func cloneConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugin_pb.ConfigValue {
