@@ -1,0 +1,445 @@
+syntax = "proto3";
+
+package plugin;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb";
+option java_package = "seaweedfs.plugin";
+option java_outer_classname = "PluginProto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// PluginService is the core service for plugin lifecycle and job execution
+service PluginService {
+  // Connect registers a plugin with the master
+  rpc Connect(PluginConnectRequest) returns (PluginConnectResponse);
+  
+  // ExecuteJob processes a detection or maintenance job
+  rpc ExecuteJob(ExecuteJobRequest) returns (ExecuteJobResponse);
+  
+  // ReportHealth sends periodic health status updates
+  rpc ReportHealth(HealthReport) returns (HealthReportResponse);
+  
+  // GetConfig retrieves the latest configuration
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  
+  // SubmitResult sends job execution results back to master
+  rpc SubmitResult(JobResultRequest) returns (JobResultResponse);
+}
+
+// AdminQueryService provides monitoring and diagnostics endpoints
+service AdminQueryService {
+  // GetPluginStats returns statistics for all connected plugins
+  rpc GetPluginStats(GetPluginStatsRequest) returns (GetPluginStatsResponse);
+  
+  // ListPlugins returns information about all registered plugins
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+  
+  // ListJobs returns current and historical job information
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  
+  // GetJobStatus returns detailed status of a specific job
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  
+  // GetPluginLogs returns logs from a specific plugin
+  rpc GetPluginLogs(GetPluginLogsRequest) returns (GetPluginLogsResponse);
+}
+
+// AdminCommandService provides administrative operations
+service AdminCommandService {
+  // SaveConfig persists plugin configuration
+  rpc SaveConfig(SaveConfigRequest) returns (SaveConfigResponse);
+  
+  // ReloadConfig reloads configuration without restarting
+  rpc ReloadConfig(ReloadConfigRequest) returns (ReloadConfigResponse);
+  
+  // EnablePlugin enables a specific plugin
+  rpc EnablePlugin(EnablePluginRequest) returns (EnablePluginResponse);
+  
+  // DisablePlugin disables a specific plugin
+  rpc DisablePlugin(DisablePluginRequest) returns (DisablePluginResponse);
+  
+  // TriggerDetection manually triggers a detection for specific types
+  rpc TriggerDetection(TriggerDetectionRequest) returns (TriggerDetectionResponse);
+  
+  // CancelJob cancels a running job
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  
+  // PurgeHistory clears job history
+  rpc PurgeHistory(PurgeHistoryRequest) returns (PurgeHistoryResponse);
+}
+
+// ============================================================================
+// Core Messages
+// ============================================================================
+
+message PluginConnectRequest {
+  string plugin_id = 1;
+  string plugin_name = 2;
+  string version = 3;
+  repeated string capabilities = 4;
+  PluginCapabilities capabilities_detail = 5;
+  int32 max_concurrent_jobs = 6;
+  bool supports_streaming = 7;
+  int32 port = 8;
+  map<string, string> metadata = 9;
+}
+
+message PluginConnectResponse {
+  bool success = 1;
+  string message = 2;
+  string master_id = 3;
+  repeated string assigned_types = 4;
+  PluginConfig config = 5;
+}
+
+message PluginCapabilities {
+  repeated DetectionCapability detection = 1;
+  repeated MaintenanceCapability maintenance = 2;
+  repeated string supported_datasources = 3;
+}
+
+message DetectionCapability {
+  string type = 1;
+  string description = 2;
+  int32 min_interval_seconds = 3;
+  bool requires_full_scan = 4;
+  repeated string output_metrics = 5;
+}
+
+message MaintenanceCapability {
+  string type = 1;
+  string description = 2;
+  repeated string required_detection_types = 3;
+  int32 estimated_duration_seconds = 4;
+}
+
+message ExecuteJobRequest {
+  string job_id = 1;
+  string job_type = 2;
+  JobPayload payload = 3;
+  google.protobuf.Duration timeout = 4;
+  int32 retry_count = 5;
+  map<string, string> context = 6;
+}
+
+message ExecuteJobResponse {
+  string job_id = 1;
+  ExecutionStatus status = 2;
+  string message = 3;
+}
+
+enum ExecutionStatus {
+  UNKNOWN = 0;
+  ACCEPTED = 1;
+  RUNNING = 2;
+  COMPLETED = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+}
+
+message JobPayload {
+  string detection_type = 1;
+  string target_datasource = 2;
+  bytes data = 3;
+  map<string, string> parameters = 4;
+  int64 timestamp_ms = 5;
+}
+
+message HealthReport {
+  string plugin_id = 1;
+  int64 timestamp_ms = 2;
+  HealthStatus status = 3;
+  int32 active_jobs = 4;
+  int64 cpu_percent = 5;
+  int64 memory_bytes = 6;
+  repeated JobProgress job_progress = 7;
+}
+
+enum HealthStatus {
+  HEALTHY = 0;
+  DEGRADED = 1;
+  UNHEALTHY = 2;
+}
+
+message JobProgress {
+  string job_id = 1;
+  float progress_percent = 2;
+  string current_step = 3;
+}
+
+message HealthReportResponse {
+  bool acknowledged = 1;
+  string feedback = 2;
+}
+
+message GetConfigRequest {
+  string plugin_id = 1;
+  bool include_defaults = 2;
+}
+
+message GetConfigResponse {
+  PluginConfig config = 1;
+  int64 version = 2;
+}
+
+message PluginConfig {
+  string plugin_id = 1;
+  map<string, string> properties = 2;
+  repeated JobTypeConfig job_types = 3;
+  int32 max_retries = 4;
+  google.protobuf.Duration health_check_interval = 5;
+  google.protobuf.Duration job_timeout = 6;
+  map<string, string> environment = 7;
+}
+
+message JobTypeConfig {
+  string type = 1;
+  bool enabled = 2;
+  int32 priority = 3;
+  google.protobuf.Duration interval = 4;
+  int32 max_concurrent = 5;
+  map<string, string> parameters = 6;
+}
+
+message JobResultRequest {
+  string job_id = 1;
+  string job_type = 2;
+  ExecutionStatus status = 3;
+  string message = 4;
+  JobResult result = 5;
+  google.protobuf.Duration execution_time = 6;
+  int32 retry_count_used = 7;
+}
+
+message JobResult {
+  bool success = 1;
+  bytes data = 2;
+  repeated DetectionRecord detections = 3;
+  repeated string warnings = 4;
+  repeated string errors = 5;
+  map<string, string> metadata = 6;
+}
+
+message DetectionRecord {
+  string detection_type = 1;
+  int64 timestamp_ms = 2;
+  string severity = 3;
+  string description = 4;
+  string affected_resource = 5;
+  bytes raw_data = 6;
+}
+
+message JobResultResponse {
+  bool acknowledged = 1;
+  repeated string actions_to_take = 2;
+}
+
+// ============================================================================
+// Query Messages
+// ============================================================================
+
+message GetPluginStatsRequest {
+  string plugin_id = 1;
+}
+
+message GetPluginStatsResponse {
+  repeated PluginStats stats = 1;
+}
+
+message PluginStats {
+  string plugin_id = 1;
+  string status = 2;
+  int32 active_jobs = 3;
+  int32 completed_jobs = 4;
+  int32 failed_jobs = 5;
+  int64 total_detections = 6;
+  float avg_execution_time_ms = 7;
+  float cpu_usage_percent = 8;
+  int64 memory_usage_bytes = 9;
+  google.protobuf.Timestamp last_heartbeat = 10;
+  int32 uptime_seconds = 11;
+}
+
+message ListPluginsRequest {
+  bool include_disabled = 1;
+  repeated string filter_by_capability = 2;
+}
+
+message ListPluginsResponse {
+  repeated PluginInfo plugins = 1;
+}
+
+message PluginInfo {
+  string plugin_id = 1;
+  string name = 2;
+  string version = 3;
+  string status = 4;
+  repeated string capabilities = 5;
+  int32 max_concurrent_jobs = 6;
+  int32 active_jobs = 7;
+  google.protobuf.Timestamp connected_at = 8;
+  google.protobuf.Timestamp last_heartbeat = 9;
+  map<string, string> metadata = 10;
+}
+
+message ListJobsRequest {
+  string plugin_id = 1;
+  JobState filter_state = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+  bool include_history = 5;
+}
+
+message ListJobsResponse {
+  repeated JobInfo jobs = 1;
+  int32 total_count = 2;
+}
+
+message JobInfo {
+  string job_id = 1;
+  string job_type = 2;
+  string plugin_id = 3;
+  JobState state = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp completed_at = 7;
+  google.protobuf.Duration execution_time = 8;
+  int32 retry_count = 9;
+  string last_error = 10;
+}
+
+enum JobState {
+  PENDING = 0;
+  SCHEDULED = 1;
+  RUNNING = 2;
+  COMPLETED = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+}
+
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  JobInfo job_info = 1;
+  JobResult result = 2;
+  string detailed_status = 3;
+}
+
+message GetPluginLogsRequest {
+  string plugin_id = 1;
+  int32 lines = 2;
+  int64 since_timestamp_ms = 3;
+  string log_level = 4;
+}
+
+message GetPluginLogsResponse {
+  repeated LogEntry entries = 1;
+}
+
+message LogEntry {
+  int64 timestamp_ms = 1;
+  string level = 2;
+  string message = 3;
+  map<string, string> context = 4;
+}
+
+// ============================================================================
+// Command Messages
+// ============================================================================
+
+message SaveConfigRequest {
+  PluginConfig config = 1;
+  bool backup_existing = 2;
+}
+
+message SaveConfigResponse {
+  bool success = 1;
+  string message = 2;
+  int64 config_version = 3;
+}
+
+message ReloadConfigRequest {
+  string plugin_id = 1;
+}
+
+message ReloadConfigResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message EnablePluginRequest {
+  string plugin_id = 1;
+}
+
+message EnablePluginResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message DisablePluginRequest {
+  string plugin_id = 1;
+}
+
+message DisablePluginResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message TriggerDetectionRequest {
+  repeated string detection_types = 1;
+  string target_datasource = 2;
+  int32 parallelism = 3;
+}
+
+message TriggerDetectionResponse {
+  bool success = 1;
+  repeated string triggered_job_ids = 2;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+  bool force = 2;
+}
+
+message CancelJobResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message PurgeHistoryRequest {
+  int64 before_timestamp_ms = 1;
+  repeated JobState states_to_purge = 2;
+}
+
+message PurgeHistoryResponse {
+  bool success = 1;
+  int32 records_deleted = 2;
+}
+
+// ============================================================================
+// Execution Records (for persistence)
+// ============================================================================
+
+message ExecutionRecord {
+  string job_id = 1;
+  string job_type = 2;
+  string plugin_id = 3;
+  JobState state = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp completed_at = 7;
+  JobPayload payload = 8;
+  JobResult result = 9;
+  int32 retry_count = 10;
+  string last_error = 11;
+}
+
+message ConfigSnapshot {
+  string plugin_id = 1;
+  PluginConfig config = 2;
+  google.protobuf.Timestamp created_at = 3;
+  int64 version = 4;
+}
