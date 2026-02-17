@@ -402,6 +402,8 @@ templ PluginRuntime(enabled bool) {
                 workers: [],
                 jobs: [],
                 activities: [],
+                allJobs: [],
+                allActivities: [],
                 descriptor: null,
                 config: null,
                 refreshTimer: null,
@@ -540,14 +542,17 @@ templ PluginRuntime(enabled bool) {
             }
 
             function renderStatus() {
-                var activeCount = state.jobs.filter(function(job) {
+                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
+                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
+
+                var activeCount = allJobs.filter(function(job) {
                     var st = String(job.state || '').toLowerCase();
                     return st === 'job_state_assigned' || st === 'job_state_running' || st === 'assigned' || st === 'running' || st === 'in_progress';
                 }).length;
 
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
                 document.getElementById('plugin-status-active-jobs').textContent = String(activeCount);
-                document.getElementById('plugin-status-activities').textContent = String(state.activities.length);
+                document.getElementById('plugin-status-activities').textContent = String(allActivities.length);
             }
 
             function renderJobTypeSummary() {
@@ -559,8 +564,11 @@ templ PluginRuntime(enabled bool) {
                 var activeByType = {};
                 var activityByType = {};
 
-                for (var i = 0; i < state.jobs.length; i++) {
-                    var job = state.jobs[i] || {};
+                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
+                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
+
+                for (var i = 0; i < allJobs.length; i++) {
+                    var job = allJobs[i] || {};
                     var jobType = String(job.job_type || '').trim();
                     if (!jobType) {
                         continue;
@@ -576,8 +584,8 @@ templ PluginRuntime(enabled bool) {
                     activeByType[jobType]++;
                 }
 
-                for (var j = 0; j < state.activities.length; j++) {
-                    var activity = state.activities[j] || {};
+                for (var j = 0; j < allActivities.length; j++) {
+                    var activity = allActivities[j] || {};
                     var activityJobType = String(activity.job_type || '').trim();
                     if (!activityJobType) {
                         continue;
@@ -1676,11 +1684,20 @@ templ PluginRuntime(enabled bool) {
                     activitiesURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
                 }
 
-                var jobs = await pluginRequest('GET', jobsURL);
-                var activities = await pluginRequest('GET', activitiesURL);
+                var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
+                var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
+                var jobsPromise = pluginRequest('GET', jobsURL);
+                var activitiesPromise = pluginRequest('GET', activitiesURL);
+
+                var allJobs = await allJobsPromise;
+                var allActivities = await allActivitiesPromise;
+                var jobs = await jobsPromise;
+                var activities = await activitiesPromise;
 
                 state.jobs = Array.isArray(jobs) ? jobs : [];
                 state.activities = Array.isArray(activities) ? activities : [];
+                state.allJobs = Array.isArray(allJobs) ? allJobs : [];
+                state.allActivities = Array.isArray(allActivities) ? allActivities : [];
                 renderJobs();
                 renderActivities();
                 renderStatus();
