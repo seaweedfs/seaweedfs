@@ -25,9 +25,11 @@ const (
 )
 
 type RuntimeOptions struct {
-	DataDir            string
-	OutgoingBufferSize int
-	SendTimeout        time.Duration
+	DataDir                string
+	OutgoingBufferSize     int
+	SendTimeout            time.Duration
+	SchedulerTick          time.Duration
+	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 }
 
 type Runtime struct {
@@ -38,6 +40,13 @@ type Runtime struct {
 
 	outgoingBuffer int
 	sendTimeout    time.Duration
+
+	schedulerTick          time.Duration
+	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+
+	schedulerMu       sync.Mutex
+	nextDetectionAt   map[string]time.Time
+	detectionInFlight map[string]bool
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]*streamSession
@@ -85,20 +94,34 @@ func NewRuntime(options RuntimeOptions) (*Runtime, error) {
 	if sendTimeout <= 0 {
 		sendTimeout = defaultSendTimeout
 	}
+	schedulerTick := options.SchedulerTick
+	if schedulerTick <= 0 {
+		schedulerTick = defaultSchedulerTick
+	}
 
-	return &Runtime{
-		store:            store,
-		registry:         NewRegistry(),
-		outgoingBuffer:   bufferSize,
-		sendTimeout:      sendTimeout,
-		sessions:         make(map[string]*streamSession),
-		pendingSchema:    make(map[string]chan *plugin_pb.ConfigSchemaResponse),
-		pendingDetection: make(map[string]*pendingDetectionState),
-		pendingExecution: make(map[string]chan *plugin_pb.JobCompleted),
-		jobs:             make(map[string]*TrackedJob),
-		activities:       make([]JobActivity, 0, 256),
-		shutdownCh:       make(chan struct{}),
-	}, nil
+	runtime := &Runtime{
+		store:                  store,
+		registry:               NewRegistry(),
+		outgoingBuffer:         bufferSize,
+		sendTimeout:            sendTimeout,
+		schedulerTick:          schedulerTick,
+		clusterContextProvider: options.ClusterContextProvider,
+		sessions:               make(map[string]*streamSession),
+		pendingSchema:          make(map[string]chan *plugin_pb.ConfigSchemaResponse),
+		pendingDetection:       make(map[string]*pendingDetectionState),
+		pendingExecution:       make(map[string]chan *plugin_pb.JobCompleted),
+		nextDetectionAt:        make(map[string]time.Time),
+		detectionInFlight:      make(map[string]bool),
+		jobs:                   make(map[string]*TrackedJob),
+		activities:             make([]JobActivity, 0, 256),
+		shutdownCh:             make(chan struct{}),
+	}
+
+	if runtime.clusterContextProvider != nil {
+		go runtime.schedulerLoop()
+	}
+
+	return runtime, nil
 }
 
 func (r *Runtime) Shutdown() {

@@ -232,6 +232,9 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	if pluginEnabled {
 		pluginRuntime, err := adminplugin.NewRuntime(adminplugin.RuntimeOptions{
 			DataDir: dataDir,
+			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+				return server.buildDefaultPluginClusterContext(), nil
+			},
 		})
 		if err != nil {
 			glog.Errorf("Failed to initialize plugin runtime: %v", err)
