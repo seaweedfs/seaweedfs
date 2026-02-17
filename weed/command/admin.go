@@ -52,7 +52,7 @@ func init() {
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
-	a.pluginEnabled = cmdAdmin.Flag.Bool("plugin.enabled", false, "enable plugin runtime on worker gRPC server")
+	a.pluginEnabled = cmdAdmin.Flag.Bool("plugin.enabled", false, "enable plugin on worker gRPC server")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -119,7 +119,7 @@ var cmdAdmin = &Command{
     - TLS is automatically used if certificates are configured
     - Workers fall back to insecure connections if TLS is unavailable
 
-  Plugin Runtime V2:
+  Plugin V2:
     - Disabled by default and enabled via -plugin.enabled=true
     - Registers plugin.proto gRPC service on the same worker gRPC port
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
@@ -204,7 +204,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
-	fmt.Printf("Plugin Runtime V2: %v\n", *a.pluginEnabled)
+	fmt.Printf("Plugin V2: %v\n", *a.pluginEnabled)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

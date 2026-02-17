@@ -23,7 +23,7 @@ templ Layout(c *gin.Context, content templ.Component) {
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
 
-  // Detect if we're on plugin runtime page.
+  // Detect if we're on plugin page.
   isPluginPage := strings.HasPrefix(currentPath, "/plugin")
 
   // Detect if we're on a storage page to keep submenu expanded
@@ -314,11 +314,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                         <li class="nav-item">
                             if isPluginPage {
                                 <a class="nav-link active" href="/plugin">
-                                    <i class="fas fa-plug me-2"></i>Plugin Runtime
+                                    <i class="fas fa-plug me-2"></i>Plugin
                                 </a>
                             } else {
                                 <a class="nav-link" href="/plugin">
-                                    <i class="fas fa-plug me-2"></i>Plugin Runtime
+                                    <i class="fas fa-plug me-2"></i>Plugin
                                 </a>
                             }
                         </li>

@@ -15,7 +15,7 @@ const (
 	maxActivityRecords  = 4000
 )
 
-func (r *Runtime) ListTrackedJobs(jobType string, state string, limit int) []TrackedJob {
+func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []TrackedJob {
 	r.jobsMu.RLock()
 	defer r.jobsMu.RUnlock()
 
@@ -49,7 +49,7 @@ func (r *Runtime) ListTrackedJobs(jobType string, state string, limit int) []Tra
 	return items
 }
 
-func (r *Runtime) GetTrackedJob(jobID string) (*TrackedJob, bool) {
+func (r *Plugin) GetTrackedJob(jobID string) (*TrackedJob, bool) {
 	r.jobsMu.RLock()
 	defer r.jobsMu.RUnlock()
 
@@ -61,7 +61,7 @@ func (r *Runtime) GetTrackedJob(jobID string) (*TrackedJob, bool) {
 	return &clone, true
 }
 
-func (r *Runtime) ListActivities(jobType string, limit int) []JobActivity {
+func (r *Plugin) ListActivities(jobType string, limit int) []JobActivity {
 	r.activitiesMu.RLock()
 	defer r.activitiesMu.RUnlock()
 
@@ -83,7 +83,7 @@ func (r *Runtime) ListActivities(jobType string, limit int) []JobActivity {
 	return activities
 }
 
-func (r *Runtime) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
+func (r *Plugin) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
 	if update == nil || strings.TrimSpace(update.JobId) == "" {
 		return
 	}
@@ -130,7 +130,7 @@ func (r *Runtime) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
 	}
 }
 
-func (r *Runtime) trackExecutionStart(requestID, workerID string, job *plugin_pb.JobSpec, attempt int32) {
+func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.JobSpec, attempt int32) {
 	if job == nil || strings.TrimSpace(job.JobId) == "" {
 		return
 	}
@@ -176,7 +176,7 @@ func (r *Runtime) trackExecutionStart(requestID, workerID string, job *plugin_pb
 	})
 }
 
-func (r *Runtime) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
+func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
 	if completed == nil || strings.TrimSpace(completed.JobId) == "" {
 		return nil
 	}
@@ -241,7 +241,7 @@ func (r *Runtime) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *T
 	return &clone
 }
 
-func (r *Runtime) trackWorkerActivities(jobType, jobID, requestID, workerID string, events []*plugin_pb.ActivityEvent) {
+func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID string, events []*plugin_pb.ActivityEvent) {
 	if len(events) == 0 {
 		return
 	}
@@ -267,7 +267,7 @@ func (r *Runtime) trackWorkerActivities(jobType, jobID, requestID, workerID stri
 	}
 }
 
-func (r *Runtime) appendActivity(activity JobActivity) {
+func (r *Plugin) appendActivity(activity JobActivity) {
 	if activity.OccurredAt.IsZero() {
 		activity.OccurredAt = time.Now().UTC()
 	}
@@ -280,7 +280,7 @@ func (r *Runtime) appendActivity(activity JobActivity) {
 	r.activitiesMu.Unlock()
 }
 
-func (r *Runtime) pruneTrackedJobsLocked() {
+func (r *Plugin) pruneTrackedJobsLocked() {
 	if len(r.jobs) <= maxTrackedJobsTotal {
 		return
 	}

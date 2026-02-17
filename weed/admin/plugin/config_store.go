@@ -32,7 +32,7 @@ const (
 
 var validJobTypePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// ConfigStore persists plugin runtime configuration and bounded run history.
+// ConfigStore persists plugin configuration and bounded run history.
 // If admin data dir is empty, it transparently falls back to in-memory mode.
 type ConfigStore struct {
 	configured bool

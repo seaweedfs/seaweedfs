@@ -269,7 +269,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.port = cmdMini.Flag.Int("admin.port", 23646, "admin server http listen port")
 	miniAdminOptions.grpcPort = cmdMini.Flag.Int("admin.port.grpc", 0, "admin server grpc listen port (default: admin http port + GrpcPortOffset)")
 	miniAdminOptions.master = cmdMini.Flag.String("admin.master", "", "master server address (automatically set)")
-	miniAdminOptions.pluginEnabled = cmdMini.Flag.Bool("admin.plugin.enabled", false, "enable plugin runtime on admin worker gRPC server")
+	miniAdminOptions.pluginEnabled = cmdMini.Flag.Bool("admin.plugin.enabled", false, "enable plugin on admin worker gRPC server")
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")

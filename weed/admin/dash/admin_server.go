@@ -103,7 +103,7 @@ type AdminServer struct {
 
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
-	plugin             *adminplugin.Runtime
+	plugin             *adminplugin.Plugin
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
@@ -230,7 +230,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	}
 
 	if pluginEnabled {
-		plugin, err := adminplugin.NewRuntime(adminplugin.RuntimeOptions{
+		plugin, err := adminplugin.New(adminplugin.Options{
 			DataDir: dataDir,
 			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 				return server.buildDefaultPluginClusterContext(), nil
@@ -1669,12 +1669,12 @@ func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 	return s.workerGrpcServer
 }
 
-// GetPlugin returns the plugin runtime instance when enabled.
-func (s *AdminServer) GetPlugin() *adminplugin.Runtime {
+// GetPlugin returns the plugin instance when enabled.
+func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
 }
 
-// IsPluginEnabled reports whether plugin runtime is enabled.
+// IsPluginEnabled reports whether plugin is enabled.
 func (s *AdminServer) IsPluginEnabled() bool {
 	return s.plugin != nil
 }
@@ -1785,7 +1785,7 @@ func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplu
 	return s.plugin.ListActivities(jobType, limit)
 }
 
-// ListPluginSchedulerStates returns per-job-type scheduler runtime state.
+// ListPluginSchedulerStates returns per-job-type scheduler state.
 func (s *AdminServer) ListPluginSchedulerStates() ([]adminplugin.SchedulerJobTypeState, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")

@@ -37,7 +37,7 @@ type schedulerPolicy struct {
 	ExecutorReserveBackoff time.Duration
 }
 
-func (r *Runtime) schedulerLoop() {
+func (r *Plugin) schedulerLoop() {
 	ticker := time.NewTicker(r.schedulerTick)
 	defer ticker.Stop()
 
@@ -54,7 +54,7 @@ func (r *Runtime) schedulerLoop() {
 	}
 }
 
-func (r *Runtime) runSchedulerTick() {
+func (r *Plugin) runSchedulerTick() {
 	jobTypes := r.registry.DetectableJobTypes()
 	if len(jobTypes) == 0 {
 		return
@@ -84,7 +84,7 @@ func (r *Runtime) runSchedulerTick() {
 	r.pruneSchedulerState(active)
 }
 
-func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, error) {
+func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, error) {
 	cfg, err := r.store.LoadJobTypeConfig(jobType)
 	if err != nil {
 		return schedulerPolicy{}, false, err
@@ -146,7 +146,7 @@ func (r *Runtime) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, er
 	return policy, true, nil
 }
 
-func (r *Runtime) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
+func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 	jobTypes, err := r.ListKnownJobTypes()
 	if err != nil {
 		return nil, err
@@ -235,7 +235,7 @@ func deriveSchedulerAdminRuntime(
 	}
 }
 
-func (r *Runtime) markDetectionDue(jobType string, interval time.Duration) bool {
+func (r *Plugin) markDetectionDue(jobType string, interval time.Duration) bool {
 	now := time.Now().UTC()
 
 	r.schedulerMu.Lock()
@@ -255,13 +255,13 @@ func (r *Runtime) markDetectionDue(jobType string, interval time.Duration) bool 
 	return true
 }
 
-func (r *Runtime) finishDetection(jobType string) {
+func (r *Plugin) finishDetection(jobType string) {
 	r.schedulerMu.Lock()
 	delete(r.detectionInFlight, jobType)
 	r.schedulerMu.Unlock()
 }
 
-func (r *Runtime) pruneSchedulerState(activeJobTypes map[string]struct{}) {
+func (r *Plugin) pruneSchedulerState(activeJobTypes map[string]struct{}) {
 	r.schedulerMu.Lock()
 	defer r.schedulerMu.Unlock()
 
@@ -273,14 +273,14 @@ func (r *Runtime) pruneSchedulerState(activeJobTypes map[string]struct{}) {
 	}
 }
 
-func (r *Runtime) clearSchedulerJobType(jobType string) {
+func (r *Plugin) clearSchedulerJobType(jobType string) {
 	r.schedulerMu.Lock()
 	delete(r.nextDetectionAt, jobType)
 	delete(r.detectionInFlight, jobType)
 	r.schedulerMu.Unlock()
 }
 
-func (r *Runtime) runScheduledDetection(jobType string, policy schedulerPolicy) {
+func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 	defer r.finishDetection(jobType)
 
 	start := time.Now().UTC()
@@ -344,7 +344,7 @@ func (r *Runtime) runScheduledDetection(jobType string, policy schedulerPolicy) 
 	r.dispatchScheduledProposals(jobType, filtered, clusterContext, policy)
 }
 
-func (r *Runtime) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error) {
+func (r *Plugin) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error) {
 	if r.clusterContextProvider == nil {
 		return nil, fmt.Errorf("cluster context provider is not configured")
 	}
@@ -362,7 +362,7 @@ func (r *Runtime) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, erro
 	return clusterContext, nil
 }
 
-func (r *Runtime) dispatchScheduledProposals(
+func (r *Plugin) dispatchScheduledProposals(
 	jobType string,
 	proposals []*plugin_pb.JobProposal,
 	clusterContext *plugin_pb.ClusterContext,
@@ -462,7 +462,7 @@ func (r *Runtime) dispatchScheduledProposals(
 	})
 }
 
-func (r *Runtime) reserveScheduledExecutor(
+func (r *Plugin) reserveScheduledExecutor(
 	jobType string,
 	workerLimiters map[string]chan struct{},
 	limiterMu *sync.Mutex,
@@ -473,7 +473,7 @@ func (r *Runtime) reserveScheduledExecutor(
 	for {
 		select {
 		case <-r.shutdownCh:
-			return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+			return nil, nil, fmt.Errorf("plugin is shutting down")
 		default:
 		}
 
@@ -483,7 +483,7 @@ func (r *Runtime) reserveScheduledExecutor(
 				return nil, nil, err
 			}
 			if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
-				return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+				return nil, nil, fmt.Errorf("plugin is shutting down")
 			}
 			continue
 		}
@@ -510,12 +510,12 @@ func (r *Runtime) reserveScheduledExecutor(
 			return nil, nil, fmt.Errorf("no executor slot became available for job_type=%s", jobType)
 		}
 		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
-			return nil, nil, fmt.Errorf("plugin runtime is shutting down")
+			return nil, nil, fmt.Errorf("plugin is shutting down")
 		}
 	}
 }
 
-func (r *Runtime) executeScheduledJobWithExecutor(
+func (r *Plugin) executeScheduledJobWithExecutor(
 	executor *WorkerSession,
 	job *plugin_pb.JobSpec,
 	clusterContext *plugin_pb.ClusterContext,
@@ -530,7 +530,7 @@ func (r *Runtime) executeScheduledJobWithExecutor(
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		select {
 		case <-r.shutdownCh:
-			return fmt.Errorf("plugin runtime is shutting down")
+			return fmt.Errorf("plugin is shutting down")
 		default:
 		}
 
@@ -552,7 +552,7 @@ func (r *Runtime) executeScheduledJobWithExecutor(
 				OccurredAt: time.Now().UTC(),
 			})
 			if !waitForShutdownOrTimer(r.shutdownCh, policy.RetryBackoff) {
-				return fmt.Errorf("plugin runtime is shutting down")
+				return fmt.Errorf("plugin is shutting down")
 			}
 		}
 	}
@@ -639,7 +639,7 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 	}
 }
 
-func (r *Runtime) filterScheduledProposals(jobType string, proposals []*plugin_pb.JobProposal, dedupeTTL time.Duration) []*plugin_pb.JobProposal {
+func (r *Plugin) filterScheduledProposals(jobType string, proposals []*plugin_pb.JobProposal, dedupeTTL time.Duration) []*plugin_pb.JobProposal {
 	now := time.Now().UTC()
 	if dedupeTTL <= 0 {
 		dedupeTTL = defaultScheduledDedupeTTL

@@ -9,9 +9,9 @@ import (
 func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -71,9 +71,9 @@ func TestEnsureJobTypeConfigFromDescriptorBootstrapsDefaults(t *testing.T) {
 func TestEnsureJobTypeConfigFromDescriptorDoesNotOverwriteExisting(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 

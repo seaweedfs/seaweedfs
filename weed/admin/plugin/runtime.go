@@ -25,7 +25,7 @@ const (
 	defaultPendingSchemaBuffer = 1
 )
 
-type RuntimeOptions struct {
+type Options struct {
 	DataDir                string
 	OutgoingBufferSize     int
 	SendTimeout            time.Duration
@@ -33,7 +33,7 @@ type RuntimeOptions struct {
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 }
 
-type Runtime struct {
+type Plugin struct {
 	plugin_pb.UnimplementedPluginControlServiceServer
 
 	store    *ConfigStore
@@ -84,7 +84,7 @@ type pendingDetectionState struct {
 	complete  chan *plugin_pb.DetectionComplete
 }
 
-func NewRuntime(options RuntimeOptions) (*Runtime, error) {
+func New(options Options) (*Plugin, error) {
 	store, err := NewConfigStore(options.DataDir)
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func NewRuntime(options RuntimeOptions) (*Runtime, error) {
 		schedulerTick = defaultSchedulerTick
 	}
 
-	runtime := &Runtime{
+	plugin := &Plugin{
 		store:                  store,
 		registry:               NewRegistry(),
 		outgoingBuffer:         bufferSize,
@@ -122,14 +122,14 @@ func NewRuntime(options RuntimeOptions) (*Runtime, error) {
 		shutdownCh:             make(chan struct{}),
 	}
 
-	if runtime.clusterContextProvider != nil {
-		go runtime.schedulerLoop()
+	if plugin.clusterContextProvider != nil {
+		go plugin.schedulerLoop()
 	}
 
-	return runtime, nil
+	return plugin, nil
 }
 
-func (r *Runtime) Shutdown() {
+func (r *Plugin) Shutdown() {
 	select {
 	case <-r.shutdownCh:
 		return
@@ -166,7 +166,7 @@ func (r *Runtime) Shutdown() {
 	r.pendingExecutionMu.Unlock()
 }
 
-func (r *Runtime) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
+func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
 	first, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -232,7 +232,7 @@ func (r *Runtime) WorkerStream(stream plugin_pb.PluginControlService_WorkerStrea
 	}
 }
 
-func (r *Runtime) RequestConfigSchema(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
+func (r *Plugin) RequestConfigSchema(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
 	if !forceRefresh {
 		descriptor, err := r.store.LoadDescriptor(jobType)
 		if err != nil {
@@ -298,32 +298,32 @@ func (r *Runtime) RequestConfigSchema(ctx context.Context, jobType string, force
 	}
 }
 
-func (r *Runtime) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
+func (r *Plugin) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
 	return r.store.LoadJobTypeConfig(jobType)
 }
 
-func (r *Runtime) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
+func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
 	return r.store.SaveJobTypeConfig(config)
 }
 
-func (r *Runtime) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
+func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
 }
 
-func (r *Runtime) LoadRunHistory(jobType string) (*JobTypeRunHistory, error) {
+func (r *Plugin) LoadRunHistory(jobType string) (*JobTypeRunHistory, error) {
 	return r.store.LoadRunHistory(jobType)
 }
 
-func (r *Runtime) IsConfigured() bool {
+func (r *Plugin) IsConfigured() bool {
 	return r.store.IsConfigured()
 }
 
-func (r *Runtime) BaseDir() string {
+func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
 }
 
 // RunDetection requests one detector worker to produce job proposals for a job type.
-func (r *Runtime) RunDetection(
+func (r *Plugin) RunDetection(
 	ctx context.Context,
 	jobType string,
 	clusterContext *plugin_pb.ClusterContext,
@@ -396,7 +396,7 @@ func (r *Runtime) RunDetection(
 }
 
 // ExecuteJob sends one job to a capable executor worker and waits for completion.
-func (r *Runtime) ExecuteJob(
+func (r *Plugin) ExecuteJob(
 	ctx context.Context,
 	job *plugin_pb.JobSpec,
 	clusterContext *plugin_pb.ClusterContext,
@@ -417,7 +417,7 @@ func (r *Runtime) ExecuteJob(
 	return r.executeJobWithExecutor(ctx, executor, job, clusterContext, attempt)
 }
 
-func (r *Runtime) executeJobWithExecutor(
+func (r *Plugin) executeJobWithExecutor(
 	ctx context.Context,
 	executor *WorkerSession,
 	job *plugin_pb.JobSpec,
@@ -501,11 +501,11 @@ func (r *Runtime) executeJobWithExecutor(
 	}
 }
 
-func (r *Runtime) ListWorkers() []*WorkerSession {
+func (r *Plugin) ListWorkers() []*WorkerSession {
 	return r.registry.List()
 }
 
-func (r *Runtime) ListKnownJobTypes() ([]string, error) {
+func (r *Plugin) ListKnownJobTypes() ([]string, error) {
 	registryJobTypes := r.registry.JobTypes()
 	storedJobTypes, err := r.store.ListJobTypes()
 	if err != nil {
@@ -528,22 +528,22 @@ func (r *Runtime) ListKnownJobTypes() ([]string, error) {
 	return out, nil
 }
 
-func (r *Runtime) PickDetectorWorker(jobType string) (*WorkerSession, error) {
+func (r *Plugin) PickDetectorWorker(jobType string) (*WorkerSession, error) {
 	return r.registry.PickDetector(jobType)
 }
 
-func (r *Runtime) PickExecutorWorker(jobType string) (*WorkerSession, error) {
+func (r *Plugin) PickExecutorWorker(jobType string) (*WorkerSession, error) {
 	return r.registry.PickExecutor(jobType)
 }
 
-func (r *Runtime) sendAdminHello(workerID string) error {
+func (r *Plugin) sendAdminHello(workerID string) error {
 	msg := &plugin_pb.AdminToWorkerMessage{
 		RequestId: "",
 		SentAt:    timestamppb.Now(),
 		Body: &plugin_pb.AdminToWorkerMessage_Hello{
 			Hello: &plugin_pb.AdminHello{
 				Accepted:                 true,
-				Message:                  "plugin runtime connected",
+				Message:                  "plugin connected",
 				HeartbeatIntervalSeconds: defaultHeartbeatInterval,
 				ReconnectDelaySeconds:    defaultReconnectDelay,
 			},
@@ -552,7 +552,7 @@ func (r *Runtime) sendAdminHello(workerID string) error {
 	return r.sendToWorker(workerID, msg)
 }
 
-func (r *Runtime) sendLoop(
+func (r *Plugin) sendLoop(
 	ctx context.Context,
 	stream plugin_pb.PluginControlService_WorkerStreamServer,
 	session *streamSession,
@@ -574,7 +574,7 @@ func (r *Runtime) sendLoop(
 	}
 }
 
-func (r *Runtime) sendToWorker(workerID string, message *plugin_pb.AdminToWorkerMessage) error {
+func (r *Plugin) sendToWorker(workerID string, message *plugin_pb.AdminToWorkerMessage) error {
 	r.sessionsMu.RLock()
 	session, ok := r.sessions[workerID]
 	r.sessionsMu.RUnlock()
@@ -584,7 +584,7 @@ func (r *Runtime) sendToWorker(workerID string, message *plugin_pb.AdminToWorker
 
 	select {
 	case <-r.shutdownCh:
-		return fmt.Errorf("plugin runtime is shutting down")
+		return fmt.Errorf("plugin is shutting down")
 	case session.outgoing <- message:
 		return nil
 	case <-time.After(r.sendTimeout):
@@ -592,7 +592,7 @@ func (r *Runtime) sendToWorker(workerID string, message *plugin_pb.AdminToWorker
 	}
 }
 
-func (r *Runtime) handleWorkerMessage(workerID string, message *plugin_pb.WorkerToAdminMessage) {
+func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerToAdminMessage) {
 	if message == nil {
 		return
 	}
@@ -621,7 +621,7 @@ func (r *Runtime) handleWorkerMessage(workerID string, message *plugin_pb.Worker
 	}
 }
 
-func (r *Runtime) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaResponse) {
+func (r *Plugin) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaResponse) {
 	if response == nil {
 		return
 	}
@@ -658,7 +658,7 @@ func (r *Runtime) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaRes
 	}
 }
 
-func (r *Runtime) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *plugin_pb.JobTypeDescriptor) error {
+func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *plugin_pb.JobTypeDescriptor) error {
 	if descriptor == nil || strings.TrimSpace(jobType) == "" {
 		return nil
 	}
@@ -703,13 +703,13 @@ func (r *Runtime) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *
 		WorkerConfigValues: workerDefaults,
 		AdminRuntime:       adminRuntime,
 		UpdatedAt:          timestamppb.Now(),
-		UpdatedBy:          "plugin-runtime",
+		UpdatedBy:          "plugin",
 	}
 
 	return r.store.SaveJobTypeConfig(cfg)
 }
 
-func (r *Runtime) handleDetectionProposals(message *plugin_pb.DetectionProposals) {
+func (r *Plugin) handleDetectionProposals(message *plugin_pb.DetectionProposals) {
 	if message == nil || message.RequestId == "" {
 		return
 	}
@@ -722,7 +722,7 @@ func (r *Runtime) handleDetectionProposals(message *plugin_pb.DetectionProposals
 	r.pendingDetectionMu.Unlock()
 }
 
-func (r *Runtime) handleDetectionComplete(message *plugin_pb.DetectionComplete) {
+func (r *Plugin) handleDetectionComplete(message *plugin_pb.DetectionComplete) {
 	if message == nil {
 		return
 	}
@@ -746,7 +746,7 @@ func (r *Runtime) handleDetectionComplete(message *plugin_pb.DetectionComplete) 
 	}
 }
 
-func (r *Runtime) handleJobCompleted(completed *plugin_pb.JobCompleted) {
+func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	if completed == nil || completed.JobType == "" {
 		return
 	}
@@ -802,7 +802,7 @@ func (r *Runtime) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	}
 }
 
-func (r *Runtime) putSession(session *streamSession) {
+func (r *Plugin) putSession(session *streamSession) {
 	r.sessionsMu.Lock()
 	defer r.sessionsMu.Unlock()
 
@@ -812,7 +812,7 @@ func (r *Runtime) putSession(session *streamSession) {
 	r.sessions[session.workerID] = session
 }
 
-func (r *Runtime) cleanupSession(workerID string) {
+func (r *Plugin) cleanupSession(workerID string) {
 	r.registry.Remove(workerID)
 
 	r.sessionsMu.Lock()
@@ -837,7 +837,7 @@ func newRequestID(prefix string) (string, error) {
 	return fmt.Sprintf("%s-%d-%s", prefix, time.Now().UnixNano(), hex.EncodeToString(buf)), nil
 }
 
-func (r *Runtime) loadJobTypeConfigPayload(jobType string) (
+func (r *Plugin) loadJobTypeConfigPayload(jobType string) (
 	*plugin_pb.AdminRuntimeConfig,
 	map[string]*plugin_pb.ConfigValue,
 	map[string]*plugin_pb.ConfigValue,

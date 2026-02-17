@@ -8,7 +8,7 @@ templ Plugin(enabled bool) {
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Plugin Runtime</h2>
+                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Plugin</h2>
                         <p class="text-muted mb-0">Monitor workers, configure job types, and run detection/execution workflows.</p>
                     </div>
                     <div class="btn-group">
@@ -24,8 +24,8 @@ templ Plugin(enabled bool) {
             <div class="row">
                 <div class="col-12">
                     <div class="alert alert-warning">
-                        <h5 class="alert-heading mb-2"><i class="fas fa-exclamation-triangle me-2"></i>Plugin Runtime Disabled</h5>
-                        <p class="mb-2">Start admin server with plugin runtime enabled to use this page.</p>
+                        <h5 class="alert-heading mb-2"><i class="fas fa-exclamation-triangle me-2"></i>Plugin Disabled</h5>
+                        <p class="mb-2">Start admin server with plugin enabled to use this page.</p>
                         <code>weed admin -plugin.enabled=true</code>
                     </div>
                 </div>
@@ -35,7 +35,7 @@ templ Plugin(enabled bool) {
                 <div class="col-md-3 mb-3">
                     <div class="card border-primary h-100">
                         <div class="card-body text-center">
-                            <div class="text-uppercase text-muted small mb-1">Runtime</div>
+                            <div class="text-uppercase text-muted small mb-1">Plugin</div>
                             <h4 class="mb-0" id="plugin-status-enabled">-</h4>
                         </div>
                     </div>
@@ -160,41 +160,41 @@ templ Plugin(enabled bool) {
                             </div>
 
                             <div class="mb-3">
-                                <h6>Admin Runtime Settings</h6>
-                                <div class="row g-2" id="plugin-runtime-config-form">
+                                <h6>Admin Plugin Settings</h6>
+                                <div class="row g-2" id="plugin-admin-settings-form">
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-enabled">Enabled</label>
+                                        <label class="form-label" for="plugin-admin-enabled">Enabled</label>
                                         <div class="form-check form-switch mt-2">
-                                            <input class="form-check-input" type="checkbox" id="plugin-runtime-enabled"/>
+                                            <input class="form-check-input" type="checkbox" id="plugin-admin-enabled"/>
                                         </div>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-detection-interval">Detection Interval (s)</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-detection-interval" min="0"/>
+                                        <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
+                                        <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-detection-timeout">Detection Timeout (s)</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-detection-timeout" min="0"/>
+                                        <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
+                                        <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-max-results">Max Jobs / Detection</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-max-results" min="0"/>
+                                        <label class="form-label" for="plugin-admin-max-results">Max Jobs / Detection</label>
+                                        <input type="number" class="form-control" id="plugin-admin-max-results" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-global-exec">Global Execution Concurrency</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-global-exec" min="0"/>
+                                        <label class="form-label" for="plugin-admin-global-exec">Global Execution Concurrency</label>
+                                        <input type="number" class="form-control" id="plugin-admin-global-exec" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-per-worker-exec">Per Worker Concurrency</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-per-worker-exec" min="0"/>
+                                        <label class="form-label" for="plugin-admin-per-worker-exec">Per Worker Concurrency</label>
+                                        <input type="number" class="form-control" id="plugin-admin-per-worker-exec" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-retry-limit">Retry Limit</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-retry-limit" min="0"/>
+                                        <label class="form-label" for="plugin-admin-retry-limit">Retry Limit</label>
+                                        <input type="number" class="form-control" id="plugin-admin-retry-limit" min="0"/>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label" for="plugin-runtime-retry-backoff">Retry Backoff (s)</label>
-                                        <input type="number" class="form-control" id="plugin-runtime-retry-backoff" min="0"/>
+                                        <label class="form-label" for="plugin-admin-retry-backoff">Retry Backoff (s)</label>
+                                        <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
                                     </div>
                                 </div>
                             </div>
@@ -1403,7 +1403,7 @@ templ Plugin(enabled bool) {
                 summary.innerHTML = html;
             }
 
-            function fillRuntimeConfig() {
+            function fillAdminSettings() {
                 var runtimeConfig = (state.config && state.config.admin_runtime) ? state.config.admin_runtime : {};
                 var defaults = (state.descriptor && state.descriptor.admin_runtime_defaults) ? state.descriptor.admin_runtime_defaults : {};
 
@@ -1427,17 +1427,17 @@ templ Plugin(enabled bool) {
                     return true;
                 }
 
-                document.getElementById('plugin-runtime-enabled').checked = pickBool('enabled');
-                document.getElementById('plugin-runtime-detection-interval').value = String(pickNumber('detection_interval_seconds'));
-                document.getElementById('plugin-runtime-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
-                document.getElementById('plugin-runtime-max-results').value = String(pickNumber('max_jobs_per_detection'));
-                document.getElementById('plugin-runtime-global-exec').value = String(pickNumber('global_execution_concurrency'));
-                document.getElementById('plugin-runtime-per-worker-exec').value = String(pickNumber('per_worker_execution_concurrency'));
-                document.getElementById('plugin-runtime-retry-limit').value = String(pickNumber('retry_limit'));
-                document.getElementById('plugin-runtime-retry-backoff').value = String(pickNumber('retry_backoff_seconds'));
+                document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
+                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
+                document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
+                document.getElementById('plugin-admin-max-results').value = String(pickNumber('max_jobs_per_detection'));
+                document.getElementById('plugin-admin-global-exec').value = String(pickNumber('global_execution_concurrency'));
+                document.getElementById('plugin-admin-per-worker-exec').value = String(pickNumber('per_worker_execution_concurrency'));
+                document.getElementById('plugin-admin-retry-limit').value = String(pickNumber('retry_limit'));
+                document.getElementById('plugin-admin-retry-backoff').value = String(pickNumber('retry_backoff_seconds'));
             }
 
-            function collectRuntimeConfig() {
+            function collectAdminSettings() {
                 function getInt(id) {
                     var raw = String(document.getElementById(id).value || '').trim();
                     if (!raw) {
@@ -1451,14 +1451,14 @@ templ Plugin(enabled bool) {
                 }
 
                 return {
-                    enabled: !!document.getElementById('plugin-runtime-enabled').checked,
-                    detection_interval_seconds: getInt('plugin-runtime-detection-interval'),
-                    detection_timeout_seconds: getInt('plugin-runtime-detection-timeout'),
-                    max_jobs_per_detection: getInt('plugin-runtime-max-results'),
-                    global_execution_concurrency: getInt('plugin-runtime-global-exec'),
-                    per_worker_execution_concurrency: getInt('plugin-runtime-per-worker-exec'),
-                    retry_limit: getInt('plugin-runtime-retry-limit'),
-                    retry_backoff_seconds: getInt('plugin-runtime-retry-backoff'),
+                    enabled: !!document.getElementById('plugin-admin-enabled').checked,
+                    detection_interval_seconds: getInt('plugin-admin-detection-interval'),
+                    detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
+                    max_jobs_per_detection: getInt('plugin-admin-max-results'),
+                    global_execution_concurrency: getInt('plugin-admin-global-exec'),
+                    per_worker_execution_concurrency: getInt('plugin-admin-per-worker-exec'),
+                    retry_limit: getInt('plugin-admin-retry-limit'),
+                    retry_backoff_seconds: getInt('plugin-admin-retry-backoff'),
                 };
             }
 
@@ -1628,7 +1628,7 @@ templ Plugin(enabled bool) {
                 }
 
                 renderDescriptorSummary();
-                fillRuntimeConfig();
+                fillAdminSettings();
 
                 if (state.descriptor) {
                     renderConfigForm('admin', 'plugin-admin-config-form', state.descriptor.admin_config_form || {});
@@ -1674,7 +1674,7 @@ templ Plugin(enabled bool) {
                     payload = {
                         job_type: jobType,
                         descriptor_version: state.descriptor.descriptor_version || 0,
-                        admin_runtime: collectRuntimeConfig(),
+                        admin_runtime: collectAdminSettings(),
                         admin_config_values: collectConfigValues('admin', state.descriptor.admin_config_form || {}),
                         worker_config_values: collectConfigValues('worker', state.descriptor.worker_config_form || {}),
                     };
@@ -1693,7 +1693,7 @@ templ Plugin(enabled bool) {
             }
 
             function getMaxResults() {
-                var raw = String(document.getElementById('plugin-runtime-max-results').value || '').trim();
+                var raw = String(document.getElementById('plugin-admin-max-results').value || '').trim();
                 if (!raw) {
                     return 0;
                 }

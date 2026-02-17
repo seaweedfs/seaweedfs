@@ -11,7 +11,7 @@ import (
 
 const descriptorPrefetchTimeout = 20 * time.Second
 
-func (r *Runtime) prefetchDescriptorsFromHello(hello *plugin_pb.WorkerHello) {
+func (r *Plugin) prefetchDescriptorsFromHello(hello *plugin_pb.WorkerHello) {
 	if hello == nil || len(hello.Capabilities) == 0 {
 		return
 	}

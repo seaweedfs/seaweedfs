@@ -11,9 +11,9 @@ import (
 func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -58,9 +58,9 @@ func TestLoadSchedulerPolicyUsesAdminRuntime(t *testing.T) {
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -102,9 +102,9 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -149,9 +149,9 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 func TestFilterScheduledProposalsDedupe(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -178,9 +178,9 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -203,9 +203,9 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
@@ -299,9 +299,9 @@ func TestListSchedulerStatesIncludesPolicyAndRuntimeState(t *testing.T) {
 func TestListSchedulerStatesShowsDisabledWhenNoPolicy(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := NewRuntime(RuntimeOptions{})
+	runtime, err := New(Options{})
 	if err != nil {
-		t.Fatalf("NewRuntime: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 	defer runtime.Shutdown()
 
