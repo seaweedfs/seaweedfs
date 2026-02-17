@@ -22,7 +22,7 @@ import (
 )
 
 var cmdPluginWorker = &Command{
-	UsageLine: "plugin_worker -admin=<grpc_address> [-plugins=<plugin_types>] [-workingDir=<path>]",
+	UsageLine: "plugin_worker -admin=<grpc_address> [-id=<worker_id>] [-plugins=<plugin_types>] [-workingDir=<path>]",
 	Short:     "start a plugin-based worker using the new plugin system",
 	Long: `Start a worker using the new plugin system. This worker connects to the admin server
 via gRPC and registers capabilities for handling maintenance tasks.
@@ -31,9 +31,9 @@ Supported plugins: erasure_coding, vacuum, balance
 
 Examples:
   weed plugin_worker -admin=localhost:23646
-  weed plugin_worker -admin=admin.example.com:23646
+  weed plugin_worker -admin=admin.example.com:23646 -id=worker-1
   weed plugin_worker -admin=localhost:23646 -plugins=erasure_coding,vacuum
-  weed plugin_worker -admin=localhost:23646 -workingDir=/tmp/worker
+  weed plugin_worker -admin=localhost:23646 -id=ec-worker-1 -workingDir=/tmp/worker
   weed plugin_worker -admin=localhost:23646 -debug
 `,
 }
@@ -41,6 +41,8 @@ Examples:
 var (
 	pluginWorkerAdminServer = cmdPluginWorker.Flag.String("admin", "localhost:23646",
 		"admin server gRPC address (usually admin HTTP port + 10000)")
+	pluginWorkerID = cmdPluginWorker.Flag.String("id", "",
+		"plugin worker ID (auto-generated if not specified)")
 	pluginWorkerPlugins = cmdPluginWorker.Flag.String("plugins", "erasure_coding,vacuum,balance",
 		"comma-separated list of plugin types to enable")
 	pluginWorkerWorkingDir = cmdPluginWorker.Flag.String("workingDir", "",
@@ -75,10 +77,13 @@ type GenericPluginWorker struct {
 }
 
 // NewGenericPluginWorker creates a new generic plugin worker
-func NewGenericPluginWorker(adminServer pb.ServerAddress, plugins []string, workingDir string, maxConcurrent int) *GenericPluginWorker {
-	workerID := fmt.Sprintf("worker-%s-%d", hostname(), time.Now().UnixNano())
+func NewGenericPluginWorker(adminServer pb.ServerAddress, plugins []string, workingDir string, maxConcurrent int, id string) *GenericPluginWorker {
+	workerID := id
+	if workerID == "" {
+		workerID = fmt.Sprintf("worker-%s-%d", hostname(), time.Now().UnixNano())
+	}
 	return &GenericPluginWorker{
-		ID:                string(workerID),
+		ID:                workerID,
 		AdminServer:       adminServer,
 		Plugins:           plugins,
 		MaxConcurrentJobs: maxConcurrent,
@@ -239,6 +244,9 @@ func runPluginWorker(cmd *Command, args []string) bool {
 
 	glog.Infof("Starting plugin worker (v%s)", version.VERSION)
 	glog.Infof("Admin server: %s", *pluginWorkerAdminServer)
+	if *pluginWorkerID != "" {
+		glog.Infof("Worker ID: %s", *pluginWorkerID)
+	}
 	glog.Infof("Plugins: %s", *pluginWorkerPlugins)
 
 	// Parse plugins
@@ -286,7 +294,7 @@ func runPluginWorker(cmd *Command, args []string) bool {
 
 	// Create and start the worker
 	adminServerAddress := pb.ServerAddress(*pluginWorkerAdminServer)
-	worker := NewGenericPluginWorker(adminServerAddress, validPlugins, workingDir, *pluginWorkerMaxConcurrent)
+	worker := NewGenericPluginWorker(adminServerAddress, validPlugins, workingDir, *pluginWorkerMaxConcurrent, *pluginWorkerID)
 
 	ctx := context.Background()
 	if err := worker.Start(ctx); err != nil {
