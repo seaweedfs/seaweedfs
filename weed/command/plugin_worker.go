@@ -2,10 +2,13 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -56,6 +59,11 @@ func init() {
 func runPluginWorker(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
+	resolvedAdminServer := resolvePluginWorkerAdminServer(*pluginWorkerAdminServer)
+	if resolvedAdminServer != *pluginWorkerAdminServer {
+		fmt.Printf("Resolved admin worker gRPC endpoint: %s -> %s\n", *pluginWorkerAdminServer, resolvedAdminServer)
+	}
+
 	dialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 	workerID, err := resolvePluginWorkerID(*pluginWorkerID, *pluginWorkerWorkingDir)
 	if err != nil {
@@ -69,7 +77,7 @@ func runPluginWorker(cmd *Command, args []string) bool {
 		return false
 	}
 	worker, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
-		AdminServer:             *pluginWorkerAdminServer,
+		AdminServer:             resolvedAdminServer,
 		WorkerID:                workerID,
 		WorkerVersion:           version.Version(),
 		WorkerAddress:           *pluginWorkerAddress,
@@ -98,7 +106,7 @@ func runPluginWorker(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
-	fmt.Printf("Starting plugin worker (admin=%s)\n", *pluginWorkerAdminServer)
+	fmt.Printf("Starting plugin worker (admin=%s)\n", resolvedAdminServer)
 	if err := worker.Run(ctx); err != nil {
 		glog.Errorf("Plugin worker stopped with error: %v", err)
 		return false
@@ -142,4 +150,88 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (plugi
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", jobType)
 	}
+}
+
+func resolvePluginWorkerAdminServer(adminServer string) string {
+	adminServer = strings.TrimSpace(adminServer)
+	host, httpPort, hasExplicitGrpcPort, err := parsePluginWorkerAdminAddress(adminServer)
+	if err != nil || hasExplicitGrpcPort {
+		return adminServer
+	}
+
+	workerGrpcPort, err := fetchPluginWorkerGrpcPort(host, httpPort)
+	if err != nil || workerGrpcPort <= 0 {
+		return adminServer
+	}
+
+	// Keep canonical host:http form when admin gRPC follows the default +10000 rule.
+	if workerGrpcPort == httpPort+10000 {
+		return adminServer
+	}
+
+	return fmt.Sprintf("%s:%d.%d", host, httpPort, workerGrpcPort)
+}
+
+func parsePluginWorkerAdminAddress(adminServer string) (host string, httpPort int, hasExplicitGrpcPort bool, err error) {
+	adminServer = strings.TrimSpace(adminServer)
+	colonIndex := strings.LastIndex(adminServer, ":")
+	if colonIndex <= 0 || colonIndex >= len(adminServer)-1 {
+		return "", 0, false, fmt.Errorf("invalid admin address %q", adminServer)
+	}
+
+	host = adminServer[:colonIndex]
+	portPart := adminServer[colonIndex+1:]
+	if dotIndex := strings.LastIndex(portPart, "."); dotIndex > 0 && dotIndex < len(portPart)-1 {
+		if _, parseErr := strconv.Atoi(portPart[dotIndex+1:]); parseErr == nil {
+			hasExplicitGrpcPort = true
+			portPart = portPart[:dotIndex]
+		}
+	}
+
+	httpPort, err = strconv.Atoi(portPart)
+	if err != nil || httpPort <= 0 {
+		return "", 0, false, fmt.Errorf("invalid admin http port in %q", adminServer)
+	}
+	return host, httpPort, hasExplicitGrpcPort, nil
+}
+
+func fetchPluginWorkerGrpcPort(host string, httpPort int) (int, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	address := util.JoinHostPort(host, httpPort)
+	var lastErr error
+
+	for _, scheme := range []string{"http", "https"} {
+		statusURL := fmt.Sprintf("%s://%s/api/plugin/status", scheme, address)
+		resp, err := client.Get(statusURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var payload struct {
+			WorkerGrpcPort int `json:"worker_grpc_port"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("status code %d from %s", resp.StatusCode, statusURL)
+			continue
+		}
+		if decodeErr != nil {
+			lastErr = fmt.Errorf("decode plugin status from %s: %w", statusURL, decodeErr)
+			continue
+		}
+		if payload.WorkerGrpcPort <= 0 {
+			lastErr = fmt.Errorf("plugin status from %s returned empty worker_grpc_port", statusURL)
+			continue
+		}
+
+		return payload.WorkerGrpcPort, nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("plugin status endpoint unavailable")
+	}
+	return 0, lastErr
 }
