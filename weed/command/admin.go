@@ -37,7 +37,6 @@ type AdminOptions struct {
 	grpcPort         *int
 	master           *string
 	masters          *string // deprecated, for backward compatibility
-	pluginEnabled    *bool
 	adminUser        *string
 	adminPassword    *string
 	readOnlyUser     *string
@@ -52,7 +51,6 @@ func init() {
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
-	a.pluginEnabled = cmdAdmin.Flag.Bool("plugin.enabled", false, "enable plugin on worker gRPC server")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
@@ -63,7 +61,7 @@ func init() {
 }
 
 var cmdAdmin = &Command{
-	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data] [-plugin.enabled=true]",
+	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
 	Short:     "start SeaweedFS web admin interface",
 	Long: `Start a web admin interface for SeaweedFS cluster management.
 
@@ -120,7 +118,7 @@ var cmdAdmin = &Command{
     - Workers fall back to insecure connections if TLS is unavailable
 
   Plugin:
-    - Disabled by default and enabled via -plugin.enabled=true
+    - Always enabled on the worker gRPC port
     - Registers plugin.proto gRPC service on the same worker gRPC port
     - External workers connect with: weed plugin.worker -admin=<admin_host:admin_port>
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
@@ -205,7 +203,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
-	fmt.Printf("Plugin: %v\n", *a.pluginEnabled)
+	fmt.Printf("Plugin: Enabled\n")
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,9 +302,8 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		r.StaticFS("/static", http.FS(staticFS))
 	}
 
-	// Create admin server
-	pluginEnabled := options.pluginEnabled != nil && *options.pluginEnabled
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort, pluginEnabled)
+	// Create admin server (plugin is always enabled)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort, true)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
