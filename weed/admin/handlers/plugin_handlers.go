@@ -9,7 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 )
 
-// PluginHandlers handles plugin runtime UI pages.
+// PluginHandlers handles plugin UI pages.
 type PluginHandlers struct {
 	adminServer *dash.AdminServer
 }
@@ -21,12 +21,12 @@ func NewPluginHandlers(adminServer *dash.AdminServer) *PluginHandlers {
 	}
 }
 
-// ShowPluginRuntime displays plugin runtime monitoring and configuration page.
-func (h *PluginHandlers) ShowPluginRuntime(c *gin.Context) {
-	enabled := h.adminServer != nil && h.adminServer.IsPluginRuntimeEnabled()
+// ShowPlugin displays plugin monitoring and configuration page.
+func (h *PluginHandlers) ShowPlugin(c *gin.Context) {
+	enabled := h.adminServer != nil && h.adminServer.IsPluginEnabled()
 
 	c.Header("Content-Type", "text/html")
-	component := app.PluginRuntime(enabled)
+	component := app.Plugin(enabled)
 	layoutComponent := layout.Layout(c, component)
 	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})

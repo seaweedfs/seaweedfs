@@ -103,7 +103,7 @@ type AdminServer struct {
 
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
-	pluginRuntime      *adminplugin.Runtime
+	plugin             *adminplugin.Runtime
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
@@ -230,17 +230,17 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	}
 
 	if pluginEnabled {
-		pluginRuntime, err := adminplugin.NewRuntime(adminplugin.RuntimeOptions{
+		plugin, err := adminplugin.NewRuntime(adminplugin.RuntimeOptions{
 			DataDir: dataDir,
 			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 				return server.buildDefaultPluginClusterContext(), nil
 			},
 		})
 		if err != nil {
-			glog.Errorf("Failed to initialize plugin runtime: %v", err)
+			glog.Errorf("Failed to initialize plugin: %v", err)
 		} else {
-			server.pluginRuntime = pluginRuntime
-			glog.V(0).Infof("Plugin runtime enabled")
+			server.plugin = plugin
+			glog.V(0).Infof("Plugin enabled")
 		}
 	}
 
@@ -1669,46 +1669,46 @@ func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 	return s.workerGrpcServer
 }
 
-// GetPluginRuntime returns the plugin runtime instance when enabled.
-func (s *AdminServer) GetPluginRuntime() *adminplugin.Runtime {
-	return s.pluginRuntime
+// GetPlugin returns the plugin runtime instance when enabled.
+func (s *AdminServer) GetPlugin() *adminplugin.Runtime {
+	return s.plugin
 }
 
-// IsPluginRuntimeEnabled reports whether plugin runtime is enabled.
-func (s *AdminServer) IsPluginRuntimeEnabled() bool {
-	return s.pluginRuntime != nil
+// IsPluginEnabled reports whether plugin runtime is enabled.
+func (s *AdminServer) IsPluginEnabled() bool {
+	return s.plugin != nil
 }
 
 // RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
 func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.RequestConfigSchema(ctx, jobType, forceRefresh)
+	return s.plugin.RequestConfigSchema(ctx, jobType, forceRefresh)
 }
 
 // LoadPluginJobTypeDescriptor loads persisted descriptor for one job type.
 func (s *AdminServer) LoadPluginJobTypeDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.LoadDescriptor(jobType)
+	return s.plugin.LoadDescriptor(jobType)
 }
 
 // SavePluginJobTypeConfig persists plugin job type config in admin data dir.
 func (s *AdminServer) SavePluginJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
-	if s.pluginRuntime == nil {
-		return fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.SaveJobTypeConfig(config)
+	return s.plugin.SaveJobTypeConfig(config)
 }
 
 // LoadPluginJobTypeConfig loads plugin job type config from persistence.
 func (s *AdminServer) LoadPluginJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.LoadJobTypeConfig(jobType)
+	return s.plugin.LoadJobTypeConfig(jobType)
 }
 
 // RunPluginDetection triggers one detection pass for a job type and returns proposed jobs.
@@ -1718,10 +1718,10 @@ func (s *AdminServer) RunPluginDetection(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) ([]*plugin_pb.JobProposal, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.RunDetection(ctx, jobType, clusterContext, maxResults)
+	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
 // ExecutePluginJob dispatches one job to a capable worker and waits for completion.
@@ -1731,66 +1731,66 @@ func (s *AdminServer) ExecutePluginJob(
 	clusterContext *plugin_pb.ClusterContext,
 	attempt int32,
 ) (*plugin_pb.JobCompleted, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.ExecuteJob(ctx, job, clusterContext, attempt)
+	return s.plugin.ExecuteJob(ctx, job, clusterContext, attempt)
 }
 
 // GetPluginRunHistory returns the bounded run history (last 10 success + last 10 error).
 func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeRunHistory, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.LoadRunHistory(jobType)
+	return s.plugin.LoadRunHistory(jobType)
 }
 
 // ListPluginJobTypes returns known plugin job types from runtime registry and persisted data.
 func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.ListKnownJobTypes()
+	return s.plugin.ListKnownJobTypes()
 }
 
 // GetPluginWorkers returns currently connected plugin workers.
 func (s *AdminServer) GetPluginWorkers() []*adminplugin.WorkerSession {
-	if s.pluginRuntime == nil {
+	if s.plugin == nil {
 		return nil
 	}
-	return s.pluginRuntime.ListWorkers()
+	return s.plugin.ListWorkers()
 }
 
 // ListPluginJobs returns tracked plugin jobs for monitoring.
 func (s *AdminServer) ListPluginJobs(jobType, state string, limit int) []adminplugin.TrackedJob {
-	if s.pluginRuntime == nil {
+	if s.plugin == nil {
 		return nil
 	}
-	return s.pluginRuntime.ListTrackedJobs(jobType, state, limit)
+	return s.plugin.ListTrackedJobs(jobType, state, limit)
 }
 
 // GetPluginJob returns one tracked plugin job by ID.
 func (s *AdminServer) GetPluginJob(jobID string) (*adminplugin.TrackedJob, bool) {
-	if s.pluginRuntime == nil {
+	if s.plugin == nil {
 		return nil, false
 	}
-	return s.pluginRuntime.GetTrackedJob(jobID)
+	return s.plugin.GetTrackedJob(jobID)
 }
 
 // ListPluginActivities returns plugin job activities for monitoring.
 func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplugin.JobActivity {
-	if s.pluginRuntime == nil {
+	if s.plugin == nil {
 		return nil
 	}
-	return s.pluginRuntime.ListActivities(jobType, limit)
+	return s.plugin.ListActivities(jobType, limit)
 }
 
 // ListPluginSchedulerStates returns per-job-type scheduler runtime state.
 func (s *AdminServer) ListPluginSchedulerStates() ([]adminplugin.SchedulerJobTypeState, error) {
-	if s.pluginRuntime == nil {
-		return nil, fmt.Errorf("plugin runtime is not enabled")
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
 	}
-	return s.pluginRuntime.ListSchedulerStates()
+	return s.plugin.ListSchedulerStates()
 }
 
 // Maintenance system integration methods
@@ -1994,8 +1994,8 @@ func (s *AdminServer) Shutdown() {
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
 
-	if s.pluginRuntime != nil {
-		s.pluginRuntime.Shutdown()
+	if s.plugin != nil {
+		s.plugin.Shutdown()
 	}
 
 	// Stop worker gRPC server

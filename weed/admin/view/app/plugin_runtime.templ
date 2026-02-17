@@ -2,8 +2,8 @@ package app
 
 import "fmt"
 
-templ PluginRuntime(enabled bool) {
-    <div class="container-fluid" id="plugin-runtime-page" data-plugin-enabled={ fmt.Sprintf("%t", enabled) }>
+templ Plugin(enabled bool) {
+    <div class="container-fluid" id="plugin-page" data-plugin-enabled={ fmt.Sprintf("%t", enabled) }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -420,7 +420,7 @@ templ PluginRuntime(enabled bool) {
 
         <script>
         (function() {
-            var page = document.getElementById('plugin-runtime-page');
+            var page = document.getElementById('plugin-page');
             if (!page) {
                 return;
             }

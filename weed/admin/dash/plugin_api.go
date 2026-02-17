@@ -28,10 +28,10 @@ const (
 	maxPluginRunTimeout           = 30 * time.Minute
 )
 
-// GetPluginStatusAPI returns plugin runtime status.
+// GetPluginStatusAPI returns plugin status.
 func (s *AdminServer) GetPluginStatusAPI(c *gin.Context) {
-	runtime := s.GetPluginRuntime()
-	if runtime == nil {
+	plugin := s.GetPlugin()
+	if plugin == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"enabled": false,
 		})
@@ -40,9 +40,9 @@ func (s *AdminServer) GetPluginStatusAPI(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"enabled":      true,
-		"configured":   runtime.IsConfigured(),
-		"base_dir":     runtime.BaseDir(),
-		"worker_count": len(runtime.ListWorkers()),
+		"configured":   plugin.IsConfigured(),
+		"base_dir":     plugin.BaseDir(),
+		"worker_count": len(plugin.ListWorkers()),
 	})
 }
 

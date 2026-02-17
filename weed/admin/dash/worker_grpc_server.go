@@ -94,8 +94,8 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
-	if runtime := s.adminServer.GetPluginRuntime(); runtime != nil {
-		plugin_pb.RegisterPluginControlServiceServer(grpcServer, runtime)
+	if plugin := s.adminServer.GetPlugin(); plugin != nil {
+		plugin_pb.RegisterPluginControlServiceServer(grpcServer, plugin)
 		glog.V(0).Infof("Plugin gRPC service registered on worker gRPC server")
 	}
 
