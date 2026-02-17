@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"google.golang.org/grpc"
 )
 
 var cmdPluginWorker = &Command{
@@ -32,6 +34,7 @@ Examples:
 var (
 	pluginWorkerAdminServer = cmdPluginWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	pluginWorkerID          = cmdPluginWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
+	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", "vacuum", "plugin job type to serve")
 	pluginWorkerHeartbeat   = cmdPluginWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
 	pluginWorkerReconnect   = cmdPluginWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
 	pluginWorkerMaxDetect   = cmdPluginWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")
@@ -47,7 +50,11 @@ func runPluginWorker(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	dialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
-	handler := pluginworker.NewVacuumHandler(dialOption)
+	handler, err := buildPluginWorkerHandler(*pluginWorkerJobType, dialOption)
+	if err != nil {
+		glog.Errorf("Failed to build plugin worker handler: %v", err)
+		return false
+	}
 	worker, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
 		AdminServer:             *pluginWorkerAdminServer,
 		WorkerID:                *pluginWorkerID,
@@ -85,4 +92,13 @@ func runPluginWorker(cmd *Command, args []string) bool {
 	}
 	fmt.Println("Plugin worker stopped")
 	return true
+}
+
+func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (pluginworker.JobHandler, error) {
+	switch strings.ToLower(strings.TrimSpace(jobType)) {
+	case "", "vacuum":
+		return pluginworker.NewVacuumHandler(dialOption), nil
+	default:
+		return nil, fmt.Errorf("unsupported plugin job type %q", jobType)
+	}
 }
