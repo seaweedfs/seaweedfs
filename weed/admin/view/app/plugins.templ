@@ -1,207 +1,78 @@
 package app
 
-import (
-	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
-)
-
 type PluginsPageData struct {
-	Plugins []plugin.ConnectedPlugin
-	JobTypes map[string]interface{}
+Plugins  []interface{}
+JobTypes map[string]interface{}
 }
 
 templ PluginsOverview(data PluginsPageData) {
-	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-		<h1 class="h2">
-			<i class="fas fa-plug me-2"></i>Plugins
-		</h1>
-		<div class="btn-toolbar mb-2 mb-md-0">
-			<div class="btn-group me-2">
-				<a href="/plugins" class="btn btn-sm btn-outline-primary">
-					<i class="fas fa-sync-alt me-1"></i>Refresh
-				</a>
-			</div>
-		</div>
-	</div>
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+<h1 class="h2">
+<i class="fas fa-plug me-2"></i>Plugins
+</h1>
+<div class="btn-toolbar mb-2 mb-md-0">
+<div class="btn-group me-2">
+<a href="/plugins" class="btn btn-sm btn-outline-primary">
+<i class="fas fa-sync-alt me-1"></i>Refresh
+</a>
+</div>
+</div>
+</div>
 
-	<!-- Connected Plugins Summary -->
-	<div class="row mb-4">
-		<div class="col-md-3 mb-4">
-			<div class="card border-left-primary shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Connected Plugins</div>
-							<div class="h3 mb-0">{ fmt.Sprintf("%d", len(data.Plugins)) }</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-plug fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-		<div class="col-md-3 mb-4">
-			<div class="card border-left-success shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">Active Jobs</div>
-							<div class="h3 mb-0">
-								{
-									activeJobs := 0
-									for _, p := range data.Plugins {
-										activeJobs += p.ActiveJobs
-									}
-									fmt.Sprintf("%d", activeJobs)
-								}
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-tasks fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-		<div class="col-md-3 mb-4">
-			<div class="card border-left-info shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">Completed Jobs</div>
-							<div class="h3 mb-0">
-								{
-									completedJobs := 0
-									for _, p := range data.Plugins {
-										completedJobs += p.CompletedJobs
-									}
-									fmt.Sprintf("%d", completedJobs)
-								}
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-check-circle fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-		<div class="col-md-3 mb-4">
-			<div class="card border-left-warning shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Failed Jobs</div>
-							<div class="h3 mb-0">
-								{
-									failedJobs := 0
-									for _, p := range data.Plugins {
-										failedJobs += p.FailedJobs
-									}
-									fmt.Sprintf("%d", failedJobs)
-								}
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-exclamation-triangle fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
+<div class="row mb-4">
+<div class="col-md-3 mb-4">
+<div class="card border-left-primary shadow h-100 py-2">
+<div class="card-body">
+<div class="row no-gutters align-items-center">
+<div class="col mr-2">
+<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Connected Plugins</div>
+<div class="h3 mb-0">0</div>
+</div>
+<div class="col-auto">
+<i class="fas fa-plug fa-2x text-gray-300"></i>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 
-	<!-- Plugins List -->
-	<div class="card shadow mb-4">
-		<div class="card-header py-3">
-			<h6 class="m-0 font-weight-bold text-primary">Connected Plugins</h6>
-		</div>
-		<div class="card-body">
-			if len(data.Plugins) == 0 {
-				<div class="alert alert-info">No plugins connected</div>
-			} else {
-				<div class="table-responsive">
-					<table class="table table-hover table-sm">
-						<thead>
-							<tr>
-								<th>Plugin</th>
-								<th>Status</th>
-								<th>Active</th>
-								<th>Completed</th>
-								<th>Failed</th>
-								<th>Capabilities</th>
-								<th>Connected</th>
-								<th>Actions</th>
-							</tr>
-						</thead>
-						<tbody>
-							for _, p := range data.Plugins {
-								<tr>
-									<td>
-										<strong>{ p.Name }</strong><br/>
-										<small class="text-muted">{ p.Version }</small>
-									</td>
-									<td>
-										if p.Status == "healthy" {
-											<span class="badge bg-success">Healthy</span>
-										} else if p.Status == "degraded" {
-											<span class="badge bg-warning">Degraded</span>
-										} else {
-											<span class="badge bg-danger">{ p.Status }</span>
-										}
-									</td>
-									<td>{ fmt.Sprintf("%d", p.ActiveJobs) }</td>
-									<td>{ fmt.Sprintf("%d", p.CompletedJobs) }</td>
-									<td>{ fmt.Sprintf("%d", p.FailedJobs) }</td>
-									<td>
-										for i, cap := range p.Capabilities {
-											if i > 0 {
-												,&nbsp;
-											}
-											<code>{ cap }</code>
-										}
-									</td>
-									<td>{ p.ConnectedAt.Format("2006-01-02 15:04:05") }</td>
-									<td>
-										<a href={ templ.SafeURL("/plugins/config/" + p.ID) } class="btn btn-sm btn-primary">
-											Config
-										</a>
-									</td>
-								</tr>
-							}
-						</tbody>
-					</table>
-				</div>
-			}
-		</div>
-	</div>
-
-	<!-- Available Job Types -->
-	if len(data.JobTypes) > 0 {
-		<div class="card shadow mb-4">
-			<div class="card-header py-3">
-				<h6 class="m-0 font-weight-bold text-primary">Available Job Types</h6>
-			</div>
-			<div class="card-body">
-				<div class="row">
-					for jobType := range data.JobTypes {
-						<div class="col-md-6 col-lg-4 mb-3">
-							<div class="card h-100">
-								<div class="card-body">
-									<h5 class="card-title">{ jobType }</h5>
-									<a href={ templ.SafeURL("/plugins/jobs/" + jobType) } class="btn btn-sm btn-outline-primary">
-										View Jobs
-									</a>
-									<a href={ templ.SafeURL("/plugins/config/" + jobType) } class="btn btn-sm btn-outline-secondary">
-										Configure
-									</a>
-								</div>
-							</div>
-						</div>
-					}
-				</div>
-			</div>
-		</div>
-	}
+<div class="card shadow mb-4">
+<div class="card-header py-3">
+<h6 class="m-0 font-weight-bold text-primary">Connected Plugins</h6>
+</div>
+<div class="card-body">
+if len(data.Plugins) == 0 {
+<div class="alert alert-info">No plugins connected</div>
+} else {
+<div class="table-responsive">
+<table class="table table-hover table-sm">
+<thead>
+<tr>
+<th>Plugin</th>
+<th>Status</th>
+<th>Actions</th>
+</tr>
+</thead>
+<tbody>
+for i := 0; i < len(data.Plugins); i++ {
+<tr>
+<td>
+<strong>Plugin</strong><br/>
+<small class="text-muted">v1.0</small>
+</td>
+<td>
+<span class="badge bg-success">Healthy</span>
+</td>
+<td>
+<a href="/plugins/config/test" class="btn btn-sm btn-primary">Config</a>
+</td>
+</tr>
+}
+</tbody>
+</table>
+</div>
+}
+</div>
+</div>
 }

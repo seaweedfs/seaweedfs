@@ -26,6 +26,7 @@ type AdminHandlers struct {
 	maintenanceHandlers    *MaintenanceHandlers
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
+	pluginHandlers         *PluginHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -38,6 +39,14 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
+	
+	// Get plugin manager from admin server (may be nil)
+	var pluginMgr interface{}
+	if pm := adminServer.GetPluginManager(); pm != nil {
+		pluginMgr = pm
+	}
+	pluginHandlers := NewPluginHandlers(adminServer, pluginMgr)
+	
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		authHandlers:           authHandlers,
@@ -48,6 +57,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 		maintenanceHandlers:    maintenanceHandlers,
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
+		pluginHandlers:         pluginHandlers,
 	}
 }
 
@@ -118,6 +128,11 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
 		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
+
+		// Plugin management routes
+		protected.GET("/plugins", h.ShowPlugins)
+		protected.GET("/plugins/jobs/:jobType", h.ShowPluginJobs)
+		protected.GET("/plugins/config/:jobType", h.ShowPluginConfig)
 
 		// Maintenance system routes
 		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
@@ -249,6 +264,19 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				mqApi.POST("/topics/create", dash.RequireWriteAccess(), h.mqHandlers.CreateTopicAPI)
 				mqApi.POST("/topics/retention/update", dash.RequireWriteAccess(), h.mqHandlers.UpdateTopicRetentionAPI)
 				mqApi.POST("/retention/purge", dash.RequireWriteAccess(), h.adminServer.TriggerTopicRetentionPurgeAPI)
+			}
+
+			// Plugin API routes
+			pluginApi := api.Group("/plugin")
+			{
+				pluginApi.GET("/list", h.pluginHandlers.ListPluginsAPI)
+				pluginApi.GET("/jobs/:type", h.pluginHandlers.ListJobsAPI)
+				pluginApi.GET("/config/:type", h.pluginHandlers.GetConfigAPI)
+				pluginApi.POST("/config/:type/apply", dash.RequireWriteAccess(), h.pluginHandlers.SaveConfigAPI)
+				pluginApi.GET("/detection/history/:type", h.pluginHandlers.GetDetectionHistoryAPI)
+				pluginApi.GET("/execution/history/:type", h.pluginHandlers.GetExecutionHistoryAPI)
+				pluginApi.POST("/jobs/:type/trigger-detection", dash.RequireWriteAccess(), h.pluginHandlers.TriggerDetectionAPI)
+				pluginApi.POST("/jobs/:id/cancel", dash.RequireWriteAccess(), h.pluginHandlers.CancelJobAPI)
 			}
 		}
 	} else {
@@ -668,6 +696,61 @@ func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
 	}
 
 	return adminData
+}
+
+// ShowPlugins displays the plugins overview page
+func (h *AdminHandlers) ShowPlugins(c *gin.Context) {
+	plugins := []interface{}{}
+	jobTypes := make(map[string]interface{})
+	
+	// Get plugin manager from server
+	if pm := h.adminServer.GetPluginManager(); pm != nil {
+		// TODO: Get actual plugins from plugin manager
+	}
+	
+	component := app.PluginsOverview(app.PluginsPageData{
+		Plugins:  plugins,
+		JobTypes: jobTypes,
+	})
+	
+	htmlContent := layout.Layout(c, component)
+	htmlContent.Render(c.Request.Context(), c.Writer)
+}
+
+// ShowPluginJobs displays the job monitoring page for a specific type
+func (h *AdminHandlers) ShowPluginJobs(c *gin.Context) {
+	jobType := c.Param("jobType")
+	jobs := []interface{}{}
+	stateFilter := c.Query("state")
+	
+	component := app.PluginJobsMonitoring(app.PluginJobsPageData{
+		JobType:     jobType,
+		Jobs:        jobs,
+		StateFilter: stateFilter,
+	})
+	
+	htmlContent := layout.Layout(c, component)
+	htmlContent.Render(c.Request.Context(), c.Writer)
+}
+
+// ShowPluginConfig displays the configuration page for a job type
+func (h *AdminHandlers) ShowPluginConfig(c *gin.Context) {
+	jobType := c.Param("jobType")
+	activeTab := c.Query("tab")
+	if activeTab == "" {
+		activeTab = "config"
+	}
+	
+	component := app.PluginConfiguration(app.PluginConfigPageData{
+		JobType:             jobType,
+		Config:              app.JobTypeConfig{},
+		DetectionHistory:    []interface{}{},
+		ExecutionHistory:    []interface{}{},
+		ActiveTab:           activeTab,
+	})
+	
+	htmlContent := layout.Layout(c, component)
+	htmlContent.Render(c.Request.Context(), c.Writer)
 }
 
 // Helper functions
