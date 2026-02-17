@@ -116,6 +116,7 @@ const (
 
 	ErrTooManyRequest
 	ErrRequestBytesExceed
+	ErrServiceUnavailable
 
 	OwnershipControlsNotFoundError
 	ErrNoSuchTagSet
@@ -510,6 +511,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrRequestBytesExceed: {
 		Code:           "ErrRequestBytesExceed",
 		Description:    "Simultaneous request bytes exceed limitations",
+		HTTPStatusCode: http.StatusServiceUnavailable,
+	},
+	ErrServiceUnavailable: {
+		Code:           "ServiceUnavailable",
+		Description:    "Service Unavailable",
 		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 

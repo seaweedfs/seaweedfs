@@ -299,16 +299,6 @@ templ MaintenanceQueue(data *maintenance.MaintenanceQueueData) {
     </div>
 
     <script>
-        // Debug output to browser console
-        console.log("DEBUG: Maintenance Queue Template loaded");
-        
-        // Auto-refresh every 10 seconds
-        setInterval(function() {
-            if (!document.hidden) {
-                window.location.reload();
-            }
-        }, 10000);
-
         window.triggerScan = function() {
             console.log("triggerScan called");
             fetch('/api/maintenance/scan', {

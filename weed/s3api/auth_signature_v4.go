@@ -22,6 +22,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"net"
@@ -35,6 +36,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -78,7 +80,7 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(&bodyBuffer)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
 
 	if bodyBuffer.Len() == 0 {
 		return emptySHA256, nil
@@ -102,6 +104,24 @@ func getContentSha256Cksum(r *http.Request) string {
 
 	// X-Amz-Content-Sha256 header value is required for all non-presigned requests.
 	return emptySHA256
+}
+
+// normalizePayloadHash converts base64-encoded payload hash to hex format.
+// AWS SigV4 canonical requests always use hex-encoded SHA256.
+func normalizePayloadHash(payloadHashValue string) string {
+	// Special values and hex-encoded hashes don't need conversion
+	if payloadHashValue == emptySHA256 || payloadHashValue == unsignedPayload ||
+		payloadHashValue == streamingContentSHA256 || payloadHashValue == streamingContentSHA256Trailer ||
+		payloadHashValue == streamingUnsignedPayload || len(payloadHashValue) == 64 {
+		return payloadHashValue
+	}
+
+	// Try to decode as base64 and convert to hex
+	if decodedBytes, err := base64.StdEncoding.DecodeString(payloadHashValue); err == nil && len(decodedBytes) == 32 {
+		return hex.EncodeToString(decodedBytes)
+	}
+
+	return payloadHashValue
 }
 
 // signValues data type represents structured form of AWS Signature V4 header.
@@ -391,7 +411,7 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 	cred := &Credential{
 		AccessKey:  sessionInfo.Credentials.AccessKeyId,
 		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
-		Status:     "Active",
+		Status:     weed_iam.AccessKeyStatusActive,
 		Expiration: sessionInfo.ExpiresAt.Unix(),
 	}
 
@@ -413,6 +433,11 @@ func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, se
 		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
 		Claims:       claims,               // Populate Claims for policy variable substitution
 	}
+
+	// Restore admin privileges if the session was created by an admin
+	// if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
+	// 	identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
+	// }
 
 	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
 		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
@@ -485,6 +510,10 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		}
 	}
 
+	// Normalize payload hash to hex format for canonical request
+	// AWS SigV4 canonical requests always use hex-encoded SHA256
+	normalizedPayload := normalizePayloadHash(hashedPayload)
+
 	return &v4AuthInfo{
 		Signature:     signV4Values.Signature,
 		AccessKey:     signV4Values.Credential.accessKey,
@@ -493,7 +522,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		Region:        signV4Values.Credential.scope.region,
 		Service:       signV4Values.Credential.scope.service,
 		Scope:         signV4Values.Credential.getScope(),
-		HashedPayload: hashedPayload,
+		HashedPayload: normalizedPayload,
 		IsPresigned:   false,
 	}, s3err.ErrNone
 }
@@ -713,7 +742,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 	}
 
 	bucket := formValues.Get("bucket")
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
 	}
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -21,8 +22,8 @@ const (
 	accessKeyPrefix      = "ABIA" // Service account access keys use ABIA prefix
 
 	// Status constants
-	StatusActive   = "Active"
-	StatusInactive = "Inactive"
+	StatusActive   = iam.AccessKeyStatusActive
+	StatusInactive = iam.AccessKeyStatusInactive
 )
 
 // GetServiceAccounts returns all service accounts, optionally filtered by parent user

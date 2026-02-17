@@ -5,8 +5,6 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -46,9 +44,6 @@ const (
 const (
 	minDurationSeconds = int64(900)   // 15 minutes
 	maxDurationSeconds = int64(43200) // 12 hours
-
-	// Default account ID for federated users
-	defaultAccountId = "111122223333"
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
@@ -88,6 +83,13 @@ func NewSTSHandlers(stsService *sts.STSService, iam *IdentityAccessManagement) *
 		stsService: stsService,
 		iam:        iam,
 	}
+}
+
+func (h *STSHandlers) getAccountID() string {
+	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
+		return h.stsService.Config.AccountId
+	}
+	return defaultAccountID
 }
 
 // HandleSTSRequest is the main entry point for STS requests
@@ -163,12 +165,25 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
+	var sessionPolicyPtr *string
+	if sessionPolicyJSON != "" {
+		sessionPolicyPtr = &sessionPolicyJSON
+	}
+
 	// Build request for STS service
 	request := &sts.AssumeRoleWithWebIdentityRequest{
 		RoleArn:          roleArn,
 		WebIdentityToken: webIdentityToken,
 		RoleSessionName:  roleSessionName,
 		DurationSeconds:  durationSeconds,
+		Policy:           sessionPolicyPtr,
 	}
 
 	// Call STS service
@@ -214,17 +229,15 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 
 // handleAssumeRole handles the AssumeRole API action
 // This requires AWS Signature V4 authentication
+// Inline session policies (Policy parameter) are supported for AssumeRole,
+// AssumeRoleWithWebIdentity, and AssumeRoleWithLDAPIdentity.
 func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// Extract parameters from form
 	roleArn := r.FormValue("RoleArn")
 	roleSessionName := r.FormValue("RoleSessionName")
 
 	// Validate required parameters
-	if roleArn == "" {
-		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
-			fmt.Errorf("RoleArn is required"))
-		return
-	}
+	// RoleArn is optional to support S3-compatible clients that omit it
 
 	if roleSessionName == "" {
 		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
@@ -273,23 +286,60 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
 	// This validates that the caller has a policy allowing sts:AssumeRole on the target role
-	if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
-		glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
+	// Check authorizations
+	if roleArn != "" {
+		// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
+			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
+			return
+		}
+
+		// Validate that the target role trusts the caller (Trust Policy)
+		if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
+			glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
+			return
+		}
+	} else {
+		// If RoleArn is missing, default to the caller's identity (User Context)
+		// This allows the user to "assume" a session for themselves, inheriting their own permissions.
+		roleArn = identity.PrincipalArn
+		glog.V(2).Infof("AssumeRole: no RoleArn provided, defaulting to caller identity: %s", roleArn)
+
+		// We still enforce a global "sts:AssumeRole" check, similar to how we'd check if they can assume *any* role.
+		// However, for self-assumption, this might be implicit.
+		// For safety/consistency with previous logic, we keep the check but strictly it might not be required by AWS for GetSessionToken.
+		// But since this IS AssumeRole, let's keep it.
+		// Admin/Global check when no specific role is requested
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", ""); authErr != s3err.ErrNone {
+			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
+			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
+			return
+		}
+	}
+
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
 		return
 	}
 
-	// Validate that the target role trusts the caller (Trust Policy)
-	// This ensures the role's trust policy explicitly allows the principal to assume it
-	if err := h.iam.ValidateTrustPolicyForPrincipal(r.Context(), roleArn, identity.PrincipalArn); err != nil {
-		glog.V(2).Infof("AssumeRole: trust policy validation failed for %s to assume %s: %v", identity.Name, roleArn, err)
-		h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("trust policy denies access"))
-		return
+	// Prepare custom claims for the session
+	var modifyClaims func(claims *sts.STSSessionClaims)
+	if identity.isAdmin() {
+		modifyClaims = func(claims *sts.STSSessionClaims) {
+			if claims.RequestContext == nil {
+				claims.RequestContext = make(map[string]interface{})
+			}
+			claims.RequestContext["is_admin"] = true
+		}
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, identity.PrincipalArn, durationSeconds, nil)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -398,14 +448,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	glog.V(2).Infof("AssumeRoleWithLDAPIdentity: user %s authenticated successfully, groups=%v",
 		ldapUsername, identity.Groups)
 
-	// Verify that the identity is allowed to assume the role
-	// We create a temporary identity to represent the LDAP user for permission checking
-	// The checking logic will verify if the role's trust policy allows this principal
-	// Use configured account ID or default to "111122223333" for federated users
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
+	accountID := h.getAccountID()
 
 	ldapUserIdentity := &Identity{
 		Name: identity.UserID,
@@ -414,7 +457,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			EmailAddress: identity.Email,
 			Id:           identity.UserID,
 		},
-		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountId, identity.UserID),
+		PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.UserID),
 	}
 
 	// Verify that the identity is allowed to assume the role by checking the Trust Policy
@@ -425,12 +468,19 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		return
 	}
 
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
 	// Generate common STS components with LDAP-specific claims
 	modifyClaims := func(claims *sts.STSSessionClaims) {
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, ldapUserIdentity.PrincipalArn, durationSeconds, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -449,8 +499,8 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalArn string,
-	durationSeconds *int64, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
+func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
+	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration
 	duration := time.Hour // Default 1 hour
@@ -467,15 +517,38 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 	expiration := time.Now().Add(duration)
 
 	// Extract role name from ARN for proper response formatting
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
+	roleName := utils.ExtractRoleNameFromPrincipal(roleArn)
+	if roleName == "" {
+		// Try to extract user name if it's a user ARN (for "User Context" assumption)
+		roleName = utils.ExtractUserNameFromPrincipal(roleArn)
+	}
+
 	if roleName == "" {
 		roleName = roleArn // Fallback to full ARN if extraction fails
 	}
 
+	accountID := h.getAccountID()
+
+	// Construct AssumedRoleUser ARN - this will be used as the principal for the vended token
+	assumedRoleArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountID, roleName, roleSessionName)
+
+	// Use assumedRoleArn as RoleArn in claims if original RoleArn is empty
+	// This ensures STSSessionClaims.IsValid() passes (it requires non-empty RoleArn)
+	effectiveRoleArn := roleArn
+	if effectiveRoleArn == "" {
+		effectiveRoleArn = assumedRoleArn
+	}
+
 	// Create session claims with role information
+	// SECURITY: Use the assumedRoleArn as the principal in the token.
+	// This ensures that subsequent requests using this token are correctly identified as the assumed role.
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
-		WithRoleInfo(roleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), principalArn)
+		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+
+	if sessionPolicy != "" {
+		claims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Apply custom claims if provided (e.g., LDAP identity)
 	if modifyClaims != nil {
@@ -488,30 +561,14 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 		return STSCredentials{}, nil, fmt.Errorf("failed to generate session token: %w", err)
 	}
 
-	// Generate temporary credentials (cryptographically secure)
-	// AccessKeyId: ASIA + 16 chars hex
-	// SecretAccessKey: 40 chars base64
-	randBytes := make([]byte, 30) // Sufficient for both
-	if _, err := rand.Read(randBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	// Generate temporary credentials (deterministic based on sessionId)
+	stsCredGen := sts.NewCredentialGenerator()
+	stsCredsDet, err := stsCredGen.GenerateTemporaryCredentials(sessionId, expiration)
+	if err != nil {
+		return STSCredentials{}, nil, fmt.Errorf("failed to generate temporary credentials: %w", err)
 	}
-
-	// Generate AccessKeyId (ASIA + 16 upper-hex chars)
-	// We use 8 bytes (16 hex chars)
-	accessKeyId := "ASIA" + fmt.Sprintf("%X", randBytes[:8])
-
-	// Generate SecretAccessKey: 30 random bytes, base64-encoded to a 40-character string
-	secretBytes := make([]byte, 30)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return STSCredentials{}, nil, fmt.Errorf("failed to generate secret bytes: %w", err)
-	}
-	secretAccessKey := base64.StdEncoding.EncodeToString(secretBytes)
-
-	// Get account ID from STS config or use default
-	accountId := defaultAccountId
-	if h.stsService != nil && h.stsService.Config != nil && h.stsService.Config.AccountId != "" {
-		accountId = h.stsService.Config.AccountId
-	}
+	accessKeyId := stsCredsDet.AccessKeyId
+	secretAccessKey := stsCredsDet.SecretAccessKey
 
 	stsCreds := STSCredentials{
 		AccessKeyId:     accessKeyId,
@@ -522,7 +579,7 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName, principalA
 
 	assumedUser := &AssumedRoleUser{
 		AssumedRoleId: fmt.Sprintf("%s:%s", roleName, roleSessionName),
-		Arn:           fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", accountId, roleName, roleSessionName),
+		Arn:           assumedRoleArn,
 	}
 
 	return stsCreds, assumedUser, nil
@@ -596,13 +653,14 @@ type LDAPIdentityResult struct {
 type STSErrorCode string
 
 const (
-	STSErrAccessDenied          STSErrorCode = "AccessDenied"
-	STSErrExpiredToken          STSErrorCode = "ExpiredTokenException"
-	STSErrInvalidAction         STSErrorCode = "InvalidAction"
-	STSErrInvalidParameterValue STSErrorCode = "InvalidParameterValue"
-	STSErrMissingParameter      STSErrorCode = "MissingParameter"
-	STSErrSTSNotReady           STSErrorCode = "ServiceUnavailable"
-	STSErrInternalError         STSErrorCode = "InternalError"
+	STSErrAccessDenied            STSErrorCode = "AccessDenied"
+	STSErrExpiredToken            STSErrorCode = "ExpiredTokenException"
+	STSErrInvalidAction           STSErrorCode = "InvalidAction"
+	STSErrInvalidParameterValue   STSErrorCode = "InvalidParameterValue"
+	STSErrMalformedPolicyDocument STSErrorCode = "MalformedPolicyDocument"
+	STSErrMissingParameter        STSErrorCode = "MissingParameter"
+	STSErrSTSNotReady             STSErrorCode = "ServiceUnavailable"
+	STSErrInternalError           STSErrorCode = "InternalError"
 )
 
 // stsErrorResponses maps error codes to HTTP status and messages
@@ -610,13 +668,14 @@ var stsErrorResponses = map[STSErrorCode]struct {
 	HTTPStatusCode int
 	Message        string
 }{
-	STSErrAccessDenied:          {http.StatusForbidden, "Access Denied"},
-	STSErrExpiredToken:          {http.StatusBadRequest, "Token has expired"},
-	STSErrInvalidAction:         {http.StatusBadRequest, "Invalid action"},
-	STSErrInvalidParameterValue: {http.StatusBadRequest, "Invalid parameter value"},
-	STSErrMissingParameter:      {http.StatusBadRequest, "Missing required parameter"},
-	STSErrSTSNotReady:           {http.StatusServiceUnavailable, "STS service not ready"},
-	STSErrInternalError:         {http.StatusInternalServerError, "Internal error"},
+	STSErrAccessDenied:            {http.StatusForbidden, "Access Denied"},
+	STSErrExpiredToken:            {http.StatusBadRequest, "Token has expired"},
+	STSErrInvalidAction:           {http.StatusBadRequest, "Invalid action"},
+	STSErrInvalidParameterValue:   {http.StatusBadRequest, "Invalid parameter value"},
+	STSErrMalformedPolicyDocument: {http.StatusBadRequest, "Malformed policy document"},
+	STSErrMissingParameter:        {http.StatusBadRequest, "Missing required parameter"},
+	STSErrSTSNotReady:             {http.StatusServiceUnavailable, "STS service not ready"},
+	STSErrInternalError:           {http.StatusInternalServerError, "Internal error"},
 }
 
 // STSErrorResponse is the XML error response format

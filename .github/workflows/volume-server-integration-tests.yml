@@ -1,0 +1,122 @@
+name: "Volume Server Integration Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'test/volume_server/**'
+      - 'weed/server/**'
+      - 'weed/storage/**'
+      - 'weed/pb/volume_server.proto'
+      - 'weed/pb/volume_server_pb/**'
+      - '.github/workflows/volume-server-integration-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'test/volume_server/**'
+      - 'weed/server/**'
+      - 'weed/storage/**'
+      - 'weed/pb/volume_server.proto'
+      - 'weed/pb/volume_server_pb/**'
+      - '.github/workflows/volume-server-integration-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/volume-server-integration-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24'
+  TEST_TIMEOUT: '30m'
+
+jobs:
+  volume-server-integration-tests:
+    name: Volume Server Integration Tests (${{ matrix.test-type }} - Shard ${{ matrix.shard }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        test-type: [grpc, http]
+        shard: [1, 2, 3]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build SeaweedFS binary
+        run: |
+          cd weed
+          go build -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Run volume server integration tests
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+        run: |
+          if [ "${{ matrix.test-type }}" == "grpc" ]; then
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-H]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[I-S]"
+            else
+              TEST_PATTERN="^Test[T-Z]"
+            fi
+          else
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-G]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[H-R]"
+            else
+              TEST_PATTERN="^Test[S-Z]"
+            fi
+          fi
+          echo "Running volume server integration tests for ${{ matrix.test-type }} (Shard ${{ matrix.shard }}, pattern: ${TEST_PATTERN})..."
+          go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/volume-server-it-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_volume_server_it_*" -print -exec cp -r {} /tmp/volume-server-it-logs/ \; || true
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: volume-server-integration-test-logs
+          path: /tmp/volume-server-it-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Test summary
+        if: always()
+        run: |
+          if [ "${{ matrix.test-type }}" == "grpc" ]; then
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-H]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[I-S]"
+            else
+              TEST_PATTERN="^Test[T-Z]"
+            fi
+          else
+            if [ "${{ matrix.shard }}" == "1" ]; then
+              TEST_PATTERN="^Test[A-G]"
+            elif [ "${{ matrix.shard }}" == "2" ]; then
+              TEST_PATTERN="^Test[H-R]"
+            else
+              TEST_PATTERN="^Test[S-Z]"
+            fi
+          fi
+          echo "## Volume Server Integration Test Summary (${{ matrix.test-type }} - Shard ${{ matrix.shard }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server/${{ matrix.test-type }} (Pattern: ${TEST_PATTERN})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=${{ env.TEST_TIMEOUT }} ./test/volume_server/${{ matrix.test-type }}/... -run \"${TEST_PATTERN}\"" >> "$GITHUB_STEP_SUMMARY"

@@ -34,7 +34,7 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *Iam
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
 		s3err.WriteXMLResponse(w, r, http.StatusNotFound, errorResp)
-	case iam.ErrCodeMalformedPolicyDocumentException:
+	case iam.ErrCodeMalformedPolicyDocumentException, iam.ErrCodeInvalidInputException:
 		s3err.WriteXMLResponse(w, r, http.StatusBadRequest, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		// We do not want to expose internal server error to the client

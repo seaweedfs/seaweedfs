@@ -332,3 +332,10 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 func (ev *EcVolume) IsTimeToDestroy() bool {
 	return ev.ExpireAtSec > 0 && time.Now().Unix() > (int64(ev.ExpireAtSec)+destroyDelaySeconds)
 }
+
+func (ev *EcVolume) WalkIndex(processNeedleFn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
+	if ev.ecxFile == nil {
+		return fmt.Errorf("no ECX file associated with EC volume %v", ev.VolumeId)
+	}
+	return idx.WalkIndexFile(ev.ecxFile, 0, processNeedleFn)
+}

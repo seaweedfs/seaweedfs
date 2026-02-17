@@ -323,3 +323,12 @@ Create the name of the service account to use
 {{- define "seaweedfs.serviceAccountName" -}}
 {{- .Values.global.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}
+
+{{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35 */}}
+{{- define "seaweedfs.trafficDistribution" -}}
+{{- if .Values.s3.trafficDistribution -}}
+{{- and (eq .Values.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.s3.trafficDistribution -}}
+{{- else if .Values.filer.s3.trafficDistribution -}}
+{{- and (eq .Values.filer.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.filer.s3.trafficDistribution -}}
+{{- end -}}
+{{- end -}}

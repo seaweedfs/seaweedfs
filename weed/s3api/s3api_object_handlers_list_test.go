@@ -55,6 +55,12 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 		}
 		entries = filtered
 	}
+
+	// Respect Limit
+	if in.Limit > 0 && int(in.Limit) < len(entries) {
+		entries = entries[:in.Limit]
+	}
+
 	return &testListEntriesStream{entries: entries}, nil
 }
 
@@ -146,6 +152,26 @@ func Test_normalizePrefixMarker(t *testing.T) {
 			assert.Equalf(t, tt.wantAlignedMarker, gotAlignedMarker, "normalizePrefixMarker(%v, %v)", tt.args.prefix, tt.args.marker)
 		})
 	}
+}
+
+func TestBuildTruncatedNextMarker(t *testing.T) {
+	t.Run("does not duplicate prefix segment in next continuation token", func(t *testing.T) {
+		prefix := "export_2026-02-10_17-00-23"
+		nextMarker := "export_2026-02-10_17-00-23/4156000e.jpg"
+
+		actual := buildTruncatedNextMarker("xemu", prefix, nextMarker, false, "")
+		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/4156000e.jpg", actual)
+	})
+
+	t.Run("keeps common prefix marker trailing slash", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("xemu", "export_2026-02-10_17-00-23", "", true, "nested")
+		assert.Equal(t, "xemu/export_2026-02-10_17-00-23/nested/", actual)
+	})
+
+	t.Run("includes prefix for common prefix marker when request dir is empty", func(t *testing.T) {
+		actual := buildTruncatedNextMarker("", "foo", "", true, "bar")
+		assert.Equal(t, "foo/bar/", actual)
+	})
 }
 
 func TestAllowUnorderedParameterValidation(t *testing.T) {
@@ -390,8 +416,8 @@ func TestObjectLevelListPermissions(t *testing.T) {
 			},
 		}
 
-		// Test cases for canDo method
-		// Note: canDo concatenates bucket + objectKey, so "test-bucket" + "/allowed-prefix/file.txt" = "test-bucket/allowed-prefix/file.txt"
+		// Test cases for CanDo method
+		// Note: CanDo concatenates bucket + objectKey, so "test-bucket" + "/allowed-prefix/file.txt" = "test-bucket/allowed-prefix/file.txt"
 		testCases := []struct {
 			name        string
 			action      Action
@@ -444,7 +470,7 @@ func TestObjectLevelListPermissions(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				result := identity.CanDo(tc.action, tc.bucket, tc.object)
 				assert.Equal(t, tc.shouldAllow, result, tc.description)
 			})
 		}
@@ -469,12 +495,12 @@ func TestObjectLevelListPermissions(t *testing.T) {
 		}
 
 		for _, tc := range testCases {
-			result := identity.canDo("List", "test-bucket", tc.object)
+			result := identity.CanDo("List", "test-bucket", tc.object)
 			assert.True(t, result, "Bucket-level permission should allow access to %s", tc.object)
 		}
 
 		// Should deny access to different buckets
-		result := identity.canDo("List", "other-bucket", "/file.txt")
+		result := identity.CanDo("List", "other-bucket", "/file.txt")
 		assert.False(t, result, "Should deny access to objects in different buckets")
 	})
 
@@ -553,7 +579,7 @@ func TestObjectLevelListPermissions(t *testing.T) {
 
 		// After our middleware fix, it should check permission for the prefix
 		// Simulate: action=ACTION_LIST && object=="" && prefix="/txzl/" → object="/txzl/"
-		result := identity.canDo("List", "bdaai-shared-bucket", "/txzl/")
+		result := identity.CanDo("List", "bdaai-shared-bucket", "/txzl/")
 
 		// This should be allowed because:
 		// target = "List:bdaai-shared-bucket/txzl/"
@@ -562,15 +588,95 @@ func TestObjectLevelListPermissions(t *testing.T) {
 		assert.True(t, result, "User with 'List:bdaai-shared-bucket/txzl/*' should be able to list with prefix txzl/")
 
 		// Test that they can't list with a different prefix
-		result = identity.canDo("List", "bdaai-shared-bucket", "/other-prefix/")
+		result = identity.CanDo("List", "bdaai-shared-bucket", "/other-prefix/")
 		assert.False(t, result, "User should not be able to list with a different prefix")
 
 		// Test that they can't list a different bucket
-		result = identity.canDo("List", "other-bucket", "/txzl/")
+		result = identity.CanDo("List", "other-bucket", "/txzl/")
 		assert.False(t, result, "User should not be able to list a different bucket")
 	})
 
 	t.Log("This test validates the fix for issue #7039")
 	t.Log("Object-level List permissions like 'List:bucket/prefix/*' now work correctly")
 	t.Log("Middleware properly extracts prefix for permission validation")
+}
+
+func TestListObjectsV2_Regression(t *testing.T) {
+	// Reproduce issue: ListObjectsV2 without delimiter returns 0 objects even though files exist
+	// Structure: s3://reports/reports/[timestamp]/file
+	// Request: ListObjectsV2(Bucket='reports', Prefix='reports/')
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/reports": {
+				{Name: "reports", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports": {
+				{Name: "01771152617961894200", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports/01771152617961894200": {
+				{Name: "file1", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// s3.list_objects_v2(Bucket='reports', Prefix='reports/')
+	// normalized: requestDir="", prefix="reports"
+	// doListFilerEntries called with dir="/buckets/reports", prefix="reports", delimiter=""
+
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true} // set based on "reports/" original prefix
+	var results []string
+
+	// Call doListFilerEntries directly to unit test listing logic in isolation,
+	// simulating parameters passed from listFilerEntries for prefix "reports/".
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	assert.Contains(t, results, "file1", "Should return the nested file")
+}
+
+func TestListObjectsV2_Regression_Sorting(t *testing.T) {
+	// Verify that listing logic correctly finds the target directory even when
+	// other entries with a similar prefix are returned first by the filer,
+	// a scenario where the removed Limit=1 optimization would fail.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/reports": {
+				{Name: "reports-archive", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "reports", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports": {
+				{Name: "01771152617961894200", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/reports/reports/01771152617961894200": {
+				{Name: "file1", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// This cursor setup mimics what happens in listFilerEntries
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	// Without the fix, Limit=1 would cause the lister to stop after "reports-archive",
+	// missing the intended "reports" directory.
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/reports", "reports", cursor, "", "", false, "reports", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	// With Limit=1, this fails because it only sees "reports-archive"
+	// With fix, it sees both and processes "reports"
+	assert.Contains(t, results, "file1", "Should return the nested file even if 'reports' directory is not the first match")
 }

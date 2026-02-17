@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"hash"
 	"io"
@@ -112,7 +113,9 @@ uploadLoop:
 		// Only break if we've already read some data (chunkOffset > 0) or if this is truly EOF
 		if dataSize == 0 {
 			if chunkOffset == 0 {
-				glog.Warningf("UploadReaderInChunks: received 0 bytes on first read - creating empty file")
+				// Empty objects are valid for S3/HTTP uploads (e.g. zero-byte files).
+				// Keep this at verbose level to avoid warning noise in normal operation.
+				glog.V(4).Infof("UploadReaderInChunks: received 0 bytes on first read - creating empty file")
 			}
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
@@ -171,6 +174,10 @@ uploadLoop:
 				jwt = assignResult.Auth
 			}
 
+			// Calculate MD5 for the chunk
+			chunkMd5 := md5.Sum(buf.Bytes())
+			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
+
 			uploadOption := &UploadOption{
 				UploadUrl:         uploadUrl,
 				Cipher:            opt.Cipher,
@@ -178,6 +185,7 @@ uploadLoop:
 				MimeType:          opt.MimeType,
 				PairMap:           nil,
 				Jwt:               jwt,
+				Md5:               chunkMd5B64,
 			}
 
 			var uploadResult *UploadResult
@@ -225,7 +233,6 @@ uploadLoop:
 			}
 			fileChunksLock.Lock()
 			fileChunks = append(fileChunks, chunk)
-			glog.V(4).Infof("uploaded chunk %d to %s [%d,%d)", len(fileChunks), chunk.FileId, offset, offset+int64(chunk.Size))
 			fileChunksLock.Unlock()
 
 		}(chunkOffset, bytesBuffer)

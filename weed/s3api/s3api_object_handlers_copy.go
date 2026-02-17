@@ -46,6 +46,16 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
+	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket {
+		if err := s3a.validateTableBucketObjectPath(srcBucket, srcObject); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	}
 
 	// Validate copy source and destination
 	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
@@ -65,7 +75,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
 	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
-		fullPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject))
+		fullPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject))
 		dir, name := fullPath.DirAndName()
 		entry, err := s3a.getEntry(dir, name)
 		if err != nil || entry.IsDirectory {
@@ -116,7 +126,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	} else if srcVersioningState == s3_constants.VersioningSuspended {
 		// Versioning suspended - current object is stored as regular file ("null" version)
 		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
 		if err != nil {
@@ -126,7 +136,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	} else {
 		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
 	}
@@ -160,8 +170,8 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	var sourceMd5 []byte
 	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
 		sourceMd5 = append([]byte(nil), entry.Attributes.Md5...)
-		srcPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject)
-		dstPath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)
+		srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
+		dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
 		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
 		s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
 		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
@@ -310,7 +320,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Calculate ETag for versioning
 		filerEntry := &filer.Entry{
-			FullPath: util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject)),
+			FullPath: util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)),
 			Attr: filer.Attr{
 				FileSize: dstEntry.Attributes.FileSize,
 				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
@@ -328,7 +338,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// Create version file
 		versionFileName := s3a.getVersionFileName(dstVersionId)
 		versionObjectPath := dstObject + ".versions/" + versionFileName
-		bucketDir := s3a.option.BucketsPath + "/" + dstBucket
+		bucketDir := s3a.bucketDir(dstBucket)
 
 		if err := s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			entry.Attributes = dstEntry.Attributes
@@ -354,7 +364,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		// Remove any versioning-related metadata from source that shouldn't carry over
 		cleanupVersioningMetadata(dstEntry.Extended)
 
-		dstPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, dstBucket, dstObject))
+		dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject))
 		dstDir, dstName := dstPath.DirAndName()
 
 		// Check if destination exists and remove it first (S3 copy overwrites)
@@ -523,7 +533,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	} else if srcVersioningState == s3_constants.VersioningSuspended {
 		// Versioning suspended - current object is stored as regular file ("null" version)
 		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
 		if err != nil {
@@ -533,7 +543,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		}
 	} else {
 		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
 	}

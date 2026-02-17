@@ -3,7 +3,6 @@ name: "docker: build dev containers"
 on:
   push:
     branches: [ master ]
-  workflow_dispatch: {}
 
 permissions:
   contents: read

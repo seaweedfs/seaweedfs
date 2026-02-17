@@ -18,7 +18,7 @@ const (
 	DefaultMaxCountCheck  = 1000
 	DefaultCacheExpiry    = 5 * time.Minute
 	DefaultQueueMaxSize   = 1000
-	DefaultQueueMaxAge    = 10 * time.Minute
+	DefaultQueueMaxAge    = 5 * time.Second
 	DefaultProcessorSleep = 10 * time.Second // How often to check queue
 )
 
@@ -32,10 +32,15 @@ type FilerOperations interface {
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
 	roughCount  int       // Cached rough count (up to maxCountCheck)
-	isImplicit  *bool     // Tri-state boolean: nil (unknown), true (implicit), false (explicit)
 	lastAddTime time.Time // Last time an item was added
 	lastDelTime time.Time // Last time an item was deleted
 	lastCheck   time.Time // Last time we checked the actual count
+}
+
+type bucketCleanupPolicyState struct {
+	autoRemove bool
+	attrValue  string
+	lastCheck  time.Time
 }
 
 // EmptyFolderCleaner handles asynchronous cleanup of empty folders
@@ -46,8 +51,9 @@ type EmptyFolderCleaner struct {
 	host     pb.ServerAddress
 
 	// Folder state tracking
-	mu           sync.RWMutex
-	folderCounts map[string]*folderState // Rough count cache
+	mu                    sync.RWMutex
+	folderCounts          map[string]*folderState              // Rough count cache
+	bucketCleanupPolicies map[string]*bucketCleanupPolicyState // bucket path -> cleanup policy cache
 
 	// Cleanup queue (thread-safe, has its own lock)
 	cleanupQueue *CleanupQueue
@@ -66,17 +72,18 @@ type EmptyFolderCleaner struct {
 // NewEmptyFolderCleaner creates a new EmptyFolderCleaner
 func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string) *EmptyFolderCleaner {
 	efc := &EmptyFolderCleaner{
-		filer:          filer,
-		lockRing:       lockRing,
-		host:           host,
-		folderCounts:   make(map[string]*folderState),
-		cleanupQueue:   NewCleanupQueue(DefaultQueueMaxSize, DefaultQueueMaxAge),
-		maxCountCheck:  DefaultMaxCountCheck,
-		cacheExpiry:    DefaultCacheExpiry,
-		processorSleep: DefaultProcessorSleep,
-		bucketPath:     bucketPath,
-		enabled:        true,
-		stopCh:         make(chan struct{}),
+		filer:                 filer,
+		lockRing:              lockRing,
+		host:                  host,
+		folderCounts:          make(map[string]*folderState),
+		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
+		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, DefaultQueueMaxAge),
+		maxCountCheck:         DefaultMaxCountCheck,
+		cacheExpiry:           DefaultCacheExpiry,
+		processorSleep:        DefaultProcessorSleep,
+		bucketPath:            bucketPath,
+		enabled:               true,
+		stopCh:                make(chan struct{}),
 	}
 	go efc.cacheEvictionLoop()
 	go efc.cleanupProcessor()
@@ -162,8 +169,8 @@ func (efc *EmptyFolderCleaner) OnDeleteEvent(directory string, entryName string,
 	}
 
 	// Add to cleanup queue with event time (handles out-of-order events)
-	if efc.cleanupQueue.Add(directory, eventTime) {
-		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup", directory)
+	if efc.cleanupQueue.Add(directory, entryName, eventTime) {
+		glog.V(3).Infof("EmptyFolderCleaner: queued %s for cleanup (triggered by %s)", directory, entryName)
 	}
 }
 
@@ -214,6 +221,10 @@ func (efc *EmptyFolderCleaner) cleanupProcessor() {
 func (efc *EmptyFolderCleaner) processCleanupQueue() {
 	// Check if we should process
 	if !efc.cleanupQueue.ShouldProcess() {
+		if efc.cleanupQueue.Len() > 0 {
+			glog.Infof("EmptyFolderCleaner: pending queue not processed yet (len=%d, oldest_age=%v, max_size=%d, max_age=%v)",
+				efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge(), efc.cleanupQueue.maxSize, efc.cleanupQueue.maxAge)
+		}
 		return
 	}
 
@@ -228,35 +239,30 @@ func (efc *EmptyFolderCleaner) processCleanupQueue() {
 		}
 
 		// Pop the oldest item
-		folder, ok := efc.cleanupQueue.Pop()
+		folder, triggeredBy, ok := efc.cleanupQueue.Pop()
 		if !ok {
 			break
 		}
 
 		// Execute cleanup for this folder
-		efc.executeCleanup(folder)
-
-		// If queue is no longer full and oldest item is not old enough, stop processing
-		if !efc.cleanupQueue.ShouldProcess() {
-			break
-		}
+		efc.executeCleanup(folder, triggeredBy)
 	}
 }
 
 // executeCleanup performs the actual cleanup of an empty folder
-func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
+func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string) {
 	efc.mu.Lock()
 
 	// Quick check: if we have cached count and it's > 0, skip
 	if state, exists := efc.folderCounts[folder]; exists {
 		if state.roughCount > 0 {
-			glog.V(3).Infof("EmptyFolderCleaner: skipping %s, cached count=%d", folder, state.roughCount)
+			glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), cached count=%d", folder, triggeredBy, state.roughCount)
 			efc.mu.Unlock()
 			return
 		}
 		// If there was an add after our delete, skip
 		if !state.lastAddTime.IsZero() && state.lastAddTime.After(state.lastDelTime) {
-			glog.V(3).Infof("EmptyFolderCleaner: skipping %s, add happened after delete", folder)
+			glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), add happened after delete", folder, triggeredBy)
 			efc.mu.Unlock()
 			return
 		}
@@ -265,47 +271,23 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 
 	// Re-check ownership (topology might have changed)
 	if !efc.ownsFolder(folder) {
-		glog.V(3).Infof("EmptyFolderCleaner: no longer owner of %s, skipping", folder)
+		glog.V(3).Infof("EmptyFolderCleaner: no longer owner of %s (triggered by %s), skipping", folder, triggeredBy)
 		return
 	}
 
-	// Check for explicit implicit_dir attribute
-	// First check cache
 	ctx := context.Background()
-	efc.mu.RLock()
-	var cachedImplicit *bool
-	if state, exists := efc.folderCounts[folder]; exists {
-		cachedImplicit = state.isImplicit
-	}
-	efc.mu.RUnlock()
-
-	var isImplicit bool
-	if cachedImplicit != nil {
-		isImplicit = *cachedImplicit
-	} else {
-		// Not cached, check filer
-		attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
-		if err != nil {
-			if err == filer_pb.ErrNotFound {
-				return
-			}
-			glog.V(2).Infof("EmptyFolderCleaner: error getting attributes for %s: %v", folder, err)
+	bucketPath, autoRemove, source, attrValue, err := efc.getBucketCleanupPolicy(ctx, folder)
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
 			return
 		}
-
-		isImplicit = attrs != nil && string(attrs[s3_constants.ExtS3ImplicitDir]) == "true"
-
-		// Update cache
-		efc.mu.Lock()
-		if _, exists := efc.folderCounts[folder]; !exists {
-			efc.folderCounts[folder] = &folderState{}
-		}
-		efc.folderCounts[folder].isImplicit = &isImplicit
-		efc.mu.Unlock()
+		glog.V(2).Infof("EmptyFolderCleaner: failed to load bucket cleanup policy for folder %s (triggered by %s): %v", folder, triggeredBy, err)
+		return
 	}
 
-	if !isImplicit {
-		glog.V(4).Infof("EmptyFolderCleaner: folder %s is not marked as implicit, skipping", folder)
+	if !autoRemove {
+		glog.V(3).Infof("EmptyFolderCleaner: skipping folder %s (triggered by %s), bucket %s auto-remove-empty-folders disabled (source=%s attr=%s)",
+			folder, triggeredBy, bucketPath, source, attrValue)
 		return
 	}
 
@@ -326,14 +308,14 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string) {
 	efc.mu.Unlock()
 
 	if count > 0 {
-		glog.V(3).Infof("EmptyFolderCleaner: folder %s has %d items, not empty", folder, count)
+		glog.Infof("EmptyFolderCleaner: folder %s (triggered by %s) has %d items, not empty", folder, triggeredBy, count)
 		return
 	}
 
 	// Delete the empty folder
-	glog.V(2).Infof("EmptyFolderCleaner: deleting empty folder %s", folder)
+	glog.Infof("EmptyFolderCleaner: deleting empty folder %s (triggered by %s)", folder, triggeredBy)
 	if err := efc.deleteFolder(ctx, folder); err != nil {
-		glog.V(2).Infof("EmptyFolderCleaner: failed to delete empty folder %s: %v", folder, err)
+		glog.V(2).Infof("EmptyFolderCleaner: failed to delete empty folder %s (triggered by %s): %v", folder, triggeredBy, err)
 		return
 	}
 
@@ -355,6 +337,60 @@ func (efc *EmptyFolderCleaner) countItems(ctx context.Context, folder string) (i
 // deleteFolder deletes an empty folder
 func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) error {
 	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, 0)
+}
+
+func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {
+	bucketPath, ok := util.ExtractBucketPath(efc.bucketPath, folder, true)
+	if !ok {
+		return "", true, "default", "<not_bucket_path>", nil
+	}
+
+	now := time.Now()
+
+	efc.mu.RLock()
+	if state, found := efc.bucketCleanupPolicies[bucketPath]; found && now.Sub(state.lastCheck) <= efc.cacheExpiry {
+		efc.mu.RUnlock()
+		return bucketPath, state.autoRemove, "cache", state.attrValue, nil
+	}
+	efc.mu.RUnlock()
+
+	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(bucketPath))
+	if err != nil {
+		return "", true, "", "", err
+	}
+
+	autoRemove, attrValue = autoRemoveEmptyFoldersEnabled(attrs)
+
+	efc.mu.Lock()
+	if efc.bucketCleanupPolicies == nil {
+		efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
+	}
+	efc.bucketCleanupPolicies[bucketPath] = &bucketCleanupPolicyState{
+		autoRemove: autoRemove,
+		attrValue:  attrValue,
+		lastCheck:  now,
+	}
+	efc.mu.Unlock()
+
+	return bucketPath, autoRemove, "filer", attrValue, nil
+}
+
+func autoRemoveEmptyFoldersEnabled(attrs map[string][]byte) (bool, string) {
+	if attrs == nil {
+		return true, "<no_attrs>"
+	}
+
+	value, found := attrs[s3_constants.ExtAllowEmptyFolders]
+	if !found {
+		return true, "<missing>"
+	}
+
+	text := strings.TrimSpace(string(value))
+	if text == "" {
+		return true, "<empty>"
+	}
+
+	return !strings.EqualFold(text, "true"), text
 }
 
 // isUnderPath checks if child is under parent path
@@ -445,6 +481,12 @@ func (efc *EmptyFolderCleaner) evictStaleCacheEntries() {
 		}
 	}
 
+	for bucketPath, state := range efc.bucketCleanupPolicies {
+		if now.Sub(state.lastCheck) > efc.cacheExpiry {
+			delete(efc.bucketCleanupPolicies, bucketPath)
+		}
+	}
+
 	if expiredCount > 0 {
 		glog.V(3).Infof("EmptyFolderCleaner: evicted %d stale cache entries", expiredCount)
 	}
@@ -460,6 +502,7 @@ func (efc *EmptyFolderCleaner) Stop() {
 	efc.enabled = false
 	efc.cleanupQueue.Clear()
 	efc.folderCounts = make(map[string]*folderState) // Clear cache on stop
+	efc.bucketCleanupPolicies = make(map[string]*bucketCleanupPolicyState)
 }
 
 // GetPendingCleanupCount returns the number of pending cleanup tasks (for testing)

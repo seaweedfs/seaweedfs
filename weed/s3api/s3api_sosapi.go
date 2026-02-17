@@ -153,7 +153,7 @@ func (s3a *S3ApiServer) getCapacityInfo(ctx context.Context, bucket string) (cap
 	var quota int64
 	// getEntry communicates with filer, so errors here might mean filer connectivity issues or bucket not found
 	// If bucket not found, we probably shouldn't be here (checked in handler), but safe to ignore
-	if entry, getErr := s3a.getEntry(s3a.option.BucketsPath, bucket); getErr == nil && entry != nil {
+	if entry, getErr := s3a.getBucketEntry(bucket); getErr == nil && entry != nil {
 		quota = entry.Quota
 	}
 

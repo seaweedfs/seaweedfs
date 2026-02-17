@@ -1,6 +1,7 @@
 package s3tables
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +64,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Check if namespace exists
-	namespacePath := getNamespacePath(bucketName, namespaceName)
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
 	var namespaceMetadata namespaceMetadata
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, namespacePath, ExtendedKeyMetadata)
@@ -87,7 +88,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Authorize table creation using policy framework (namespace + bucket policies)
 	accountID := h.getAccountID(r)
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	namespacePolicy := ""
 	bucketPolicy := ""
 	bucketTags := map[string]string{}
@@ -144,6 +145,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		TagKeys:         mapKeys(req.Tags),
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("CreateTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -153,6 +155,7 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		TagKeys:         mapKeys(req.Tags),
 		TableBucketTags: bucketTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 
 	if !nsAllowed && !bucketAllowed {
@@ -160,18 +163,30 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return ErrAccessDenied
 	}
 
-	tablePath := getTablePath(bucketName, namespaceName, tableName)
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
 	// Check if table already exists
+	var existingMetadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
-		return err
+		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if unmarshalErr := json.Unmarshal(data, &existingMetadata); unmarshalErr != nil {
+			return fmt.Errorf("failed to parse existing table metadata: %w", unmarshalErr)
+		}
+		return nil
 	})
 
 	if err == nil {
-		h.writeError(w, http.StatusConflict, ErrCodeTableAlreadyExists, fmt.Sprintf("table %s already exists", tableName))
-		return fmt.Errorf("table already exists")
-	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		tableARN := h.generateTableARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
+		h.writeJSON(w, http.StatusOK, &CreateTableResponse{
+			TableARN:         tableARN,
+			VersionToken:     existingMetadata.VersionToken,
+			MetadataLocation: existingMetadata.MetadataLocation,
+		})
+		return nil
+	} else if !errors.Is(err, filer_pb.ErrNotFound) && !errors.Is(err, ErrAttributeNotFound) {
 		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, fmt.Sprintf("failed to check table: %v", err))
 		return err
 	}
@@ -181,14 +196,16 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	versionToken := generateVersionToken()
 
 	metadata := &tableMetadataInternal{
-		Name:           tableName,
-		Namespace:      namespaceName,
-		Format:         req.Format,
-		CreatedAt:      now,
-		ModifiedAt:     now,
-		OwnerAccountID: namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
-		VersionToken:   versionToken,
-		Metadata:       req.Metadata,
+		Name:             tableName,
+		Namespace:        namespaceName,
+		Format:           req.Format,
+		CreatedAt:        now,
+		ModifiedAt:       now,
+		OwnerAccountID:   namespaceMetadata.OwnerAccountID, // Inherit namespace owner for consistency
+		VersionToken:     versionToken,
+		MetadataVersion:  max(req.MetadataVersion, 1),
+		MetadataLocation: req.MetadataLocation,
+		Metadata:         req.Metadata,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -198,14 +215,14 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// Create table directory
-		if err := h.createDirectory(r.Context(), client, tablePath); err != nil {
+		// Ensure table directory exists (may already be created by object storage clients)
+		if err := h.ensureDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
 
 		// Create data subdirectory for Iceberg files
 		dataPath := tablePath + "/data"
-		if err := h.createDirectory(r.Context(), client, dataPath); err != nil {
+		if err := h.ensureDirectory(r.Context(), client, dataPath); err != nil {
 			return err
 		}
 
@@ -223,6 +240,10 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}
+		}
+
+		if err := h.updateTableLocationMapping(r.Context(), client, "", req.MetadataLocation, tablePath); err != nil {
+			glog.V(1).Infof("failed to update table location mapping for %s: %v", req.MetadataLocation, err)
 		}
 
 		return nil
@@ -284,7 +305,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		return fmt.Errorf("missing required parameters")
 	}
 
-	tablePath := getTablePath(bucketName, namespace, tableName)
+	tablePath := GetTablePath(bucketName, namespace, tableName)
 
 	var metadata tableMetadataInternal
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -309,7 +330,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 
 	// Authorize access to the table using policy framework
 	accountID := h.getAccountID(r)
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	tablePolicy := ""
 	bucketPolicy := ""
 	bucketTags := map[string]string{}
@@ -371,6 +392,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("GetTable", accountID, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -379,6 +401,7 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 
 	if !tableAllowed && !bucketAllowed {
@@ -389,13 +412,15 @@ func (h *S3TablesHandler) handleGetTable(w http.ResponseWriter, r *http.Request,
 	resp := &GetTableResponse{
 		Name:             metadata.Name,
 		TableARN:         tableARN,
-		Namespace:        []string{metadata.Namespace},
+		Namespace:        expandNamespace(metadata.Namespace),
 		Format:           metadata.Format,
 		CreatedAt:        metadata.CreatedAt,
 		ModifiedAt:       metadata.ModifiedAt,
 		OwnerAccountID:   metadata.OwnerAccountID,
 		MetadataLocation: metadata.MetadataLocation,
+		MetadataVersion:  metadata.MetadataVersion,
 		VersionToken:     metadata.VersionToken,
+		Metadata:         metadata.Metadata,
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -453,8 +478,8 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 		if len(req.Namespace) > 0 {
 			// Namespace has already been validated above
-			namespacePath := getNamespacePath(bucketName, namespaceName)
-			bucketPath := getTableBucketPath(bucketName)
+			namespacePath := GetNamespacePath(bucketName, namespaceName)
+			bucketPath := GetTableBucketPath(bucketName)
 			var nsMeta namespaceMetadata
 			var bucketMeta tableBucketMetadata
 			var namespacePolicy, bucketPolicy string
@@ -506,12 +531,14 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			})
 			bucketAllowed := CheckPermissionWithContext("ListTables", accountID, bucketMeta.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 				TableBucketName: bucketName,
 				Namespace:       namespaceName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			})
 			if !nsAllowed && !bucketAllowed {
 				return ErrAccessDenied
@@ -520,7 +547,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
 		} else {
 			// List tables across all namespaces in bucket
-			bucketPath := getTableBucketPath(bucketName)
+			bucketPath := GetTableBucketPath(bucketName)
 			var bucketMeta tableBucketMetadata
 			var bucketPolicy string
 			bucketTags := map[string]string{}
@@ -553,6 +580,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				TableBucketName: bucketName,
 				TableBucketTags: bucketTags,
 				IdentityActions: identityActions,
+				DefaultAllow:    h.defaultAllow,
 			}) {
 				return ErrAccessDenied
 			}
@@ -587,7 +615,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 // listTablesInNamespaceWithClient lists tables in a specific namespace
 func (h *S3TablesHandler) listTablesInNamespaceWithClient(r *http.Request, client filer_pb.SeaweedFilerClient, bucketName, namespaceName, prefix, continuationToken string, maxTables int) ([]TableSummary, string, error) {
-	namespacePath := getNamespacePath(bucketName, namespaceName)
+	namespacePath := GetNamespacePath(bucketName, namespaceName)
 	return h.listTablesWithClient(r, client, namespacePath, bucketName, namespaceName, prefix, continuationToken, maxTables)
 }
 
@@ -662,7 +690,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 			tables = append(tables, TableSummary{
 				Name:       entry.Entry.Name,
 				TableARN:   tableARN,
-				Namespace:  []string{namespaceName},
+				Namespace:  expandNamespace(namespaceName),
 				CreatedAt:  metadata.CreatedAt,
 				ModifiedAt: metadata.ModifiedAt,
 			})
@@ -684,7 +712,7 @@ func (h *S3TablesHandler) listTablesWithClient(r *http.Request, client filer_pb.
 }
 
 func (h *S3TablesHandler) listTablesInAllNamespaces(r *http.Request, client filer_pb.SeaweedFilerClient, bucketName, prefix, continuationToken string, maxTables int) ([]TableSummary, string, error) {
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 	ctx := r.Context()
 
 	var continuationNamespace string
@@ -800,7 +828,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		return err
 	}
 
-	tablePath := getTablePath(bucketName, namespaceName, tableName)
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
 
 	// Check if table exists and enforce VersionToken if provided
 	var metadata tableMetadataInternal
@@ -842,7 +870,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 			return err
 		}
 
-		bucketPath := getTableBucketPath(bucketName)
+		bucketPath := GetTableBucketPath(bucketName)
 		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err == nil {
 			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
@@ -889,6 +917,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	bucketAllowed := CheckPermissionWithContext("DeleteTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
@@ -897,6 +926,7 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		TableBucketTags: bucketTags,
 		ResourceTags:    tableTags,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	})
 	if !tableAllowed && !bucketAllowed {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to delete table")
@@ -905,7 +935,13 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 
 	// Delete the table
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(r.Context(), client, tablePath)
+		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
+			return err
+		}
+		if err := h.deleteTableLocationMapping(r.Context(), client, metadata.MetadataLocation, tablePath); err != nil {
+			glog.V(1).Infof("failed to delete table location mapping for %s: %v", metadata.MetadataLocation, err)
+		}
+		return nil
 	})
 
 	if err != nil {
@@ -914,5 +950,298 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 	}
 
 	h.writeJSON(w, http.StatusOK, nil)
+	return nil
+}
+
+// handleUpdateTable updates table metadata
+func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
+	var req UpdateTableRequest
+	if err := h.readRequestBody(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "tableBucketARN, namespace, and name are required")
+		return fmt.Errorf("missing required parameters")
+	}
+
+	namespaceName, err := validateNamespace(req.Namespace)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	bucketName, err := parseBucketNameFromARN(req.TableBucketARN)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	tableName, err := validateTableName(req.Name)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
+		return err
+	}
+
+	tablePath := GetTablePath(bucketName, namespaceName, tableName)
+
+	// Load existing metadata and policies for authorization
+	var metadata tableMetadataInternal
+	var tablePolicy string
+	var bucketPolicy string
+	var bucketTags map[string]string
+	var tableTags map[string]string
+	var bucketMetadata tableBucketMetadata
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		// 1. Get Table Metadata
+		data, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &metadata); err != nil {
+			return fmt.Errorf("failed to unmarshal table metadata: %w", err)
+		}
+
+		// 2. Get Table Policy & Tags
+		policyData, err := h.getExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyPolicy)
+		if err == nil {
+			tablePolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch table policy: %w", err)
+		}
+		tableTags, err = h.readTags(r.Context(), client, tablePath)
+		if err != nil {
+			return err
+		}
+
+		// 3. Get Bucket Metadata, Policy & Tags
+		bucketPath := GetTableBucketPath(bucketName)
+		data, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
+		if err == nil {
+			if err := json.Unmarshal(data, &bucketMetadata); err != nil {
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
+			}
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket metadata: %w", err)
+		}
+		policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err == nil {
+			bucketPolicy = string(policyData)
+		} else if !errors.Is(err, ErrAttributeNotFound) {
+			return fmt.Errorf("failed to fetch bucket policy: %w", err)
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			h.writeError(w, http.StatusNotFound, ErrCodeNoSuchTable, "table not found")
+		} else {
+			h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, err.Error())
+		}
+		return err
+	}
+
+	// Authorization Check
+	tableARN := h.generateTableARN(metadata.OwnerAccountID, bucketName, namespaceName+"/"+tableName)
+	bucketARN := h.generateTableBucketARN(bucketMetadata.OwnerAccountID, bucketName)
+	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
+
+	tableAllowed := CheckPermissionWithContext("UpdateTable", principal, metadata.OwnerAccountID, tablePolicy, tableARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
+	})
+	bucketAllowed := CheckPermissionWithContext("UpdateTable", principal, bucketMetadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
+		TableBucketName: bucketName,
+		Namespace:       namespaceName,
+		TableName:       tableName,
+		TableBucketTags: bucketTags,
+		ResourceTags:    tableTags,
+		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
+	})
+
+	if !tableAllowed && !bucketAllowed {
+		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to update table")
+		return NewAuthError("UpdateTable", principal, "not authorized to update table")
+	}
+
+	// Check version token if provided
+	if req.VersionToken != "" && req.VersionToken != metadata.VersionToken {
+		h.writeError(w, http.StatusConflict, ErrCodeConflict, "Version token mismatch")
+		return ErrVersionTokenMismatch
+	}
+
+	// Capture old metadata location before mutation for stale mapping cleanup
+	oldMetadataLocation := metadata.MetadataLocation
+
+	// Update metadata
+	if req.Metadata != nil {
+		if metadata.Metadata == nil {
+			metadata.Metadata = &TableMetadata{}
+		}
+		if req.Metadata.Iceberg != nil {
+			if metadata.Metadata.Iceberg == nil {
+				metadata.Metadata.Iceberg = &IcebergMetadata{}
+			}
+			if req.Metadata.Iceberg.TableUUID != "" {
+				metadata.Metadata.Iceberg.TableUUID = req.Metadata.Iceberg.TableUUID
+			}
+		}
+		if len(req.Metadata.FullMetadata) > 0 {
+			metadata.Metadata.FullMetadata = req.Metadata.FullMetadata
+		}
+	}
+	if req.MetadataLocation != "" {
+		metadata.MetadataLocation = req.MetadataLocation
+	}
+	if req.MetadataVersion > 0 {
+		metadata.MetadataVersion = req.MetadataVersion
+	} else if metadata.MetadataVersion == 0 {
+		metadata.MetadataVersion = 1
+	}
+	metadata.ModifiedAt = time.Now()
+	metadata.VersionToken = generateVersionToken()
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to marshal metadata")
+		return err
+	}
+
+	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
+			return err
+		}
+		if err := h.updateTableLocationMapping(r.Context(), client, oldMetadataLocation, metadata.MetadataLocation, tablePath); err != nil {
+			glog.V(1).Infof("failed to update table location mapping for %s -> %s: %v", oldMetadataLocation, metadata.MetadataLocation, err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, ErrCodeInternalError, "failed to update metadata")
+		return err
+	}
+
+	h.writeJSON(w, http.StatusOK, &UpdateTableResponse{
+		TableARN:         tableARN,
+		MetadataLocation: metadata.MetadataLocation,
+		VersionToken:     metadata.VersionToken,
+	})
+	return nil
+}
+
+func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, oldMetadataLocation, newMetadataLocation, tablePath string) error {
+	newTableLocationBucket, ok := parseTableLocationBucket(newMetadataLocation)
+	if !ok {
+		return nil
+	}
+	tableBucketPath, ok := tableBucketPathFromTablePath(tablePath)
+	if !ok {
+		return fmt.Errorf("invalid table path for location mapping: %s", tablePath)
+	}
+
+	if err := h.ensureDirectory(ctx, client, GetTableLocationMappingDir()); err != nil {
+		return err
+	}
+	if err := h.ensureTableLocationMappingBucketDir(ctx, client, newTableLocationBucket); err != nil {
+		return err
+	}
+
+	// If the metadata location changed, remove this table's stale mapping entry from the old bucket.
+	if oldMetadataLocation != "" && oldMetadataLocation != newMetadataLocation {
+		oldTableLocationBucket, ok := parseTableLocationBucket(oldMetadataLocation)
+		if ok && oldTableLocationBucket != newTableLocationBucket {
+			if err := h.removeTableLocationMappingEntry(ctx, client, oldTableLocationBucket, tablePath); err != nil {
+				glog.V(1).Infof("failed to delete stale mapping for %s: %v", oldTableLocationBucket, err)
+			}
+		}
+	}
+
+	return h.upsertFile(ctx, client, GetTableLocationMappingEntryPath(newTableLocationBucket, tablePath), []byte(tableBucketPath))
+}
+
+func (h *S3TablesHandler) deleteTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, metadataLocation, tablePath string) error {
+	tableLocationBucket, ok := parseTableLocationBucket(metadataLocation)
+	if !ok {
+		return nil
+	}
+	return h.removeTableLocationMappingEntry(ctx, client, tableLocationBucket, tablePath)
+}
+
+func (h *S3TablesHandler) ensureTableLocationMappingBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
+	mappingDir := GetTableLocationMappingDir()
+	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
+
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: mappingDir,
+		Name:      tableLocationBucket,
+	})
+	if err == nil {
+		if resp != nil && resp.Entry != nil && resp.Entry.IsDirectory {
+			return nil
+		}
+		if removeErr := h.deleteEntryIfExists(ctx, client, bucketMappingPath); removeErr != nil && !errors.Is(removeErr, filer_pb.ErrNotFound) {
+			return removeErr
+		}
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+
+	return h.ensureDirectory(ctx, client, bucketMappingPath)
+}
+
+func (h *S3TablesHandler) removeTableLocationMappingEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket, tablePath string) error {
+	entryPath := GetTableLocationMappingEntryPath(tableLocationBucket, tablePath)
+	if err := h.deleteEntryIfExists(ctx, client, entryPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
+	return h.removeTableLocationMappingBucketDirIfEmpty(ctx, client, tableLocationBucket)
+}
+
+func (h *S3TablesHandler) removeTableLocationMappingBucketDirIfEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
+	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
+
+	stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		Directory: bucketMappingPath,
+		Limit:     1,
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	for {
+		resp, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			return recvErr
+		}
+		if resp != nil && resp.Entry != nil {
+			return nil
+		}
+	}
+
+	if err := h.deleteEntryIfExists(ctx, client, bucketMappingPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
+	}
 	return nil
 }

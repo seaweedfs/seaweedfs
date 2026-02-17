@@ -355,7 +355,7 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	}
 
 	// Try to get from filer
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	entry, err := s3a.getBucketEntry(bucket)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			// Bucket doesn't exist - set negative cache
@@ -471,7 +471,7 @@ func (s3a *S3ApiServer) updateBucketConfig(bucket string, updateFn func(*BucketC
 
 	// Save to filer
 	glog.V(3).Infof("updateBucketConfig: saving entry to filer for bucket %s", bucket)
-	err := s3a.updateEntry(s3a.option.BucketsPath, config.Entry)
+	err := s3a.updateEntry(s3a.bucketRoot(bucket), config.Entry)
 	if err != nil {
 		glog.Errorf("updateBucketConfig: failed to update bucket entry for %s: %v", bucket, err)
 		return s3err.ErrInternalError
@@ -801,7 +801,7 @@ func (s3a *S3ApiServer) loadBucketMetadataFromFiler(bucket string) (*BucketMetad
 	}
 
 	// Get bucket directory entry to access its content
-	entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+	entry, err := s3a.getBucketEntry(bucket)
 	if err != nil {
 		// Check if this is a "not found" error
 		if errors.Is(err, filer_pb.ErrNotFound) {
@@ -880,7 +880,7 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 	// Update the bucket entry with new content
 	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get current bucket entry
-		entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket)
+		entry, err := s3a.getBucketEntry(bucket)
 		if err != nil {
 			return fmt.Errorf("error retrieving bucket directory %s: %w", bucket, err)
 		}
@@ -892,7 +892,7 @@ func (s3a *S3ApiServer) setBucketMetadata(bucket string, metadata *BucketMetadat
 		entry.Content = metadataBytes
 
 		request := &filer_pb.UpdateEntryRequest{
-			Directory: s3a.option.BucketsPath,
+			Directory: s3a.bucketRoot(bucket),
 			Entry:     entry,
 		}
 

@@ -23,7 +23,7 @@ install-templ:
 .PHONY: generate
 generate: install-templ
 	@echo "Generating templ files..."
-	@templ generate
+	@cd $(BUILD_DIR) && templ generate
 	@echo "Generated: $(TEMPL_GO_FILES)"
 
 # Clean generated files
@@ -37,7 +37,7 @@ clean-templ:
 .PHONY: watch
 watch: install-templ
 	@echo "Watching for templ file changes..."
-	@templ generate --watch
+	@cd $(BUILD_DIR) && templ generate --watch
 
 # Build the main weed binary with admin component
 .PHONY: build
@@ -160,4 +160,4 @@ $(WEED_BINARY): $(TEMPL_GO_FILES) $(GO_FILES)
 # Auto-generate templ files when .templ files change
 %_templ.go: %.templ
 	@echo "Regenerating $@ from $<"
-	@templ generate 
+	@cd $(BUILD_DIR) && templ generate

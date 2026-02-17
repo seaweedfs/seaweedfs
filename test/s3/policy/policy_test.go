@@ -16,22 +16,25 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/stretchr/testify/require"
 )
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	isRunning  bool
-	wg         sync.WaitGroup
-	masterPort int
-	volumePort int
-	filerPort  int
-	s3Port     int
-	s3Endpoint string
+	dataDir        string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	isRunning      bool
+	wg             sync.WaitGroup
+	masterPort     int
+	masterGrpcPort int
+	volumePort     int
+	filerPort      int
+	filerGrpcPort  int
+	s3Port         int
+	s3Endpoint     string
 }
 
 func TestS3PolicyShellRevised(t *testing.T) {
@@ -53,8 +56,8 @@ func TestS3PolicyShellRevised(t *testing.T) {
 	require.NoError(t, tmpPolicyFile.Close())
 
 	weedCmd := "weed"
-	masterAddr := fmt.Sprintf("127.0.0.1:%d", cluster.masterPort)
-	filerAddr := fmt.Sprintf("127.0.0.1:%d", cluster.filerPort)
+	masterAddr := string(pb.NewServerAddress("127.0.0.1", cluster.masterPort, cluster.masterGrpcPort))
+	filerAddr := string(pb.NewServerAddress("127.0.0.1", cluster.filerPort, cluster.filerGrpcPort))
 
 	// Put
 	execShell(t, weedCmd, masterAddr, filerAddr, fmt.Sprintf("s3.policy -put -name=testpolicy -file=%s", tmpPolicyFile.Name()))
@@ -156,17 +159,16 @@ func findAvailablePort() (int, error) {
 
 // findAvailablePortPair finds an available http port P such that P and P+10000 (grpc) are both available
 func findAvailablePortPair() (int, int, error) {
+	httpPort, err := findAvailablePort()
+	if err != nil {
+		return 0, 0, err
+	}
 	for i := 0; i < 100; i++ {
-		httpPort, err := findAvailablePort()
+		grpcPort, err := findAvailablePort()
 		if err != nil {
 			return 0, 0, err
 		}
-		grpcPort := httpPort + 10000
-
-		// check if grpc port is available
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
-		if err == nil {
-			listener.Close()
+		if grpcPort != httpPort {
 			return httpPort, grpcPort, nil
 		}
 	}
@@ -188,14 +190,16 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s3Endpoint := fmt.Sprintf("http://127.0.0.1:%d", s3Port)
 	cluster := &TestCluster{
-		dataDir:    testDir,
-		ctx:        ctx,
-		cancel:     cancel,
-		masterPort: masterPort,
-		volumePort: volumePort,
-		filerPort:  filerPort,
-		s3Port:     s3Port,
-		s3Endpoint: s3Endpoint,
+		dataDir:        testDir,
+		ctx:            ctx,
+		cancel:         cancel,
+		masterPort:     masterPort,
+		masterGrpcPort: masterGrpcPort,
+		volumePort:     volumePort,
+		filerPort:      filerPort,
+		filerGrpcPort:  filerGrpcPort,
+		s3Port:         s3Port,
+		s3Endpoint:     s3Endpoint,
 	}
 
 	// Disable authentication for tests
@@ -211,6 +215,14 @@ enabled = true
 `
 	err = os.WriteFile(credentialToml, []byte(credentialConfig), 0644)
 	require.NoError(t, err)
+
+	// Set environment variables for admin credentials safely for this test
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+	}
 
 	cluster.wg.Add(1)
 	go func() {

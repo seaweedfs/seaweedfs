@@ -251,6 +251,132 @@ func TestPolicyEnforcement(t *testing.T) {
 	}
 }
 
+// TestSessionPolicyBoundary verifies that inline session policies restrict permissions.
+func TestSessionPolicyBoundary(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	stsService := iamManager.GetSTSService()
+	require.NotNil(t, stsService)
+
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::test-bucket/allowed/*"]}]}`
+
+	sessionId, err := sts.GenerateSessionId()
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(time.Hour)
+	principal := "arn:aws:sts::000000000000:assumed-role/S3ReadOnlyRole/policy-session"
+
+	claims := sts.NewSTSSessionClaims(sessionId, stsService.Config.Issuer, expiresAt).
+		WithSessionName("policy-session").
+		WithRoleInfo("arn:aws:iam::role/S3ReadOnlyRole", principal, principal).
+		WithSessionPolicy(sessionPolicy)
+
+	sessionToken, err := stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/allowed/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow GetObject within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/other/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny GetObject outside allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:ListBucket",
+		Resource:     "arn:aws:s3:::test-bucket",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny ListBucket when not explicitly allowed")
+}
+
+// TestAssumeRoleWithWebIdentitySessionPolicy verifies Policy downscoping is applied to web identity sessions.
+func TestAssumeRoleWithWebIdentitySessionPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::test-bucket/allowed/*"]}]}`
+
+	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "policy-web-identity",
+		Policy:           &sessionPolicy,
+	}
+
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/allowed/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow GetObject within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/other/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny GetObject outside allowed prefix")
+}
+
+// TestAssumeRoleWithCredentialsSessionPolicy verifies Policy downscoping is applied to credentials sessions.
+func TestAssumeRoleWithCredentialsSessionPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["filer:CreateEntry"],"Resource":["arn:aws:filer::path/user-docs/allowed/*"]}]}`
+	assumeRequest := &sts.AssumeRoleWithCredentialsRequest{
+		RoleArn:         "arn:aws:iam::role/LDAPUserRole",
+		Username:        "testuser",
+		Password:        "testpass",
+		RoleSessionName: "policy-ldap",
+		ProviderName:    "test-ldap",
+		Policy:          &sessionPolicy,
+	}
+
+	response, err := iamManager.AssumeRoleWithCredentials(ctx, assumeRequest)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "filer:CreateEntry",
+		Resource:     "arn:aws:filer::path/user-docs/allowed/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow CreateEntry within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "filer:CreateEntry",
+		Resource:     "arn:aws:filer::path/user-docs/other/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny CreateEntry outside allowed prefix")
+}
+
 // TestSessionExpiration tests session expiration and cleanup
 func TestSessionExpiration(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)

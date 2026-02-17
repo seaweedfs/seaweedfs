@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -363,4 +364,47 @@ func BenchmarkShardsInfo_Size(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		si.Size(ShardId(i % TotalShardsCount))
 	}
+}
+
+func TestShardsInfo_ConcurrentAccess(t *testing.T) {
+	si := NewShardsInfo()
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	// Goroutine 1: Continuously Set/Delete shards
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			si.Set(ShardInfo{Id: ShardId(i % TotalShardsCount), Size: 100})
+			if i%10 == 0 {
+				si.Delete(ShardId((i / 10) % TotalShardsCount))
+			}
+		}
+	}()
+
+	// Goroutine 2: Continuously read Info (Sizes, Bitmap, Count)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			si.Sizes()
+			si.Bitmap()
+			si.Count()
+			si.TotalSize()
+		}
+	}()
+
+	// Goroutine 3: Continuously Add/Subtract from another ShardsInfo
+	go func() {
+		defer wg.Done()
+		other := NewShardsInfo()
+		other.Set(ShardInfo{Id: 1, Size: 100})
+		other.Set(ShardInfo{Id: 2, Size: 200})
+		for i := 0; i < 1000; i++ {
+			si.Add(other)
+			si.Subtract(other)
+		}
+	}()
+
+	wg.Wait()
 }

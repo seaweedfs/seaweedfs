@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"net/url"
@@ -9,12 +10,19 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 const (
 	bucketNamePatternStr     = `[a-z0-9-]+`
-	tableNamespacePatternStr = `[a-z0-9_]+`
+	tableNamespacePatternStr = `[a-z0-9_.]+`
 	tableNamePatternStr      = `[a-z0-9_]+`
+)
+
+const (
+	tableLocationMappingsDirName = ".table-location-mappings"
+	tableObjectRootDirName       = ".objects"
 )
 
 var (
@@ -47,7 +55,6 @@ func ParseBucketNameFromARN(arn string) (string, error) {
 // parseTableFromARN extracts bucket name, namespace, and table name from ARN
 // ARN format: arn:aws:s3tables:{region}:{account}:bucket/{bucket-name}/table/{namespace}/{table-name}
 func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err error) {
-	// Updated regex to align with namespace validation (single-segment)
 	matches := tableARNPattern.FindStringSubmatch(arn)
 	if len(matches) != 4 {
 		return "", "", "", fmt.Errorf("invalid table ARN: %s", arn)
@@ -59,9 +66,7 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 		return "", "", "", fmt.Errorf("invalid bucket name in ARN: %v", err)
 	}
 
-	// Namespace is already constrained by the regex; validate it directly.
-	namespace = matches[2]
-	_, err = validateNamespace([]string{namespace})
+	namespace, err = validateNamespace([]string{matches[2]})
 	if err != nil {
 		return "", "", "", fmt.Errorf("invalid namespace in ARN: %v", err)
 	}
@@ -79,19 +84,66 @@ func parseTableFromARN(arn string) (bucketName, namespace, tableName string, err
 
 // Path helpers
 
-// getTableBucketPath returns the filer path for a table bucket
-func getTableBucketPath(bucketName string) string {
+// GetTableBucketPath returns the filer path for a table bucket
+func GetTableBucketPath(bucketName string) string {
 	return path.Join(TablesPath, bucketName)
 }
 
-// getNamespacePath returns the filer path for a namespace
-func getNamespacePath(bucketName, namespace string) string {
+// GetNamespacePath returns the filer path for a namespace
+func GetNamespacePath(bucketName, namespace string) string {
 	return path.Join(TablesPath, bucketName, namespace)
 }
 
-// getTablePath returns the filer path for a table
-func getTablePath(bucketName, namespace, tableName string) string {
+// GetTablePath returns the filer path for a table
+func GetTablePath(bucketName, namespace, tableName string) string {
 	return path.Join(TablesPath, bucketName, namespace, tableName)
+}
+
+// GetTableObjectRootDir returns the root path for table bucket object storage
+func GetTableObjectRootDir() string {
+	return path.Join(TablesPath, tableObjectRootDirName)
+}
+
+// GetTableObjectBucketPath returns the filer path for table bucket object storage
+func GetTableObjectBucketPath(bucketName string) string {
+	return path.Join(GetTableObjectRootDir(), bucketName)
+}
+
+// GetTableLocationMappingDir returns the root path for table location bucket mappings
+func GetTableLocationMappingDir() string {
+	return path.Join(TablesPath, tableLocationMappingsDirName)
+}
+
+// GetTableLocationMappingPath returns the filer path for a table location bucket mapping
+func GetTableLocationMappingPath(tableLocationBucket string) string {
+	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
+}
+
+// GetTableLocationMappingEntryPath returns the filer path for a table-specific mapping entry.
+// Each table gets its own entry so multiple tables can share the same external table-location bucket.
+func GetTableLocationMappingEntryPath(tableLocationBucket, tablePath string) string {
+	return path.Join(GetTableLocationMappingPath(tableLocationBucket), tableLocationMappingEntryName(tablePath))
+}
+
+func tableLocationMappingEntryName(tablePath string) string {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	sum := sha1.Sum([]byte(normalized))
+	return hex.EncodeToString(sum[:])
+}
+
+func tableBucketPathFromTablePath(tablePath string) (string, bool) {
+	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
+	tablesPrefix := strings.TrimSuffix(TablesPath, "/") + "/"
+	if !strings.HasPrefix(normalized, tablesPrefix) {
+		return "", false
+	}
+
+	remaining := strings.TrimPrefix(normalized, tablesPrefix)
+	bucketName, _, _ := strings.Cut(remaining, "/")
+	if bucketName == "" {
+		return "", false
+	}
+	return path.Join(TablesPath, bucketName), true
 }
 
 // Metadata structures
@@ -104,9 +156,10 @@ type tableBucketMetadata struct {
 
 // namespaceMetadata stores metadata for a namespace
 type namespaceMetadata struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 // tableMetadataInternal stores metadata for a table
@@ -118,8 +171,18 @@ type tableMetadataInternal struct {
 	ModifiedAt       time.Time      `json:"modifiedAt"`
 	OwnerAccountID   string         `json:"ownerAccountId"`
 	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
 	MetadataLocation string         `json:"metadataLocation,omitempty"`
 	Metadata         *TableMetadata `json:"metadata,omitempty"`
+}
+
+// IsTableBucketEntry returns true when the entry is marked as a table bucket.
+func IsTableBucketEntry(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	_, ok := entry.Extended[ExtendedKeyTableBucket]
+	return ok
 }
 
 // Utility functions
@@ -179,6 +242,22 @@ func validateBucketName(name string) error {
 // ValidateBucketName validates bucket name and returns an error if invalid.
 func ValidateBucketName(name string) error {
 	return validateBucketName(name)
+}
+
+func parseTableLocationBucket(metadataLocation string) (string, bool) {
+	if !strings.HasPrefix(metadataLocation, "s3://") {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(metadataLocation, "s3://")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	if trimmed == "" {
+		return "", false
+	}
+	bucket, _, _ := strings.Cut(trimmed, "/")
+	if bucket == "" || !strings.HasSuffix(bucket, "--table-s3") {
+		return "", false
+	}
+	return bucket, true
 }
 
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.
@@ -273,35 +352,27 @@ func splitPath(p string) (dir, name string) {
 	return
 }
 
-// validateNamespace validates that the namespace provided is supported (single-level)
-func validateNamespace(namespace []string) (string, error) {
-	if len(namespace) == 0 {
-		return "", fmt.Errorf("namespace is required")
-	}
-	if len(namespace) > 1 {
-		return "", fmt.Errorf("multi-level namespaces are not supported")
-	}
-	name := namespace[0]
+func validateNamespacePart(name string) error {
 	if len(name) < 1 || len(name) > 255 {
-		return "", fmt.Errorf("namespace name must be between 1 and 255 characters")
+		return fmt.Errorf("namespace name must be between 1 and 255 characters")
 	}
 
 	// Prevent path traversal and multi-segment paths
 	if name == "." || name == ".." {
-		return "", fmt.Errorf("namespace name cannot be '.' or '..'")
+		return fmt.Errorf("namespace name cannot be '.' or '..'")
 	}
 	if strings.Contains(name, "/") {
-		return "", fmt.Errorf("namespace name cannot contain '/'")
+		return fmt.Errorf("namespace name cannot contain '/'")
 	}
 
 	// Must start and end with a letter or digit
 	start := name[0]
 	end := name[len(name)-1]
 	if !((start >= 'a' && start <= 'z') || (start >= '0' && start <= '9')) {
-		return "", fmt.Errorf("namespace name must start with a letter or digit")
+		return fmt.Errorf("namespace name must start with a letter or digit")
 	}
 	if !((end >= 'a' && end <= 'z') || (end >= '0' && end <= '9')) {
-		return "", fmt.Errorf("namespace name must end with a letter or digit")
+		return fmt.Errorf("namespace name must end with a letter or digit")
 	}
 
 	// Allowed characters: a-z, 0-9, _
@@ -309,20 +380,56 @@ func validateNamespace(namespace []string) (string, error) {
 		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
 			continue
 		}
-		return "", fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
+		return fmt.Errorf("invalid namespace name: only 'a-z', '0-9', and '_' are allowed")
 	}
 
 	// Reserved prefix
 	if strings.HasPrefix(name, "aws") {
-		return "", fmt.Errorf("namespace name cannot start with reserved prefix 'aws'")
+		return fmt.Errorf("namespace name cannot start with reserved prefix 'aws'")
 	}
 
-	return name, nil
+	return nil
+}
+
+func normalizeNamespace(namespace []string) ([]string, error) {
+	if len(namespace) == 0 {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	parts := namespace
+	if len(namespace) == 1 {
+		parts = strings.Split(namespace[0], ".")
+	}
+
+	normalized := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if err := validateNamespacePart(part); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, part)
+	}
+	return normalized, nil
+}
+
+// validateNamespace validates namespace identifiers and returns an internal namespace key.
+// A single dotted namespace value is interpreted as multi-level namespace for compatibility
+// with path-style APIs, for example "analytics.daily" => ["analytics", "daily"].
+func validateNamespace(namespace []string) (string, error) {
+	parts, err := normalizeNamespace(namespace)
+	if err != nil {
+		return "", err
+	}
+	return flattenNamespace(parts), nil
 }
 
 // ValidateNamespace is a wrapper to validate namespace for other packages.
 func ValidateNamespace(namespace []string) (string, error) {
 	return validateNamespace(namespace)
+}
+
+// ParseNamespace parses a namespace string into namespace parts.
+func ParseNamespace(namespace string) ([]string, error) {
+	return normalizeNamespace([]string{namespace})
 }
 
 // validateTableName validates a table name
@@ -361,4 +468,15 @@ func flattenNamespace(namespace []string) string {
 		return ""
 	}
 	return strings.Join(namespace, ".")
+}
+
+func expandNamespace(namespace string) []string {
+	if namespace == "" {
+		return nil
+	}
+	parts, err := ParseNamespace(namespace)
+	if err != nil {
+		return []string{namespace}
+	}
+	return parts
 }

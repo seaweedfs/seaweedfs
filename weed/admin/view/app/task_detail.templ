@@ -942,10 +942,48 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             return;
         }
         
+        
         // Format and display logs with structured fields
         let logText = '';
+        
+        // Helper function to format timestamps robustly
+        function formatTimestamp(timestamp) {
+            if (!timestamp) {
+                return 'N/A';
+            }
+            
+            let date;
+            
+            // Check if timestamp is a numeric string (e.g., "1738652668")
+            if (typeof timestamp === 'string' && /^\d+$/.test(timestamp)) {
+                const numericTimestamp = parseInt(timestamp, 10);
+                // Treat values > 10^10 as milliseconds, otherwise as seconds
+                date = numericTimestamp > 10000000000 
+                    ? new Date(numericTimestamp) 
+                    : new Date(numericTimestamp * 1000);
+            } else if (typeof timestamp === 'string') {
+                // ISO date string
+                date = new Date(timestamp);
+            } else if (typeof timestamp === 'number') {
+                // Numeric timestamp (seconds or milliseconds)
+                date = timestamp > 10000000000 
+                    ? new Date(timestamp) 
+                    : new Date(timestamp * 1000);
+            } else {
+                return 'N/A';
+            }
+            
+            // Validate the date
+            if (isNaN(date.getTime())) {
+                return 'N/A';
+            }
+            
+            return date.toISOString();
+        }
+        
         logs.forEach(entry => {
-            const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+            const timestamp = formatTimestamp(entry.timestamp);
+
             const level = entry.level || 'INFO';
             const message = entry.message || '';
             
@@ -1011,7 +1049,12 @@ templ TaskDetail(data *maintenance.TaskDetailData) {
             let logContent = '';
             if (data.logs && data.logs.length > 0) {
                 data.logs.forEach(entry => {
-                    const timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    let timestamp;
+                    if (typeof entry.timestamp === 'string') {
+                        timestamp = new Date(entry.timestamp).toISOString();
+                    } else {
+                        timestamp = entry.timestamp ? new Date(entry.timestamp * 1000).toISOString() : 'N/A';
+                    }
                     const level = entry.level || 'INFO';
                     const message = entry.message || '';
                     

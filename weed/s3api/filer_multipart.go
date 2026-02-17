@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"cmp"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -206,7 +207,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				return &CompleteMultipartUploadResult{
 					Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 					Bucket:   input.Bucket,
-					ETag:     aws.String("\"" + filer.ETagChunks(entry.GetChunks()) + "\""),
+					ETag:     aws.String(getEtagFromEntry(entry)),
 					Key:      objectKey(input.Key),
 				}, s3err.ErrNone
 			}
@@ -242,17 +243,16 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			continue
 		}
 		for _, partETag := range completedPartsByNumber {
-			partETag = strings.Trim(partETag, `"`)
-			entryETag := hex.EncodeToString(entry.Attributes.GetMd5())
-			if partETag != "" && len(partETag) == 32 && entryETag != "" {
-				if entryETag != partETag {
-					glog.Errorf("completeMultipartUpload %s ETag mismatch chunk: %s part: %s", entry.Name, entryETag, partETag)
-					stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
-					continue
-				}
-			} else {
-				glog.Warningf("invalid complete etag %s, partEtag %s", partETag, entryETag)
+			match, invalid, normalizedPartETag, normalizedEntryETag := validateCompletePartETag(partETag, entry)
+			if invalid {
+				glog.Warningf("invalid complete etag %s, storedEtag %s", normalizedPartETag, normalizedEntryETag)
 				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagInvalid).Inc()
+				continue
+			}
+			if !match {
+				glog.Errorf("completeMultipartUpload %s ETag mismatch stored: %s part: %s", entry.Name, normalizedEntryETag, normalizedPartETag)
+				stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedEtagMismatch).Inc()
+				continue
 			}
 			if len(entry.Chunks) == 0 && partNumber != maxPartNo {
 				glog.Warningf("completeMultipartUpload %s empty chunks", entry.Name)
@@ -301,10 +301,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, s3err.ErrInvalidPart
 		}
 		found := false
+
 		if len(partEntriesByNumber) > 1 {
-			slices.SortFunc(partEntriesByNumber, func(a, b *filer_pb.Entry) int {
-				return cmp.Compare(b.Chunks[0].ModifiedTsNs, a.Chunks[0].ModifiedTsNs)
-			})
+			sortEntriesByLatestChunk(partEntriesByNumber)
 		}
 		for _, entry := range partEntriesByNumber {
 			if found {
@@ -357,6 +356,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 	entryName, dirName := s3a.getEntryNameAndDir(input)
 
+	// Precompute ETag once for consistency across all paths
+	multipartETag := calculateMultipartETag(partEntries, completedPartNumbers)
+	etagQuote := "\"" + multipartETag + "\""
+
 	// Check if versioning is configured for this bucket BEFORE creating any files
 	versioningState, vErr := s3a.getVersioningState(*input.Bucket)
 	if vErr == nil && versioningState == s3_constants.VersioningEnabled {
@@ -396,6 +399,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 			}
 
+			// Persist ETag to ensure subsequent HEAD/GET uses the same value
+			versionEntry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
+
 			// Preserve ALL SSE metadata from the first part (if any)
 			// SSE metadata is stored in individual parts, not the upload directory
 			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
@@ -418,14 +424,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// Construct entry with metadata for caching in .versions directory
 		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
-		etag := "\"" + filer.ETagChunks(finalParts) + "\""
+		// multipartETag is precomputed
 		versionEntryForCache := &filer_pb.Entry{
 			Attributes: &filer_pb.FuseAttributes{
 				FileSize: uint64(offset),
 				Mtime:    versionMtime,
 			},
 			Extended: map[string][]byte{
-				s3_constants.ExtETagKey: []byte(etag),
+				s3_constants.ExtETagKey: []byte(multipartETag),
 			},
 		}
 		if amzAccountId != "" {
@@ -440,13 +446,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return nil, s3err.ErrInternalError
 		}
 
-		// For versioned buckets, don't create a main object file - all content is stored in .versions directory
+		// For versioned buckets, all content is stored in .versions directory
 		// The latest version information is tracked in the .versions directory metadata
-
 		output = &CompleteMultipartUploadResult{
 			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:    input.Bucket,
-			ETag:      aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:      aws.String(etagQuote),
 			Key:       objectKey(input.Key),
 			VersionId: aws.String(versionId),
 		}
@@ -482,6 +487,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
 			}
+			// Persist ETag to ensure subsequent HEAD/GET uses the same value
+			entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -499,7 +506,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
-			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:     aws.String(etagQuote),
 			Key:      objectKey(input.Key),
 			// VersionId field intentionally omitted for suspended versioning
 		}
@@ -535,6 +542,8 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				firstPartEntry := partEntries[completedPartNumbers[0]][0]
 				copySSEHeadersFromFirstPart(entry, firstPartEntry, "non-versioned")
 			}
+			// Persist ETag to ensure subsequent HEAD/GET uses the same value
+			entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
 			if pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = pentry.Attributes.Mime
 			} else if mime != "" {
@@ -556,7 +565,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		output = &CompleteMultipartUploadResult{
 			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 			Bucket:   input.Bucket,
-			ETag:     aws.String("\"" + filer.ETagChunks(finalParts) + "\""),
+			ETag:     aws.String(etagQuote),
 			Key:      objectKey(input.Key),
 		}
 	}
@@ -581,7 +590,7 @@ func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInpu
 		dirName = ""
 	}
 	dirName = strings.TrimPrefix(dirName, "/")
-	dirName = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, *input.Bucket, dirName)
+	dirName = fmt.Sprintf("%s/%s", s3a.bucketDir(*input.Bucket), dirName)
 
 	// remove suffix '/'
 	dirName = strings.TrimSuffix(dirName, "/")
@@ -928,4 +937,80 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 		entry.Extended[s3_constants.SeaweedFSSSES3KeyData] = []byte(config.S3KeyDataEncoded)
 		glog.V(3).Infof("applyMultipartEncryptionConfig: applied SSE-S3 settings")
 	}
+}
+
+func sortEntriesByLatestChunk(entries []*filer_pb.Entry) {
+	slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
+		var aTs, bTs int64
+		if len(a.Chunks) > 0 {
+			aTs = a.Chunks[0].ModifiedTsNs
+		}
+		if len(b.Chunks) > 0 {
+			bTs = b.Chunks[0].ModifiedTsNs
+		}
+		return cmp.Compare(bTs, aTs)
+	})
+}
+
+func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) string {
+	var etags []byte
+	for _, partNumber := range completedPartNumbers {
+		entries, ok := partEntries[partNumber]
+		if !ok || len(entries) == 0 {
+			continue
+		}
+		if len(entries) > 1 {
+			sortEntriesByLatestChunk(entries)
+		}
+		entry := entries[0]
+		etag := getEtagFromEntry(entry)
+		glog.V(4).Infof("calculateMultipartETag: part %d, entry %s, getEtagFromEntry result: %s", partNumber, entry.Name, etag)
+		etag = strings.Trim(etag, "\"")
+		if before, _, found := strings.Cut(etag, "-"); found {
+			etag = before
+		}
+		if etagBytes, err := hex.DecodeString(etag); err == nil {
+			etags = append(etags, etagBytes...)
+		} else {
+			glog.Warningf("calculateMultipartETag: failed to decode etag '%s' for part %d: %v", etag, partNumber, err)
+		}
+	}
+	return fmt.Sprintf("%x-%d", md5.Sum(etags), len(completedPartNumbers))
+}
+
+func getEtagFromEntry(entry *filer_pb.Entry) string {
+	if entry.Extended != nil {
+		if etagBytes, ok := entry.Extended[s3_constants.ExtETagKey]; ok {
+			etag := string(etagBytes)
+			if len(etag) > 0 {
+				if !strings.HasPrefix(etag, "\"") {
+					return "\"" + etag + "\""
+				}
+				return etag
+			}
+			// Empty stored ETag — fall through to filer.ETag calculation
+		}
+	}
+	// Fallback to filer.ETag which handles Attributes.Md5 consistently
+	etag := filer.ETag(entry)
+	entryName := entry.Name
+	if entryName == "" {
+		entryName = "entry"
+	}
+	glog.V(4).Infof("getEtagFromEntry: fallback to filer.ETag for %s: %s, chunkCount: %d", entryName, etag, len(entry.Chunks))
+	return "\"" + etag + "\""
+}
+
+func validateCompletePartETag(partETag string, entry *filer_pb.Entry) (match bool, invalid bool, normalizedPartETag string, normalizedEntryETag string) {
+	normalizedPartETag = strings.Trim(strings.TrimSpace(partETag), `"`)
+	if normalizedPartETag == "" {
+		return false, true, normalizedPartETag, ""
+	}
+
+	normalizedEntryETag = strings.Trim(getEtagFromEntry(entry), `"`)
+	if normalizedEntryETag == "" {
+		return false, true, normalizedPartETag, normalizedEntryETag
+	}
+
+	return normalizedPartETag == normalizedEntryETag, false, normalizedPartETag, normalizedEntryETag
 }

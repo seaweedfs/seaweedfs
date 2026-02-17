@@ -14,7 +14,7 @@ type Action string
 
 // Identity represents a user identity - this should match the type in auth_credentials.go
 type Identity interface {
-	canDo(action Action, bucket string, objectKey string) bool
+	CanDo(action Action, bucket string, objectKey string) bool
 }
 
 // PolicyBackedIAM provides policy-based access control with fallback to legacy IAM
@@ -104,7 +104,7 @@ func (p *PolicyBackedIAM) evaluateLegacyAction(action, bucketName, objectName, p
 
 		// If we have an identity, check if it can perform the action
 		if identity != nil {
-			return identity.canDo(legacyAction, bucketName, objectName)
+			return identity.CanDo(legacyAction, bucketName, objectName)
 		}
 	}
 

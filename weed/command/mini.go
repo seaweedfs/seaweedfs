@@ -93,12 +93,13 @@ Example Usage:
 	weed mini -dir=/data -master.port=9444  # Custom master port
 
 After starting, you can access:
-- Master UI:    http://localhost:9333
-- Volume Server: http://localhost:9340
-- Filer UI:     http://localhost:8888
-- S3 Endpoint:  http://localhost:8333
-- WebDAV:       http://localhost:7333
-- Admin UI:     http://localhost:23646
+- Master UI:       http://localhost:9333
+- Volume Server:   http://localhost:9340
+- Filer UI:        http://localhost:8888
+- S3 Endpoint:     http://localhost:8333
+- Iceberg Catalog: http://localhost:8181
+- WebDAV:          http://localhost:7333
+- Admin UI:        http://localhost:23646
 
 S3 Access:
 The S3 endpoint is available at http://localhost:8333. For client
@@ -222,6 +223,7 @@ func initMiniS3Flags() {
 	miniS3Options.port = cmdMini.Flag.Int("s3.port", 8333, "s3 server http listen port")
 	miniS3Options.portHttps = cmdMini.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	miniS3Options.portGrpc = cmdMini.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
+	miniS3Options.portIceberg = cmdMini.Flag.Int("s3.port.iceberg", 8181, "Iceberg REST Catalog server listen port (0 to disable)")
 	miniS3Options.domainName = cmdMini.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	miniS3Options.allowedOrigins = cmdMini.Flag.String("s3.allowedOrigins", "*", "comma separated list of allowed origins")
 	miniS3Options.tlsPrivateKey = cmdMini.Flag.String("s3.key.file", "", "path to the TLS private key file")
@@ -353,6 +355,9 @@ func isFlagPassed(name string) bool {
 
 // isPortOpenOnIP checks if a port is available for binding on a specific IP address
 func isPortOpenOnIP(ip string, port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
 	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
 		return false
@@ -364,6 +369,9 @@ func isPortOpenOnIP(ip string, port int) bool {
 // isPortAvailable checks if a port is available on any interface
 // This is more comprehensive than checking a single IP
 func isPortAvailable(port int) bool {
+	if port <= 0 || port > 65535 {
+		return false
+	}
 	// Try to listen on all interfaces (0.0.0.0)
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -379,6 +387,10 @@ func isPortAvailable(port int) bool {
 func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPorts map[int]bool) int {
 	for i := 0; i < maxAttempts; i++ {
 		port := startPort + i
+		if port > 65535 {
+			// Wrap around to a lower range if we exceed 65535
+			port = 10000 + (port % 65535)
+		}
 		// Skip ports reserved for gRPC calculation
 		if reservedPorts[port] {
 			continue
@@ -396,14 +408,14 @@ func findAvailablePortOnIP(ip string, startPort int, maxAttempts int, reservedPo
 // If the port is not available, it finds the next available port and updates the pointer
 // The reservedPorts map contains ports that should not be allocated (for gRPC collision avoidance)
 func ensurePortAvailableOnIP(portPtr *int, serviceName string, ip string, reservedPorts map[int]bool, flagName string) error {
-	if portPtr == nil {
+	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
+	isExplicitPort := explicitPortFlags[flagName]
+
+	if *portPtr == 0 {
 		return nil
 	}
 
 	original := *portPtr
-
-	// Check if this port was explicitly specified by the user (from CLI, before config file was applied)
-	isExplicitPort := explicitPortFlags[flagName]
 
 	// Skip if this port is reserved for gRPC calculation
 	if reservedPorts[original] {
@@ -463,6 +475,14 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 			flagName string
 			grpcPtr  *int
 		}{miniS3Options.port, "S3", "s3.port", miniS3Options.portGrpc})
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			portConfigs = append(portConfigs, struct {
+				port     *int
+				name     string
+				flagName string
+				grpcPtr  *int
+			}{miniS3Options.portIceberg, "Iceberg", "s3.port.iceberg", nil})
+		}
 	}
 	portConfigs = append(portConfigs, struct {
 		port     *int
@@ -510,9 +530,13 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 	initializeGrpcPortsOnIP(bindIp)
 
 	// Log the final port configuration
-	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, WebDAV: %d, Admin: %d",
+	icebergPortStr := "disabled"
+	if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+		icebergPortStr = fmt.Sprintf("%d", *miniS3Options.portIceberg)
+	}
+	glog.Infof("Final port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Iceberg: %s, WebDAV: %d, Admin: %d",
 		*miniMasterOptions.port, *miniFilerOptions.port, *miniOptions.v.port,
-		*miniS3Options.port, *miniWebDavOptions.port, *miniAdminOptions.port)
+		*miniS3Options.port, icebergPortStr, *miniWebDavOptions.port, *miniAdminOptions.port)
 
 	// Log gRPC ports too (now finalized)
 	glog.Infof("gRPC port configuration - Master: %d, Filer: %d, Volume: %d, S3: %d, Admin: %d",
@@ -704,7 +728,7 @@ func runMini(cmd *Command, args []string) bool {
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
 	explicitPortFlags = make(map[string]bool)
-	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "webdav.port", "admin.port", "s3.iam.readOnly"}
+	portFlagNames := []string{"master.port", "filer.port", "volume.port", "s3.port", "s3.port.iceberg", "webdav.port", "admin.port", "s3.iam.readOnly"}
 	for _, flagName := range portFlagNames {
 		explicitPortFlags[flagName] = isFlagPassed(flagName)
 	}
@@ -874,9 +898,12 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 		}, *miniWebDavOptions.port)
 	}
 
-	// Wait for both S3 and WebDAV to be ready
+	// Wait for services to be ready
 	if *miniEnableS3 {
 		waitForServiceReady("S3", *miniS3Options.port, bindIp)
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			waitForServiceReady("Iceberg", *miniS3Options.portIceberg, bindIp)
+		}
 	}
 	if *miniEnableWebDAV {
 		waitForServiceReady("WebDAV", *miniWebDavOptions.port, bindIp)
@@ -895,6 +922,7 @@ func startMiniService(name string, fn func(), port int) {
 // waitForServiceReady pings the service HTTP endpoint to check if it's ready to accept connections
 func waitForServiceReady(name string, port int, bindIp string) {
 	address := fmt.Sprintf("http://%s:%d", bindIp, port)
+	healthAddr := getHealthCheckAddr(address)
 	maxAttempts := 30 // 30 * 200ms = 6 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -902,7 +930,7 @@ func waitForServiceReady(name string, port int, bindIp string) {
 	}
 
 	for attempt < maxAttempts {
-		resp, err := client.Get(address)
+		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
 			glog.Infof("%s service is ready at %s", name, address)
@@ -945,8 +973,8 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
 
-	// Prepare master address
-	masterAddr := fmt.Sprintf("%s:%d", *miniIp, *miniMasterOptions.port)
+	// Prepare master address with gRPC port
+	masterAddr := string(pb.NewServerAddress(*miniIp, *miniMasterOptions.port, *miniMasterOptions.portGrpc))
 
 	// Set admin options
 	*miniAdminOptions.master = masterAddr
@@ -982,7 +1010,11 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start admin server in background
 	go func() {
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI); err != nil {
+		var icebergPort int
+		if miniS3Options.portIceberg != nil {
+			icebergPort = *miniS3Options.portIceberg
+		}
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -1004,7 +1036,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
 func waitForAdminServerReady(adminAddr string) error {
-	healthAddr := fmt.Sprintf("%s/health", adminAddr)
+	healthAddr := getHealthCheckAddr(fmt.Sprintf("%s/health", adminAddr))
 	maxAttempts := 60 // 60 * 500ms = 30 seconds max wait
 	attempt := 0
 	client := &http.Client{
@@ -1015,7 +1047,7 @@ func waitForAdminServerReady(adminAddr string) error {
 		resp, err := client.Get(healthAddr)
 		if err == nil {
 			resp.Body.Close()
-			glog.V(1).Infof("Admin server is ready at %s", adminAddr)
+			glog.Infof("Admin server is ready at %s", adminAddr)
 			return nil
 		}
 		attempt++
@@ -1023,6 +1055,12 @@ func waitForAdminServerReady(adminAddr string) error {
 	}
 
 	return fmt.Errorf("admin server did not become ready at %s after %d attempts", adminAddr, maxAttempts)
+}
+func getHealthCheckAddr(addr string) string {
+	if strings.Contains(addr, "://0.0.0.0:") {
+		return strings.Replace(addr, "://0.0.0.0:", "://127.0.0.1:", 1)
+	}
+	return addr
 }
 
 // waitForWorkerReady polls the worker's gRPC port to ensure the worker has fully initialized
@@ -1153,20 +1191,23 @@ func printWelcomeMessage() {
 	sb.WriteString("║                      SeaweedFS Mini - All-in-One Mode                         ║\n")
 	sb.WriteString("╚═══════════════════════════════════════════════════════════════════════════════╝\n\n")
 	sb.WriteString("  All enabled components are running and ready to use:\n\n")
-	fmt.Fprintf(&sb, "    Master UI:      http://%s:%d\n", *miniIp, *miniMasterOptions.port)
-	fmt.Fprintf(&sb, "    Filer UI:       http://%s:%d\n", *miniIp, *miniFilerOptions.port)
+	fmt.Fprintf(&sb, "    Master UI:       http://%s:%d\n", *miniIp, *miniMasterOptions.port)
+	fmt.Fprintf(&sb, "    Filer UI:        http://%s:%d\n", *miniIp, *miniFilerOptions.port)
 	if *miniEnableS3 {
-		fmt.Fprintf(&sb, "    S3 Endpoint:    http://%s:%d\n", *miniIp, *miniS3Options.port)
+		fmt.Fprintf(&sb, "    S3 Endpoint:     http://%s:%d\n", *miniIp, *miniS3Options.port)
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			fmt.Fprintf(&sb, "    Iceberg Catalog: http://%s:%d\n", *miniIp, *miniS3Options.portIceberg)
+		}
 	}
 
 	if *miniEnableWebDAV {
-		fmt.Fprintf(&sb, "    WebDAV:         http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
+		fmt.Fprintf(&sb, "    WebDAV:          http://%s:%d\n", *miniIp, *miniWebDavOptions.port)
 	}
 	if *miniEnableAdminUI {
-		fmt.Fprintf(&sb, "    Admin UI:       http://%s:%d\n", *miniIp, *miniAdminOptions.port)
+		fmt.Fprintf(&sb, "    Admin UI:        http://%s:%d\n", *miniIp, *miniAdminOptions.port)
 	}
 
-	fmt.Fprintf(&sb, "    Volume Server:  http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
+	fmt.Fprintf(&sb, "    Volume Server:   http://%s:%d\n\n", *miniIp, *miniOptions.v.port)
 
 	sb.WriteString("  Optimized Settings:\n")
 	fmt.Fprintf(&sb, "    • Volume size limit: %dMB\n", *miniMasterOptions.volumeSizeLimitMB)

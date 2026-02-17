@@ -152,7 +152,7 @@ func (s3a *S3ApiServer) createDeleteMarker(bucket, object string) (string, error
 	versionFileName := s3a.getVersionFileName(versionId)
 
 	// Store delete marker in the .versions directory
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsDir := bucketDir + "/" + cleanObject + s3_constants.VersionsFolder
 
 	// Create the delete marker entry in the .versions directory
@@ -230,7 +230,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 	// Recursively find all .versions directories in the bucket
 	// Pass keyMarker and versionIdMarker to enable efficient pagination (skip entries before marker)
-	bucketPath := path.Join(s3a.option.BucketsPath, bucket)
+	bucketPath := s3a.bucketDir(bucket)
 
 	// Memory optimization: limit collection to maxKeys+1 versions.
 	// This works correctly for objects using the NEW inverted-timestamp format, where
@@ -640,6 +640,24 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 				continue
 			}
 
+			// Handle special directories that should bypass delimiter logic
+			// This ensures .versions directories are processed as version containers
+			// rather than being rolled up into CommonPrefixes when a delimiter is used
+			if entry.IsDirectory {
+				// Skip .uploads directory
+				if strings.HasPrefix(entry.Name, s3_constants.MultipartUploadsFolder) {
+					continue
+				}
+
+				// Handle .versions directory
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					if err := vc.processVersionsDirectory(entryPath); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+
 			// Group into common prefixes if delimiter is found after the prefix
 			if vc.delimiter != "" {
 				fullKey := entryPath
@@ -688,16 +706,6 @@ func (vc *versionCollector) collectVersions(currentPath, relativePath string) er
 
 // processDirectory handles directory entries
 func (vc *versionCollector) processDirectory(currentPath, entryPath string, entry *filer_pb.Entry) error {
-	// Skip .uploads directory
-	if strings.HasPrefix(entry.Name, ".uploads") {
-		return nil
-	}
-
-	// Handle .versions directory
-	if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-		return vc.processVersionsDirectory(entryPath)
-	}
-
 	// Handle explicit S3 directory object
 	if entry.Attributes.Mime == s3_constants.FolderMimeType {
 		vc.processExplicitDirectory(entryPath, entry)
@@ -720,7 +728,7 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 	glog.V(2).Infof("getObjectVersionList: looking for versions of %s/%s in .versions directory", bucket, object)
 
 	// All versions are now stored in the .versions directory only
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	glog.V(2).Infof("getObjectVersionList: checking versions directory %s", versionsObjectPath)
 
@@ -810,6 +818,9 @@ func (s3a *S3ApiServer) getObjectVersionList(bucket, object string) ([]*ObjectVe
 				// Try to get ETag from Extended attributes first
 				if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
 					version.ETag = string(etagBytes)
+					if !strings.HasPrefix(version.ETag, "\"") {
+						version.ETag = "\"" + version.ETag + "\""
+					}
 				} else {
 					// Fallback: calculate ETag from chunks
 					version.ETag = s3a.calculateETagFromChunks(entry.Chunks)
@@ -861,12 +872,12 @@ func (s3a *S3ApiServer) getSpecificObjectVersion(bucket, object, versionId strin
 
 	if versionId == "" {
 		// Get current version
-		return s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), normalizedObject)
+		return s3a.getEntry(s3a.bucketDir(bucket), normalizedObject)
 	}
 
 	if versionId == "null" {
 		// "null" version ID refers to pre-versioning objects stored as regular files
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
+		bucketDir := s3a.bucketDir(bucket)
 		entry, err := s3a.getEntry(bucketDir, normalizedObject)
 		if err != nil {
 			return nil, fmt.Errorf("null version object %s not found: %v", normalizedObject, err)
@@ -897,7 +908,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 
 	if versionId == "null" {
 		// Delete "null" version (pre-versioning object stored as regular file)
-		bucketDir := s3a.option.BucketsPath + "/" + bucket
+		bucketDir := s3a.bucketDir(bucket)
 
 		// Check if the object exists
 		_, err := s3a.getEntry(bucketDir, normalizedObject)
@@ -924,7 +935,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	versionFile := s3a.getVersionFileName(versionId)
 
 	// Check if this is the latest version before attempting deletion (for potential metadata update)
-	versionsEntry, dirErr := s3a.getEntry(path.Join(s3a.option.BucketsPath, bucket), normalizedObject+s3_constants.VersionsFolder)
+	versionsEntry, dirErr := s3a.getEntry(s3a.bucketDir(bucket), normalizedObject+s3_constants.VersionsFolder)
 	isLatestVersion := false
 	if dirErr == nil && versionsEntry.Extended != nil {
 		if latestVersionIdBytes, hasLatest := versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey]; hasLatest {
@@ -961,7 +972,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 
 // updateLatestVersionAfterDeletion finds the new latest version after deleting the current latest
 func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
 	versionsDir := bucketDir + "/" + versionsObjectPath
 
@@ -1094,6 +1105,7 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	// Set the original prefix in the response (not the normalized internal prefix)
 	result.Prefix = originalPrefix
 
+	glog.V(3).Infof("ListObjectVersionsHandler response: %+v", result)
 	writeSuccessResponseXML(w, r, result)
 }
 
@@ -1106,7 +1118,7 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	// Normalize object path to ensure consistency with toFilerPath behavior
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
 
 	glog.V(1).Infof("doGetLatestObjectVersion: looking for latest version of %s/%s (normalized: %s, retries: %d)", bucket, object, normalizedObject, maxRetries)
@@ -1294,7 +1306,7 @@ func (s3a *S3ApiServer) getLatestVersionEntryFromDirectoryEntry(bucket, object s
 
 	glog.V(3).Infof("getLatestVersionEntryFromDirectoryEntry: fetching version file for %s/%s (no cached metadata)", bucket, normalizedObject)
 
-	bucketDir := path.Join(s3a.option.BucketsPath, bucket)
+	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := path.Join(normalizedObject, s3_constants.VersionsFolder)
 	latestVersionPath := path.Join(versionsObjectPath, latestVersionFile)
 	latestVersionEntry, err := s3a.getEntry(bucketDir, latestVersionPath)

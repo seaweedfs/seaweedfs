@@ -104,20 +104,18 @@ func TestPrintStorageInfo(t *testing.T) {
 		{
 			testTopology2, true,
 			`storage:
-	total:           5.9 TB
-	regular volumes: 5.9 TB
-	EC volumes:      0 B
-	raw:             18 TB on volume replicas, 0 B on EC shards
+	total:           5.9 TB (18 TB raw, 299.97%)
+	regular volumes: 5.9 TB (18 TB raw, 299.97%)
+	EC volumes:      0 B (0 B raw, 0%)
 
 `,
 		},
 		{
 			testTopology2, false,
 			`storage:
-	total:           5892610895448 byte(s)
-	regular volumes: 5892610895448 byte(s)
-	EC volumes:      0 byte(s)
-	raw:             17676186754616 byte(s) on volume replicas, 0 byte(s) on EC shards
+	total:           5892610895448 byte(s) (17676186754616 byte(s) raw, 299.97%)
+	regular volumes: 5892610895448 byte(s) (17676186754616 byte(s) raw, 299.97%)
+	EC volumes:      0 byte(s) (0 byte(s) raw, 0.00%)
 
 `,
 		},
@@ -141,12 +139,13 @@ func TestPrintStorageInfo(t *testing.T) {
 
 func TestPrintFilesInfo(t *testing.T) {
 	testCases := []struct {
-		regularVolumeStats RegularVolumeStats
-		humanize           bool
-		want               string
+		regularVolumesStats RegularVolumesStats
+		ecVolumesStats      EcVolumesStats
+		humanize            bool
+		want                string
 	}{
 		{
-			regularVolumeStats: RegularVolumeStats{
+			regularVolumesStats: RegularVolumesStats{
 				1: []*VolumeReplicaStats{
 					&VolumeReplicaStats{Id: "10.200.17.13:9001", VolumeId: 1, Files: 159, FilesDeleted: 8, TotalSize: 89762704},
 					&VolumeReplicaStats{Id: "10.200.17.13:9002", VolumeId: 1, Files: 159, FilesDeleted: 8, TotalSize: 89762704},
@@ -163,17 +162,20 @@ func TestPrintFilesInfo(t *testing.T) {
 					&VolumeReplicaStats{Id: "10.200.17.13:9009", VolumeId: 3, Files: 149, FilesDeleted: 0, TotalSize: 81643872},
 				},
 			},
+			ecVolumesStats: EcVolumesStats{
+				10: &EcVolumeStats{VolumeId: 10, Files: 30, FilesDeleted: 0, TotalSize: 34879032},
+				11: &EcVolumeStats{VolumeId: 11, Files: 55, FilesDeleted: 5, TotalSize: 55540341},
+			},
 			humanize: false,
 			want: `files:
-	regular:     500 file(s), 471 readable (94.20%), 29 deleted (5.80%), avg 530390 byte(s) per file
-	regular raw: 1500 file(s), 1413 readable (94.20%), 87 deleted (5.80%), 795585624 byte(s) total
-	EC:          [no data]
-	EC raw:      [no data]
+	total:   585 file(s), 551 readable (94.19%), 34 deleted (5.81%), avg 607888 byte(s) per file
+	regular: 500 file(s), 471 readable (94.20%), 29 deleted (5.80%), avg 530390 byte(s) per file
+	EC:      85 file(s), 80 readable (94.12%), 5 deleted (5.88%), avg 1063757 byte(s) per file
 
 `,
 		},
 		{
-			regularVolumeStats: RegularVolumeStats{
+			regularVolumesStats: RegularVolumesStats{
 				1: []*VolumeReplicaStats{
 					&VolumeReplicaStats{Id: "10.200.17.13:9001", VolumeId: 1, Files: 184, FilesDeleted: 33, TotalSize: 79187475},
 					&VolumeReplicaStats{Id: "10.200.17.13:9008", VolumeId: 1, Files: 184, FilesDeleted: 33, TotalSize: 79187475},
@@ -187,12 +189,15 @@ func TestPrintFilesInfo(t *testing.T) {
 					&VolumeReplicaStats{Id: "10.200.17.13:9009", VolumeId: 3, Files: 171, FilesDeleted: 12, TotalSize: 124049530},
 				},
 			},
+			ecVolumesStats: EcVolumesStats{
+				20: &EcVolumeStats{VolumeId: 20, Files: 22, FilesDeleted: 10, TotalSize: 27328233},
+				30: &EcVolumeStats{VolumeId: 30, Files: 16, FilesDeleted: 11, TotalSize: 11193827},
+			},
 			humanize: true,
 			want: `files:
-	regular:     600 files, 551 readable (91.83%), 49 deleted (8.16%), avg 488 kB per file
-	regular raw: 1,200 files, 1,102 readable (91.83%), 98 deleted (8.16%), 586 MB total
-	EC:          [no data]
-	EC raw:      [no data]
+	total:   638 files, 568 readable (89.02%), 70 deleted (10.97%), avg 519 kB per file
+	regular: 600 files, 551 readable (91.83%), 49 deleted (8.16%), avg 488 kB per file
+	EC:      38 files, 17 readable (44.73%), 21 deleted (55.26%), avg 1.0 MB per file
 
 `,
 		},
@@ -201,9 +206,10 @@ func TestPrintFilesInfo(t *testing.T) {
 	for i, tc := range testCases {
 		var buf bytes.Buffer
 		sp := &ClusterStatusPrinter{
-			writer:             &buf,
-			humanize:           tc.humanize,
-			regularVolumeStats: tc.regularVolumeStats,
+			writer:              &buf,
+			humanize:            tc.humanize,
+			regularVolumesStats: tc.regularVolumesStats,
+			ecVolumesStats:      tc.ecVolumesStats,
 		}
 		sp.printFilesInfo()
 		got := buf.String()

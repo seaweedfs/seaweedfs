@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
@@ -85,6 +86,7 @@ type PolicyContext struct {
 	SSEAlgorithm    string
 	KMSKeyArn       string
 	StorageClass    string
+	DefaultAllow    bool
 }
 
 // CheckPermissionWithResource checks if a principal has permission to perform an operation on a specific resource
@@ -110,10 +112,13 @@ func CheckPermissionWithContext(operation, principal, owner, resourcePolicy, res
 		return true
 	}
 
+	glog.V(2).Infof("S3Tables: CheckPermission operation=%s principal=%s owner=%s", operation, principal, owner)
+
 	return checkPermission(operation, principal, owner, resourcePolicy, resourceARN, ctx)
 }
 
 func checkPermission(operation, principal, owner, resourcePolicy, resourceARN string, ctx *PolicyContext) bool {
+
 	// Owner always has permission
 	if principal == owner {
 		return true
@@ -123,8 +128,11 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		return true
 	}
 
-	// If no policy is provided, deny access (default deny)
+	// If no policy is provided, use default allow if enabled
 	if resourcePolicy == "" {
+		if ctx != nil && ctx.DefaultAllow {
+			return true
+		}
 		return false
 	}
 
@@ -166,15 +174,25 @@ func checkPermission(operation, principal, owner, resourcePolicy, resourceARN st
 		}
 
 		// Statement matches - check effect
-		if stmt.Effect == "Allow" {
+		switch stmt.Effect {
+		case "Allow":
 			hasAllow = true
-		} else if stmt.Effect == "Deny" {
+		case "Deny":
 			// Explicit deny always wins
 			return false
 		}
 	}
 
-	return hasAllow
+	if hasAllow {
+		return true
+	}
+
+	// If no statement matched, use default allow if enabled
+	if ctx != nil && ctx.DefaultAllow {
+		return true
+	}
+
+	return false
 }
 
 func hasIdentityPermission(operation string, ctx *PolicyContext) bool {

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,9 @@ Steps to apply erasure coding to .dat .idx files
 
 // VolumeEcShardsGenerate generates the .ecx and .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_server_pb.VolumeEcShardsGenerateRequest) (*volume_server_pb.VolumeEcShardsGenerateResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsGenerate: %v", req)
 
@@ -131,9 +135,11 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 
 // VolumeEcShardsRebuild generates the any of the missing .ec00 ~ .ec13 files
 func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsRebuild: %v", req)
-
 	baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
 	var rebuiltShardIds []uint32
@@ -173,6 +179,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
 func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
@@ -249,6 +258,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 // VolumeEcShardsDelete local delete the .ecx and some ec data slices if not needed
 // the shard should not be mounted before calling this.
 func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	bName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
@@ -327,11 +339,28 @@ func checkEcVolumeStatus(bName string, location *storage.DiskLocation) (hasEcxFi
 			hasIdxFile = true
 			continue
 		}
-		if strings.HasPrefix(fileInfo.Name(), bName+".ec") {
+		if isEcDataShardFile(fileInfo.Name(), bName) {
 			existingShardCount++
 		}
 	}
 	return hasEcxFile, hasIdxFile, existingShardCount, nil
+}
+
+func isEcDataShardFile(fileName, baseName string) bool {
+	const ecDataShardSuffixLen = 2 // ".ecNN"
+	prefix := baseName + ".ec"
+	if !strings.HasPrefix(fileName, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(fileName, prefix)
+	if len(suffix) != ecDataShardSuffixLen {
+		return false
+	}
+	shardId, err := strconv.Atoi(suffix)
+	if err != nil {
+		return false
+	}
+	return shardId >= 0 && shardId < erasure_coding.MaxShardCount
 }
 
 func (vs *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_server_pb.VolumeEcShardsMountRequest) (*volume_server_pb.VolumeEcShardsMountResponse, error) {
@@ -445,6 +474,9 @@ func (vs *VolumeServer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardRea
 }
 
 func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcBlobDelete: %v", req)
 
@@ -475,6 +507,9 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
 func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_server_pb.VolumeEcShardsToVolumeRequest) (*volume_server_pb.VolumeEcShardsToVolumeResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	glog.V(0).Infof("VolumeEcShardsToVolume: %v", req)
 
@@ -542,25 +577,43 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	glog.V(0).Infof("VolumeEcShardsInfo: volume %d", req.VolumeId)
 
-	var ecShardInfos []*volume_server_pb.EcShardInfo
+	glog.V(0).Infof("VolumeEcStatus: %v", req)
 
-	// Find the EC volume
-	for _, location := range vs.store.Locations {
-		if v, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
-			// Get shard details from the EC volume
-			for _, si := range erasure_coding.ShardsInfoFromVolume(v).AsSlice() {
-				ecShardInfo := &volume_server_pb.EcShardInfo{
-					ShardId:    uint32(si.Id),
-					Size:       int64(si.Size),
-					Collection: v.Collection,
-				}
-				ecShardInfos = append(ecShardInfos, ecShardInfo)
-			}
-			break
-		}
+	vid := needle.VolumeId(req.GetVolumeId())
+	ecv, found := vs.store.FindEcVolume(vid)
+	if !found {
+		return nil, fmt.Errorf("VolumeEcStatus: EC volume %d not found", vid)
 	}
 
-	return &volume_server_pb.VolumeEcShardsInfoResponse{
-		EcShardInfos: ecShardInfos,
-	}, nil
+	shardInfos := make([]*volume_server_pb.EcShardInfo, len(ecv.Shards))
+	for i, s := range ecv.Shards {
+		shardInfos[i] = s.ToEcShardInfo()
+	}
+
+	var files, filesDeleted, totalSize uint64
+	err := ecv.WalkIndex(func(_ types.NeedleId, _ types.Offset, size types.Size) error {
+		// deleted files are counted when computing EC volume sizes. this aligns with VolumeStatus(),
+		// which reports the raw data backend file size, regardless of deleted files.
+		totalSize += uint64(size.Raw())
+
+		if size.IsDeleted() {
+			filesDeleted++
+		} else {
+			files++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &volume_server_pb.VolumeEcShardsInfoResponse{
+		EcShardInfos:     shardInfos,
+		FileCount:        files,
+		FileDeletedCount: filesDeleted,
+		VolumeSize:       totalSize,
+	}
+
+	return res, nil
 }

@@ -18,6 +18,10 @@ func (s3a *S3ApiServer) GetObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// collect parameters
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetObjectAclHandler %s %s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -161,6 +165,10 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	// collect parameters
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutObjectAclHandler %s %s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
@@ -266,7 +274,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 		}
 
 		// 4. Verify the authenticated identity can perform WriteAcp on this specific object
-		if identity == nil || !identity.canDo(writeAcpAction, bucket, object) {
+		if identity == nil || !identity.CanDo(writeAcpAction, bucket, object) {
 			glog.V(3).Infof("PutObjectAclHandler: Identity %v cannot perform WriteAcp on %s/%s", identity, bucket, object)
 			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
@@ -306,7 +314,7 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 	if versioningConfigured {
 		if versionId != "" && versionId != "null" {
 			// Versioned object - update the specific version file in .versions directory
-			updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+			updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 		} else {
 			// Latest version in versioned bucket - could be null version or versioned object
 			// Extract version ID from the entry to determine where it's stored
@@ -319,15 +327,15 @@ func (s3a *S3ApiServer) PutObjectAclHandler(w http.ResponseWriter, r *http.Reque
 
 			if actualVersionId == "null" || actualVersionId == "" {
 				// Null version (pre-versioning object) - stored as regular file
-				updateDirectory = s3a.option.BucketsPath + "/" + bucket
+				updateDirectory = s3a.bucketDir(bucket)
 			} else {
 				// Versioned object - stored in .versions directory
-				updateDirectory = s3a.option.BucketsPath + "/" + bucket + "/" + object + s3_constants.VersionsFolder
+				updateDirectory = s3a.bucketDir(bucket) + "/" + object + s3_constants.VersionsFolder
 			}
 		}
 	} else {
 		// Non-versioned object - stored as regular file
-		updateDirectory = s3a.option.BucketsPath + "/" + bucket
+		updateDirectory = s3a.bucketDir(bucket)
 	}
 
 	// Update the object with new ACL metadata

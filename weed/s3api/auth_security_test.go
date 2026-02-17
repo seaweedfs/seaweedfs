@@ -66,7 +66,7 @@ func TestReproIssue7912(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, "memory")
+	iam := NewIdentityAccessManagementWithStore(option, nil, "memory")
 
 	assert.True(t, iam.isEnabled(), "Auth should be enabled")
 
@@ -98,8 +98,8 @@ func TestReproIssue7912(t *testing.T) {
 		var nilIdentity *Identity
 		// Test isAdmin guard
 		assert.False(t, nilIdentity.isAdmin())
-		// Test canDo guard
-		assert.False(t, nilIdentity.canDo(s3_constants.ACTION_LIST, "bucket", "object"))
+		// Test CanDo guard
+		assert.False(t, nilIdentity.CanDo(s3_constants.ACTION_LIST, "bucket", "object"))
 	})
 
 	t.Run("AuthSignatureOnly path", func(t *testing.T) {

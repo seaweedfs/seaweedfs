@@ -14,6 +14,7 @@ templ Layout(c *gin.Context, content templ.Component) {
   if username == "" {
     username = "admin"
   }
+  csrfToken := c.GetString("csrf_token")
   
   // Detect if we're on a configuration page to keep submenu expanded
   currentPath := c.Request.URL.Path
@@ -21,7 +22,7 @@ templ Layout(c *gin.Context, content templ.Component) {
   
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
-  
+
   // Detect if we're on a storage page to keep submenu expanded
   isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
   
@@ -34,6 +35,7 @@ templ Layout(c *gin.Context, content templ.Component) {
     <meta charset="UTF-8">
     <title>SeaweedFS Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content={ csrfToken }>
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     
     <!-- Bootstrap CSS -->
@@ -141,6 +143,37 @@ templ Layout(c *gin.Context, content templ.Component) {
                             </div>
                         </li>
                     </ul>
+
+                    <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
+                        <span>OBJECT STORE</span>
+                    </h6>
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/buckets">
+                                <i class="fas fa-cube me-2"></i>Buckets
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/s3tables/buckets">
+                                <i class="fas fa-table me-2"></i>Table Buckets
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/users">
+                                <i class="fas fa-users me-2"></i>Users
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/service-accounts">
+                                <i class="fas fa-robot me-2"></i>Service Accounts
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/policies">
+                                <i class="fas fa-shield-alt me-2"></i>Policies
+                            </a>
+                        </li>
+                    </ul>
                     
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
                         <span>MANAGEMENT</span>
@@ -150,41 +183,6 @@ templ Layout(c *gin.Context, content templ.Component) {
                             <a class="nav-link" href="/files">
                                 <i class="fas fa-folder me-2"></i>File Browser
                             </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#objectStoreSubmenu" aria-expanded="false" aria-controls="objectStoreSubmenu">
-                                <i class="fas fa-cloud me-2"></i>Object Store
-                                <i class="fas fa-chevron-down ms-auto"></i>
-                            </a>
-                            <div class="collapse" id="objectStoreSubmenu">
-                                <ul class="nav flex-column ms-3">
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/buckets">
-                                            <i class="fas fa-cube me-2"></i>Buckets
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/s3tables/buckets">
-                                            <i class="fas fa-table me-2"></i>Table Buckets
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/users">
-                                            <i class="fas fa-users me-2"></i>Users
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/service-accounts">
-                                            <i class="fas fa-robot me-2"></i>Service Accounts
-                                        </a>
-                                    </li>
-                                    <li class="nav-item">
-                                        <a class="nav-link py-2" href="/object-store/policies">
-                                            <i class="fas fa-shield-alt me-2"></i>Policies
-                                        </a>
-                                    </li>
-                                </ul>
-                            </div>
                         </li>
                         <li class="nav-item">
                             if isMQPage {

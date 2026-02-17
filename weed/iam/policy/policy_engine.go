@@ -324,6 +324,14 @@ func (e *PolicyEngine) IsInitialized() bool {
 	return e.initialized
 }
 
+// DefaultAllow returns whether the default effect is Allow
+func (e *PolicyEngine) DefaultAllow() bool {
+	if e.config == nil {
+		return true // Default to Allow if not configured
+	}
+	return e.config.DefaultEffect == string(EffectAllow)
+}
+
 // AddPolicy adds a policy to the engine (filerAddress ignored for memory stores)
 func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *PolicyDocument) error {
 	if !e.initialized {
@@ -465,6 +473,68 @@ func (e *PolicyEngine) EvaluateTrustPolicy(ctx context.Context, trustPolicy *Pol
 	// 1. If there's an explicit Deny, the result is Deny
 	// 2. If there's an Allow and no Deny, the result is Allow
 	// 3. Otherwise, use the default effect
+	if explicitDeny {
+		result.Effect = EffectDeny
+	} else if hasAllow {
+		result.Effect = EffectAllow
+	}
+
+	return result, nil
+}
+
+// EvaluatePolicyDocument evaluates a single policy document without storing it.
+// defaultEffect controls the fallback result when no statements match.
+func (e *PolicyEngine) EvaluatePolicyDocument(ctx context.Context, evalCtx *EvaluationContext, policyName string, policyDoc *PolicyDocument, defaultEffect Effect) (*EvaluationResult, error) {
+	if !e.initialized {
+		return nil, fmt.Errorf("policy engine not initialized")
+	}
+
+	if evalCtx == nil {
+		return nil, fmt.Errorf("evaluation context cannot be nil")
+	}
+
+	if policyDoc == nil {
+		return nil, fmt.Errorf("policy document cannot be nil")
+	}
+
+	if policyName == "" {
+		policyName = "inline-policy"
+	}
+
+	result := &EvaluationResult{
+		Effect: defaultEffect,
+		EvaluationDetails: &EvaluationDetails{
+			Principal:         evalCtx.Principal,
+			Action:            evalCtx.Action,
+			Resource:          evalCtx.Resource,
+			PoliciesEvaluated: []string{policyName},
+		},
+	}
+
+	var matchingStatements []StatementMatch
+	explicitDeny := false
+	hasAllow := false
+
+	for _, statement := range policyDoc.Statement {
+		if e.statementMatches(&statement, evalCtx) {
+			match := StatementMatch{
+				PolicyName:   policyName,
+				StatementSid: statement.Sid,
+				Effect:       Effect(statement.Effect),
+				Reason:       "Action, Resource, and Condition matched",
+			}
+			matchingStatements = append(matchingStatements, match)
+
+			if statement.Effect == "Deny" {
+				explicitDeny = true
+			} else if statement.Effect == "Allow" {
+				hasAllow = true
+			}
+		}
+	}
+
+	result.MatchingStatements = matchingStatements
+
 	if explicitDeny {
 		result.Effect = EffectDeny
 	} else if hasAllow {

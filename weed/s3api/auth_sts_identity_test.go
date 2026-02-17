@@ -22,7 +22,7 @@ func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}
@@ -78,9 +78,9 @@ func TestSTSIdentityPolicyNamesPopulation(t *testing.T) {
 	// Verify that Actions is empty (STS identities should use IAM authorization, not legacy Actions)
 	assert.Empty(t, identity.Actions, "STS identities should have empty Actions to trigger IAM authorization path")
 
-	// Verify legacy canDo returns false (forcing fallback to IAM)
-	assert.False(t, identity.canDo("Read", "test-bucket", "/any/path"),
-		"canDo should return false for STS identities with no Actions")
+	// Verify legacy CanDo returns false (forcing fallback to IAM)
+	assert.False(t, identity.CanDo("Read", "test-bucket", "/any/path"),
+		"CanDo should return false for STS identities with no Actions")
 
 	// Verify authorization path selection
 	// When identity.Actions is empty and iamIntegration is available, it should use IAM authorization
@@ -143,15 +143,15 @@ func TestSTSIdentityAuthorizationFlow(t *testing.T) {
 	assert.Empty(t, identity.Actions,
 		"STS identities should have empty Actions to trigger the IAM authorization path")
 
-	// Test 2: Verify canDo returns false (legacy auth should be bypassed)
+	// Test 2: Verify CanDo returns false (legacy auth should be bypassed)
 	// This is important because it confirms that identity.Actions being empty
 	// correctly forces the authorization logic to fall back to iam.authorizeWithIAM
-	assert.False(t, identity.canDo("Read", "test-bucket", "/any/path"),
-		"canDo should return false for STS identities with no Actions")
+	assert.False(t, identity.CanDo("Read", "test-bucket", "/any/path"),
+		"CanDo should return false for STS identities with no Actions")
 
 	// With empty Actions and populated PolicyNames, IAM authorization path will be used
 	// as per auth_credentials.go:703-713
-	t.Log("✓ Verified: STS identity correctly bypasses legacy canDo() to use IAM authorization path")
+	t.Log("✓ Verified: STS identity correctly bypasses legacy CanDo() to use IAM authorization path")
 }
 
 // TestSTSIdentityWithoutPolicyNames tests the bug scenario where PolicyNames is not populated
@@ -237,7 +237,7 @@ func TestCanDoPathConstruction(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := identity.canDo(tc.action, tc.bucket, tc.objectKey)
+			result := identity.CanDo(tc.action, tc.bucket, tc.objectKey)
 
 			// Robust path construction for verification
 			fullPath := tc.bucket
@@ -264,7 +264,7 @@ func TestValidateSTSSessionTokenIntegration(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}
@@ -311,7 +311,7 @@ func TestSTSIdentityClaimsPopulation(t *testing.T) {
 	stsService, config := setupTestSTSService(t)
 
 	// Create IAM with STS integration
-	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, "memory")
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
 	s3iam := &S3IAMIntegration{
 		stsService: stsService,
 	}

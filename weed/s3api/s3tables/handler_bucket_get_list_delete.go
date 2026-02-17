@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -32,7 +33,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	var metadata tableBucketMetadata
 	var bucketPolicy string
@@ -71,6 +72,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 	if !CheckPermissionWithContext("GetTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 		TableBucketName: bucketName,
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to get table bucket details")
 		return ErrAccessDenied
@@ -100,6 +102,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 	identityActions := getIdentityActions(r)
 	if !CheckPermissionWithContext("ListTableBuckets", principal, accountID, "", "", &PolicyContext{
 		IdentityActions: identityActions,
+		DefaultAllow:    h.defaultAllow,
 	}) {
 		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to list table buckets")
 		return NewAuthError("ListTableBuckets", principal, "not authorized to list table buckets")
@@ -166,6 +169,10 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
+				if !IsTableBucketEntry(entry.Entry) {
+					continue
+				}
+
 				// Read metadata from extended attribute
 				data, ok := entry.Entry.Extended[ExtendedKeyMetadata]
 				if !ok {
@@ -177,7 +184,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				bucketPath := getTableBucketPath(entry.Entry.Name)
+				bucketPath := GetTableBucketPath(entry.Entry.Name)
 				bucketPolicy := ""
 				policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 				if err != nil {
@@ -193,6 +200,7 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 				if !CheckPermissionWithContext("GetTableBucket", accountID, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 					TableBucketName: entry.Entry.Name,
 					IdentityActions: identityActions,
+					DefaultAllow:    h.defaultAllow,
 				}) {
 					continue
 				}
@@ -261,7 +269,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		return err
 	}
 
-	bucketPath := getTableBucketPath(bucketName)
+	bucketPath := GetTableBucketPath(bucketName)
 
 	// Check if bucket exists and perform ownership + emptiness check in one block
 	var metadata tableBucketMetadata
@@ -295,6 +303,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		if !CheckPermissionWithContext("DeleteTableBucket", principal, metadata.OwnerAccountID, bucketPolicy, bucketARN, &PolicyContext{
 			TableBucketName: bucketName,
 			IdentityActions: identityActions,
+			DefaultAllow:    h.defaultAllow,
 		}) {
 			return NewAuthError("DeleteTableBucket", principal, fmt.Sprintf("not authorized to delete bucket %s", bucketName))
 		}
@@ -343,7 +352,22 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 
 	// Delete the bucket
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return h.deleteDirectory(r.Context(), client, bucketPath)
+		// Delete table object entry first, then directory
+		// This ensures we clean up the leaf entry even if directory deletion fails
+		tableObjErr := h.deleteEntryIfExists(r.Context(), client, GetTableObjectBucketPath(bucketName))
+		dirErr := h.deleteDirectory(r.Context(), client, bucketPath)
+
+		// Log any errors but don't fail if one succeeds
+		if tableObjErr != nil && dirErr != nil {
+			return fmt.Errorf("delete table object failed: %w, delete directory failed: %w", tableObjErr, dirErr)
+		}
+		if tableObjErr != nil {
+			glog.V(1).Infof("failed to delete table object for %s: %v", bucketName, tableObjErr)
+		}
+		if dirErr != nil {
+			glog.V(1).Infof("failed to delete table bucket dir for %s: %v", bucketName, dirErr)
+		}
+		return nil
 	})
 
 	if err != nil {

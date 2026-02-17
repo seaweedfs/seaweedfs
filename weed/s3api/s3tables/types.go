@@ -1,6 +1,9 @@
 package s3tables
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Table bucket types
 
@@ -74,19 +77,22 @@ type DeleteTableBucketPolicyRequest struct {
 // Namespace types
 
 type Namespace struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type CreateNamespaceRequest struct {
-	TableBucketARN string   `json:"tableBucketARN"`
-	Namespace      []string `json:"namespace"`
+	TableBucketARN string            `json:"tableBucketARN"`
+	Namespace      []string          `json:"namespace"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type CreateNamespaceResponse struct {
-	Namespace      []string `json:"namespace"`
-	TableBucketARN string   `json:"tableBucketARN"`
+	Namespace      []string          `json:"namespace"`
+	TableBucketARN string            `json:"tableBucketARN"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type GetNamespaceRequest struct {
@@ -95,9 +101,10 @@ type GetNamespaceRequest struct {
 }
 
 type GetNamespaceResponse struct {
-	Namespace      []string  `json:"namespace"`
-	CreatedAt      time.Time `json:"createdAt"`
-	OwnerAccountID string    `json:"ownerAccountId"`
+	Namespace      []string          `json:"namespace"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	OwnerAccountID string            `json:"ownerAccountId"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 type ListNamespacesRequest struct {
@@ -135,11 +142,13 @@ type IcebergSchema struct {
 }
 
 type IcebergMetadata struct {
-	Schema IcebergSchema `json:"schema"`
+	Schema    IcebergSchema `json:"schema"`
+	TableUUID string        `json:"tableUuid,omitempty"`
 }
 
 type TableMetadata struct {
-	Iceberg *IcebergMetadata `json:"iceberg,omitempty"`
+	Iceberg      *IcebergMetadata `json:"iceberg,omitempty"`
+	FullMetadata json.RawMessage  `json:"fullMetadata,omitempty"`
 }
 
 type Table struct {
@@ -155,12 +164,14 @@ type Table struct {
 }
 
 type CreateTableRequest struct {
-	TableBucketARN string            `json:"tableBucketARN"`
-	Namespace      []string          `json:"namespace"`
-	Name           string            `json:"name"`
-	Format         string            `json:"format"`
-	Metadata       *TableMetadata    `json:"metadata,omitempty"`
-	Tags           map[string]string `json:"tags,omitempty"`
+	TableBucketARN   string            `json:"tableBucketARN"`
+	Namespace        []string          `json:"namespace"`
+	Name             string            `json:"name"`
+	Format           string            `json:"format"`
+	Metadata         *TableMetadata    `json:"metadata,omitempty"`
+	MetadataVersion  int               `json:"metadataVersion,omitempty"`
+	MetadataLocation string            `json:"metadataLocation,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 }
 
 type CreateTableResponse struct {
@@ -177,15 +188,17 @@ type GetTableRequest struct {
 }
 
 type GetTableResponse struct {
-	Name             string    `json:"name"`
-	TableARN         string    `json:"tableARN"`
-	Namespace        []string  `json:"namespace"`
-	Format           string    `json:"format"`
-	CreatedAt        time.Time `json:"createdAt"`
-	ModifiedAt       time.Time `json:"modifiedAt"`
-	OwnerAccountID   string    `json:"ownerAccountId"`
-	MetadataLocation string    `json:"metadataLocation,omitempty"`
-	VersionToken     string    `json:"versionToken"`
+	Name             string         `json:"name"`
+	TableARN         string         `json:"tableARN"`
+	Namespace        []string       `json:"namespace"`
+	Format           string         `json:"format"`
+	CreatedAt        time.Time      `json:"createdAt"`
+	ModifiedAt       time.Time      `json:"modifiedAt"`
+	OwnerAccountID   string         `json:"ownerAccountId"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+	VersionToken     string         `json:"versionToken"`
+	MetadataVersion  int            `json:"metadataVersion"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
 }
 
 type ListTablesRequest struct {
@@ -215,6 +228,22 @@ type DeleteTableRequest struct {
 	Namespace      []string `json:"namespace"`
 	Name           string   `json:"name"`
 	VersionToken   string   `json:"versionToken,omitempty"`
+}
+
+type UpdateTableRequest struct {
+	TableBucketARN   string         `json:"tableBucketARN"`
+	Namespace        []string       `json:"namespace"`
+	Name             string         `json:"name"`
+	VersionToken     string         `json:"versionToken,omitempty"`
+	Metadata         *TableMetadata `json:"metadata,omitempty"`
+	MetadataVersion  int            `json:"metadataVersion,omitempty"`
+	MetadataLocation string         `json:"metadataLocation,omitempty"`
+}
+
+type UpdateTableResponse struct {
+	TableARN         string `json:"tableARN"`
+	VersionToken     string `json:"versionToken"`
+	MetadataLocation string `json:"metadataLocation,omitempty"`
 }
 
 // Table policy types

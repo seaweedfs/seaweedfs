@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"sync"
@@ -86,11 +87,11 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	// object specific
-	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d/e.txt"))
-	assert.Equal(t, false, ident1.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
-	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
-	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/*"), "action on parent directory")
+	assert.Equal(t, true, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d/e.txt"))
+	assert.Equal(t, false, ident1.CanDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+	assert.Equal(t, false, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
+	assert.Equal(t, false, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/*"), "action on parent directory")
 
 	// bucket specific
 	ident2 := &Identity{
@@ -101,11 +102,11 @@ func TestCanDo(t *testing.T) {
 			"WriteAcp:bucket1",
 		},
 	}
-	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE_ACP, "bucket1", ""))
-	assert.Equal(t, false, ident2.canDo(ACTION_READ_ACP, "bucket1", ""))
-	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_WRITE_ACP, "bucket1", ""))
+	assert.Equal(t, false, ident2.CanDo(ACTION_READ_ACP, "bucket1", ""))
+	assert.Equal(t, false, ident2.CanDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
 
 	// across buckets
 	ident3 := &Identity{
@@ -115,10 +116,10 @@ func TestCanDo(t *testing.T) {
 			"Write",
 		},
 	}
-	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
-	assert.Equal(t, false, ident3.canDo(ACTION_WRITE_ACP, "bucket1", ""))
+	assert.Equal(t, true, ident3.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident3.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident3.CanDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
+	assert.Equal(t, false, ident3.CanDo(ACTION_WRITE_ACP, "bucket1", ""))
 
 	// partial buckets
 	ident4 := &Identity{
@@ -128,9 +129,9 @@ func TestCanDo(t *testing.T) {
 			"ReadAcp:special_*",
 		},
 	}
-	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident4.canDo(ACTION_READ_ACP, "special_bucket", ""))
-	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.CanDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.CanDo(ACTION_READ_ACP, "special_bucket", ""))
+	assert.Equal(t, false, ident4.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
 	// admin buckets
 	ident5 := &Identity{
@@ -139,10 +140,10 @@ func TestCanDo(t *testing.T) {
 			"Admin:special_*",
 		},
 	}
-	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_READ_ACP, "special_bucket", ""))
-	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_WRITE_ACP, "special_bucket", ""))
+	assert.Equal(t, true, ident5.CanDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.CanDo(ACTION_READ_ACP, "special_bucket", ""))
+	assert.Equal(t, true, ident5.CanDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.CanDo(ACTION_WRITE_ACP, "special_bucket", ""))
 
 	// anonymous buckets
 	ident6 := &Identity{
@@ -151,7 +152,7 @@ func TestCanDo(t *testing.T) {
 			"Read",
 		},
 	}
-	assert.Equal(t, true, ident6.canDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident6.CanDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
 
 	//test deleteBucket operation
 	ident7 := &Identity{
@@ -160,7 +161,7 @@ func TestCanDo(t *testing.T) {
 			"DeleteBucket:bucket1",
 		},
 	}
-	assert.Equal(t, true, ident7.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+	assert.Equal(t, true, ident7.CanDo(ACTION_DELETE_BUCKET, "bucket1", ""))
 }
 
 func TestMatchWildcardPattern(t *testing.T) {
@@ -294,7 +295,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "notSpecifyAccountId",
 				Account:      &AccountAdmin,
-				PrincipalArn: "arn:aws:iam::user/notSpecifyAccountId",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/notSpecifyAccountId", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -320,7 +321,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "specifiedAccountID",
 				Account:      &specifiedAccount,
-				PrincipalArn: "arn:aws:iam::user/specifiedAccountID",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/specifiedAccountID", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -338,7 +339,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "anonymous",
 				Account:      &AccountAnonymous,
-				PrincipalArn: "arn:aws:iam::user/anonymous",
+				PrincipalArn: "*",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -426,6 +427,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Reset the memory store to avoid test pollution
+			if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+				if memStore, ok := store.(interface{ Reset() }); ok {
+					memStore.Reset()
+				}
+			}
+
 			// Set up environment variables
 			if tt.accessKeyId != "" {
 				os.Setenv("AWS_ACCESS_KEY_ID", tt.accessKeyId)
@@ -442,7 +450,7 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 			option := &S3ApiServerOption{
 				Config: "", // No config file - this should trigger environment variable fallback
 			}
-			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+			iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 			if tt.expectEnvIdentity {
 				// Should have exactly one identity from environment variables
@@ -466,6 +474,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 // but contains no identities (e.g., only KMS settings), environment variables should still work.
 // This test validates the fix for issue #7311.
 func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
+	// Reset the memory store to avoid test pollution
+	if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+		if memStore, ok := store.(interface{ Reset() }); ok {
+			memStore.Reset()
+		}
+	}
+
 	// Set environment variables
 	testAccessKey := "AKIATEST1234567890AB"
 	testSecretKey := "testSecret1234567890123456789012345678901234"
@@ -495,7 +510,7 @@ func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+	iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 	// Should have exactly one identity from environment variables
 	assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables even when config file exists with no identities")
@@ -580,7 +595,7 @@ func TestBucketLevelListPermissions(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				result := identity.CanDo(tc.action, tc.bucket, tc.object)
 				assert.Equal(t, tc.shouldAllow, result, tc.description)
 			})
 		}
@@ -599,7 +614,7 @@ func TestBucketLevelListPermissions(t *testing.T) {
 		testCases := []string{"anybucket", "mybucket", "test-bucket", "prod-data"}
 
 		for _, bucket := range testCases {
-			result := identity.canDo("List", bucket, "")
+			result := identity.CanDo("List", bucket, "")
 			assert.True(t, result, "Global List permission should allow access to bucket %s", bucket)
 		}
 	})
@@ -614,9 +629,9 @@ func TestBucketLevelListPermissions(t *testing.T) {
 		}
 
 		// Should only allow access to the exact bucket
-		assert.True(t, identity.canDo("List", "specificbucket", ""), "Should allow access to exact bucket")
-		assert.False(t, identity.canDo("List", "specificbucket-test", ""), "Should deny access to bucket with suffix")
-		assert.False(t, identity.canDo("List", "otherbucket", ""), "Should deny access to different bucket")
+		assert.True(t, identity.CanDo("List", "specificbucket", ""), "Should allow access to exact bucket")
+		assert.False(t, identity.CanDo("List", "specificbucket-test", ""), "Should deny access to bucket with suffix")
+		assert.False(t, identity.CanDo("List", "otherbucket", ""), "Should deny access to different bucket")
 	})
 
 	t.Log("This test validates the fix for issue #7066")
@@ -639,26 +654,26 @@ func TestListBucketsAuthRequest(t *testing.T) {
 		}
 
 		// Test 1: ListBuckets operation should succeed (bucket = "")
-		// This would have failed before the fix because canDo("List", "", "") would return false
-		// After the fix, it bypasses the canDo check for ListBuckets operations
+		// This would have failed before the fix because CanDo("List", "", "") would return false
+		// After the fix, it bypasses the CanDo check for ListBuckets operations
 
 		// Simulate what happens in authRequest for ListBuckets:
 		// action = ACTION_LIST, bucket = "", object = ""
 
-		// Before fix: identity.canDo(ACTION_LIST, "", "") would fail
-		// After fix: the canDo check should be bypassed
+		// Before fix: identity.CanDo(ACTION_LIST, "", "") would fail
+		// After fix: the CanDo check should be bypassed
 
-		// Test the individual canDo method to show it would fail without the special case
-		result := identity.canDo(Action(ACTION_LIST), "", "")
-		assert.False(t, result, "canDo should return false for empty bucket with bucket-specific permissions")
+		// Test the individual CanDo method to show it would fail without the special case
+		result := identity.CanDo(Action(ACTION_LIST), "", "")
+		assert.False(t, result, "CanDo should return false for empty bucket with bucket-specific permissions")
 
 		// Test with a specific bucket that matches the permission
-		result2 := identity.canDo(Action(ACTION_LIST), "mybucket", "")
-		assert.True(t, result2, "canDo should return true for matching bucket")
+		result2 := identity.CanDo(Action(ACTION_LIST), "mybucket", "")
+		assert.True(t, result2, "CanDo should return true for matching bucket")
 
 		// Test with a specific bucket that doesn't match
-		result3 := identity.canDo(Action(ACTION_LIST), "otherbucket", "")
-		assert.False(t, result3, "canDo should return false for non-matching bucket")
+		result3 := identity.CanDo(Action(ACTION_LIST), "otherbucket", "")
+		assert.False(t, result3, "CanDo should return false for non-matching bucket")
 	})
 
 	t.Run("Object listing maintains permission enforcement", func(t *testing.T) {
@@ -675,14 +690,14 @@ func TestListBucketsAuthRequest(t *testing.T) {
 		// These operations have a specific bucket in the URL
 
 		// Should succeed for allowed bucket
-		result1 := identity.canDo(Action(ACTION_LIST), "mybucket", "prefix/")
+		result1 := identity.CanDo(Action(ACTION_LIST), "mybucket", "prefix/")
 		assert.True(t, result1, "Should allow listing objects in permitted bucket")
 
-		result2 := identity.canDo(Action(ACTION_LIST), "mybucket-prod", "")
+		result2 := identity.CanDo(Action(ACTION_LIST), "mybucket-prod", "")
 		assert.True(t, result2, "Should allow listing objects in wildcard-matched bucket")
 
 		// Should fail for disallowed bucket
-		result3 := identity.canDo(Action(ACTION_LIST), "otherbucket", "")
+		result3 := identity.CanDo(Action(ACTION_LIST), "otherbucket", "")
 		assert.False(t, result3, "Should deny listing objects in non-permitted bucket")
 	})
 
@@ -734,11 +749,11 @@ func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
 		assert.Equal(t, "list_secret_key", cred.SecretKey)
 
 		// User should have the correct permissions
-		assert.True(t, identity.canDo(Action(ACTION_LIST), "bucket-123", ""))
-		assert.True(t, identity.canDo(Action(ACTION_READ), "bucket-123", ""))
+		assert.True(t, identity.CanDo(Action(ACTION_LIST), "bucket-123", ""))
+		assert.True(t, identity.CanDo(Action(ACTION_READ), "bucket-123", ""))
 
 		// User should NOT have write permissions
-		assert.False(t, identity.canDo(Action(ACTION_WRITE), "bucket-123", ""))
+		assert.False(t, identity.CanDo(Action(ACTION_WRITE), "bucket-123", ""))
 	})
 
 	t.Log("This test validates the fix for issue #7334")
@@ -747,7 +762,7 @@ func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
 }
 
 func TestStaticIdentityProtection(t *testing.T) {
-	iam := NewIdentityAccessManagement(&S3ApiServerOption{})
+	iam := NewIdentityAccessManagement(&S3ApiServerOption{}, nil)
 
 	// Add a static identity
 	staticIdent := &Identity{

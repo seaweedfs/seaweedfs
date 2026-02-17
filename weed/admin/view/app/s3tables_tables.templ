@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -95,6 +96,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 										<th>Table ARN</th>
 										<th>Created</th>
 										<th>Modified</th>
+										<th>S3 Location</th>
 										<th>Metadata</th>
 										<th>Actions</th>
 									</tr>
@@ -108,6 +110,13 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 											<td>{ table.CreatedAt.Format("2006-01-02 15:04") }</td>
 											<td>{ table.ModifiedAt.Format("2006-01-02 15:04") }</td>
 											<td>
+												if parseErr == nil {
+													<code class="small">s3://{ bucketName }/{ data.Namespace }/{ tableName }/</code>
+												} else {
+													<span class="text-muted">-</span>
+												}
+											</td>
+											<td>
 												if table.MetadataLocation != "" {
 													<span class="text-muted small">{ table.MetadataLocation }</span>
 												} else {
@@ -116,6 +125,15 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 											</td>
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
+													if parseErr == nil {
+														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(bucketName), url.PathEscape(data.Namespace), url.PathEscape(tableName))) } title="View Iceberg Details">
+															<i class="fas fa-eye"></i>
+														</a>
+													} else {
+														<button type="button" class="btn btn-outline-primary btn-sm" disabled title="Invalid bucket ARN">
+															<i class="fas fa-eye"></i>
+														</button>
+													}
 													<button type="button" class="btn btn-outline-success btn-sm s3tables-tags-btn" data-resource-arn={ table.TableARN } title="Tags">
 														<i class="fas fa-tags"></i>
 													</button>
@@ -131,7 +149,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 									}
 									if len(data.Tables) == 0 {
 										<tr>
-											<td colspan="6" class="text-center text-muted py-4">
+											<td colspan="7" class="text-center text-muted py-4">
 												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>

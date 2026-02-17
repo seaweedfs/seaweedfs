@@ -164,7 +164,6 @@ func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super
 }
 
 func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) (topoInfo *master_pb.TopologyInfo, volumeSizeLimitMb uint64, err error) {
-
 	if delayBeforeCollecting > 0 {
 		time.Sleep(delayBeforeCollecting)
 	}
@@ -179,7 +178,25 @@ func collectTopologyInfo(commandEnv *CommandEnv, delayBeforeCollecting time.Dura
 	}
 
 	return resp.TopologyInfo, resp.VolumeSizeLimitMb, nil
+}
 
+func collectDataNodes(commandEnv *CommandEnv, delayBeforeCollecting time.Duration) ([]*master_pb.DataNodeInfo, error) {
+	dataNodes := []*master_pb.DataNodeInfo{}
+
+	topo, _, err := collectTopologyInfo(commandEnv, delayBeforeCollecting)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, dci := range topo.GetDataCenterInfos() {
+		for _, r := range dci.GetRackInfos() {
+			for _, dn := range r.GetDataNodeInfos() {
+				dataNodes = append(dataNodes, dn)
+			}
+		}
+	}
+
+	return dataNodes, nil
 }
 
 func collectEcNodesForDC(commandEnv *CommandEnv, selectedDataCenter string, diskType types.DiskType) (ecNodes []*EcNode, totalFreeEcSlots int, err error) {

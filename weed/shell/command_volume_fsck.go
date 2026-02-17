@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -39,7 +40,8 @@ func init() {
 }
 
 const (
-	readbufferSize = 16
+	readbufferSize                 = 16
+	jwtFilerTokenExpirationSeconds = 300
 )
 
 type commandVolumeFsck struct {
@@ -53,6 +55,7 @@ type commandVolumeFsck struct {
 	forcePurging             *bool
 	findMissingChunksInFiler *bool
 	verifyNeedle             *bool
+	filerSigningKey          string
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -139,6 +142,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer os.RemoveAll(c.tempFolder)
 
+	c.filerSigningKey = util.GetViper().GetString("jwt.filer_signing.key")
+
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
@@ -198,7 +203,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
+			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
@@ -284,10 +289,16 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					if _, err := f.Write([]byte(i.path)); err != nil {
 						return err
 					}
-				} else if *c.findMissingChunksInFiler && len(c.volumeIds) == 0 {
+				} else if *c.findMissingChunksInFiler {
+					// check if the volume matches the filter
+					if len(c.volumeIds) > 0 {
+						if _, ok := c.volumeIds[i.vid]; !ok {
+							continue
+						}
+					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
-						fmt.Printf("deleting path %s after volume not found", i.path)
+						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
 						c.httpDelete(i.path)
 					}
 				}
@@ -540,22 +551,30 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
+	if err != nil {
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
+		return
+	}
 
 	req.URL = &url.URL{
 		Scheme: "http",
 		Host:   c.env.option.FilerAddress.ToHttpAddress(),
 		Path:   string(path),
 	}
+
+	if c.filerSigningKey != "" {
+		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
+		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+	}
+
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
-	}
-	if err != nil {
-		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
 	}
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
+		return
 	}
 	defer resp.Body.Close()
 

@@ -361,7 +361,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
@@ -453,7 +453,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 	})
@@ -549,14 +549,14 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	}
 
 	// Verify that the authenticated identity can perform this action
-	if identity != nil && identity.canDo(action, bucket, object) {
+	if identity != nil && identity.CanDo(action, bucket, object) {
 		return true
 	}
 
 	// Additional check: allow users with Admin action to bypass governance retention
 	// Use the proper S3 Admin action constant instead of generic isAdmin() method
 	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
-	if identity != nil && identity.canDo(adminAction, bucket, object) {
+	if identity != nil && identity.CanDo(adminAction, bucket, object) {
 		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
 		return true
 	}

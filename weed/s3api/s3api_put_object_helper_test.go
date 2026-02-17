@@ -13,7 +13,7 @@ import (
 func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 	// Create an S3ApiServer with IAM disabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, string(credential.StoreTypeMemory)),
 	}
 	// Ensure IAM is disabled for this test
 	s3a.iam.isAuthEnabled = false
@@ -87,7 +87,7 @@ func TestGetRequestDataReader_ChunkedEncodingWithoutIAM(t *testing.T) {
 func TestGetRequestDataReader_AuthTypeDetection(t *testing.T) {
 	// Create an S3ApiServer with IAM disabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, string(credential.StoreTypeMemory)),
 	}
 	s3a.iam.isAuthEnabled = false
 
@@ -122,7 +122,7 @@ func TestGetRequestDataReader_AuthTypeDetection(t *testing.T) {
 func TestGetRequestDataReader_IAMEnabled(t *testing.T) {
 	// Create an S3ApiServer with IAM enabled
 	s3a := &S3ApiServer{
-		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, string(credential.StoreTypeMemory)),
+		iam: NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, string(credential.StoreTypeMemory)),
 	}
 	s3a.iam.isAuthEnabled = true
 

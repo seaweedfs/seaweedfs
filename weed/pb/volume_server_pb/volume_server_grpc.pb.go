@@ -35,6 +35,8 @@ const (
 	VolumeServer_VolumeMarkWritable_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeMarkWritable"
 	VolumeServer_VolumeConfigure_FullMethodName             = "/volume_server_pb.VolumeServer/VolumeConfigure"
 	VolumeServer_VolumeStatus_FullMethodName                = "/volume_server_pb.VolumeServer/VolumeStatus"
+	VolumeServer_GetState_FullMethodName                    = "/volume_server_pb.VolumeServer/GetState"
+	VolumeServer_SetState_FullMethodName                    = "/volume_server_pb.VolumeServer/SetState"
 	VolumeServer_VolumeCopy_FullMethodName                  = "/volume_server_pb.VolumeServer/VolumeCopy"
 	VolumeServer_ReadVolumeFileStatus_FullMethodName        = "/volume_server_pb.VolumeServer/ReadVolumeFileStatus"
 	VolumeServer_CopyFile_FullMethodName                    = "/volume_server_pb.VolumeServer/CopyFile"
@@ -60,6 +62,8 @@ const (
 	VolumeServer_VolumeServerStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeServerStatus"
 	VolumeServer_VolumeServerLeave_FullMethodName           = "/volume_server_pb.VolumeServer/VolumeServerLeave"
 	VolumeServer_FetchAndWriteNeedle_FullMethodName         = "/volume_server_pb.VolumeServer/FetchAndWriteNeedle"
+	VolumeServer_ScrubVolume_FullMethodName                 = "/volume_server_pb.VolumeServer/ScrubVolume"
+	VolumeServer_ScrubEcVolume_FullMethodName               = "/volume_server_pb.VolumeServer/ScrubEcVolume"
 	VolumeServer_Query_FullMethodName                       = "/volume_server_pb.VolumeServer/Query"
 	VolumeServer_VolumeNeedleStatus_FullMethodName          = "/volume_server_pb.VolumeServer/VolumeNeedleStatus"
 	VolumeServer_Ping_FullMethodName                        = "/volume_server_pb.VolumeServer/Ping"
@@ -86,6 +90,8 @@ type VolumeServerClient interface {
 	VolumeMarkWritable(ctx context.Context, in *VolumeMarkWritableRequest, opts ...grpc.CallOption) (*VolumeMarkWritableResponse, error)
 	VolumeConfigure(ctx context.Context, in *VolumeConfigureRequest, opts ...grpc.CallOption) (*VolumeConfigureResponse, error)
 	VolumeStatus(ctx context.Context, in *VolumeStatusRequest, opts ...grpc.CallOption) (*VolumeStatusResponse, error)
+	GetState(ctx context.Context, in *GetStateRequest, opts ...grpc.CallOption) (*GetStateResponse, error)
+	SetState(ctx context.Context, in *SetStateRequest, opts ...grpc.CallOption) (*SetStateResponse, error)
 	// copy the .idx .dat files, and mount this volume
 	VolumeCopy(ctx context.Context, in *VolumeCopyRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VolumeCopyResponse], error)
 	ReadVolumeFileStatus(ctx context.Context, in *ReadVolumeFileStatusRequest, opts ...grpc.CallOption) (*ReadVolumeFileStatusResponse, error)
@@ -115,6 +121,9 @@ type VolumeServerClient interface {
 	VolumeServerLeave(ctx context.Context, in *VolumeServerLeaveRequest, opts ...grpc.CallOption) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(ctx context.Context, in *FetchAndWriteNeedleRequest, opts ...grpc.CallOption) (*FetchAndWriteNeedleResponse, error)
+	// scrubbing
+	ScrubVolume(ctx context.Context, in *ScrubVolumeRequest, opts ...grpc.CallOption) (*ScrubVolumeResponse, error)
+	ScrubEcVolume(ctx context.Context, in *ScrubEcVolumeRequest, opts ...grpc.CallOption) (*ScrubEcVolumeResponse, error)
 	// <experimental> query
 	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error)
 	VolumeNeedleStatus(ctx context.Context, in *VolumeNeedleStatusRequest, opts ...grpc.CallOption) (*VolumeNeedleStatusResponse, error)
@@ -301,6 +310,26 @@ func (c *volumeServerClient) VolumeStatus(ctx context.Context, in *VolumeStatusR
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(VolumeStatusResponse)
 	err := c.cc.Invoke(ctx, VolumeServer_VolumeStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) GetState(ctx context.Context, in *GetStateRequest, opts ...grpc.CallOption) (*GetStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetStateResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_GetState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) SetState(ctx context.Context, in *SetStateRequest, opts ...grpc.CallOption) (*SetStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetStateResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_SetState_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -623,6 +652,26 @@ func (c *volumeServerClient) FetchAndWriteNeedle(ctx context.Context, in *FetchA
 	return out, nil
 }
 
+func (c *volumeServerClient) ScrubVolume(ctx context.Context, in *ScrubVolumeRequest, opts ...grpc.CallOption) (*ScrubVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ScrubVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_ScrubVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) ScrubEcVolume(ctx context.Context, in *ScrubEcVolumeRequest, opts ...grpc.CallOption) (*ScrubEcVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ScrubEcVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_ScrubEcVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *volumeServerClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[QueriedStripe], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &VolumeServer_ServiceDesc.Streams[10], VolumeServer_Query_FullMethodName, cOpts...)
@@ -683,6 +732,8 @@ type VolumeServerServer interface {
 	VolumeMarkWritable(context.Context, *VolumeMarkWritableRequest) (*VolumeMarkWritableResponse, error)
 	VolumeConfigure(context.Context, *VolumeConfigureRequest) (*VolumeConfigureResponse, error)
 	VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error)
+	GetState(context.Context, *GetStateRequest) (*GetStateResponse, error)
+	SetState(context.Context, *SetStateRequest) (*SetStateResponse, error)
 	// copy the .idx .dat files, and mount this volume
 	VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error
 	ReadVolumeFileStatus(context.Context, *ReadVolumeFileStatusRequest) (*ReadVolumeFileStatusResponse, error)
@@ -712,6 +763,9 @@ type VolumeServerServer interface {
 	VolumeServerLeave(context.Context, *VolumeServerLeaveRequest) (*VolumeServerLeaveResponse, error)
 	// remote storage
 	FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error)
+	// scrubbing
+	ScrubVolume(context.Context, *ScrubVolumeRequest) (*ScrubVolumeResponse, error)
+	ScrubEcVolume(context.Context, *ScrubEcVolumeRequest) (*ScrubEcVolumeResponse, error)
 	// <experimental> query
 	Query(*QueryRequest, grpc.ServerStreamingServer[QueriedStripe]) error
 	VolumeNeedleStatus(context.Context, *VolumeNeedleStatusRequest) (*VolumeNeedleStatusResponse, error)
@@ -773,6 +827,12 @@ func (UnimplementedVolumeServerServer) VolumeConfigure(context.Context, *VolumeC
 }
 func (UnimplementedVolumeServerServer) VolumeStatus(context.Context, *VolumeStatusRequest) (*VolumeStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method VolumeStatus not implemented")
+}
+func (UnimplementedVolumeServerServer) GetState(context.Context, *GetStateRequest) (*GetStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetState not implemented")
+}
+func (UnimplementedVolumeServerServer) SetState(context.Context, *SetStateRequest) (*SetStateResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetState not implemented")
 }
 func (UnimplementedVolumeServerServer) VolumeCopy(*VolumeCopyRequest, grpc.ServerStreamingServer[VolumeCopyResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method VolumeCopy not implemented")
@@ -848,6 +908,12 @@ func (UnimplementedVolumeServerServer) VolumeServerLeave(context.Context, *Volum
 }
 func (UnimplementedVolumeServerServer) FetchAndWriteNeedle(context.Context, *FetchAndWriteNeedleRequest) (*FetchAndWriteNeedleResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FetchAndWriteNeedle not implemented")
+}
+func (UnimplementedVolumeServerServer) ScrubVolume(context.Context, *ScrubVolumeRequest) (*ScrubVolumeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScrubVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) ScrubEcVolume(context.Context, *ScrubEcVolumeRequest) (*ScrubEcVolumeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScrubEcVolume not implemented")
 }
 func (UnimplementedVolumeServerServer) Query(*QueryRequest, grpc.ServerStreamingServer[QueriedStripe]) error {
 	return status.Errorf(codes.Unimplemented, "method Query not implemented")
@@ -1149,6 +1215,42 @@ func _VolumeServer_VolumeStatus_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VolumeServerServer).VolumeStatus(ctx, req.(*VolumeStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_GetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).GetState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_GetState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).GetState(ctx, req.(*GetStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_SetState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).SetState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_SetState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).SetState(ctx, req.(*SetStateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1543,6 +1645,42 @@ func _VolumeServer_FetchAndWriteNeedle_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_ScrubVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScrubVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ScrubVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_ScrubVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ScrubVolume(ctx, req.(*ScrubVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_ScrubEcVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ScrubEcVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ScrubEcVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_ScrubEcVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ScrubEcVolume(ctx, req.(*ScrubEcVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _VolumeServer_Query_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(QueryRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1654,6 +1792,14 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _VolumeServer_VolumeStatus_Handler,
 		},
 		{
+			MethodName: "GetState",
+			Handler:    _VolumeServer_GetState_Handler,
+		},
+		{
+			MethodName: "SetState",
+			Handler:    _VolumeServer_SetState_Handler,
+		},
+		{
 			MethodName: "ReadVolumeFileStatus",
 			Handler:    _VolumeServer_ReadVolumeFileStatus_Handler,
 		},
@@ -1720,6 +1866,14 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FetchAndWriteNeedle",
 			Handler:    _VolumeServer_FetchAndWriteNeedle_Handler,
+		},
+		{
+			MethodName: "ScrubVolume",
+			Handler:    _VolumeServer_ScrubVolume_Handler,
+		},
+		{
+			MethodName: "ScrubEcVolume",
+			Handler:    _VolumeServer_ScrubEcVolume_Handler,
 		},
 		{
 			MethodName: "VolumeNeedleStatus",

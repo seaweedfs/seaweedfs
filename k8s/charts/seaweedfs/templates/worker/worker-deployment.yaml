@@ -134,7 +134,7 @@ spec:
               {{- if .Values.worker.adminServer }}
               -admin={{ .Values.worker.adminServer }} \
               {{- else }}
-              -admin={{ template "seaweedfs.name" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
+              -admin={{ template "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
               -capabilities={{ .Values.worker.capabilities }} \
               -maxConcurrent={{ .Values.worker.maxConcurrent }} \

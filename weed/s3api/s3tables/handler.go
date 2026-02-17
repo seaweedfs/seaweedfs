@@ -16,14 +16,15 @@ import (
 )
 
 const (
-	TablesPath       = "/table-buckets"
+	TablesPath       = s3_constants.DefaultBucketsPath
 	DefaultAccountID = "000000000000"
 	DefaultRegion    = "us-east-1"
 
 	// Extended entry attributes for metadata storage
-	ExtendedKeyMetadata = "s3tables.metadata"
-	ExtendedKeyPolicy   = "s3tables.policy"
-	ExtendedKeyTags     = "s3tables.tags"
+	ExtendedKeyTableBucket = "s3tables.tableBucket"
+	ExtendedKeyMetadata    = "s3tables.metadata"
+	ExtendedKeyPolicy      = "s3tables.policy"
+	ExtendedKeyTags        = "s3tables.tags"
 
 	// Maximum request body size (10MB)
 	maxRequestBodySize = 10 * 1024 * 1024
@@ -43,15 +44,17 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region    string
-	accountID string
+	region       string
+	accountID    string
+	defaultAllow bool // Whether to allow access by default (for zero-config IAM)
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
 func NewS3TablesHandler() *S3TablesHandler {
 	return &S3TablesHandler{
-		region:    DefaultRegion,
-		accountID: DefaultAccountID,
+		region:       DefaultRegion,
+		accountID:    DefaultAccountID,
+		defaultAllow: false,
 	}
 }
 
@@ -67,6 +70,11 @@ func (h *S3TablesHandler) SetAccountID(accountID string) {
 	if accountID != "" {
 		h.accountID = accountID
 	}
+}
+
+// SetDefaultAllow sets whether to allow access by default
+func (h *S3TablesHandler) SetDefaultAllow(allow bool) {
+	h.defaultAllow = allow
 }
 
 // FilerClient interface for filer operations
@@ -127,6 +135,8 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 		err = h.handleGetTable(w, r, filerClient)
 	case "ListTables":
 		err = h.handleListTables(w, r, filerClient)
+	case "UpdateTable":
+		err = h.handleUpdateTable(w, r, filerClient)
 	case "DeleteTable":
 		err = h.handleDeleteTable(w, r, filerClient)
 
@@ -162,9 +172,32 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 // This is also used as the principal for permission checks, ensuring alignment between
 // the caller identity and ownership verification when IAM is enabled.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
+	identityRaw := s3_constants.GetIdentityFromContext(r)
+	if identityRaw != nil {
+		// Use reflection to access the Account.Id field to avoid import cycle
+		val := reflect.ValueOf(identityRaw)
+		if val.Kind() == reflect.Ptr {
+			val = val.Elem()
+		}
+		if val.Kind() == reflect.Struct {
+			accountField := val.FieldByName("Account")
+			if accountField.IsValid() && !accountField.IsNil() {
+				accountVal := accountField.Elem()
+				if accountVal.Kind() == reflect.Struct {
+					idField := accountVal.FieldByName("Id")
+					if idField.IsValid() && idField.Kind() == reflect.String {
+						id := idField.String()
+						return id
+					}
+				}
+			}
+		}
+	}
+
 	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
 		return identityName
 	}
+
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
 		return accountID
 	}

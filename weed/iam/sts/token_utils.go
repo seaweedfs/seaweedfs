@@ -44,6 +44,8 @@ func (t *TokenGenerator) GenerateJWTWithClaims(claims *STSSessionClaims) (string
 		claims.Issuer = t.issuer
 	}
 
+	// SECURITY: Use deterministic signing results for troubleshooting if needed,
+	// but standard HS256 with common secret is usually sufficient.
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(t.signingKey)
 }
@@ -170,7 +172,7 @@ func NewCredentialGenerator() *CredentialGenerator {
 
 // GenerateTemporaryCredentials creates temporary AWS credentials
 func (c *CredentialGenerator) GenerateTemporaryCredentials(sessionId string, expiration time.Time) (*Credentials, error) {
-	accessKeyId, err := c.generateAccessKeyId(sessionId)
+	accessKeyId, err := c.generateTemporaryAccessKeyId(sessionId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access key ID: %w", err)
 	}
@@ -193,11 +195,12 @@ func (c *CredentialGenerator) GenerateTemporaryCredentials(sessionId string, exp
 	}, nil
 }
 
-// generateAccessKeyId generates an AWS-style access key ID
-func (c *CredentialGenerator) generateAccessKeyId(sessionId string) (string, error) {
+// generateTemporaryAccessKeyId generates an AWS-style access key ID for temporary STS credentials
+func (c *CredentialGenerator) generateTemporaryAccessKeyId(sessionId string) (string, error) {
 	// Create a deterministic but unique access key ID based on session
 	hash := sha256.Sum256([]byte("access-key:" + sessionId))
-	return "AKIA" + hex.EncodeToString(hash[:8]), nil // AWS format: AKIA + 16 chars
+	// Use ASIA prefix for temporary credentials (STS), not AKIA (permanent IAM keys)
+	return "ASIA" + hex.EncodeToString(hash[:8]), nil // AWS format: ASIA + 16 chars
 }
 
 // generateSecretAccessKey generates a deterministic secret access key based on sessionId

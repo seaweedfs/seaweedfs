@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
 // maxPoliciesForEvaluation defines an upper bound on the number of policies that
@@ -23,6 +25,7 @@ type IAMManager struct {
 	stsService           *sts.STSService
 	policyEngine         *policy.PolicyEngine
 	roleStore            RoleStore
+	userStore            UserStore
 	filerAddressProvider func() string // Function to get current filer address
 	initialized          bool
 }
@@ -46,6 +49,11 @@ type RoleStoreConfig struct {
 
 	// StoreConfig contains store-specific configuration
 	StoreConfig map[string]interface{} `json:"storeConfig,omitempty"`
+}
+
+// UserStore defines the interface for retrieving IAM user policy attachments.
+type UserStore interface {
+	GetUser(ctx context.Context, username string) (*iam_pb.Identity, error)
 }
 
 // RoleDefinition defines a role with its trust policy and attached policies
@@ -90,6 +98,11 @@ type ActionRequest struct {
 // NewIAMManager creates a new IAM manager
 func NewIAMManager() *IAMManager {
 	return &IAMManager{}
+}
+
+// SetUserStore assigns the user store used to resolve IAM user policy attachments.
+func (m *IAMManager) SetUserStore(store UserStore) {
+	m.userStore = store
 }
 
 // Initialize initializes the IAM manager with all components
@@ -310,12 +323,30 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		return false, fmt.Errorf("IAM manager not initialized")
 	}
 
-	// Validate session token if present (skip for OIDC tokens which are already validated,
-	// and skip for empty tokens which represent static access keys)
-	if request.SessionToken != "" && !isOIDCToken(request.SessionToken) {
-		_, err := m.stsService.ValidateSessionToken(ctx, request.SessionToken)
-		if err != nil {
-			return false, fmt.Errorf("invalid session: %w", err)
+	// Validate session token if present
+	// We always try to validate with the internal STS service first if it's a SeaweedFS token.
+	// This ensures that session policies embedded in the token are correctly extracted and enforced.
+	var sessionInfo *sts.SessionInfo
+	if request.SessionToken != "" {
+		// Parse unverified to check issuer
+		parsed, _, err := new(jwt.Parser).ParseUnverified(request.SessionToken, jwt.MapClaims{})
+		isInternal := false
+		if err == nil {
+			if claims, ok := parsed.Claims.(jwt.MapClaims); ok {
+				if issuer, ok := claims["iss"].(string); ok && m.stsService != nil && m.stsService.Config != nil {
+					if issuer == m.stsService.Config.Issuer {
+						isInternal = true
+					}
+				}
+			}
+		}
+
+		if isInternal || !isOIDCToken(request.SessionToken) {
+			var err error
+			sessionInfo, err = m.stsService.ValidateSessionToken(ctx, request.SessionToken)
+			if err != nil {
+				return false, fmt.Errorf("invalid session: %w", err)
+			}
 		}
 	}
 
@@ -334,7 +365,17 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 	// Add principal to context for policy matching
 	// The PolicyEngine checks RequestContext["principal"] or RequestContext["aws:PrincipalArn"]
 	evalCtx.RequestContext["principal"] = request.Principal
-	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal
+	evalCtx.RequestContext["aws:PrincipalArn"] = request.Principal // AWS standard key
+
+	// Check if this is an admin request - bypass policy evaluation if so
+	// This mirrors the logic in auth_signature_v4.go but applies it at authorization time
+	isAdmin := false
+	if request.RequestContext != nil {
+		if val, ok := request.RequestContext["is_admin"].(bool); ok && val {
+			isAdmin = true
+		}
+		// Print full request context for debugging
+	}
 
 	// Parse principal ARN to extract details for context variables (e.g. ${aws:username})
 	arnInfo := utils.ParsePrincipalARN(request.Principal)
@@ -349,6 +390,9 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 		evalCtx.RequestContext["aws:username"] = awsUsername
 		evalCtx.RequestContext["aws:userid"] = arnInfo.RoleName
+	} else if userName := utils.ExtractUserNameFromPrincipal(request.Principal); userName != "" {
+		evalCtx.RequestContext["aws:username"] = userName
+		evalCtx.RequestContext["aws:userid"] = userName
 	}
 	if arnInfo.AccountID != "" {
 		evalCtx.RequestContext["aws:PrincipalAccount"] = arnInfo.AccountID
@@ -364,58 +408,83 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 		}
 	}
 
-	// If explicit policy names are provided (e.g. from user identity), evaluate them directly
-	if len(request.PolicyNames) > 0 {
+	var baseResult *policy.EvaluationResult
+	var err error
+
+	if isAdmin {
+		// Admin always has base access allowed
+		baseResult = &policy.EvaluationResult{Effect: policy.EffectAllow}
+	} else {
 		policies := request.PolicyNames
+		if len(policies) == 0 {
+			// Extract role name from principal ARN
+			roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
+			if roleName == "" {
+				userName := utils.ExtractUserNameFromPrincipal(request.Principal)
+				if userName == "" {
+					return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+				}
+				if m.userStore == nil {
+					return false, fmt.Errorf("user store unavailable for principal: %s", request.Principal)
+				}
+				user, err := m.userStore.GetUser(ctx, userName)
+				if err != nil || user == nil {
+					return false, fmt.Errorf("user not found for principal: %s (user=%s)", request.Principal, userName)
+				}
+				policies = user.GetPolicyNames()
+			} else {
+				// Get role definition
+				roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+				if err != nil {
+					return false, fmt.Errorf("role not found: %s", roleName)
+				}
+
+				policies = roleDef.AttachedPolicies
+			}
+		}
+
 		if bucketPolicyName != "" {
 			// Enforce an upper bound on the number of policies to avoid excessive allocations
 			if len(policies) >= maxPoliciesForEvaluation {
 				return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
 			}
-			// Create a new slice to avoid modifying the request and append the bucket policy
+			// Create a new slice to avoid modifying the original and append the bucket policy
 			copied := make([]string, len(policies))
 			copy(copied, policies)
 			policies = append(copied, bucketPolicyName)
 		}
 
-		result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
+		baseResult, err = m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
 		if err != nil {
 			return false, fmt.Errorf("policy evaluation failed: %w", err)
 		}
-		return result.Effect == policy.EffectAllow, nil
 	}
 
-	// Extract role name from principal ARN
-	roleName := utils.ExtractRoleNameFromPrincipal(request.Principal)
-	if roleName == "" {
-		return false, fmt.Errorf("could not extract role from principal: %s", request.Principal)
+	// Base policy must allow; if it doesn't, deny immediately (session policy can only further restrict)
+	if baseResult.Effect != policy.EffectAllow {
+		return false, nil
 	}
 
-	// Get role definition
-	roleDef, err := m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
-	if err != nil {
-		return false, fmt.Errorf("role not found: %s", roleName)
-	}
-
-	// Evaluate policies attached to the role
-	policies := roleDef.AttachedPolicies
-	if bucketPolicyName != "" {
-		// Enforce an upper bound on the number of policies to avoid excessive allocations
-		if len(policies) >= maxPoliciesForEvaluation {
-			return false, fmt.Errorf("too many policies for evaluation: %d >= %d", len(policies), maxPoliciesForEvaluation)
+	// If there's a session policy, it must also allow the action
+	if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
+		var sessionPolicy policy.PolicyDocument
+		if err := json.Unmarshal([]byte(sessionInfo.SessionPolicy), &sessionPolicy); err != nil {
+			return false, fmt.Errorf("invalid session policy JSON: %w", err)
 		}
-		// Create a new slice to avoid modifying the role definition and append the bucket policy
-		copied := make([]string, len(policies))
-		copy(copied, policies)
-		policies = append(copied, bucketPolicyName)
+		if err := policy.ValidatePolicyDocument(&sessionPolicy); err != nil {
+			return false, fmt.Errorf("invalid session policy document: %w", err)
+		}
+		sessionResult, err := m.policyEngine.EvaluatePolicyDocument(ctx, evalCtx, "session-policy", &sessionPolicy, policy.EffectDeny)
+		if err != nil {
+			return false, fmt.Errorf("session policy evaluation failed: %w", err)
+		}
+		if sessionResult.Effect != policy.EffectAllow {
+			// Session policy does not allow this action
+			return false, nil
+		}
 	}
 
-	result, err := m.policyEngine.Evaluate(ctx, "", evalCtx, policies)
-	if err != nil {
-		return false, fmt.Errorf("policy evaluation failed: %w", err)
-	}
-
-	return result.Effect == policy.EffectAllow, nil
+	return true, nil
 }
 
 // ValidateTrustPolicy validates if a principal can assume a role (for testing)
@@ -585,6 +654,14 @@ func (m *IAMManager) GetSTSService() *sts.STSService {
 	return m.stsService
 }
 
+// DefaultAllow returns whether the default effect is Allow
+func (m *IAMManager) DefaultAllow() bool {
+	if !m.initialized || m.policyEngine == nil {
+		return true // Default to true if not initialized
+	}
+	return m.policyEngine.DefaultAllow()
+}
+
 // parseJWTTokenForTrustPolicy parses a JWT token to extract claims for trust policy evaluation
 func parseJWTTokenForTrustPolicy(tokenString string) (map[string]interface{}, error) {
 	// Simple JWT parsing without verification (for trust policy context only)
@@ -643,7 +720,28 @@ func isOIDCToken(token string) bool {
 	}
 
 	// JWT tokens typically start with "eyJ" (base64 encoded JSON starting with "{")
-	return strings.HasPrefix(token, "eyJ")
+	if !strings.HasPrefix(token, "eyJ") {
+		return false
+	}
+
+	parsed, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
+	if err != nil {
+		return false
+	}
+
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return false
+	}
+
+	if typ, ok := claims["typ"].(string); ok && typ == sts.TokenTypeSession {
+		return false
+	}
+	if typ, ok := claims[sts.JWTClaimTokenType].(string); ok && typ == sts.TokenTypeSession {
+		return false
+	}
+
+	return true
 }
 
 // TrustPolicyValidator interface implementation

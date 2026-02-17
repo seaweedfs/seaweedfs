@@ -219,10 +219,10 @@ func ScanVolumeFile(dirname string, collection string, id needle.VolumeId,
 	volumeFileScanner VolumeFileScanner) (err error) {
 	var v *Volume
 	if v, err = loadVolumeWithoutIndex(dirname, collection, id, needleMapKind, needle.GetCurrentVersion()); err != nil {
-		return fmt.Errorf("failed to load volume %d: %v", id, err)
+		return fmt.Errorf("failed to load volume %d: %w", id, err)
 	}
 	if err = volumeFileScanner.VisitSuperBlock(v.SuperBlock); err != nil {
-		return fmt.Errorf("failed to process volume %d super block: %v", id, err)
+		return fmt.Errorf("failed to process volume %d super block: %w", id, err)
 	}
 	defer v.Close()
 
@@ -239,7 +239,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 		if e == io.EOF {
 			return nil
 		}
-		return fmt.Errorf("cannot read %s at offset %d: %v", datBackend.Name(), offset, e)
+		return fmt.Errorf("cannot read %s at offset %d: %w", datBackend.Name(), offset, e)
 	}
 	for n != nil {
 		var needleBody []byte
@@ -265,7 +265,7 @@ func ScanVolumeFileFrom(version needle.Version, datBackend backend.BackendStorag
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("cannot read needle header at offset %d: %v", offset, err)
+			return fmt.Errorf("cannot read needle header at offset %d: %w", offset, err)
 		}
 		glog.V(4).Infof("new entry needle size:%d rest:%d", n.Size, rest)
 	}

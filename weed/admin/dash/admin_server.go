@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +30,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
+)
+
+const (
+	maxAssignmentHistoryDisplay = 50
+	maxLogMessageLength         = 2000
+	maxLogFields                = 20
+	maxRelatedTasksDisplay      = 50
+	maxRecentTasksDisplay       = 10
+	defaultCacheTimeout         = 10 * time.Second
+	defaultFilerCacheTimeout    = 30 * time.Second
+	defaultStatsCacheTimeout    = 30 * time.Second
 )
 
 // FilerConfig holds filer configuration needed for bucket operations
@@ -104,11 +114,12 @@ type AdminServer struct {
 	collectionStatsCacheThreshold time.Duration
 
 	s3TablesManager *s3tables.Manager
+	icebergPort     int
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -131,11 +142,12 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		templateFS:                    templateFS,
 		dataDir:                       dataDir,
 		grpcDialOption:                grpcDialOption,
-		cacheExpiration:               10 * time.Second,
-		filerCacheExpiration:          30 * time.Second, // Cache filers for 30 seconds
+		cacheExpiration:               defaultCacheTimeout,
+		filerCacheExpiration:          defaultFilerCacheTimeout,
 		configPersistence:             NewConfigPersistence(dataDir),
-		collectionStatsCacheThreshold: 30 * time.Second,
+		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
+		icebergPort:                   icebergPort,
 	}
 
 	// Initialize topic retention purger
@@ -304,6 +316,14 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 			if resp.Entry.IsDirectory {
 				bucketName := resp.Entry.Name
+				if strings.HasPrefix(bucketName, ".") {
+					// Skip internal/system directories from Object Store bucket listing.
+					continue
+				}
+				if s3tables.IsTableBucketEntry(resp.Entry) || strings.HasSuffix(bucketName, "--table-s3") {
+					// Keep table buckets in the S3 Tables pages, not regular Object Store buckets.
+					continue
+				}
 
 				// Determine collection name for this bucket
 				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
@@ -777,7 +797,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 
 // ShowMaintenanceQueue displays the maintenance queue page
 func (as *AdminServer) ShowMaintenanceQueue(c *gin.Context) {
-	data, err := as.getMaintenanceQueueData()
+	data, err := as.GetMaintenanceQueueData()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -866,7 +886,7 @@ func (as *AdminServer) TriggerMaintenanceScan(c *gin.Context) {
 
 // GetMaintenanceTasks returns all maintenance tasks
 func (as *AdminServer) GetMaintenanceTasks(c *gin.Context) {
-	tasks, err := as.getMaintenanceTasks()
+	tasks, err := as.GetAllMaintenanceTasks()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1030,9 +1050,9 @@ func (as *AdminServer) UpdateMaintenanceConfigData(config *maintenance.Maintenan
 
 // Helper methods for maintenance operations
 
-// getMaintenanceQueueData returns data for the maintenance queue UI
-func (as *AdminServer) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	tasks, err := as.getMaintenanceTasks()
+// GetMaintenanceQueueData returns data for the maintenance queue UI
+func (as *AdminServer) GetMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
+	tasks, err := as.GetAllMaintenanceTasks()
 	if err != nil {
 		return nil, err
 	}
@@ -1087,14 +1107,16 @@ func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, erro
 	return queueStats, nil
 }
 
-// getMaintenanceTasks returns all maintenance tasks
-func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
+// GetAllMaintenanceTasks returns all maintenance tasks
+func (as *AdminServer) GetAllMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
 	if as.maintenanceManager == nil {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
 
-	// Collect all tasks from memory across all statuses
-	allTasks := []*maintenance.MaintenanceTask{}
+	// 1. Collect all tasks from memory
+	tasksMap := make(map[string]*maintenance.MaintenanceTask)
+
+	// Collect from memory via GetTasks loop to ensure we catch everything
 	statuses := []maintenance.MaintenanceTaskStatus{
 		maintenance.TaskStatusPending,
 		maintenance.TaskStatusAssigned,
@@ -1106,28 +1128,91 @@ func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, er
 
 	for _, status := range statuses {
 		tasks := as.maintenanceManager.GetTasks(status, "", 0)
-		allTasks = append(allTasks, tasks...)
+		for _, t := range tasks {
+			tasksMap[t.ID] = t
+		}
 	}
 
-	// Also load any persisted tasks that might not be in memory
+	// 2. Merge persisted tasks
 	if as.configPersistence != nil {
 		persistedTasks, err := as.configPersistence.LoadAllTaskStates()
 		if err == nil {
-			// Add any persisted tasks not already in memory
-			for _, persistedTask := range persistedTasks {
-				found := false
-				for _, memoryTask := range allTasks {
-					if memoryTask.ID == persistedTask.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					allTasks = append(allTasks, persistedTask)
+			for _, t := range persistedTasks {
+				if _, exists := tasksMap[t.ID]; !exists {
+					tasksMap[t.ID] = t
 				}
 			}
 		}
 	}
+
+	// 3. Bucketize buckets
+	var pendingTasks, activeTasks, finishedTasks []*maintenance.MaintenanceTask
+
+	for _, t := range tasksMap {
+		switch t.Status {
+		case maintenance.TaskStatusPending:
+			pendingTasks = append(pendingTasks, t)
+		case maintenance.TaskStatusAssigned, maintenance.TaskStatusInProgress:
+			activeTasks = append(activeTasks, t)
+		case maintenance.TaskStatusCompleted, maintenance.TaskStatusFailed, maintenance.TaskStatusCancelled:
+			finishedTasks = append(finishedTasks, t)
+		default:
+			// Treat unknown as finished/archived? Or pending?
+			// Safest to add to finished so they appear somewhere
+			finishedTasks = append(finishedTasks, t)
+		}
+	}
+
+	// 4. Sort buckets
+	// Pending: Newest Created First
+	sort.Slice(pendingTasks, func(i, j int) bool {
+		return pendingTasks[i].CreatedAt.After(pendingTasks[j].CreatedAt)
+	})
+
+	// Active: Newest Created First (or StartedAt?)
+	sort.Slice(activeTasks, func(i, j int) bool {
+		return activeTasks[i].CreatedAt.After(activeTasks[j].CreatedAt)
+	})
+
+	// Finished: Newest Completed First
+	sort.Slice(finishedTasks, func(i, j int) bool {
+		t1 := finishedTasks[i].CompletedAt
+		t2 := finishedTasks[j].CompletedAt
+
+		// Handle nil completion times
+		if t1 == nil && t2 == nil {
+			// Both nil, fallback to CreatedAt
+			if !finishedTasks[i].CreatedAt.Equal(finishedTasks[j].CreatedAt) {
+				return finishedTasks[i].CreatedAt.After(finishedTasks[j].CreatedAt)
+			}
+			return finishedTasks[i].ID > finishedTasks[j].ID
+		}
+		if t1 == nil {
+			return false // t1 (nil) goes to bottom
+		}
+		if t2 == nil {
+			return true // t2 (nil) goes to bottom
+		}
+
+		// Compare completion times
+		if !t1.Equal(*t2) {
+			return t1.After(*t2)
+		}
+
+		// Fallback to CreatedAt if completion times are identical
+		if !finishedTasks[i].CreatedAt.Equal(finishedTasks[j].CreatedAt) {
+			return finishedTasks[i].CreatedAt.After(finishedTasks[j].CreatedAt)
+		}
+
+		// Final tie-breaker: ID
+		return finishedTasks[i].ID > finishedTasks[j].ID
+	})
+
+	// 5. Recombine
+	allTasks := make([]*maintenance.MaintenanceTask, 0, len(tasksMap))
+	allTasks = append(allTasks, pendingTasks...)
+	allTasks = append(allTasks, activeTasks...)
+	allTasks = append(allTasks, finishedTasks...)
 
 	return allTasks, nil
 }
@@ -1179,13 +1264,23 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		return nil, err
 	}
 
+	// Copy task and truncate assignment history for display
+	displayTask := *task
+	displayTask.AssignmentHistory = nil // History is provided separately in taskDetail
+
 	// Create task detail structure from the loaded task
 	taskDetail := &maintenance.TaskDetailData{
-		Task:              task,
+		Task:              &displayTask,
 		AssignmentHistory: task.AssignmentHistory, // Use assignment history from persisted task
 		ExecutionLogs:     []*maintenance.TaskExecutionLog{},
 		RelatedTasks:      []*maintenance.MaintenanceTask{},
 		LastUpdated:       time.Now(),
+	}
+
+	// Truncate assignment history if it's too long (display last N only)
+	if len(taskDetail.AssignmentHistory) > maxAssignmentHistoryDisplay {
+		startIdx := len(taskDetail.AssignmentHistory) - maxAssignmentHistoryDisplay
+		taskDetail.AssignmentHistory = taskDetail.AssignmentHistory[startIdx:]
 	}
 
 	if taskDetail.AssignmentHistory == nil {
@@ -1203,72 +1298,19 @@ func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.Tas
 		}
 	}
 
-	// Get execution logs from worker if task is active/completed and worker is connected
-	if task.Status == maintenance.TaskStatusInProgress || task.Status == maintenance.TaskStatusCompleted {
-		if as.workerGrpcServer != nil && task.WorkerID != "" {
-			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
-			if err == nil && len(workerLogs) > 0 {
-				// Convert worker logs to maintenance logs
-				for _, workerLog := range workerLogs {
-					maintenanceLog := &maintenance.TaskExecutionLog{
-						Timestamp: time.Unix(workerLog.Timestamp, 0),
-						Level:     workerLog.Level,
-						Message:   workerLog.Message,
-						Source:    "worker",
-						TaskID:    taskID,
-						WorkerID:  task.WorkerID,
-					}
-					// carry structured fields if present
-					if len(workerLog.Fields) > 0 {
-						maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
-						for k, v := range workerLog.Fields {
-							maintenanceLog.Fields[k] = v
-						}
-					}
-					// carry optional progress/status
-					if workerLog.Progress != 0 {
-						p := float64(workerLog.Progress)
-						maintenanceLog.Progress = &p
-					}
-					if workerLog.Status != "" {
-						maintenanceLog.Status = workerLog.Status
-					}
-					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
-				}
-			} else if err != nil {
-				// Add a diagnostic log entry when worker logs cannot be retrieved
-				diagnosticLog := &maintenance.TaskExecutionLog{
-					Timestamp: time.Now(),
-					Level:     "WARNING",
-					Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", err),
-					Source:    "admin",
-					TaskID:    taskID,
-					WorkerID:  task.WorkerID,
-				}
-				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
-				glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, err)
-			}
+	// Load execution logs from disk
+	if as.configPersistence != nil {
+		logs, err := as.configPersistence.LoadTaskExecutionLogs(taskID)
+		if err == nil {
+			taskDetail.ExecutionLogs = logs
 		} else {
-			// Add diagnostic information when worker is not available
-			reason := "worker gRPC server not available"
-			if task.WorkerID == "" {
-				reason = "no worker assigned to task"
-			}
-			diagnosticLog := &maintenance.TaskExecutionLog{
-				Timestamp: time.Now(),
-				Level:     "INFO",
-				Message:   fmt.Sprintf("Worker logs not available: %s", reason),
-				Source:    "admin",
-				TaskID:    taskID,
-				WorkerID:  task.WorkerID,
-			}
-			taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
+			glog.V(2).Infof("No execution logs found on disk for task %s", taskID)
 		}
 	}
 
 	// Get related tasks (other tasks on same volume/server)
 	if task.VolumeID != 0 || task.Server != "" {
-		allTasks := as.maintenanceManager.GetTasks("", "", 50) // Get recent tasks
+		allTasks := as.maintenanceManager.GetTasks("", "", maxRelatedTasksDisplay) // Get recent tasks
 		for _, relatedTask := range allTasks {
 			if relatedTask.ID != taskID &&
 				(relatedTask.VolumeID == task.VolumeID || relatedTask.Server == task.Server) {
@@ -1322,7 +1364,7 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	}
 
 	// Get recent tasks for this worker
-	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", 10)
+	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", maxRecentTasksDisplay)
 	var workerRecentTasks []*MaintenanceTask
 	for _, task := range recentTasks {
 		if task.WorkerID == workerID {
@@ -1334,12 +1376,13 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	var totalDuration time.Duration
 	var completedTasks, failedTasks int
 	for _, task := range workerRecentTasks {
-		if task.Status == TaskStatusCompleted {
+		switch task.Status {
+		case TaskStatusCompleted:
 			completedTasks++
 			if task.StartedAt != nil && task.CompletedAt != nil {
 				totalDuration += task.CompletedAt.Sub(*task.StartedAt)
 			}
-		} else if task.Status == TaskStatusFailed {
+		case TaskStatusFailed:
 			failedTasks++
 		}
 	}
@@ -1368,30 +1411,28 @@ func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDeta
 	}, nil
 }
 
-// GetWorkerLogs fetches logs from a specific worker for a task
+// GetWorkerLogs fetches logs from a specific worker for a task (now reads from disk)
 func (as *AdminServer) GetWorkerLogs(c *gin.Context) {
 	workerID := c.Param("id")
 	taskID := c.Query("taskId")
-	maxEntriesStr := c.DefaultQuery("maxEntries", "100")
-	logLevel := c.DefaultQuery("logLevel", "")
 
-	maxEntries := int32(100)
-	if maxEntriesStr != "" {
-		if parsed, err := strconv.ParseInt(maxEntriesStr, 10, 32); err == nil {
-			maxEntries = int32(parsed)
-		}
-	}
-
-	if as.workerGrpcServer == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Worker gRPC server not available"})
+	// Check config persistence first
+	if as.configPersistence == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Config persistence not available"})
 		return
 	}
 
-	logs, err := as.workerGrpcServer.RequestTaskLogs(workerID, taskID, maxEntries, logLevel)
+	// Load logs strictly from disk to avoid timeouts and network dependency
+	// This matches the behavior of the Task Detail page
+	logs, err := as.configPersistence.LoadTaskExecutionLogs(taskID)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to get logs from worker: %v", err)})
-		return
+		glog.V(2).Infof("No execution logs found on disk for task %s: %v", taskID, err)
+		logs = []*maintenance.TaskExecutionLog{}
 	}
+
+	// Filter logs by workerID if strictly needed, but usually task logs are what we want
+	// The persistent logs struct (TaskExecutionLog) matches what the frontend expects for the detail view
+	// ensuring consistent display.
 
 	c.JSON(http.StatusOK, gin.H{"worker_id": workerID, "task_id": taskID, "logs": logs, "count": len(logs)})
 }

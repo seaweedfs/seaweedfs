@@ -245,6 +245,14 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
 
+		// Keep the renamed destination immediately readable even when the directory
+		// itself is not marked as fully cached.
+		if !wfs.metaCache.IsDirectoryCached(newParent) {
+			if err := wfs.metaCache.InsertEntry(ctx, newEntry); err != nil {
+				return err
+			}
+		}
+
 		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
 		if sourceInode != 0 {
 			fh, foundFh := wfs.fhMap.FindFileHandle(sourceInode)

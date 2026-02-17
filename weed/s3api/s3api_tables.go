@@ -43,6 +43,11 @@ func (st *S3TablesApiServer) SetAccountID(accountID string) {
 	st.handler.SetAccountID(accountID)
 }
 
+// SetDefaultAllow sets whether to allow access by default
+func (st *S3TablesApiServer) SetDefaultAllow(allow bool) {
+	st.handler.SetDefaultAllow(allow)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -57,6 +62,12 @@ func (st *S3TablesApiServer) WithFilerClient(streamingMode bool, fn func(filer_p
 func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	// Create S3 Tables handler
 	s3TablesApi := NewS3TablesApiServer(s3a)
+	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
+		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
+	} else {
+		// If IAM is not configured, allow all access by default
+		s3TablesApi.SetDefaultAllow(true)
+	}
 
 	// Regex for S3 Tables Bucket ARN
 	const tableBucketARNRegex = "arn:aws:s3tables:[^/:]*:[^/:]*:bucket/[^/]+"
@@ -226,16 +237,27 @@ func parseOptionalIntParam(r *http.Request, name string) (int, error) {
 	return parsed, nil
 }
 
-func parseOptionalNamespace(r *http.Request, name string) []string {
+func parseOptionalNamespace(r *http.Request, name string) ([]string, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
-		return nil
+		return nil, nil
 	}
-	if _, err := s3tables.ValidateNamespace([]string{value}); err != nil {
-		glog.V(1).Infof("invalid namespace value for %s: %q: %v", name, value, err)
-		return nil
+	parts, err := s3tables.ParseNamespace(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
 	}
-	return []string{value}
+	return parts, nil
+}
+
+func parseRequiredNamespacePathParam(r *http.Request, name string) ([]string, error) {
+	value, err := getDecodedPathParam(r, name)
+	if err != nil {
+		return nil, err
+	}
+	if value == "" {
+		return nil, fmt.Errorf("%s is required", name)
+	}
+	return s3tables.ParseNamespace(value)
 }
 
 // parseTagKeys handles tag key parsing from query parameters.
@@ -352,19 +374,13 @@ func buildGetNamespaceRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	return &s3tables.GetNamespaceRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}, nil
 }
 
@@ -373,19 +389,13 @@ func buildDeleteNamespaceRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	return &s3tables.DeleteNamespaceRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 	}, nil
 }
 
@@ -398,23 +408,21 @@ func buildCreateTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
 		return nil, err
 	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
-		return nil, err
-	}
 	req.TableBucketARN = tableBucketARN
-	req.Namespace = []string{namespace}
+	req.Namespace = namespace
 	return &req, nil
 }
 
 func buildListTablesRequest(r *http.Request) (interface{}, error) {
 	tableBucketARN, err := getDecodedPathParam(r, "tableBucketARN")
+	if err != nil {
+		return nil, err
+	}
+	namespace, err := parseOptionalNamespace(r, "namespace")
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +432,7 @@ func buildListTablesRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.ListTablesRequest{
 		TableBucketARN:    tableBucketARN,
-		Namespace:         parseOptionalNamespace(r, "namespace"),
+		Namespace:         namespace,
 		Prefix:            r.URL.Query().Get("prefix"),
 		ContinuationToken: r.URL.Query().Get("continuationToken"),
 		MaxTables:         maxTables,
@@ -439,7 +447,11 @@ func buildGetTableRequest(r *http.Request) (interface{}, error) {
 	}
 	if tableARN == "" {
 		req.TableBucketARN = query.Get("tableBucketARN")
-		req.Namespace = parseOptionalNamespace(r, "namespace")
+		namespace, err := parseOptionalNamespace(r, "namespace")
+		if err != nil {
+			return nil, err
+		}
+		req.Namespace = namespace
 		req.Name = query.Get("name")
 		if req.TableBucketARN == "" || len(req.Namespace) == 0 || req.Name == "" {
 			return nil, fmt.Errorf("either tableArn or (tableBucketARN, namespace, name) must be provided")
@@ -453,14 +465,8 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -475,7 +481,7 @@ func buildDeleteTableRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.DeleteTableRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 		VersionToken:   r.URL.Query().Get("versionToken"),
 	}, nil
@@ -490,14 +496,8 @@ func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -511,7 +511,7 @@ func buildPutTablePolicyRequest(r *http.Request) (interface{}, error) {
 		return nil, err
 	}
 	req.TableBucketARN = tableBucketARN
-	req.Namespace = []string{namespace}
+	req.Namespace = namespace
 	req.Name = name
 	return &req, nil
 }
@@ -521,14 +521,8 @@ func buildGetTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -543,7 +537,7 @@ func buildGetTablePolicyRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.GetTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}, nil
 }
@@ -553,14 +547,8 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	namespace, err := getDecodedPathParam(r, "namespace")
+	namespace, err := parseRequiredNamespacePathParam(r, "namespace")
 	if err != nil {
-		return nil, err
-	}
-	if namespace == "" {
-		return nil, fmt.Errorf("namespace is required")
-	}
-	if _, err := s3tables.ValidateNamespace([]string{namespace}); err != nil {
 		return nil, err
 	}
 	name, err := getDecodedPathParam(r, "name")
@@ -575,7 +563,7 @@ func buildDeleteTablePolicyRequest(r *http.Request) (interface{}, error) {
 	}
 	return &s3tables.DeleteTablePolicyRequest{
 		TableBucketARN: tableBucketARN,
-		Namespace:      []string{namespace},
+		Namespace:      namespace,
 		Name:           name,
 	}, nil
 }
@@ -632,6 +620,7 @@ func buildUntagResourceRequest(r *http.Request) (interface{}, error) {
 // which performs granular permission checks based on the specific operation.
 func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		glog.V(2).Infof("S3Tables: authenticateS3Tables called, iam.isEnabled()=%t", s3a.iam.isEnabled())
 		if !s3a.iam.isEnabled() {
 			f(w, r)
 			return
@@ -640,15 +629,25 @@ func (s3a *S3ApiServer) authenticateS3Tables(f http.HandlerFunc) http.HandlerFun
 		// Use AuthSignatureOnly to authenticate the request without authorizing specific actions
 		identity, errCode := s3a.iam.AuthSignatureOnly(r)
 		if errCode != s3err.ErrNone {
-			s3err.WriteErrorResponse(w, r, errCode)
-			return
+			// If IAM is enabled but DefaultAllow is true, we can proceed even if unauthenticated
+			// authorization checks in handlers will then use DefaultAllow logic.
+			if s3a.iam.iamIntegration != nil && s3a.iam.iamIntegration.DefaultAllow() {
+				glog.V(2).Infof("S3Tables: AuthSignatureOnly failed (%v), but DefaultAllow is true, proceeding", errCode)
+			} else {
+				glog.Errorf("S3Tables: AuthSignatureOnly failed: %v", errCode)
+				s3err.WriteErrorResponse(w, r, errCode)
+				return
+			}
 		}
 
 		// Store the authenticated identity in request context
 		if identity != nil && identity.Name != "" {
+			glog.V(2).Infof("S3Tables: authenticated identity Name=%s Account.Id=%s", identity.Name, identity.Account.Id)
 			ctx := s3_constants.SetIdentityNameInContext(r.Context(), identity.Name)
 			ctx = s3_constants.SetIdentityInContext(ctx, identity)
 			r = r.WithContext(ctx)
+		} else {
+			glog.V(2).Infof("S3Tables: authenticated identity is nil or empty name")
 		}
 
 		f(w, r)

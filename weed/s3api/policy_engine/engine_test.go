@@ -287,6 +287,18 @@ func TestPolicyValidation(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "Valid policy with single statement object",
+			policyJSON: `{
+				"Version": "2012-10-17",
+				"Statement": {
+					"Effect": "Allow",
+					"Action": "s3:GetObject",
+					"Resource": "arn:aws:s3:::test-bucket/*"
+				}
+			}`,
+			expectError: false,
+		},
+		{
 			name: "Invalid version",
 			policyJSON: `{
 				"Version": "2008-10-17",
@@ -443,6 +455,89 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 	// Check that aws:RequestTime is still available for backward compatibility
 	if len(values["aws:RequestTime"]) != 1 {
 		t.Errorf("Expected aws:RequestTime to be set for backward compatibility, got %v", values["aws:RequestTime"])
+	}
+}
+
+func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		header     map[string][]string
+		remoteAddr string
+		expectedIP string
+	}{
+		{
+			name: "uses right-most public X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.5",
+		},
+		{
+			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip"},
+				"X-Real-Ip":       {"198.51.100.7"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name:       "uses RemoteAddr ip when no forwarding headers",
+			header:     map[string][]string{},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "192.168.1.100",
+		},
+		{
+			name:       "keeps unix socket marker when RemoteAddr is not an ip",
+			header:     map[string][]string{},
+			remoteAddr: "@",
+			expectedIP: "@",
+		},
+		{
+			name: "uses IPv6 X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name: "ignores spoofed IP when real client is public",
+			header: map[string][]string{
+				"X-Forwarded-For": {"8.8.8.8, 203.0.113.10, 10.0.0.1"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "203.0.113.10",
+		},
+		{
+			name:       "handles bracketed IPv6 remote address",
+			header:     map[string][]string{},
+			remoteAddr: "[2001:db8::1]:12345",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name:       "avoids returning DNS host names",
+			header:     map[string][]string{},
+			remoteAddr: "example.com:9000",
+			expectedIP: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &http.Request{
+				Method:     "GET",
+				URL:        &url.URL{Path: "/"},
+				Header:     tt.header,
+				RemoteAddr: tt.remoteAddr,
+			}
+
+			values := ExtractConditionValuesFromRequest(req)
+			if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != tt.expectedIP {
+				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
+			}
+		})
 	}
 }
 

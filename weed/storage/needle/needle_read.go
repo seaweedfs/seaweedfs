@@ -55,7 +55,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 	if n.Size != size {
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatchOffsetSize).Inc()
-			glog.Errorf("entry not found1: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+			glog.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 			return ErrorSizeMismatch
 		}
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()

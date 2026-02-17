@@ -1013,7 +1013,36 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 
 	// Sort by completion time (most recent first)
 	sort.Slice(completedTasks, func(i, j int) bool {
-		return completedTasks[i].CompletedAt.After(*completedTasks[j].CompletedAt)
+		t1 := completedTasks[i].CompletedAt
+		t2 := completedTasks[j].CompletedAt
+
+		// Handle nil completion times
+		if t1 == nil && t2 == nil {
+			// Both nil, fallback to CreatedAt
+			if !completedTasks[i].CreatedAt.Equal(completedTasks[j].CreatedAt) {
+				return completedTasks[i].CreatedAt.After(completedTasks[j].CreatedAt)
+			}
+			return completedTasks[i].ID > completedTasks[j].ID
+		}
+		if t1 == nil {
+			return false // t1 (nil) goes to bottom
+		}
+		if t2 == nil {
+			return true // t2 (nil) goes to bottom
+		}
+
+		// Compare completion times
+		if !t1.Equal(*t2) {
+			return t1.After(*t2)
+		}
+
+		// Fallback to CreatedAt if completion times are identical
+		if !completedTasks[i].CreatedAt.Equal(completedTasks[j].CreatedAt) {
+			return completedTasks[i].CreatedAt.After(completedTasks[j].CreatedAt)
+		}
+
+		// Final tie-breaker: ID
+		return completedTasks[i].ID > completedTasks[j].ID
 	})
 
 	// Keep only the most recent MaxCompletedTasks, delete the rest

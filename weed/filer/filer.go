@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -276,8 +275,10 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		// dirParts[0] == "" and dirParts[1] == "buckets"
 		isUnderBuckets := len(dirParts) >= 3 && dirParts[1] == "buckets"
 		if isUnderBuckets {
-			if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
-				return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+			if !strings.HasPrefix(dirParts[2], ".") {
+				if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
+					return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+				}
 			}
 		}
 
@@ -301,12 +302,8 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
-		// level > 3 corresponds to a path depth greater than "/buckets/<bucket_name>",
-		// ensuring we only mark subdirectories within a bucket as implicit.
 		if isUnderBuckets && level > 3 {
-			dirEntry.Extended = map[string][]byte{
-				s3_constants.ExtS3ImplicitDir: []byte("true"),
-			}
+			// Parent directories under buckets are created automatically; no additional logging.
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)

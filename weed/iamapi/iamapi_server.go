@@ -89,7 +89,9 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		GrpcDialOption: option.GrpcDialOption,
 	}
 
-	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, explicitStore)
+	// Initialize FilerClient for IAM - explicit filers only (no discovery as FilerGroup unspecified)
+	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, "")
+	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, filerClient, explicitStore)
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
@@ -99,6 +101,13 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 		shutdownCancel:  shutdownCancel,
 		masterClient:    masterClient,
 	}
+
+	// Keep attempting to load configuration from filer now that we have a client
+	go func() {
+		if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Warningf("Failed to load IAM config from credential manager after client update: %v", err)
+		}
+	}()
 
 	iamApiServer.registerRouter(router)
 

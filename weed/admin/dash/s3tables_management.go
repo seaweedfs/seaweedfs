@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +25,7 @@ type S3TablesBucketsData struct {
 	Username     string                  `json:"username"`
 	Buckets      []S3TablesBucketSummary `json:"buckets"`
 	TotalBuckets int                     `json:"total_buckets"`
+	IcebergPort  int                     `json:"iceberg_port"`
 	LastUpdated  time.Time               `json:"last_updated"`
 }
 
@@ -59,6 +62,19 @@ type tableBucketMetadata struct {
 // S3Tables manager helpers
 
 const s3TablesAdminListLimit = 1000
+
+func parseNamespaceInput(namespace string) ([]string, error) {
+	return s3tables.ParseNamespace(namespace)
+}
+
+func (s *AdminServer) parseNamespaceFromGin(c *gin.Context, namespace string) ([]string, bool) {
+	parts, err := parseNamespaceInput(namespace)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid namespace: " + err.Error()})
+		return nil, false
+	}
+	return parts, true
+}
 
 func newS3TablesManager() *s3tables.Manager {
 	manager := s3tables.NewManager()
@@ -100,6 +116,9 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 			if strings.HasPrefix(entry.Entry.Name, ".") {
 				continue
 			}
+			if !s3tables.IsTableBucketEntry(entry.Entry) {
+				continue
+			}
 			metaBytes, ok := entry.Entry.Extended[s3tables.ExtendedKeyMetadata]
 			if !ok {
 				continue
@@ -129,6 +148,7 @@ func (s *AdminServer) GetS3TablesBucketsData(ctx context.Context) (S3TablesBucke
 	return S3TablesBucketsData{
 		Buckets:      buckets,
 		TotalBuckets: len(buckets),
+		IcebergPort:  s.icebergPort,
 		LastUpdated:  time.Now(),
 	}, nil
 }
@@ -151,7 +171,11 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 	var resp s3tables.ListTablesResponse
 	var ns []string
 	if namespace != "" {
-		ns = []string{namespace}
+		parts, err := parseNamespaceInput(namespace)
+		if err != nil {
+			return S3TablesTablesData{}, err
+		}
+		ns = parts
 	}
 	req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: ns, MaxTables: s3TablesAdminListLimit}
 	if err := s.executeS3TablesOperation(ctx, "ListTables", req, &resp); err != nil {
@@ -164,6 +188,383 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 		TotalTables: len(resp.Tables),
 		LastUpdated: time.Now(),
 	}, nil
+}
+
+// Iceberg Catalog data providers
+
+// GetIcebergCatalogData returns the Iceberg catalog overview data.
+// Each S3 Table Bucket is exposed as an Iceberg catalog.
+func (s *AdminServer) GetIcebergCatalogData(ctx context.Context) (IcebergCatalogData, error) {
+	bucketsData, err := s.GetS3TablesBucketsData(ctx)
+	if err != nil {
+		return IcebergCatalogData{}, err
+	}
+
+	catalogs := make([]IcebergCatalogInfo, 0, len(bucketsData.Buckets))
+	for _, bucket := range bucketsData.Buckets {
+		catalogs = append(catalogs, IcebergCatalogInfo{
+			Name:           bucket.Name,
+			ARN:            bucket.ARN,
+			OwnerAccountID: bucket.OwnerAccountID,
+			CreatedAt:      bucket.CreatedAt,
+		})
+	}
+
+	return IcebergCatalogData{
+		Catalogs:      catalogs,
+		TotalCatalogs: len(catalogs),
+		IcebergPort:   s.icebergPort, // Use the port passed to AdminServer
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// GetIcebergNamespacesData returns namespaces for an Iceberg catalog.
+func (s *AdminServer) GetIcebergNamespacesData(ctx context.Context, catalogName, bucketArn string) (IcebergNamespacesData, error) {
+	nsData, err := s.GetS3TablesNamespacesData(ctx, bucketArn)
+	if err != nil {
+		return IcebergNamespacesData{}, err
+	}
+
+	namespaces := make([]IcebergNamespaceInfo, 0, len(nsData.Namespaces))
+	for _, ns := range nsData.Namespaces {
+		name := ""
+		if len(ns.Namespace) > 0 {
+			name = strings.Join(ns.Namespace, ".")
+		}
+		namespaces = append(namespaces, IcebergNamespaceInfo{
+			Name:      name,
+			CreatedAt: ns.CreatedAt,
+		})
+	}
+
+	return IcebergNamespacesData{
+		CatalogName:     catalogName,
+		BucketARN:       bucketArn,
+		Namespaces:      namespaces,
+		TotalNamespaces: len(namespaces),
+		LastUpdated:     time.Now(),
+	}, nil
+}
+
+// GetIcebergTablesData returns tables for an Iceberg namespace.
+func (s *AdminServer) GetIcebergTablesData(ctx context.Context, catalogName, bucketArn, namespace string) (IcebergTablesData, error) {
+	tablesData, err := s.GetS3TablesTablesData(ctx, bucketArn, namespace)
+	if err != nil {
+		return IcebergTablesData{}, err
+	}
+
+	tables := make([]IcebergTableInfo, 0, len(tablesData.Tables))
+	for _, t := range tablesData.Tables {
+		tables = append(tables, IcebergTableInfo{
+			Name:      t.Name,
+			CreatedAt: t.CreatedAt,
+		})
+	}
+
+	return IcebergTablesData{
+		CatalogName:   catalogName,
+		NamespaceName: namespace,
+		BucketARN:     bucketArn,
+		Tables:        tables,
+		TotalTables:   len(tables),
+		LastUpdated:   time.Now(),
+	}, nil
+}
+
+// GetIcebergTableDetailsData returns Iceberg table metadata and snapshot information.
+func (s *AdminServer) GetIcebergTableDetailsData(ctx context.Context, catalogName, bucketArn, namespace, tableName string) (IcebergTableDetailsData, error) {
+	var resp s3tables.GetTableResponse
+	namespaceParts, err := parseNamespaceInput(namespace)
+	if err != nil {
+		return IcebergTableDetailsData{}, err
+	}
+	req := &s3tables.GetTableRequest{
+		TableBucketARN: bucketArn,
+		Namespace:      namespaceParts,
+		Name:           tableName,
+	}
+	if err := s.executeS3TablesOperation(ctx, "GetTable", req, &resp); err != nil {
+		return IcebergTableDetailsData{}, err
+	}
+
+	details := IcebergTableDetailsData{
+		CatalogName:      catalogName,
+		NamespaceName:    namespace,
+		TableName:        resp.Name,
+		BucketARN:        bucketArn,
+		TableARN:         resp.TableARN,
+		Format:           resp.Format,
+		CreatedAt:        resp.CreatedAt,
+		ModifiedAt:       resp.ModifiedAt,
+		MetadataLocation: resp.MetadataLocation,
+	}
+
+	applyIcebergMetadata(resp.Metadata, &details)
+	return details, nil
+}
+
+type icebergFullMetadata struct {
+	FormatVersion     int                    `json:"format-version"`
+	TableUUID         string                 `json:"table-uuid"`
+	Location          string                 `json:"location"`
+	LastUpdatedMs     int64                  `json:"last-updated-ms"`
+	Schemas           []icebergSchema        `json:"schemas"`
+	Schema            *icebergSchema         `json:"schema"`
+	CurrentSchemaID   int                    `json:"current-schema-id"`
+	PartitionSpecs    []icebergPartitionSpec `json:"partition-specs"`
+	PartitionSpec     *icebergPartitionSpec  `json:"partition-spec"`
+	DefaultSpecID     int                    `json:"default-spec-id"`
+	Properties        map[string]string      `json:"properties"`
+	Snapshots         []icebergSnapshot      `json:"snapshots"`
+	CurrentSnapshotID int64                  `json:"current-snapshot-id"`
+}
+
+type icebergSchema struct {
+	SchemaID int                  `json:"schema-id"`
+	Fields   []icebergSchemaField `json:"fields"`
+}
+
+type icebergSchemaField struct {
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
+}
+
+type icebergPartitionSpec struct {
+	SpecID int                     `json:"spec-id"`
+	Fields []icebergPartitionField `json:"fields"`
+}
+
+type icebergPartitionField struct {
+	SourceID  int    `json:"source-id"`
+	FieldID   int    `json:"field-id"`
+	Name      string `json:"name"`
+	Transform string `json:"transform"`
+}
+
+type icebergSnapshot struct {
+	SnapshotID   int64             `json:"snapshot-id"`
+	TimestampMs  int64             `json:"timestamp-ms"`
+	ManifestList string            `json:"manifest-list"`
+	Summary      map[string]string `json:"summary"`
+}
+
+func applyIcebergMetadata(metadata *s3tables.TableMetadata, details *IcebergTableDetailsData) {
+	if details == nil || metadata == nil {
+		return
+	}
+	if len(metadata.FullMetadata) == 0 {
+		details.SchemaFields = schemaFieldsFromIceberg(metadata.Iceberg)
+		return
+	}
+
+	var full icebergFullMetadata
+	if err := json.Unmarshal(metadata.FullMetadata, &full); err != nil {
+		glog.V(1).Infof("iceberg metadata parse failed: %v", err)
+		details.MetadataError = fmt.Sprintf("Failed to parse Iceberg metadata: %v", err)
+		details.SchemaFields = schemaFieldsFromIceberg(metadata.Iceberg)
+		return
+	}
+
+	details.TableLocation = full.Location
+	details.SchemaFields = schemaFieldsFromFullMetadata(full, metadata.Iceberg)
+	details.PartitionFields = partitionFieldsFromFullMetadata(full)
+	details.Properties = propertiesFromFullMetadata(full.Properties)
+	details.Snapshots = snapshotsFromFullMetadata(full.Snapshots)
+	details.SnapshotCount = len(full.Snapshots)
+	details.HasSnapshotCount = true
+	if metricsSnapshot := selectSnapshotForMetrics(full); metricsSnapshot != nil {
+		if value, ok := parseSummaryInt(metricsSnapshot.Summary, "total-data-files", "total-data-file-count", "total-files", "total-file-count"); ok {
+			details.DataFileCount = value
+			details.HasDataFileCount = true
+		}
+		if value, ok := parseSummaryInt(metricsSnapshot.Summary, "total-files-size", "total-data-files-size", "total-file-size", "total-data-file-size", "total-data-size", "total-size"); ok {
+			details.TotalSizeBytes = value
+			details.HasTotalSize = true
+		}
+	}
+}
+
+func typeToString(t json.RawMessage) json.RawMessage {
+	if t == nil || len(t) == 0 {
+		return json.RawMessage(`(complex)`)
+	}
+	var primitive string
+	if err := json.Unmarshal(t, &primitive); err == nil {
+		return json.RawMessage(primitive)
+	}
+	var v interface{}
+	if err := json.Unmarshal(t, &v); err != nil {
+		return json.RawMessage(`(complex)`)
+	}
+	return json.RawMessage(`(complex)`)
+}
+
+func schemaFieldsFromFullMetadata(full icebergFullMetadata, fallback *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
+	if schema := selectSchema(full); schema != nil {
+		fields := make([]IcebergSchemaFieldInfo, 0, len(schema.Fields))
+		for _, field := range schema.Fields {
+			fields = append(fields, IcebergSchemaFieldInfo{
+				ID:       field.ID,
+				Name:     field.Name,
+				Type:     typeToString(field.Type),
+				Required: field.Required,
+			})
+		}
+		return fields
+	}
+	return schemaFieldsFromIceberg(fallback)
+}
+
+func schemaFieldsFromIceberg(metadata *s3tables.IcebergMetadata) []IcebergSchemaFieldInfo {
+	if metadata == nil {
+		return nil
+	}
+	fields := make([]IcebergSchemaFieldInfo, 0, len(metadata.Schema.Fields))
+	for _, field := range metadata.Schema.Fields {
+		typeBytes, err := json.Marshal(field.Type)
+		if err != nil {
+			typeBytes = json.RawMessage(`(complex)`)
+		} else {
+			typeBytes = typeToString(typeBytes)
+		}
+		fields = append(fields, IcebergSchemaFieldInfo{
+			Name:     field.Name,
+			Type:     typeBytes,
+			Required: field.Required,
+		})
+	}
+	return fields
+}
+
+func selectSchema(full icebergFullMetadata) *icebergSchema {
+	if len(full.Schemas) == 0 && full.Schema == nil {
+		return nil
+	}
+	if len(full.Schemas) == 0 {
+		return full.Schema
+	}
+	for i := range full.Schemas {
+		if full.Schemas[i].SchemaID == full.CurrentSchemaID {
+			return &full.Schemas[i]
+		}
+	}
+	return &full.Schemas[0]
+}
+
+func partitionFieldsFromFullMetadata(full icebergFullMetadata) []IcebergPartitionFieldInfo {
+	var spec *icebergPartitionSpec
+	if len(full.PartitionSpecs) == 0 && full.PartitionSpec == nil {
+		return nil
+	}
+	if len(full.PartitionSpecs) == 0 {
+		spec = full.PartitionSpec
+	} else {
+		for i := range full.PartitionSpecs {
+			if full.PartitionSpecs[i].SpecID == full.DefaultSpecID {
+				spec = &full.PartitionSpecs[i]
+				break
+			}
+		}
+		if spec == nil {
+			spec = &full.PartitionSpecs[0]
+		}
+	}
+	if spec == nil {
+		return nil
+	}
+	fields := make([]IcebergPartitionFieldInfo, 0, len(spec.Fields))
+	for _, field := range spec.Fields {
+		fields = append(fields, IcebergPartitionFieldInfo{
+			Name:      field.Name,
+			Transform: field.Transform,
+			SourceID:  field.SourceID,
+			FieldID:   field.FieldID,
+		})
+	}
+	return fields
+}
+
+func propertiesFromFullMetadata(properties map[string]string) []IcebergPropertyInfo {
+	if len(properties) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	entries := make([]IcebergPropertyInfo, 0, len(keys))
+	for _, key := range keys {
+		entries = append(entries, IcebergPropertyInfo{Key: key, Value: properties[key]})
+	}
+	return entries
+}
+
+func snapshotsFromFullMetadata(snapshots []icebergSnapshot) []IcebergSnapshotInfo {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	sorted := make([]icebergSnapshot, len(snapshots))
+	copy(sorted, snapshots)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].TimestampMs > sorted[j].TimestampMs
+	})
+	info := make([]IcebergSnapshotInfo, 0, len(sorted))
+	for _, snapshot := range sorted {
+		operation := ""
+		if snapshot.Summary != nil {
+			operation = snapshot.Summary["operation"]
+		}
+		timestamp := time.Time{}
+		if snapshot.TimestampMs > 0 {
+			timestamp = time.Unix(0, snapshot.TimestampMs*int64(time.Millisecond))
+		}
+		info = append(info, IcebergSnapshotInfo{
+			SnapshotID:   snapshot.SnapshotID,
+			Timestamp:    timestamp,
+			Operation:    operation,
+			ManifestList: snapshot.ManifestList,
+		})
+	}
+	return info
+}
+
+func selectSnapshotForMetrics(full icebergFullMetadata) *icebergSnapshot {
+	if len(full.Snapshots) == 0 {
+		return nil
+	}
+	for i := range full.Snapshots {
+		if full.Snapshots[i].SnapshotID == full.CurrentSnapshotID {
+			return &full.Snapshots[i]
+		}
+	}
+	latestIdx := 0
+	for i := 1; i < len(full.Snapshots); i++ {
+		if full.Snapshots[i].TimestampMs > full.Snapshots[latestIdx].TimestampMs {
+			latestIdx = i
+		}
+	}
+	return &full.Snapshots[latestIdx]
+}
+
+func parseSummaryInt(summary map[string]string, keys ...string) (int64, bool) {
+	if len(summary) == 0 {
+		return 0, false
+	}
+	for _, key := range keys {
+		value, ok := summary[key]
+		if !ok || value == "" {
+			continue
+		}
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue
+		}
+		return parsed, true
+	}
+	return 0, false
 }
 
 // API handlers
@@ -291,6 +692,9 @@ func (s *AdminServer) ListS3TablesNamespacesAPI(c *gin.Context) {
 }
 
 func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Name      string `json:"name"`
@@ -303,7 +707,11 @@ func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn and name are required"})
 		return
 	}
-	createReq := &s3tables.CreateNamespaceRequest{TableBucketARN: req.BucketARN, Namespace: []string{req.Name}}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Name)
+	if !ok {
+		return
+	}
+	createReq := &s3tables.CreateNamespaceRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts}
 	var resp s3tables.CreateNamespaceResponse
 	if err := s.executeS3TablesOperation(c.Request.Context(), "CreateNamespace", createReq, &resp); err != nil {
 		writeS3TablesError(c, err)
@@ -313,13 +721,20 @@ func (s *AdminServer) CreateS3TablesNamespace(c *gin.Context) {
 }
 
 func (s *AdminServer) DeleteS3TablesNamespace(c *gin.Context) {
+	if !requireSessionCSRFToken(c) {
+		return
+	}
 	bucketArn := c.Query("bucket")
 	namespace := c.Query("name")
 	if bucketArn == "" || namespace == "" {
 		c.JSON(400, gin.H{"error": "bucket and name query parameters are required"})
 		return
 	}
-	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: []string{namespace}}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+		return
+	}
+	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: namespaceParts}
 	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteNamespace", req, nil); err != nil {
 		writeS3TablesError(c, err)
 		return
@@ -359,6 +774,10 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn, namespace, and name are required"})
 		return
 	}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	if !ok {
+		return
+	}
 	format := req.Format
 	if format == "" {
 		format = "ICEBERG"
@@ -371,7 +790,7 @@ func (s *AdminServer) CreateS3TablesTable(c *gin.Context) {
 	}
 	createReq := &s3tables.CreateTableRequest{
 		TableBucketARN: req.BucketARN,
-		Namespace:      []string{req.Namespace},
+		Namespace:      namespaceParts,
 		Name:           req.Name,
 		Format:         format,
 		Tags:           req.Tags,
@@ -394,7 +813,11 @@ func (s *AdminServer) DeleteS3TablesTable(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
-	req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: []string{namespace}, Name: name, VersionToken: version}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+		return
+	}
+	req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name, VersionToken: version}
 	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTable", req, nil); err != nil {
 		writeS3TablesError(c, err)
 		return
@@ -467,7 +890,11 @@ func (s *AdminServer) PutS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket_arn, namespace, name, and policy are required"})
 		return
 	}
-	putReq := &s3tables.PutTablePolicyRequest{TableBucketARN: req.BucketARN, Namespace: []string{req.Namespace}, Name: req.Name, ResourcePolicy: req.Policy}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, req.Namespace)
+	if !ok {
+		return
+	}
+	putReq := &s3tables.PutTablePolicyRequest{TableBucketARN: req.BucketARN, Namespace: namespaceParts, Name: req.Name, ResourcePolicy: req.Policy}
 	if err := s.executeS3TablesOperation(c.Request.Context(), "PutTablePolicy", putReq, nil); err != nil {
 		writeS3TablesError(c, err)
 		return
@@ -483,7 +910,11 @@ func (s *AdminServer) GetS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
-	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: []string{namespace}, Name: name}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+		return
+	}
+	getReq := &s3tables.GetTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
 	var resp s3tables.GetTablePolicyResponse
 	if err := s.executeS3TablesOperation(c.Request.Context(), "GetTablePolicy", getReq, &resp); err != nil {
 		writeS3TablesError(c, err)
@@ -500,7 +931,11 @@ func (s *AdminServer) DeleteS3TablesTablePolicy(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "bucket, namespace, and name query parameters are required"})
 		return
 	}
-	deleteReq := &s3tables.DeleteTablePolicyRequest{TableBucketARN: bucketArn, Namespace: []string{namespace}, Name: name}
+	namespaceParts, ok := s.parseNamespaceFromGin(c, namespace)
+	if !ok {
+		return
+	}
+	deleteReq := &s3tables.DeleteTablePolicyRequest{TableBucketARN: bucketArn, Namespace: namespaceParts, Name: name}
 	if err := s.executeS3TablesOperation(c.Request.Context(), "DeleteTablePolicy", deleteReq, nil); err != nil {
 		writeS3TablesError(c, err)
 		return

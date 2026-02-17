@@ -57,6 +57,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		formValues.Set("Key", strings.Replace(formValues.Get("Key"), "${filename}", fileName, -1))
 	}
 	object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	successRedirect := formValues.Get("success_action_redirect")
 	successStatus := formValues.Get("success_action_status")
@@ -114,7 +118,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	filePath := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object)
+	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType

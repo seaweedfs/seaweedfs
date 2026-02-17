@@ -909,6 +909,9 @@ s3:
   # add additional https port
   httpsPort: 0
   metricsPort: 9327
+  # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
+  # Set to a port number to enable, or 0/null to disable
+  icebergPort: null
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
@@ -1047,6 +1050,15 @@ s3:
     path: "/"
     pathType: Prefix
     # additional ingress annotations for the s3 endpoint
+    annotations: {}
+    tls: []
+
+  icebergIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
     annotations: {}
     tls: []
 

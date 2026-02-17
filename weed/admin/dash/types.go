@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -595,4 +596,100 @@ type STSConfigData struct {
 	TokenDuration string    `json:"token_duration,omitempty"`
 	Providers     []string  `json:"providers,omitempty"`
 	LastUpdated   time.Time `json:"last_updated"`
+}
+
+// Iceberg Catalog types
+type IcebergCatalogInfo struct {
+	Name           string    `json:"name"`
+	ARN            string    `json:"arn"`
+	OwnerAccountID string    `json:"owner_account_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type IcebergCatalogData struct {
+	Username      string               `json:"username"`
+	Catalogs      []IcebergCatalogInfo `json:"catalogs"`
+	TotalCatalogs int                  `json:"total_catalogs"`
+	IcebergPort   int                  `json:"iceberg_port"`
+	LastUpdated   time.Time            `json:"last_updated"`
+}
+
+type IcebergNamespaceInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergNamespacesData struct {
+	Username        string                 `json:"username"`
+	CatalogName     string                 `json:"catalog_name"`
+	BucketARN       string                 `json:"bucket_arn"`
+	Namespaces      []IcebergNamespaceInfo `json:"namespaces"`
+	TotalNamespaces int                    `json:"total_namespaces"`
+	LastUpdated     time.Time              `json:"last_updated"`
+}
+
+type IcebergTableInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergTablesData struct {
+	Username      string             `json:"username"`
+	CatalogName   string             `json:"catalog_name"`
+	NamespaceName string             `json:"namespace_name"`
+	BucketARN     string             `json:"bucket_arn"`
+	Tables        []IcebergTableInfo `json:"tables"`
+	TotalTables   int                `json:"total_tables"`
+	LastUpdated   time.Time          `json:"last_updated"`
+}
+
+type IcebergSchemaFieldInfo struct {
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
+}
+
+type IcebergPartitionFieldInfo struct {
+	Name      string `json:"name"`
+	Transform string `json:"transform"`
+	SourceID  int    `json:"source_id"`
+	FieldID   int    `json:"field_id"`
+}
+
+type IcebergPropertyInfo struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type IcebergSnapshotInfo struct {
+	SnapshotID   int64     `json:"snapshot_id"`
+	Timestamp    time.Time `json:"timestamp"`
+	Operation    string    `json:"operation"`
+	ManifestList string    `json:"manifest_list"`
+}
+
+type IcebergTableDetailsData struct {
+	Username         string                      `json:"username"`
+	CatalogName      string                      `json:"catalog_name"`
+	NamespaceName    string                      `json:"namespace_name"`
+	TableName        string                      `json:"table_name"`
+	BucketARN        string                      `json:"bucket_arn"`
+	TableARN         string                      `json:"table_arn"`
+	Format           string                      `json:"format"`
+	CreatedAt        time.Time                   `json:"created_at"`
+	ModifiedAt       time.Time                   `json:"modified_at"`
+	MetadataLocation string                      `json:"metadata_location"`
+	TableLocation    string                      `json:"table_location"`
+	SchemaFields     []IcebergSchemaFieldInfo    `json:"schema_fields"`
+	PartitionFields  []IcebergPartitionFieldInfo `json:"partition_fields"`
+	Properties       []IcebergPropertyInfo       `json:"properties"`
+	Snapshots        []IcebergSnapshotInfo       `json:"snapshots"`
+	SnapshotCount    int                         `json:"snapshot_count"`
+	HasSnapshotCount bool                        `json:"has_snapshot_count"`
+	DataFileCount    int64                       `json:"data_file_count"`
+	HasDataFileCount bool                        `json:"has_data_file_count"`
+	TotalSizeBytes   int64                       `json:"total_size_bytes"`
+	HasTotalSize     bool                        `json:"has_total_size"`
+	MetadataError    string                      `json:"metadata_error,omitempty"`
 }

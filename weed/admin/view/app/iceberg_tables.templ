@@ -1,0 +1,227 @@
+package app
+
+import (
+	"fmt"
+	"net/url"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ IcebergTables(data dash.IcebergTablesData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<nav aria-label="breadcrumb">
+				<ol class="breadcrumb mb-0">
+					<li class="breadcrumb-item">
+						<a href="/object-store/iceberg">
+							<i class="fas fa-snowflake me-1"></i>Iceberg Catalog
+						</a>
+					</li>
+					<li class="breadcrumb-item">
+						<a href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(data.CatalogName))) }>
+							{ data.CatalogName }
+						</a>
+					</li>
+					<li class="breadcrumb-item active">{ data.NamespaceName }</li>
+				</ol>
+			</nav>
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#createIcebergTableModal">
+					<i class="fas fa-plus me-1"></i>Create Table
+				</button>
+			</div>
+		</div>
+	</div>
+	<div class="mb-3">
+		<span class="text-muted">Bucket ARN: { data.BucketARN }</span>
+		<span class="text-muted ms-2">Namespace: { data.NamespaceName }</span>
+	</div>
+	<div id="iceberg-tables-content" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-catalog-name={ data.CatalogName }>
+		<!-- Stats Cards -->
+		<div class="row mb-4">
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-primary shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+									Namespace
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ data.NamespaceName }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-folder fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="col-xl-4 col-md-6 mb-4">
+				<div class="card border-left-success shadow h-100 py-2">
+					<div class="card-body">
+						<div class="row no-gutters align-items-center">
+							<div class="col mr-2">
+								<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+									Total Tables
+								</div>
+								<div class="h5 mb-0 font-weight-bold text-gray-800">
+									{ fmt.Sprintf("%d", data.TotalTables) }
+								</div>
+							</div>
+							<div class="col-auto">
+								<i class="fas fa-table fa-2x text-gray-300"></i>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Tables List -->
+		<div class="row">
+			<div class="col-12">
+				<div class="card shadow mb-4">
+					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
+						<h6 class="m-0 font-weight-bold text-primary">
+							<i class="fas fa-table me-2"></i>Tables
+						</h6>
+					</div>
+					<div class="card-body">
+						<div class="table-responsive">
+							<table class="table table-hover" width="100%" cellspacing="0">
+								<thead>
+									<tr>
+										<th>Table Name</th>
+										<th>Type</th>
+										<th>S3 Location</th>
+										<th>Created</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, table := range data.Tables {
+										<tr>
+											<td>
+												<i class="fas fa-table text-primary me-2"></i>
+												<strong>{ table.Name }</strong>
+											</td>
+											<td>
+												<span class="badge bg-info">Iceberg</span>
+											</td>
+											<td>
+												<code class="small">s3://{ data.CatalogName }/{ data.NamespaceName }/{ table.Name }/</code>
+											</td>
+											<td>
+												if table.CreatedAt.IsZero() {
+													<span class="text-muted">-</span>
+												} else {
+													{ table.CreatedAt.Format("2006-01-02 15:04") }
+												}
+											</td>
+											<td>
+												<div class="btn-group btn-group-sm" role="group">
+													<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces/%s/tables/%s", url.PathEscape(data.CatalogName), url.PathEscape(data.NamespaceName), url.PathEscape(table.Name))) } title="View Details">
+														<i class="fas fa-eye"></i>
+													</a>
+													<button type="button" class="btn btn-outline-danger btn-sm iceberg-delete-table-btn" data-bucket-arn={ data.BucketARN } data-namespace={ data.NamespaceName } data-table-name={ table.Name } data-catalog-name={ data.CatalogName } title="Drop Table">
+														<i class="fas fa-trash"></i>
+													</button>
+												</div>
+											</td>
+										</tr>
+									}
+									if len(data.Tables) == 0 {
+										<tr>
+											<td colspan="5" class="text-center text-muted py-4">
+												<i class="fas fa-table fa-3x mb-3 text-muted"></i>
+												<div>
+													<h5>No tables found</h5>
+													<p>Create tables via the Iceberg REST API.</p>
+												</div>
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="createIcebergTableModal" tabindex="-1" aria-labelledby="createIcebergTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="createIcebergTableModalLabel">
+						<i class="fas fa-plus me-2"></i>Create Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<form id="createIcebergTableForm">
+					<div class="modal-body">
+						<input type="hidden" id="icebergTableCsrfToken" name="csrf_token"/>
+						<div class="mb-3">
+							<label for="icebergTableName" class="form-label">Table Name</label>
+							<input type="text" class="form-control" id="icebergTableName" name="name" required/>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableFormat" class="form-label">Format</label>
+							<select class="form-select" id="icebergTableFormat" name="format">
+								<option value="ICEBERG" selected>ICEBERG</option>
+							</select>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableMetadata" class="form-label">Metadata JSON (optional)</label>
+							<textarea class="form-control" id="icebergTableMetadata" name="metadata" rows="6" placeholder="{ }"></textarea>
+						</div>
+						<div class="mb-3">
+							<label for="icebergTableTags" class="form-label">Tags</label>
+							<input type="text" class="form-control" id="icebergTableTags" name="tags" placeholder="key1=value1,key2=value2"/>
+						</div>
+					</div>
+					<div class="modal-footer">
+						<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-plus me-1"></i>Create
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="deleteIcebergTableModal" tabindex="-1" aria-labelledby="deleteIcebergTableModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="deleteIcebergTableModalLabel">
+						<i class="fas fa-exclamation-triangle me-2 text-warning"></i>Drop Table
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p>Are you sure you want to drop the table <strong id="deleteIcebergTableName"></strong>?</p>
+					<div class="mb-3">
+						<label for="deleteIcebergTableVersion" class="form-label">Version Token (optional)</label>
+						<input type="text" class="form-control" id="deleteIcebergTableVersion" placeholder="Version token"/>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-danger" onclick="deleteIcebergTable()">
+						<i class="fas fa-trash me-1"></i>Drop Table
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<script>
+		document.addEventListener('DOMContentLoaded', function() {
+			initIcebergTables();
+		});
+	</script>
+}

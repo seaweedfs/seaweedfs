@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"encoding/xml"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -23,7 +22,11 @@ const (
 func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("DeleteObjectHandler %s %s", bucket, object)
+	glog.Infof("DeleteObjectHandler %s %s", bucket, object)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	// Check for specific version ID in query parameters
 	versionId := r.URL.Query().Get("versionId")
@@ -121,7 +124,9 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		target := util.FullPath(fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, object))
+		// Normalize trailing-slash object keys (e.g. "path/") to the
+		// underlying directory entry path so DeleteEntry gets a valid name.
+		target := util.NewFullPath(s3a.bucketDir(bucket), object)
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -234,6 +239,15 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 			if object.Key == "" {
 				continue
 			}
+			if err := s3a.validateTableBucketObjectPath(bucket, object.Key); err != nil {
+				deleteErrors = append(deleteErrors, DeleteError{
+					Code:      s3err.GetAPIError(s3err.ErrAccessDenied).Code,
+					Message:   s3err.GetAPIError(s3err.ErrAccessDenied).Description,
+					Key:       object.Key,
+					VersionId: object.VersionId,
+				})
+				continue
+			}
 
 			// Check object lock permissions before deletion (only for versioned buckets)
 			if versioningConfigured {
@@ -327,13 +341,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				}
 			} else {
 				// Handle non-versioned delete (original logic)
-				lastSeparator := strings.LastIndex(object.Key, "/")
-				parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.Key, true, false
-				if lastSeparator > 0 && lastSeparator+1 < len(object.Key) {
-					entryName = object.Key[lastSeparator+1:]
-					parentDirectoryPath = object.Key[:lastSeparator]
-				}
-				parentDirectoryPath = fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, parentDirectoryPath)
+				target := util.NewFullPath(s3a.bucketDir(bucket), object.Key)
+				parentDirectoryPath, entryName := target.DirAndName()
+				isDeleteData, isRecursive := true, false
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
