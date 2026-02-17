@@ -52,6 +52,15 @@ type JobTracker struct {
 	Detections   []*DetectionRecord
 }
 
+// DetectionRecord represents a detection result
+type DetectionRecord struct {
+	ResourceID    string
+	DetectionType string
+	Severity      string
+	Description   string
+	Data          []byte
+}
+
 // ExecutionRecord tracks execution details
 type ExecutionRecord struct {
 	ResourceID   string
@@ -196,12 +205,8 @@ func (h *TestHarness) DispatchJob(pluginID string, jobType string, payload *plug
 	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
 	defer cancel()
 
-	// Create mock stream
-	mockStream := &MockExecuteJobStream{
-		responses: make([]*plugin_pb.ExecuteJobResponse, 0),
-	}
-
-	err := h.adminService.ExecuteJob(req, mockStream)
+	// Simulate job dispatch
+	err := h.adminService.SimulateJobExecution(req)
 	if err != nil {
 		h.mu.Lock()
 		h.failureReasons = append(h.failureReasons, fmt.Sprintf("job dispatch failed: %v", err))
@@ -214,8 +219,8 @@ func (h *TestHarness) DispatchJob(pluginID string, jobType string, payload *plug
 
 	// Verify job execution
 	plugin.TrackJob(req)
-	
-	executionErr := plugin.ExecuteJob(ctx, jobID, jobType, payload)
+
+	_, executionErr := plugin.ExecuteJob(ctx, jobID, jobType, payload)
 
 	h.mu.Lock()
 	h.jobs[jobID] = &JobTracker{
@@ -334,7 +339,7 @@ func (h *TestHarness) GetJobCount() int {
 }
 
 // SimulateDetection simulates detection results
-func (h *TestHarness) SimulateDetection(pluginID string, result *DetectionResult) error {
+func (h *TestHarness) SimulateDetection(pluginID string, result *DetectionRecord) error {
 	h.mu.RLock()
 	plugin, ok := h.plugins[pluginID]
 	h.mu.RUnlock()

@@ -2,7 +2,6 @@ package testing
 
 import (
 	"context"
-	"io"
 	"sync"
 	"time"
 

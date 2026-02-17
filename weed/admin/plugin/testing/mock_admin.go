@@ -2,9 +2,10 @@ package testing
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
@@ -108,8 +109,8 @@ func (m *MockPluginService) Connect(ctx context.Context, req *plugin_pb.PluginCo
 	}, nil
 }
 
-// ExecuteJob simulates job dispatch (streaming version)
-func (m *MockPluginService) ExecuteJob(req *plugin_pb.ExecuteJobRequest, stream plugin_pb.PluginService_ExecuteJobServer) error {
+// SimulateJobExecution simulates job execution
+func (m *MockPluginService) SimulateJobExecution(req *plugin_pb.ExecuteJobRequest) error {
 	m.mu.Lock()
 
 	m.jobDispatchCalls++
@@ -129,29 +130,16 @@ func (m *MockPluginService) ExecuteJob(req *plugin_pb.ExecuteJobRequest, stream 
 	m.jobs[req.JobId] = job
 	m.mu.Unlock()
 
-	// Send initial acceptance
-	stream.Send(&plugin_pb.ExecuteJobResponse{
-		JobId:   req.JobId,
-		Status:  plugin_pb.ExecutionStatus_EXECUTION_STATUS_ACCEPTED,
-		Message: "Job accepted for processing",
-	})
-
 	// Simulate job execution
 	time.Sleep(50 * time.Millisecond)
 
-	// Update job status in stream
+	// Update job status
 	m.mu.Lock()
 	job.StreamCalls++
 	job.Status = plugin_pb.ExecutionStatus_EXECUTION_STATUS_RUNNING
 	m.mu.Unlock()
 
-	stream.Send(&plugin_pb.ExecuteJobResponse{
-		JobId:   req.JobId,
-		Status:  plugin_pb.ExecutionStatus_EXECUTION_STATUS_RUNNING,
-		Message: "Job is executing",
-	})
-
-	// Simulate completion
+	// Simulate processing
 	time.Sleep(50 * time.Millisecond)
 
 	m.mu.Lock()
@@ -162,13 +150,20 @@ func (m *MockPluginService) ExecuteJob(req *plugin_pb.ExecuteJobRequest, stream 
 	job.ExecutedAt = &now
 	m.mu.Unlock()
 
-	stream.Send(&plugin_pb.ExecuteJobResponse{
-		JobId:   req.JobId,
-		Status:  plugin_pb.ExecutionStatus_EXECUTION_STATUS_COMPLETED,
-		Message: "Job completed successfully",
-	})
-
 	return nil
+}
+
+// ExecuteJob simulates job dispatch
+func (m *MockPluginService) ExecuteJob(ctx context.Context, req *plugin_pb.ExecuteJobRequest) (*plugin_pb.ExecuteJobResponse, error) {
+	m.mu.Lock()
+	m.jobDispatchCalls++
+	m.mu.Unlock()
+
+	return &plugin_pb.ExecuteJobResponse{
+		JobId:   req.JobId,
+		Status:  plugin_pb.ExecutionStatus_EXECUTION_STATUS_ACCEPTED,
+		Message: "Job accepted",
+	}, nil
 }
 
 // ReportHealth handles plugin health reports
@@ -339,7 +334,7 @@ func (m *MockPluginService) VerifyPluginRegistered(pluginID string) bool {
 }
 
 // durationFromProto converts proto Duration to time.Duration
-func durationFromProto(d *plugin_pb.Duration) time.Duration {
+func durationFromProto(d *durationpb.Duration) time.Duration {
 	if d == nil {
 		return 0
 	}

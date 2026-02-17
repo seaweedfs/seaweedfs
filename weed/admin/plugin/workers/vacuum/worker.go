@@ -232,7 +232,7 @@ func (w *Worker) ExecuteJob(ctx context.Context, jobID string, payload *plugin_p
 	}
 
 	log.Printf("Job %s failed: %s", jobID, result.ErrorMessage)
-	return fmt.Errorf(result.ErrorMessage)
+	return fmt.Errorf("%s", result.ErrorMessage)
 }
 
 // submitResult submits job results to admin

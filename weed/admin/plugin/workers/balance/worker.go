@@ -236,7 +236,7 @@ return w.submitResult(ctx, jobID, result)
 }
 
 log.Printf("Job %s failed: %s", jobID, result.ErrorMessage)
-return fmt.Errorf(result.ErrorMessage)
+return fmt.Errorf("%s", result.ErrorMessage)
 }
 
 // submitResult submits job results to admin

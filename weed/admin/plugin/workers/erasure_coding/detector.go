@@ -2,7 +2,6 @@ package erasure_coding
 
 import (
 	"fmt"
-	"strings"
 )
 
 // CandidateVolume represents a volume eligible for EC
