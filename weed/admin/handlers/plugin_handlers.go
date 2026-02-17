@@ -23,10 +23,8 @@ func NewPluginHandlers(adminServer *dash.AdminServer) *PluginHandlers {
 
 // ShowPlugin displays plugin monitoring and configuration page.
 func (h *PluginHandlers) ShowPlugin(c *gin.Context) {
-	enabled := h.adminServer != nil && h.adminServer.IsPluginEnabled()
-
 	c.Header("Content-Type", "text/html")
-	component := app.Plugin(enabled)
+	component := app.Plugin(true)
 	layoutComponent := layout.Layout(c, component)
 	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
