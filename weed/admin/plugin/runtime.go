@@ -49,6 +49,9 @@ type Runtime struct {
 	nextDetectionAt   map[string]time.Time
 	detectionInFlight map[string]bool
 
+	dedupeMu           sync.Mutex
+	recentDedupeByType map[string]map[string]time.Time
+
 	sessionsMu sync.RWMutex
 	sessions   map[string]*streamSession
 
@@ -113,6 +116,7 @@ func NewRuntime(options RuntimeOptions) (*Runtime, error) {
 		pendingExecution:       make(map[string]chan *plugin_pb.JobCompleted),
 		nextDetectionAt:        make(map[string]time.Time),
 		detectionInFlight:      make(map[string]bool),
+		recentDedupeByType:     make(map[string]map[string]time.Time),
 		jobs:                   make(map[string]*TrackedJob),
 		activities:             make([]JobActivity, 0, 256),
 		shutdownCh:             make(chan struct{}),

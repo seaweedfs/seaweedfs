@@ -22,6 +22,7 @@ const (
 	maxScheduledExecutionConcurrency           = 32
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
+	defaultScheduledDedupeTTL                  = 24 * time.Hour
 )
 
 type schedulerPolicy struct {
@@ -262,11 +263,22 @@ func (r *Runtime) runScheduledDetection(jobType string, policy schedulerPolicy) 
 		OccurredAt: time.Now().UTC(),
 	})
 
-	if len(proposals) == 0 {
+	filtered := r.filterScheduledProposals(jobType, proposals, defaultScheduledDedupeTTL)
+	if len(filtered) != len(proposals) {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s)", len(proposals)-len(filtered)),
+			Stage:      "deduped",
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+
+	if len(filtered) == 0 {
 		return
 	}
 
-	r.dispatchScheduledProposals(jobType, proposals, clusterContext, policy)
+	r.dispatchScheduledProposals(jobType, filtered, clusterContext, policy)
 }
 
 func (r *Runtime) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error) {
@@ -544,4 +556,58 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 	case <-timer.C:
 		return true
 	}
+}
+
+func (r *Runtime) filterScheduledProposals(jobType string, proposals []*plugin_pb.JobProposal, dedupeTTL time.Duration) []*plugin_pb.JobProposal {
+	now := time.Now().UTC()
+	if dedupeTTL <= 0 {
+		dedupeTTL = defaultScheduledDedupeTTL
+	}
+
+	r.dedupeMu.Lock()
+	defer r.dedupeMu.Unlock()
+
+	typedCache := r.recentDedupeByType[jobType]
+	if typedCache == nil {
+		typedCache = make(map[string]time.Time)
+		r.recentDedupeByType[jobType] = typedCache
+	}
+
+	cutoff := now.Add(-dedupeTTL)
+	for dedupeKey, seenAt := range typedCache {
+		if seenAt.Before(cutoff) {
+			delete(typedCache, dedupeKey)
+		}
+	}
+
+	filtered := make([]*plugin_pb.JobProposal, 0, len(proposals))
+	seenInRun := make(map[string]struct{}, len(proposals))
+
+	for _, proposal := range proposals {
+		if proposal == nil {
+			continue
+		}
+
+		key := proposal.DedupeKey
+		if key == "" {
+			key = proposal.ProposalId
+		}
+		if key == "" {
+			filtered = append(filtered, proposal)
+			continue
+		}
+
+		if _, exists := seenInRun[key]; exists {
+			continue
+		}
+		if _, exists := typedCache[key]; exists {
+			continue
+		}
+
+		seenInRun[key] = struct{}{}
+		typedCache[key] = now
+		filtered = append(filtered, proposal)
+	}
+
+	return filtered
 }

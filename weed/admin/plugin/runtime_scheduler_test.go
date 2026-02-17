@@ -145,3 +145,32 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 		t.Fatalf("expected different executors due per-worker limit, got same worker %s", executor1.WorkerID)
 	}
 }
+
+func TestFilterScheduledProposalsDedupe(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := NewRuntime(RuntimeOptions{})
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer runtime.Shutdown()
+
+	proposals := []*plugin_pb.JobProposal{
+		{ProposalId: "p1", DedupeKey: "d1"},
+		{ProposalId: "p2", DedupeKey: "d1"}, // same dedupe key
+		{ProposalId: "p3", DedupeKey: "d3"},
+		{ProposalId: "p3"}, // fallback dedupe by proposal id
+		{ProposalId: "p4"},
+		{ProposalId: "p4"}, // same proposal id, no dedupe key
+	}
+
+	filtered := runtime.filterScheduledProposals("vacuum", proposals, time.Hour)
+	if len(filtered) != 4 {
+		t.Fatalf("unexpected filtered size: got=%d want=4", len(filtered))
+	}
+
+	filtered2 := runtime.filterScheduledProposals("vacuum", proposals, time.Hour)
+	if len(filtered2) != 0 {
+		t.Fatalf("expected second run to be fully deduped, got=%d", len(filtered2))
+	}
+}
