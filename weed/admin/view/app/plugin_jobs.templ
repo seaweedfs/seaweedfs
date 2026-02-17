@@ -1,0 +1,154 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+)
+
+type PluginJobsPageData struct {
+	JobType string
+	Jobs []plugin.ExecutionRecord
+	StateFilter string
+}
+
+templ PluginJobsMonitoring(data PluginJobsPageData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-tasks me-2"></i>Jobs - { data.JobType }
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<button type="button" class="btn btn-sm btn-success" onclick="triggerDetection()">
+					<i class="fas fa-play me-1"></i>Trigger Detection
+				</button>
+				<a href="/plugins" class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back
+				</a>
+			</div>
+		</div>
+	</div>
+
+	<!-- State Filter -->
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary">Filter</h6>
+		</div>
+		<div class="card-body">
+			<div class="btn-group" role="group">
+				<a href={ templ.SafeURL("/plugins/jobs/" + data.JobType) } class={ templ.Classes("btn btn-sm", templ.Classes("btn-primary", data.StateFilter == "")) }>All</a>
+				<a href={ templ.SafeURL("/plugins/jobs/" + data.JobType + "?state=PENDING") } class={ templ.Classes("btn btn-sm", templ.Classes("btn-primary", data.StateFilter == "PENDING")) }>Pending</a>
+				<a href={ templ.SafeURL("/plugins/jobs/" + data.JobType + "?state=RUNNING") } class={ templ.Classes("btn btn-sm", templ.Classes("btn-primary", data.StateFilter == "RUNNING")) }>Running</a>
+				<a href={ templ.SafeURL("/plugins/jobs/" + data.JobType + "?state=COMPLETED") } class={ templ.Classes("btn btn-sm", templ.Classes("btn-primary", data.StateFilter == "COMPLETED")) }>Completed</a>
+				<a href={ templ.SafeURL("/plugins/jobs/" + data.JobType + "?state=FAILED") } class={ templ.Classes("btn btn-sm", templ.Classes("btn-primary", data.StateFilter == "FAILED")) }>Failed</a>
+			</div>
+		</div>
+	</div>
+
+	<!-- Jobs Table -->
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary">Recent Jobs</h6>
+		</div>
+		<div class="card-body">
+			if len(data.Jobs) == 0 {
+				<div class="alert alert-info">No jobs found</div>
+			} else {
+				<div class="table-responsive">
+					<table class="table table-hover table-sm">
+						<thead>
+							<tr>
+								<th>Job ID</th>
+								<th>State</th>
+								<th>Plugin</th>
+								<th>Created</th>
+								<th>Started</th>
+								<th>Completed</th>
+								<th>Retries</th>
+								<th>Error</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, job := range data.Jobs {
+								if data.StateFilter == "" || job.State.String() == data.StateFilter {
+									<tr>
+										<td><code>{ job.JobID }</code></td>
+										<td>
+											if job.State.String() == "PENDING" {
+												<span class="badge bg-secondary">PENDING</span>
+											} else if job.State.String() == "RUNNING" {
+												<span class="badge bg-primary">RUNNING</span>
+											} else if job.State.String() == "COMPLETED" {
+												<span class="badge bg-success">COMPLETED</span>
+											} else if job.State.String() == "FAILED" {
+												<span class="badge bg-danger">FAILED</span>
+											} else if job.State.String() == "CANCELLED" {
+												<span class="badge bg-warning">CANCELLED</span>
+											} else {
+												<span class="badge bg-light text-dark">{ job.State.String() }</span>
+											}
+										</td>
+										<td>{ job.PluginID }</td>
+										<td>{ job.CreatedAt.Format("2006-01-02 15:04:05") }</td>
+										<td>
+											if job.StartedAt != nil {
+												{ job.StartedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<em class="text-muted">-</em>
+											}
+										</td>
+										<td>
+											if job.CompletedAt != nil {
+												{ job.CompletedAt.Format("2006-01-02 15:04:05") }
+											} else {
+												<em class="text-muted">-</em>
+											}
+										</td>
+										<td>{ fmt.Sprintf("%d", job.RetryCount) }</td>
+										<td>
+											if job.LastError != "" {
+												<small class="text-danger">{ job.LastError }</small>
+											} else {
+												<em class="text-muted">-</em>
+											}
+										</td>
+										<td>
+											if job.State.String() == "PENDING" || job.State.String() == "SCHEDULED" {
+												<button class="btn btn-xs btn-danger" onclick={ templ.SafeScript("cancelJob('" + job.JobID + "')") }>
+													Cancel
+												</button>
+											}
+										</td>
+									</tr>
+								}
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		</div>
+	</div>
+
+	<script>
+		function triggerDetection() {
+			fetch('/api/plugin/jobs/{ data.JobType }/trigger-detection', { method: 'POST' })
+				.then(r => r.json())
+				.then(d => {
+					alert('Detection triggered: ' + d.job_ids.join(', '));
+					location.reload();
+				})
+				.catch(e => alert('Error: ' + e));
+		}
+
+		function cancelJob(jobId) {
+			if (!confirm('Cancel job ' + jobId + '?')) return;
+			fetch('/api/plugin/jobs/' + jobId + '/cancel', { method: 'POST' })
+				.then(r => r.json())
+				.then(d => {
+					alert('Job cancelled');
+					location.reload();
+				})
+				.catch(e => alert('Error: ' + e));
+		}
+	</script>
+}
