@@ -332,6 +332,40 @@ templ Layout(c *gin.Context, content templ.Component) {
                         </li>
                     </ul>
                 </div>
+
+                <!-- Plugins Section -->
+                <li class="nav-item border-top pt-3 my-3">
+                    if strings.HasPrefix(currentPath, "/plugins") {
+                        <a class="nav-link active" href="#pluginsSubmenu" data-bs-toggle="collapse">
+                            <i class="fas fa-plug me-2"></i>Plugins
+                        </a>
+                    } else {
+                        <a class="nav-link" href="#pluginsSubmenu" data-bs-toggle="collapse">
+                            <i class="fas fa-plug me-2"></i>Plugins
+                        </a>
+                    }
+                    if strings.HasPrefix(currentPath, "/plugins") {
+                        <div class="collapse show" id="pluginsSubmenu">
+                            <ul class="nav flex-column ms-3">
+                                <li class="nav-item">
+                                    <a class="nav-link py-2" href="/plugins">
+                                        <i class="fas fa-home me-2"></i>Overview
+                                    </a>
+                                </li>
+                            </ul>
+                        </div>
+                    } else {
+                        <div class="collapse" id="pluginsSubmenu">
+                            <ul class="nav flex-column ms-3">
+                                <li class="nav-item">
+                                    <a class="nav-link py-2" href="/plugins">
+                                        <i class="fas fa-home me-2"></i>Overview
+                                    </a>
+                                </li>
+                            </ul>
+                        </div>
+                    }
+                </li>
             </div>
 
             <!-- Main content -->
