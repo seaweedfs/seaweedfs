@@ -154,6 +154,30 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
+func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
+	handler := NewVacuumHandler(nil)
+	sender := &recordingDetectionSender{}
+	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType:           "vacuum",
+		LastSuccessfulRun: timestamppb.New(time.Now().Add(-3 * time.Second)),
+		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
+			"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10}},
+		},
+	}, sender)
+	if err != nil {
+		t.Fatalf("detect returned err = %v", err)
+	}
+	if sender.proposals == nil {
+		t.Fatalf("expected proposals message")
+	}
+	if len(sender.proposals.Proposals) != 0 {
+		t.Fatalf("expected zero proposals, got %d", len(sender.proposals.Proposals))
+	}
+	if sender.complete == nil || !sender.complete.Success {
+		t.Fatalf("expected successful completion message")
+	}
+}
+
 type noopDetectionSender struct{}
 
 func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
@@ -163,3 +187,18 @@ type noopExecutionSender struct{}
 
 func (noopExecutionSender) SendProgress(*plugin_pb.JobProgressUpdate) error { return nil }
 func (noopExecutionSender) SendCompleted(*plugin_pb.JobCompleted) error     { return nil }
+
+type recordingDetectionSender struct {
+	proposals *plugin_pb.DetectionProposals
+	complete  *plugin_pb.DetectionComplete
+}
+
+func (r *recordingDetectionSender) SendProposals(proposals *plugin_pb.DetectionProposals) error {
+	r.proposals = proposals
+	return nil
+}
+
+func (r *recordingDetectionSender) SendComplete(complete *plugin_pb.DetectionComplete) error {
+	r.complete = complete
+	return nil
+}
