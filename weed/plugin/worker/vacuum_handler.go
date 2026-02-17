@@ -18,6 +18,7 @@ import (
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -163,8 +164,26 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	if sender == nil {
 		return fmt.Errorf("detection sender is nil")
 	}
+	if request.JobType != "" && request.JobType != "vacuum" {
+		return fmt.Errorf("job type %q is not handled by vacuum worker", request.JobType)
+	}
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
+	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
+			JobType:   "vacuum",
+			Proposals: []*plugin_pb.JobProposal{},
+			HasMore:   false,
+		}); err != nil {
+			return err
+		}
+		return sender.SendComplete(&plugin_pb.DetectionComplete{
+			JobType:        "vacuum",
+			Success:        true,
+			TotalProposals: 0,
+		})
+	}
+
 	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	masters := make([]string, 0)
 	if request.ClusterContext != nil {
@@ -219,6 +238,9 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 	}
 	if sender == nil {
 		return fmt.Errorf("execution sender is nil")
+	}
+	if request.Job.JobType != "" && request.Job.JobType != "vacuum" {
+		return fmt.Errorf("job type %q is not handled by vacuum worker", request.Job.JobType)
 	}
 
 	params, err := decodeVacuumTaskParams(request.Job)
@@ -663,4 +685,15 @@ func masterAddressCandidates(address string) []string {
 	}
 	sort.Strings(candidates)
 	return candidates
+}
+
+func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
+	if lastSuccessfulRun == nil || minIntervalSeconds <= 0 {
+		return false
+	}
+	lastRun := lastSuccessfulRun.AsTime()
+	if lastRun.IsZero() {
+		return false
+	}
+	return time.Since(lastRun) < time.Duration(minIntervalSeconds)*time.Second
 }

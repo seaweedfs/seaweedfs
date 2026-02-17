@@ -1,11 +1,14 @@
 package pluginworker
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestDecodeVacuumTaskParamsFromPayload(t *testing.T) {
@@ -114,3 +117,49 @@ func TestMasterAddressCandidates(t *testing.T) {
 		t.Fatalf("expected grpc address in candidates: %v", candidates)
 	}
 }
+
+func TestShouldSkipDetectionByInterval(t *testing.T) {
+	if shouldSkipDetectionByInterval(nil, 10) {
+		t.Fatalf("expected false when timestamp is nil")
+	}
+	if shouldSkipDetectionByInterval(timestamppb.Now(), 0) {
+		t.Fatalf("expected false when min interval is zero")
+	}
+
+	recent := timestamppb.New(time.Now().Add(-5 * time.Second))
+	if !shouldSkipDetectionByInterval(recent, 10) {
+		t.Fatalf("expected true for recent successful run")
+	}
+
+	old := timestamppb.New(time.Now().Add(-30 * time.Second))
+	if shouldSkipDetectionByInterval(old, 10) {
+		t.Fatalf("expected false for old successful run")
+	}
+}
+
+func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
+	handler := NewVacuumHandler(nil)
+	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType: "balance",
+	}, noopDetectionSender{})
+	if err == nil {
+		t.Fatalf("expected detect job type mismatch error")
+	}
+
+	err = handler.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: &plugin_pb.JobSpec{JobId: "job-1", JobType: "balance"},
+	}, noopExecutionSender{})
+	if err == nil {
+		t.Fatalf("expected execute job type mismatch error")
+	}
+}
+
+type noopDetectionSender struct{}
+
+func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
+func (noopDetectionSender) SendComplete(*plugin_pb.DetectionComplete) error   { return nil }
+
+type noopExecutionSender struct{}
+
+func (noopExecutionSender) SendProgress(*plugin_pb.JobProgressUpdate) error { return nil }
+func (noopExecutionSender) SendCompleted(*plugin_pb.JobCompleted) error     { return nil }
