@@ -130,12 +130,12 @@ message ExecuteJobResponse {
 }
 
 enum ExecutionStatus {
-  UNKNOWN = 0;
-  ACCEPTED = 1;
-  RUNNING = 2;
-  COMPLETED = 3;
-  FAILED = 4;
-  CANCELLED = 5;
+  EXECUTION_STATUS_UNKNOWN = 0;
+  EXECUTION_STATUS_ACCEPTED = 1;
+  EXECUTION_STATUS_RUNNING = 2;
+  EXECUTION_STATUS_COMPLETED = 3;
+  EXECUTION_STATUS_FAILED = 4;
+  EXECUTION_STATUS_CANCELLED = 5;
 }
 
 message JobPayload {
@@ -157,9 +157,9 @@ message HealthReport {
 }
 
 enum HealthStatus {
-  HEALTHY = 0;
-  DEGRADED = 1;
-  UNHEALTHY = 2;
+  HEALTH_STATUS_HEALTHY = 0;
+  HEALTH_STATUS_DEGRADED = 1;
+  HEALTH_STATUS_UNHEALTHY = 2;
 }
 
 message JobProgress {
@@ -310,12 +310,12 @@ message JobInfo {
 }
 
 enum JobState {
-  PENDING = 0;
-  SCHEDULED = 1;
-  RUNNING = 2;
-  COMPLETED = 3;
-  FAILED = 4;
-  CANCELLED = 5;
+  JOB_STATE_PENDING = 0;
+  JOB_STATE_SCHEDULED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_COMPLETED = 3;
+  JOB_STATE_FAILED = 4;
+  JOB_STATE_CANCELLED = 5;
 }
 
 message GetJobStatusRequest {

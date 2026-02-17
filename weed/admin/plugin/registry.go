@@ -114,7 +114,6 @@ func (r *Registry) ListPlugins(includeUnhealthy bool) []*ConnectedPlugin {
 	defer r.mu.RUnlock()
 
 	var result []*ConnectedPlugin
-	now := time.Now()
 
 	for _, plugin := range r.plugins {
 		if !includeUnhealthy && time.Since(plugin.LastHeartbeat) > r.healthCheckTimeout {

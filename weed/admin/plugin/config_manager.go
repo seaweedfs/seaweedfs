@@ -359,7 +359,7 @@ func (cm *ConfigManager) ImportConfigs(jsonData string) error {
 	defer cm.mu.Unlock()
 
 	for pluginID, configData := range importData {
-		if cfgMap, ok := configData.(map[string]interface{}); ok {
+		if _, ok := configData.(map[string]interface{}); ok {
 			config := &PluginConfig{
 				PluginID:    pluginID,
 				Properties:  make(map[string]string),
