@@ -47,7 +47,7 @@ func runPluginWorker(cmd *Command, args []string) bool {
 	util.LoadConfiguration("security", false)
 
 	dialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
-	handler := pluginworker.NewVacuumHandler()
+	handler := pluginworker.NewVacuumHandler(dialOption)
 	worker, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
 		AdminServer:             *pluginWorkerAdminServer,
 		WorkerID:                *pluginWorkerID,
