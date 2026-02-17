@@ -1,0 +1,443 @@
+syntax = "proto3";
+
+package plugin_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// PluginControlService is the admin-facing stream API for external workers.
+// Workers initiate and keep this stream alive; all control plane traffic flows through it.
+service PluginControlService {
+  rpc WorkerStream(stream WorkerToAdminMessage) returns (stream AdminToWorkerMessage);
+}
+
+// WorkerToAdminMessage carries worker-originated events and responses.
+message WorkerToAdminMessage {
+  string worker_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+
+  oneof body {
+    WorkerHello hello = 10;
+    WorkerHeartbeat heartbeat = 11;
+    WorkerAcknowledge acknowledge = 12;
+    ConfigSchemaResponse config_schema_response = 13;
+    DetectionProposals detection_proposals = 14;
+    DetectionComplete detection_complete = 15;
+    JobProgressUpdate job_progress_update = 16;
+    JobCompleted job_completed = 17;
+  }
+}
+
+// AdminToWorkerMessage carries commands and lifecycle notifications from admin.
+message AdminToWorkerMessage {
+  string request_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+
+  oneof body {
+    AdminHello hello = 10;
+    RequestConfigSchema request_config_schema = 11;
+    RunDetectionRequest run_detection_request = 12;
+    ExecuteJobRequest execute_job_request = 13;
+    CancelRequest cancel_request = 14;
+    AdminShutdown shutdown = 15;
+  }
+}
+
+message WorkerHello {
+  string worker_id = 1;
+  string worker_instance_id = 2;
+  string address = 3;
+  string worker_version = 4;
+  string protocol_version = 5;
+  repeated JobTypeCapability capabilities = 6;
+  map<string, string> metadata = 7;
+}
+
+message AdminHello {
+  bool accepted = 1;
+  string message = 2;
+  int32 heartbeat_interval_seconds = 3;
+  int32 reconnect_delay_seconds = 4;
+}
+
+message WorkerHeartbeat {
+  string worker_id = 1;
+  repeated RunningWork running_work = 2;
+  int32 detection_slots_used = 3;
+  int32 detection_slots_total = 4;
+  int32 execution_slots_used = 5;
+  int32 execution_slots_total = 6;
+  map<string, int32> queued_jobs_by_type = 7;
+  map<string, string> metadata = 8;
+}
+
+message WorkerAcknowledge {
+  string request_id = 1;
+  bool accepted = 2;
+  string message = 3;
+}
+
+message RunningWork {
+  string work_id = 1;
+  WorkKind kind = 2;
+  string job_type = 3;
+  JobState state = 4;
+  double progress_percent = 5;
+  string stage = 6;
+}
+
+message JobTypeCapability {
+  string job_type = 1;
+  bool can_detect = 2;
+  bool can_execute = 3;
+  int32 max_detection_concurrency = 4;
+  int32 max_execution_concurrency = 5;
+  string display_name = 6;
+  string description = 7;
+}
+
+message RequestConfigSchema {
+  string job_type = 1;
+  bool force_refresh = 2;
+}
+
+message ConfigSchemaResponse {
+  string request_id = 1;
+  string job_type = 2;
+  bool success = 3;
+  string error_message = 4;
+  JobTypeDescriptor job_type_descriptor = 5;
+}
+
+// JobTypeDescriptor defines one job type contract, including UI schema and defaults.
+message JobTypeDescriptor {
+  string job_type = 1;
+  string display_name = 2;
+  string description = 3;
+  string icon = 4;
+  uint32 descriptor_version = 5;
+
+  // Admin-owned options such as detection frequency and dispatch concurrency.
+  ConfigForm admin_config_form = 6;
+  // Worker-owned options used during detection and execution.
+  ConfigForm worker_config_form = 7;
+
+  AdminRuntimeDefaults admin_runtime_defaults = 8;
+  map<string, ConfigValue> worker_default_values = 9;
+}
+
+message ConfigForm {
+  string form_id = 1;
+  string title = 2;
+  string description = 3;
+  repeated ConfigSection sections = 4;
+  map<string, ConfigValue> default_values = 5;
+}
+
+message ConfigSection {
+  string section_id = 1;
+  string title = 2;
+  string description = 3;
+  repeated ConfigField fields = 4;
+}
+
+message ConfigField {
+  string name = 1;
+  string label = 2;
+  string description = 3;
+  string help_text = 4;
+  string placeholder = 5;
+
+  ConfigFieldType field_type = 6;
+  ConfigWidget widget = 7;
+
+  bool required = 8;
+  bool read_only = 9;
+  bool sensitive = 10;
+
+  ConfigValue min_value = 11;
+  ConfigValue max_value = 12;
+
+  repeated ConfigOption options = 13;
+  repeated ValidationRule validation_rules = 14;
+
+  // Simple visibility dependency: show this field when the referenced field equals value.
+  string visible_when_field = 15;
+  ConfigValue visible_when_equals = 16;
+}
+
+message ConfigOption {
+  string value = 1;
+  string label = 2;
+  string description = 3;
+  bool disabled = 4;
+}
+
+message ValidationRule {
+  ValidationRuleType type = 1;
+  string expression = 2;
+  string error_message = 3;
+}
+
+message ConfigValue {
+  oneof kind {
+    bool bool_value = 1;
+    int64 int64_value = 2;
+    double double_value = 3;
+    string string_value = 4;
+    bytes bytes_value = 5;
+    google.protobuf.Duration duration_value = 6;
+    StringList string_list = 7;
+    Int64List int64_list = 8;
+    DoubleList double_list = 9;
+    BoolList bool_list = 10;
+    ValueList list_value = 11;
+    ValueMap map_value = 12;
+  }
+}
+
+message StringList {
+  repeated string values = 1;
+}
+
+message Int64List {
+  repeated int64 values = 1;
+}
+
+message DoubleList {
+  repeated double values = 1;
+}
+
+message BoolList {
+  repeated bool values = 1;
+}
+
+message ValueList {
+  repeated ConfigValue values = 1;
+}
+
+message ValueMap {
+  map<string, ConfigValue> fields = 1;
+}
+
+message AdminRuntimeDefaults {
+  bool enabled = 1;
+  int32 detection_interval_seconds = 2;
+  int32 detection_timeout_seconds = 3;
+  int32 max_jobs_per_detection = 4;
+  int32 global_execution_concurrency = 5;
+  int32 per_worker_execution_concurrency = 6;
+  int32 retry_limit = 7;
+  int32 retry_backoff_seconds = 8;
+}
+
+message AdminRuntimeConfig {
+  bool enabled = 1;
+  int32 detection_interval_seconds = 2;
+  int32 detection_timeout_seconds = 3;
+  int32 max_jobs_per_detection = 4;
+  int32 global_execution_concurrency = 5;
+  int32 per_worker_execution_concurrency = 6;
+  int32 retry_limit = 7;
+  int32 retry_backoff_seconds = 8;
+}
+
+message RunDetectionRequest {
+  string request_id = 1;
+  string job_type = 2;
+  int64 detection_sequence = 3;
+
+  AdminRuntimeConfig admin_runtime = 4;
+  map<string, ConfigValue> admin_config_values = 5;
+  map<string, ConfigValue> worker_config_values = 6;
+
+  ClusterContext cluster_context = 7;
+  google.protobuf.Timestamp last_successful_run = 8;
+  int32 max_results = 9;
+}
+
+message DetectionProposals {
+  string request_id = 1;
+  string job_type = 2;
+  repeated JobProposal proposals = 3;
+  bool has_more = 4;
+}
+
+message DetectionComplete {
+  string request_id = 1;
+  string job_type = 2;
+  bool success = 3;
+  string error_message = 4;
+  int32 total_proposals = 5;
+}
+
+message JobProposal {
+  string proposal_id = 1;
+  string dedupe_key = 2;
+  string job_type = 3;
+  JobPriority priority = 4;
+  string summary = 5;
+  string detail = 6;
+  map<string, ConfigValue> parameters = 7;
+  map<string, string> labels = 8;
+  google.protobuf.Timestamp not_before = 9;
+  google.protobuf.Timestamp expires_at = 10;
+}
+
+message ExecuteJobRequest {
+  string request_id = 1;
+  JobSpec job = 2;
+  AdminRuntimeConfig admin_runtime = 3;
+  map<string, ConfigValue> admin_config_values = 4;
+  map<string, ConfigValue> worker_config_values = 5;
+  ClusterContext cluster_context = 6;
+  int32 attempt = 7;
+}
+
+message JobSpec {
+  string job_id = 1;
+  string job_type = 2;
+  string dedupe_key = 3;
+  JobPriority priority = 4;
+  string summary = 5;
+  string detail = 6;
+  map<string, ConfigValue> parameters = 7;
+  map<string, string> labels = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp scheduled_at = 10;
+}
+
+message JobProgressUpdate {
+  string request_id = 1;
+  string job_id = 2;
+  string job_type = 3;
+  JobState state = 4;
+  double progress_percent = 5;
+  string stage = 6;
+  string message = 7;
+  map<string, ConfigValue> metrics = 8;
+  repeated ActivityEvent activities = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+message JobCompleted {
+  string request_id = 1;
+  string job_id = 2;
+  string job_type = 3;
+  bool success = 4;
+  string error_message = 5;
+  JobResult result = 6;
+  repeated ActivityEvent activities = 7;
+  google.protobuf.Timestamp completed_at = 8;
+}
+
+message JobResult {
+  map<string, ConfigValue> output_values = 1;
+  string summary = 2;
+}
+
+message ClusterContext {
+  repeated string master_grpc_addresses = 1;
+  repeated string filer_grpc_addresses = 2;
+  repeated string volume_grpc_addresses = 3;
+  map<string, string> metadata = 4;
+}
+
+message ActivityEvent {
+  ActivitySource source = 1;
+  string message = 2;
+  string stage = 3;
+  map<string, ConfigValue> details = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message CancelRequest {
+  string target_id = 1;
+  WorkKind target_kind = 2;
+  string reason = 3;
+  bool force = 4;
+}
+
+message AdminShutdown {
+  string reason = 1;
+  int32 grace_period_seconds = 2;
+}
+
+// PersistedJobTypeConfig is the admin-side on-disk model per job type.
+message PersistedJobTypeConfig {
+  string job_type = 1;
+  uint32 descriptor_version = 2;
+  map<string, ConfigValue> admin_config_values = 3;
+  map<string, ConfigValue> worker_config_values = 4;
+  AdminRuntimeConfig admin_runtime = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  string updated_by = 7;
+}
+
+enum WorkKind {
+  WORK_KIND_UNSPECIFIED = 0;
+  WORK_KIND_DETECTION = 1;
+  WORK_KIND_EXECUTION = 2;
+}
+
+enum JobPriority {
+  JOB_PRIORITY_UNSPECIFIED = 0;
+  JOB_PRIORITY_LOW = 1;
+  JOB_PRIORITY_NORMAL = 2;
+  JOB_PRIORITY_HIGH = 3;
+  JOB_PRIORITY_CRITICAL = 4;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_ASSIGNED = 2;
+  JOB_STATE_RUNNING = 3;
+  JOB_STATE_SUCCEEDED = 4;
+  JOB_STATE_FAILED = 5;
+  JOB_STATE_CANCELED = 6;
+}
+
+enum ConfigFieldType {
+  CONFIG_FIELD_TYPE_UNSPECIFIED = 0;
+  CONFIG_FIELD_TYPE_BOOL = 1;
+  CONFIG_FIELD_TYPE_INT64 = 2;
+  CONFIG_FIELD_TYPE_DOUBLE = 3;
+  CONFIG_FIELD_TYPE_STRING = 4;
+  CONFIG_FIELD_TYPE_BYTES = 5;
+  CONFIG_FIELD_TYPE_DURATION = 6;
+  CONFIG_FIELD_TYPE_ENUM = 7;
+  CONFIG_FIELD_TYPE_LIST = 8;
+  CONFIG_FIELD_TYPE_OBJECT = 9;
+}
+
+enum ConfigWidget {
+  CONFIG_WIDGET_UNSPECIFIED = 0;
+  CONFIG_WIDGET_TOGGLE = 1;
+  CONFIG_WIDGET_TEXT = 2;
+  CONFIG_WIDGET_TEXTAREA = 3;
+  CONFIG_WIDGET_NUMBER = 4;
+  CONFIG_WIDGET_SELECT = 5;
+  CONFIG_WIDGET_MULTI_SELECT = 6;
+  CONFIG_WIDGET_DURATION = 7;
+  CONFIG_WIDGET_PASSWORD = 8;
+}
+
+enum ValidationRuleType {
+  VALIDATION_RULE_TYPE_UNSPECIFIED = 0;
+  VALIDATION_RULE_TYPE_REGEX = 1;
+  VALIDATION_RULE_TYPE_MIN_LENGTH = 2;
+  VALIDATION_RULE_TYPE_MAX_LENGTH = 3;
+  VALIDATION_RULE_TYPE_MIN_ITEMS = 4;
+  VALIDATION_RULE_TYPE_MAX_ITEMS = 5;
+  VALIDATION_RULE_TYPE_CUSTOM = 6;
+}
+
+enum ActivitySource {
+  ACTIVITY_SOURCE_UNSPECIFIED = 0;
+  ACTIVITY_SOURCE_ADMIN = 1;
+  ACTIVITY_SOURCE_DETECTOR = 2;
+  ACTIVITY_SOURCE_EXECUTOR = 3;
+}
