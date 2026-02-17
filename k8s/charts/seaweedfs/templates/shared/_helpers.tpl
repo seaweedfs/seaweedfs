@@ -135,12 +135,10 @@ Inject extra environment vars in the format key:value, if populated
 {{- $repositoryName := default .Values.image.repository .Values.global.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
-{{- if $repositoryName -}}
-{{-   if .Values.image.repository -}}
-{{-     $name = $repositoryName -}}
-{{-   else -}}
-{{-     $name = printf "%s/%s" (trimSuffix "/" $repositoryName) (base $name) -}}
-{{-   end -}}
+{{- if .Values.image.repository -}}
+{{-   $name = $repositoryName -}}
+{{- else if $repositoryName -}}
+{{-   $name = printf "%s/%s" (trimSuffix "/" $repositoryName) (base $name) -}}
 {{- end -}}
 {{- if $registryName -}}
 {{-   printf "%s/%s:%s" $registryName $name $tag -}}
