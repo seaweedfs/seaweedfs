@@ -183,6 +183,8 @@ Phase 4 status (starter)
 Run example:
 - Start admin with plugin enabled: `weed admin -plugin.enabled=true -master=localhost:9333`
 - Start plugin worker: `weed plugin.worker -admin=localhost:23646`
+- Optional explicit job type: `weed plugin.worker -admin=localhost:23646 -jobType=vacuum`
+- Optional stable worker ID persistence: `weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin`
 
 Phase 5
 - Migrate remaining job types and deprecate old mechanism.
