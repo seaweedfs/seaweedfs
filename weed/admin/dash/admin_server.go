@@ -235,6 +235,15 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 			return server.buildDefaultPluginClusterContext(), nil
 		},
 	})
+	if err != nil && dataDir != "" {
+		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
+		plugin, err = adminplugin.New(adminplugin.Options{
+			DataDir: "",
+			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+				return server.buildDefaultPluginClusterContext(), nil
+			},
+		})
+	}
 	if err != nil {
 		glog.Errorf("Failed to initialize plugin: %v", err)
 	} else {
