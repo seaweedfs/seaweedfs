@@ -119,7 +119,7 @@ var cmdAdmin = &Command{
     - TLS is automatically used if certificates are configured
     - Workers fall back to insecure connections if TLS is unavailable
 
-  Plugin V2:
+  Plugin:
     - Disabled by default and enabled via -plugin.enabled=true
     - Registers plugin.proto gRPC service on the same worker gRPC port
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
@@ -204,7 +204,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
-	fmt.Printf("Plugin V2: %v\n", *a.pluginEnabled)
+	fmt.Printf("Plugin: %v\n", *a.pluginEnabled)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
