@@ -171,6 +171,19 @@ Phase 3
 Phase 4
 - Port one existing job type (e.g. vacuum) as external worker plugin.
 
+Phase 4 status (starter)
+- Added `weed plugin.worker` command as an external `plugin.proto` worker process.
+- Initial handler implements `vacuum` job type with:
+  - declarative descriptor/config form response (`ConfigSchemaResponse`),
+  - detection via master topology scan (`RunDetectionRequest`),
+  - execution via existing vacuum task logic (`ExecuteJobRequest`),
+  - heartbeat/load reporting for monitor UI.
+- Existing maintenance worker path remains unchanged.
+
+Run example:
+- Start admin with plugin enabled: `weed admin -plugin.enabled=true -master=localhost:9333`
+- Start plugin worker: `weed plugin.worker -admin=localhost:23646`
+
 Phase 5
 - Migrate remaining job types and deprecate old mechanism.
 
