@@ -390,6 +390,7 @@ func (r *Plugin) RunDetection(
 
 	select {
 	case <-ctx.Done():
+		r.sendCancel(detector.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
 		return nil, ctx.Err()
 	case complete, ok := <-state.complete:
 		if !ok {
@@ -497,6 +498,7 @@ func (r *Plugin) executeJobWithExecutor(
 
 	select {
 	case <-ctx.Done():
+		r.sendCancel(executor.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_EXECUTION, ctx.Err())
 		return nil, ctx.Err()
 	case completed, ok := <-completedCh:
 		if !ok {
@@ -594,6 +596,36 @@ func (r *Plugin) clearDetectorLease(jobType string, workerID string) {
 		return
 	}
 	delete(r.detectorLeases, jobType)
+}
+
+func (r *Plugin) sendCancel(workerID, targetID string, kind plugin_pb.WorkKind, cause error) {
+	if strings.TrimSpace(workerID) == "" || strings.TrimSpace(targetID) == "" {
+		return
+	}
+
+	requestID, err := newRequestID("cancel")
+	if err != nil {
+		requestID = ""
+	}
+	reason := "request canceled"
+	if cause != nil {
+		reason = cause.Error()
+	}
+
+	message := &plugin_pb.AdminToWorkerMessage{
+		RequestId: requestID,
+		SentAt:    timestamppb.Now(),
+		Body: &plugin_pb.AdminToWorkerMessage_CancelRequest{
+			CancelRequest: &plugin_pb.CancelRequest{
+				TargetId:   targetID,
+				TargetKind: kind,
+				Reason:     reason,
+			},
+		},
+	}
+	if err := r.sendToWorker(workerID, message); err != nil {
+		glog.V(1).Infof("Plugin failed to send cancel request to worker=%s target=%s: %v", workerID, targetID, err)
+	}
 }
 
 func (r *Plugin) sendAdminHello(workerID string) error {
