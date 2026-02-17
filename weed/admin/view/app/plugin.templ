@@ -241,10 +241,11 @@ templ Plugin(enabled bool) {
                                             <th>Worker</th>
                                             <th>Address</th>
                                             <th>Capabilities</th>
+                                            <th>Load</th>
                                         </tr>
                                     </thead>
                                     <tbody id="plugin-workers-table-body">
-                                        <tr><td colspan="3" class="text-muted text-center py-3">Loading...</td></tr>
+                                        <tr><td colspan="4" class="text-muted text-center py-3">Loading...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -726,7 +727,7 @@ templ Plugin(enabled bool) {
             function renderWorkers() {
                 var tbody = document.getElementById('plugin-workers-table-body');
                 if (!state.workers.length) {
-                    tbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center py-3">No connected workers</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-muted text-center py-3">No connected workers</td></tr>';
                     return;
                 }
 
@@ -758,10 +759,31 @@ templ Plugin(enabled bool) {
                         capBadges.push('<span class="text-muted">-</span>');
                     }
 
+                    var heartbeat = getWorkerField(worker, 'heartbeat') || {};
+                    var detUsed = Number(heartbeat.detection_slots_used || heartbeat.DetectionSlotsUsed || 0);
+                    var detTotal = Number(heartbeat.detection_slots_total || heartbeat.DetectionSlotsTotal || 0);
+                    var execUsed = Number(heartbeat.execution_slots_used || heartbeat.ExecutionSlotsUsed || 0);
+                    var execTotal = Number(heartbeat.execution_slots_total || heartbeat.ExecutionSlotsTotal || 0);
+                    var runningWork = heartbeat.running_work || heartbeat.RunningWork || [];
+                    var queuedByType = heartbeat.queued_jobs_by_type || heartbeat.QueuedJobsByType || {};
+                    var queuedTotal = 0;
+                    Object.keys(queuedByType || {}).forEach(function(jobType) {
+                        var queuedCount = Number(queuedByType[jobType] || 0);
+                        if (Number.isFinite(queuedCount) && queuedCount > 0) {
+                            queuedTotal += queuedCount;
+                        }
+                    });
+                    var loadLines = [];
+                    loadLines.push('Detect: ' + String(detUsed) + '/' + String(detTotal));
+                    loadLines.push('Execute: ' + String(execUsed) + '/' + String(execTotal));
+                    loadLines.push('Running: ' + String(Array.isArray(runningWork) ? runningWork.length : 0));
+                    loadLines.push('Queued: ' + String(queuedTotal));
+
                     rows += '<tr>' +
                         '<td><div class="fw-semibold">' + escapeHtml(workerID) + '</div></td>' +
                         '<td><small>' + escapeHtml(address) + '</small></td>' +
                         '<td>' + capBadges.join('') + '</td>' +
+                        '<td><small>' + escapeHtml(loadLines.join(' | ')) + '</small></td>' +
                         '</tr>';
                 }
 
