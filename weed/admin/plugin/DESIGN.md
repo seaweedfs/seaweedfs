@@ -67,6 +67,7 @@ Why this model:
 3. Run detection on demand (`RunDetectionRequest`) and return proposals.
 4. Execute assigned jobs (`ExecuteJobRequest`) and stream progress.
 5. Heartbeat regularly with slot usage and running work.
+6. Handle cancellation requests (`CancelRequest`) for in-flight detection/execution.
 
 ## Declarative UI Model
 
