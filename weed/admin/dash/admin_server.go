@@ -122,7 +122,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, pluginEnabled bool) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, _ bool) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -229,19 +229,17 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
-	if pluginEnabled {
-		plugin, err := adminplugin.New(adminplugin.Options{
-			DataDir: dataDir,
-			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
-				return server.buildDefaultPluginClusterContext(), nil
-			},
-		})
-		if err != nil {
-			glog.Errorf("Failed to initialize plugin: %v", err)
-		} else {
-			server.plugin = plugin
-			glog.V(0).Infof("Plugin enabled")
-		}
+	plugin, err := adminplugin.New(adminplugin.Options{
+		DataDir: dataDir,
+		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+			return server.buildDefaultPluginClusterContext(), nil
+		},
+	})
+	if err != nil {
+		glog.Errorf("Failed to initialize plugin: %v", err)
+	} else {
+		server.plugin = plugin
+		glog.V(0).Infof("Plugin enabled")
 	}
 
 	return server
