@@ -68,6 +68,9 @@ type Worker struct {
 	runningMu   sync.RWMutex
 	runningWork map[string]*plugin_pb.RunningWork
 
+	workCancelMu sync.Mutex
+	workCancel   map[string]context.CancelFunc
+
 	workerID string
 }
 
@@ -116,6 +119,7 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 		detectSlots: make(chan struct{}, opts.MaxDetectionConcurrency),
 		execSlots:   make(chan struct{}, opts.MaxExecutionConcurrency),
 		runningWork: make(map[string]*plugin_pb.RunningWork),
+		workCancel:  make(map[string]context.CancelFunc),
 		workerID:    workerID,
 	}
 	return w, nil
@@ -266,15 +270,25 @@ func (w *Worker) handleAdminMessage(
 		w.handleExecuteRequest(ctx, message.GetRequestId(), body.ExecuteJobRequest, send)
 	case *plugin_pb.AdminToWorkerMessage_CancelRequest:
 		cancel := body.CancelRequest
-		msg := "cancel not supported"
-		if cancel != nil && cancel.Reason != "" {
-			msg = cancel.Reason
+		targetID := ""
+		if cancel != nil {
+			targetID = strings.TrimSpace(cancel.TargetId)
+		}
+		accepted := false
+		ackMessage := "cancel target is required"
+		if targetID != "" {
+			if w.cancelWork(targetID) {
+				accepted = true
+				ackMessage = "cancel request accepted"
+			} else {
+				ackMessage = "cancel target not found"
+			}
 		}
 		send(&plugin_pb.WorkerToAdminMessage{
 			Body: &plugin_pb.WorkerToAdminMessage_Acknowledge{Acknowledge: &plugin_pb.WorkerAcknowledge{
 				RequestId: message.GetRequestId(),
-				Accepted:  false,
-				Message:   msg,
+				Accepted:  accepted,
+				Message:   ackMessage,
 			}},
 		})
 	case *plugin_pb.AdminToWorkerMessage_Shutdown:
@@ -385,7 +399,11 @@ func (w *Worker) handleDetectionRequest(
 	})
 
 	go func() {
+		requestCtx, cancelRequest := context.WithCancel(ctx)
+		w.setWorkCancel(cancelRequest, requestID)
 		defer func() {
+			w.clearWorkCancel(requestID)
+			cancelRequest()
 			<-w.detectSlots
 			w.clearRunningWork(workKey)
 		}()
@@ -395,7 +413,7 @@ func (w *Worker) handleDetectionRequest(
 			jobType:   request.JobType,
 			send:      send,
 		}
-		if err := w.opts.Handler.Detect(ctx, request, detectionSender); err != nil {
+		if err := w.opts.Handler.Detect(requestCtx, request, detectionSender); err != nil {
 			detectionSender.SendComplete(&plugin_pb.DetectionComplete{
 				Success:      false,
 				ErrorMessage: err.Error(),
@@ -455,7 +473,11 @@ func (w *Worker) handleExecuteRequest(
 	})
 
 	go func() {
+		requestCtx, cancelRequest := context.WithCancel(ctx)
+		w.setWorkCancel(cancelRequest, requestID, request.Job.JobId)
 		defer func() {
+			w.clearWorkCancel(requestID, request.Job.JobId)
+			cancelRequest()
 			<-w.execSlots
 			w.clearRunningWork(workKey)
 		}()
@@ -469,7 +491,7 @@ func (w *Worker) handleExecuteRequest(
 				w.updateRunningExecution(workKey, progress, stage)
 			},
 		}
-		if err := w.opts.Handler.Execute(ctx, request, executionSender); err != nil {
+		if err := w.opts.Handler.Execute(requestCtx, request, executionSender); err != nil {
 			executionSender.SendCompleted(&plugin_pb.JobCompleted{
 				Success:      false,
 				ErrorMessage: err.Error(),
@@ -664,4 +686,47 @@ func generateWorkerID() string {
 		return fmt.Sprintf("plugin-%d", time.Now().UnixNano())
 	}
 	return "plugin-" + hex.EncodeToString(random)
+}
+
+func (w *Worker) setWorkCancel(cancel context.CancelFunc, keys ...string) {
+	if cancel == nil {
+		return
+	}
+	w.workCancelMu.Lock()
+	defer w.workCancelMu.Unlock()
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		w.workCancel[key] = cancel
+	}
+}
+
+func (w *Worker) clearWorkCancel(keys ...string) {
+	w.workCancelMu.Lock()
+	defer w.workCancelMu.Unlock()
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		delete(w.workCancel, key)
+	}
+}
+
+func (w *Worker) cancelWork(targetID string) bool {
+	targetID = strings.TrimSpace(targetID)
+	if targetID == "" {
+		return false
+	}
+
+	w.workCancelMu.Lock()
+	cancel := w.workCancel[targetID]
+	w.workCancelMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
 }

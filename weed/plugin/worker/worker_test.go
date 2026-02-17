@@ -3,6 +3,7 @@ package pluginworker
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/grpc"
@@ -45,6 +46,39 @@ func TestWorkerBuildHelloUsesConfiguredConcurrency(t *testing.T) {
 	}
 	if capability.JobType != "vacuum" {
 		t.Fatalf("expected job type vacuum, got=%q", capability.JobType)
+	}
+}
+
+func TestWorkerCancelWorkByTargetID(t *testing.T) {
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:    "localhost:23646",
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handler: &testJobHandler{
+			capability: &plugin_pb.JobTypeCapability{JobType: "vacuum"},
+			descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	worker.setWorkCancel(cancel, "request-1", "job-1")
+
+	if !worker.cancelWork("request-1") {
+		t.Fatalf("expected cancel by request id to succeed")
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("expected context to be canceled")
+	}
+
+	if !worker.cancelWork("job-1") {
+		t.Fatalf("expected cancel by job id to succeed")
+	}
+	if worker.cancelWork("unknown-target") {
+		t.Fatalf("expected cancel unknown target to fail")
 	}
 }
 
