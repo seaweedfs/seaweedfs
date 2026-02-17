@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -759,6 +760,11 @@ func (h *AdminHandlers) ShowPlugins(c *gin.Context) {
 			}
 		}
 	}
+
+	// Sort plugins by ID
+	sort.Slice(plugins, func(i, j int) bool {
+		return plugins[i]["id"].(string) < plugins[j]["id"].(string)
+	})
 
 	component := app.PluginsOverview(app.PluginsPageData{
 		Plugins:  plugins,
