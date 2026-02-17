@@ -154,9 +154,7 @@ Execution dispatch:
 - Existing `worker.proto` + current maintenance manager remain unchanged.
 - Plugin system is introduced as a parallel path (`plugin.proto`, new runtime package).
 - No migration cut-over in this step.
-- Runtime is opt-in via admin flags:
-  - `weed admin -plugin.enabled=true`
-  - `weed server -admin.plugin.enabled=true` (mini/all-in-one mode)
+- Runtime is enabled by default on admin worker gRPC server.
 
 ## Incremental Rollout Plan
 
@@ -182,7 +180,7 @@ Phase 4 status (starter)
 - Existing maintenance worker path remains unchanged.
 
 Run example:
-- Start admin with plugin enabled: `weed admin -plugin.enabled=true -master=localhost:9333`
+- Start admin: `weed admin -master=localhost:9333`
 - Start plugin worker: `weed plugin.worker -admin=localhost:23646`
 - Optional explicit job type: `weed plugin.worker -admin=localhost:23646 -jobType=vacuum`
 - Optional stable worker ID persistence: `weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin`
