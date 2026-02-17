@@ -165,7 +165,7 @@ func (r *Runtime) WorkerStream(stream plugin_pb.PluginControlService_WorkerStrea
 	r.putSession(session)
 	defer r.cleanupSession(workerID)
 
-	glog.V(0).Infof("Plugin V2 worker connected: %s (%s)", workerID, hello.Address)
+	glog.V(0).Infof("Plugin worker connected: %s (%s)", workerID, hello.Address)
 
 	sendErrCh := make(chan error, 1)
 	go func() {
@@ -173,7 +173,7 @@ func (r *Runtime) WorkerStream(stream plugin_pb.PluginControlService_WorkerStrea
 	}()
 
 	if err := r.sendAdminHello(workerID); err != nil {
-		glog.Warningf("failed to send Plugin V2 admin hello to %s: %v", workerID, err)
+		glog.Warningf("failed to send plugin admin hello to %s: %v", workerID, err)
 	}
 
 	for {
@@ -537,7 +537,7 @@ func (r *Runtime) handleWorkerMessage(workerID string, message *plugin_pb.Worker
 		r.handleJobCompleted(body.JobCompleted)
 	case *plugin_pb.WorkerToAdminMessage_Acknowledge:
 		if !body.Acknowledge.Accepted {
-			glog.Warningf("Plugin V2 worker %s rejected request %s: %s", workerID, body.Acknowledge.RequestId, body.Acknowledge.Message)
+			glog.Warningf("Plugin worker %s rejected request %s: %s", workerID, body.Acknowledge.RequestId, body.Acknowledge.Message)
 		}
 	default:
 		// Keep the transport open even if admin does not yet consume all message variants.
@@ -556,7 +556,7 @@ func (r *Runtime) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaRes
 		}
 		if jobType != "" {
 			if err := r.store.SaveDescriptor(jobType, response.GetJobTypeDescriptor()); err != nil {
-				glog.Warningf("Plugin V2 failed to persist descriptor for %s: %v", jobType, err)
+				glog.Warningf("Plugin failed to persist descriptor for %s: %v", jobType, err)
 			}
 		}
 	}
@@ -596,7 +596,7 @@ func (r *Runtime) handleDetectionComplete(message *plugin_pb.DetectionComplete) 
 		return
 	}
 	if !message.Success {
-		glog.Warningf("Plugin V2 detection failed job_type=%s: %s", message.JobType, message.ErrorMessage)
+		glog.Warningf("Plugin detection failed job_type=%s: %s", message.JobType, message.ErrorMessage)
 	}
 	if message.RequestId == "" {
 		return
@@ -667,7 +667,7 @@ func (r *Runtime) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	}
 
 	if err := r.store.AppendRunRecord(completed.JobType, record); err != nil {
-		glog.Warningf("Plugin V2 failed to append run record for %s: %v", completed.JobType, err)
+		glog.Warningf("Plugin failed to append run record for %s: %v", completed.JobType, err)
 	}
 }
 
@@ -692,7 +692,7 @@ func (r *Runtime) cleanupSession(workerID string) {
 	}
 	r.sessionsMu.Unlock()
 
-	glog.V(0).Infof("Plugin V2 worker disconnected: %s", workerID)
+	glog.V(0).Infof("Plugin worker disconnected: %s", workerID)
 }
 
 func newRequestID(prefix string) (string, error) {

@@ -96,7 +96,7 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
 	if runtime := s.adminServer.GetPluginRuntime(); runtime != nil {
 		plugin_pb.RegisterPluginControlServiceServer(grpcServer, runtime)
-		glog.V(0).Infof("Plugin V2 gRPC service registered on worker gRPC server")
+		glog.V(0).Infof("Plugin gRPC service registered on worker gRPC server")
 	}
 
 	s.grpcServer = grpcServer

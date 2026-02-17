@@ -52,7 +52,7 @@ func init() {
 	a.grpcPort = cmdAdmin.Flag.Int("port.grpc", 0, "gRPC server port for worker connections (default: http port + 10000)")
 	a.master = cmdAdmin.Flag.String("master", "localhost:9333", "comma-separated master servers")
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
-	a.pluginEnabled = cmdAdmin.Flag.Bool("plugin.enabled", false, "enable plugin v2 runtime on worker gRPC server")
+	a.pluginEnabled = cmdAdmin.Flag.Bool("plugin.enabled", false, "enable plugin runtime on worker gRPC server")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
