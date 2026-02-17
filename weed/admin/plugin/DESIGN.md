@@ -1,6 +1,6 @@
-# Admin Worker Plugin System V2 (Design)
+# Admin Worker Plugin System (Design)
 
-This document proposes a new plugin system for admin-managed workers, implemented in parallel with the current maintenance/worker mechanism.
+This document describes the plugin system for admin-managed workers, implemented in parallel with the current maintenance/worker mechanism.
 
 ## Scope
 
@@ -105,44 +105,28 @@ Result:
 
 ## Persistence Layout (Admin Data Dir)
 
-Proposed layout under `<admin-data-dir>/plugin/`:
+Current layout under `<admin-data-dir>/plugin/`:
 
 - `job_types/<job_type>/descriptor.pb`
 - `job_types/<job_type>/descriptor.json`
 - `job_types/<job_type>/config.pb`
 - `job_types/<job_type>/config.json`
-- `jobs/<job_id>.pb`
-- `jobs/index.json`
-- `activities/<yyyy-mm-dd>.log` (append-only JSON lines)
+- `job_types/<job_type>/runs.json`
+
+`jobs/` and `activities/` directories are reserved for future persisted execution/event logs.
 
 `config.pb` should use `PersistedJobTypeConfig` from `plugin.proto`.
 
-## Admin UI (V2)
+## Admin UI
 
-1. Job Types page
-- job type status, detector assignment, schema version, last detection run.
-
-2. Job Type Config page
-- render both forms from descriptor:
-  - admin config form,
-  - worker config form.
-- save to data dir.
-
-3. Jobs page
-- filter by job type/state/worker.
-- show pending, active, failed, completed counters.
-
-4. Job Detail page
-- timeline of activities,
-- stage + progress,
-- worker assignment history,
-- structured result payload.
-
-5. Workers page
-- connected workers, capabilities, slot usage, heartbeat age.
-
-6. Activity page
-- global event stream grouped by job type and severity.
+- Route: `/plugin`
+- Includes:
+  - runtime status,
+  - workers/capabilities,
+  - declarative descriptor-driven config forms,
+  - run history (last 10 success + last 10 errors),
+  - tracked jobs and activity stream,
+  - manual actions for schema refresh, detection, and detect+execute workflow.
 
 ## Scheduling Policy (Initial)
 
@@ -167,7 +151,7 @@ Execution dispatch:
 ## Backward Compatibility
 
 - Existing `worker.proto` + current maintenance manager remain unchanged.
-- V2 introduced as parallel path (`plugin.proto`, new runtime package).
+- Plugin system is introduced as a parallel path (`plugin.proto`, new runtime package).
 - No migration cut-over in this step.
 - Runtime is opt-in via admin flags:
   - `weed admin -plugin.enabled=true`
@@ -179,10 +163,10 @@ Phase 1
 - Introduce protocol and storage models only.
 
 Phase 2
-- Build admin V2 registry/scheduler/dispatcher behind feature flag.
+- Build admin registry/scheduler/dispatcher behind feature flag.
 
 Phase 3
-- Add V2 UI pages and metrics.
+- Add dedicated plugin UI pages and metrics.
 
 Phase 4
 - Port one existing job type (e.g. vacuum) as external worker plugin.
