@@ -115,6 +115,9 @@ type AdminServer struct {
 
 	s3TablesManager *s3tables.Manager
 	icebergPort     int
+
+	// Plugin system manager
+	pluginManager interface{}
 }
 
 // Type definitions moved to types.go
@@ -226,6 +229,9 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
+	// Initialize plugin manager
+	server.initPluginManager(dataDir)
+
 	return server
 }
 
@@ -244,6 +250,24 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 // GetCredentialManager returns the credential manager
 func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 	return s.credentialManager
+}
+
+// initPluginManager initializes the plugin manager
+func (s *AdminServer) initPluginManager(dataDir string) {
+	// For now, keep pluginManager as interface{} to avoid circular imports
+	// This will be set later when handlers are initialized
+	// We'll check if it's nil when needed
+	glog.V(1).Infof("Plugin manager placeholder initialized")
+}
+
+// GetPluginManager returns the plugin manager
+func (s *AdminServer) GetPluginManager() interface{} {
+	return s.pluginManager
+}
+
+// SetPluginManager sets the plugin manager
+func (s *AdminServer) SetPluginManager(pm interface{}) {
+	s.pluginManager = pm
 }
 
 // Filer discovery methods moved to client_management.go
