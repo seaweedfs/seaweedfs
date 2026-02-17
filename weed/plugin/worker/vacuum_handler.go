@@ -284,6 +284,9 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			ProgressPercent: progress,
 			Stage:           stage,
 			Message:         message,
+			Activities: []*plugin_pb.ActivityEvent{
+				buildExecutorActivity(stage, message),
+			},
 		})
 	})
 
@@ -294,11 +297,25 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		ProgressPercent: 0,
 		Stage:           "assigned",
 		Message:         "vacuum job accepted",
+		Activities: []*plugin_pb.ActivityEvent{
+			buildExecutorActivity("assigned", "vacuum job accepted"),
+		},
 	}); err != nil {
 		return err
 	}
 
 	if err := task.Execute(ctx, params); err != nil {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId:           request.Job.JobId,
+			JobType:         request.Job.JobType,
+			State:           plugin_pb.JobState_JOB_STATE_FAILED,
+			ProgressPercent: 100,
+			Stage:           "failed",
+			Message:         err.Error(),
+			Activities: []*plugin_pb.ActivityEvent{
+				buildExecutorActivity("failed", err.Error()),
+			},
+		})
 		return err
 	}
 
@@ -317,6 +334,9 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: params.Sources[0].Node},
 				},
 			},
+		},
+		Activities: []*plugin_pb.ActivityEvent{
+			buildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -696,4 +716,13 @@ func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, min
 		return false
 	}
 	return time.Since(lastRun) < time.Duration(minIntervalSeconds)*time.Second
+}
+
+func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
+	return &plugin_pb.ActivityEvent{
+		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+		Stage:     stage,
+		Message:   message,
+		CreatedAt: timestamppb.Now(),
+	}
 }
