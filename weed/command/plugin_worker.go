@@ -21,7 +21,7 @@ var cmdPluginWorker = &Command{
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
 This command currently provides the vacuum job type contract and stream runtime,
-with descriptor/heartbeat implemented and detection+execution wired for next phase.
+including descriptor delivery, heartbeat/load reporting, detection, and execution.
 
 Examples:
   weed plugin.worker -admin=localhost:23646
