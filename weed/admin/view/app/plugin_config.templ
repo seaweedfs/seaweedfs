@@ -1,0 +1,245 @@
+package app
+
+import (
+	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
+)
+
+type PluginConfigPageData struct {
+	JobType string
+	Config plugin.JobTypeConfig
+	DetectionHistory []plugin.DetectionRecord
+	ExecutionHistory []plugin.ExecutionRecord
+	ActiveTab string
+}
+
+templ PluginConfiguration(data PluginConfigPageData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<h1 class="h2">
+			<i class="fas fa-cog me-2"></i>Configuration - { data.JobType }
+		</h1>
+		<div class="btn-toolbar mb-2 mb-md-0">
+			<div class="btn-group me-2">
+				<a href="/plugins" class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back
+				</a>
+			</div>
+		</div>
+	</div>
+
+	<!-- Tabs -->
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<ul class="nav nav-tabs card-header-tabs" id="configTabs" role="tablist">
+				<li class="nav-item" role="presentation">
+					<button class={ templ.Classes("nav-link", templ.Classes("active", data.ActiveTab == "config")) } 
+						id="config-tab" data-bs-toggle="tab" data-bs-target="#config" type="button" role="tab">
+						Configuration
+					</button>
+				</li>
+				<li class="nav-item" role="presentation">
+					<button class={ templ.Classes("nav-link", templ.Classes("active", data.ActiveTab == "detection")) } 
+						id="detection-tab" data-bs-toggle="tab" data-bs-target="#detection" type="button" role="tab">
+						Detection History ({ fmt.Sprintf("%d", len(data.DetectionHistory)) })
+					</button>
+				</li>
+				<li class="nav-item" role="presentation">
+					<button class={ templ.Classes("nav-link", templ.Classes("active", data.ActiveTab == "execution")) } 
+						id="execution-tab" data-bs-toggle="tab" data-bs-target="#execution" type="button" role="tab">
+						Execution History ({ fmt.Sprintf("%d", len(data.ExecutionHistory)) })
+					</button>
+				</li>
+			</ul>
+		</div>
+		<div class="card-body">
+			<div class="tab-content" id="configTabContent">
+				<!-- Configuration Tab -->
+				<div class={ templ.Classes("tab-pane fade", templ.Classes("show active", data.ActiveTab == "config")) } 
+					id="config" role="tabpanel">
+					<form id="configForm" onsubmit="saveConfig(event)">
+						<div class="mb-3">
+							<label class="form-label">Enabled</label>
+							<div class="form-check">
+								<input class="form-check-input" type="checkbox" id="enabled" name="enabled" 
+									if data.Config.Enabled { checked } />
+								<label class="form-check-label" for="enabled">
+									Enable this job type
+								</label>
+							</div>
+						</div>
+
+						<div class="row">
+							<div class="col-md-6">
+								<div class="mb-3">
+									<label class="form-label">Priority</label>
+									<input type="number" class="form-control" id="priority" name="priority" 
+										value={ fmt.Sprintf("%d", data.Config.Priority) } />
+								</div>
+							</div>
+							<div class="col-md-6">
+								<div class="mb-3">
+									<label class="form-label">Interval (ms)</label>
+									<input type="number" class="form-control" id="interval" name="interval" 
+										value={ fmt.Sprintf("%d", data.Config.Interval.Milliseconds()) } />
+								</div>
+							</div>
+						</div>
+
+						<div class="mb-3">
+							<label class="form-label">Max Concurrent</label>
+							<input type="number" class="form-control" id="maxConcurrent" name="max_concurrent" 
+								value={ fmt.Sprintf("%d", data.Config.MaxConcurrent) } />
+						</div>
+
+						<div class="mb-3">
+							<label class="form-label">Parameters (JSON)</label>
+							<textarea class="form-control" id="parameters" name="parameters" rows="6">
+{
+								for key, value := range data.Config.Parameters {
+									"{ key }": "{ value }",
+								}
+}
+							</textarea>
+						</div>
+
+						<button type="submit" class="btn btn-primary">
+							<i class="fas fa-save me-1"></i>Save Configuration
+						</button>
+					</form>
+				</div>
+
+				<!-- Detection History Tab -->
+				<div class={ templ.Classes("tab-pane fade", templ.Classes("show active", data.ActiveTab == "detection")) } 
+					id="detection" role="tabpanel">
+					if len(data.DetectionHistory) == 0 {
+						<div class="alert alert-info">No detection records</div>
+					} else {
+						<div class="table-responsive">
+							<table class="table table-hover table-sm">
+								<thead>
+									<tr>
+										<th>Timestamp</th>
+										<th>Type</th>
+										<th>Severity</th>
+										<th>Description</th>
+										<th>Resource</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, record := range data.DetectionHistory {
+										<tr>
+											<td>{ record.Timestamp.Format("2006-01-02 15:04:05") }</td>
+											<td><code>{ record.DetectionType }</code></td>
+											<td>
+												if record.Severity == "high" {
+													<span class="badge bg-danger">HIGH</span>
+												} else if record.Severity == "medium" {
+													<span class="badge bg-warning">MEDIUM</span>
+												} else if record.Severity == "low" {
+													<span class="badge bg-info">LOW</span>
+												} else {
+													<span class="badge bg-secondary">{ record.Severity }</span>
+												}
+											</td>
+											<td>{ record.Description }</td>
+											<td><small>{ record.AffectedResource }</small></td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					}
+				</div>
+
+				<!-- Execution History Tab -->
+				<div class={ templ.Classes("tab-pane fade", templ.Classes("show active", data.ActiveTab == "execution")) } 
+					id="execution" role="tabpanel">
+					if len(data.ExecutionHistory) == 0 {
+						<div class="alert alert-info">No execution records</div>
+					} else {
+						<div class="table-responsive">
+							<table class="table table-hover table-sm">
+								<thead>
+									<tr>
+										<th>Job ID</th>
+										<th>State</th>
+										<th>Created</th>
+										<th>Started</th>
+										<th>Completed</th>
+										<th>Retries</th>
+										<th>Error</th>
+									</tr>
+								</thead>
+								<tbody>
+									for _, record := range data.ExecutionHistory {
+										<tr>
+											<td><code>{ record.JobID }</code></td>
+											<td>
+												if record.State.String() == "COMPLETED" {
+													<span class="badge bg-success">COMPLETED</span>
+												} else if record.State.String() == "FAILED" {
+													<span class="badge bg-danger">FAILED</span>
+												} else if record.State.String() == "RUNNING" {
+													<span class="badge bg-primary">RUNNING</span>
+												} else {
+													<span class="badge bg-secondary">{ record.State.String() }</span>
+												}
+											</td>
+											<td>{ record.CreatedAt.Format("2006-01-02 15:04:05") }</td>
+											<td>
+												if record.StartedAt != nil {
+													{ record.StartedAt.Format("2006-01-02 15:04:05") }
+												} else {
+													<em class="text-muted">-</em>
+												}
+											</td>
+											<td>
+												if record.CompletedAt != nil {
+													{ record.CompletedAt.Format("2006-01-02 15:04:05") }
+												} else {
+													<em class="text-muted">-</em>
+												}
+											</td>
+											<td>{ fmt.Sprintf("%d", record.RetryCount) }</td>
+											<td>
+												if record.LastError != "" {
+													<small class="text-danger">{ record.LastError }</small>
+												} else {
+													<em class="text-muted">-</em>
+												}
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					}
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<script>
+		function saveConfig(event) {
+			event.preventDefault();
+			const formData = {
+				enabled: document.getElementById('enabled').checked,
+				priority: parseInt(document.getElementById('priority').value),
+				interval_ms: parseInt(document.getElementById('interval').value),
+				parameters: JSON.parse(document.getElementById('parameters').value || '{}')
+			};
+			
+			fetch('/api/plugin/config/{ data.JobType }/apply', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(formData)
+			})
+				.then(r => r.json())
+				.then(d => {
+					alert('Configuration saved');
+					location.reload();
+				})
+				.catch(e => alert('Error: ' + e));
+		}
+	</script>
+}
