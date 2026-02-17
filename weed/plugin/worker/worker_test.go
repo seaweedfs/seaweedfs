@@ -82,6 +82,60 @@ func TestWorkerCancelWorkByTargetID(t *testing.T) {
 	}
 }
 
+func TestWorkerHandleCancelRequestAck(t *testing.T) {
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:    "localhost:23646",
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handler: &testJobHandler{
+			capability: &plugin_pb.JobTypeCapability{JobType: "vacuum"},
+			descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	canceled := false
+	worker.setWorkCancel(func() { canceled = true }, "job-42")
+
+	var response *plugin_pb.WorkerToAdminMessage
+	ok := worker.handleAdminMessageForTest(&plugin_pb.AdminToWorkerMessage{
+		RequestId: "cancel-req-1",
+		Body: &plugin_pb.AdminToWorkerMessage_CancelRequest{
+			CancelRequest: &plugin_pb.CancelRequest{TargetId: "job-42"},
+		},
+	}, func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		response = msg
+		return true
+	})
+	if !ok {
+		t.Fatalf("expected send callback to be invoked")
+	}
+	if !canceled {
+		t.Fatalf("expected registered work cancel function to be called")
+	}
+	if response == nil || response.GetAcknowledge() == nil || !response.GetAcknowledge().Accepted {
+		t.Fatalf("expected accepted acknowledge response, got=%+v", response)
+	}
+
+	response = nil
+	ok = worker.handleAdminMessageForTest(&plugin_pb.AdminToWorkerMessage{
+		RequestId: "cancel-req-2",
+		Body: &plugin_pb.AdminToWorkerMessage_CancelRequest{
+			CancelRequest: &plugin_pb.CancelRequest{TargetId: "missing"},
+		},
+	}, func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		response = msg
+		return true
+	})
+	if !ok {
+		t.Fatalf("expected send callback to be invoked")
+	}
+	if response == nil || response.GetAcknowledge() == nil || response.GetAcknowledge().Accepted {
+		t.Fatalf("expected rejected acknowledge for missing target, got=%+v", response)
+	}
+}
+
 type testJobHandler struct {
 	capability *plugin_pb.JobTypeCapability
 	descriptor *plugin_pb.JobTypeDescriptor
@@ -101,4 +155,16 @@ func (h *testJobHandler) Detect(context.Context, *plugin_pb.RunDetectionRequest,
 
 func (h *testJobHandler) Execute(context.Context, *plugin_pb.ExecuteJobRequest, ExecutionSender) error {
 	return nil
+}
+
+func (w *Worker) handleAdminMessageForTest(
+	message *plugin_pb.AdminToWorkerMessage,
+	send func(*plugin_pb.WorkerToAdminMessage) bool,
+) bool {
+	called := false
+	w.handleAdminMessage(context.Background(), message, func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		called = true
+		return send(msg)
+	})
+	return called
 }
