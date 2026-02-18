@@ -53,7 +53,7 @@ func (r *Plugin) prefetchDescriptorsFromHello(hello *plugin_pb.WorkerHello) {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), descriptorPrefetchTimeout)
+		ctx, cancel := context.WithTimeout(r.ctx, descriptorPrefetchTimeout)
 		_, err = r.RequestConfigSchema(ctx, jobType, false)
 		cancel()
 		if err != nil {
