@@ -3,6 +3,8 @@ package example
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
 	"net"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -66,6 +69,10 @@ func TestS3Integration(t *testing.T) {
 
 	t.Run("PutObject", func(t *testing.T) {
 		testPutObject(t, cluster)
+	})
+
+	t.Run("PutObjectWithChecksum", func(t *testing.T) {
+		testPutObjectWithChecksum(t, cluster)
 	})
 
 	t.Run("GetObject", func(t *testing.T) {
@@ -342,6 +349,65 @@ func testPutObject(t *testing.T, cluster *TestCluster) {
 	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
 
 	t.Logf("✓ Put object: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
+}
+
+func testPutObjectWithChecksum(t *testing.T, cluster *TestCluster) {
+	bucketName := "test-put-checksum-" + randomString(8)
+	objectKey := "test-checksumed-object.txt"
+	objectData := "Hello, SeaweedFS S3!"
+
+	correctMD5 := calculateMd5(objectData)
+	incorrectMD5 := calculateMd5(objectData + "incorrect")
+
+	// Create bucket
+	_, err := cluster.s3Client.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Wait a bit for bucket to be fully created
+	time.Sleep(100 * time.Millisecond)
+
+	// Put object
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(incorrectMD5),
+	})
+	require.Error(t, err, "PutObject should fail with incorrect MD5")
+
+	var awsErr awserr.Error
+	require.ErrorAs(t, err, &awsErr)
+	assert.Equal(t, "BadDigest", awsErr.Code())
+
+	t.Logf("✓ Put object with incorrect MD5 rejected: %s/%s ", bucketName, objectKey)
+
+	// Put object
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		Body:       bytes.NewReader([]byte(objectData)),
+		ContentMD5: aws.String(correctMD5),
+	})
+	require.NoError(t, err, "Failed to put object")
+
+	// Verify object exists
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, headResp.ContentLength)
+	assert.Equal(t, int64(len(objectData)), aws.Int64Value(headResp.ContentLength))
+
+	t.Logf("✓ Put object with correct MD5: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
+}
+
+func calculateMd5(objectData string) string {
+	dataBytes := []byte(objectData)
+	hash := md5.Sum(dataBytes)
+	return base64.StdEncoding.EncodeToString(hash[:])
 }
 
 func testGetObject(t *testing.T, cluster *TestCluster) {
