@@ -70,6 +70,56 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 	}
 }
 
+func TestBuildPluginWorkerHandlers(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+
+	handlers, err := buildPluginWorkerHandlers("vacuum,volume_balance,erasure_coding", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandlers(list) err = %v", err)
+	}
+	if len(handlers) != 3 {
+		t.Fatalf("expected 3 handlers, got %d", len(handlers))
+	}
+
+	handlers, err = buildPluginWorkerHandlers("balance,ec,vacuum,balance", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandlers(aliases) err = %v", err)
+	}
+	if len(handlers) != 3 {
+		t.Fatalf("expected deduped 3 handlers, got %d", len(handlers))
+	}
+
+	_, err = buildPluginWorkerHandlers("unknown,vacuum", dialOption)
+	if err == nil {
+		t.Fatalf("expected unsupported job type error")
+	}
+}
+
+func TestParsePluginWorkerJobTypes(t *testing.T) {
+	jobTypes, err := parsePluginWorkerJobTypes("")
+	if err != nil {
+		t.Fatalf("parsePluginWorkerJobTypes(default) err = %v", err)
+	}
+	if len(jobTypes) != 1 || jobTypes[0] != "vacuum" {
+		t.Fatalf("expected default [vacuum], got %v", jobTypes)
+	}
+
+	jobTypes, err = parsePluginWorkerJobTypes(" volume_balance , ec , vacuum , volume_balance ")
+	if err != nil {
+		t.Fatalf("parsePluginWorkerJobTypes(list) err = %v", err)
+	}
+	if len(jobTypes) != 3 {
+		t.Fatalf("expected 3 deduped job types, got %d (%v)", len(jobTypes), jobTypes)
+	}
+	if jobTypes[0] != "volume_balance" || jobTypes[1] != "erasure_coding" || jobTypes[2] != "vacuum" {
+		t.Fatalf("unexpected parsed order %v", jobTypes)
+	}
+
+	if _, err = parsePluginWorkerJobTypes(" , "); err != nil {
+		t.Fatalf("expected empty list to resolve to default vacuum: %v", err)
+	}
+}
+
 func TestResolvePluginWorkerID(t *testing.T) {
 	dir := t.TempDir()
 

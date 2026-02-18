@@ -22,7 +22,7 @@ import (
 )
 
 var cmdPluginWorker = &Command{
-	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum|volume_balance|erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
+	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
 	Short:     "start a plugin.proto worker process",
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
@@ -31,12 +31,13 @@ contracts with the plugin stream runtime, including descriptor delivery,
 heartbeat/load reporting, detection, and execution.
 
 Behavior:
-  - Use -jobType to choose which plugin job handler to serve (vacuum, volume_balance, erasure_coding)
+  - Use -jobType to choose one or more plugin job handlers (comma-separated list)
   - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
 
 Examples:
   weed plugin.worker -admin=localhost:23646
   weed plugin.worker -admin=localhost:23646 -jobType=volume_balance
+  weed plugin.worker -admin=localhost:23646 -jobType=vacuum,volume_balance
   weed plugin.worker -admin=localhost:23646 -jobType=erasure_coding
   weed plugin.worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
   weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
@@ -74,9 +75,9 @@ func runPluginWorker(cmd *Command, args []string) bool {
 		return false
 	}
 
-	handler, err := buildPluginWorkerHandler(*pluginWorkerJobType, dialOption)
+	handlers, err := buildPluginWorkerHandlers(*pluginWorkerJobType, dialOption)
 	if err != nil {
-		glog.Errorf("Failed to build plugin worker handler: %v", err)
+		glog.Errorf("Failed to build plugin worker handlers: %v", err)
 		return false
 	}
 	worker, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
@@ -89,7 +90,7 @@ func runPluginWorker(cmd *Command, args []string) bool {
 		MaxDetectionConcurrency: *pluginWorkerMaxDetect,
 		MaxExecutionConcurrency: *pluginWorkerMaxExecute,
 		GrpcDialOption:          dialOption,
-		Handler:                 handler,
+		Handlers:                handlers,
 	})
 	if err != nil {
 		glog.Errorf("Failed to create plugin worker: %v", err)
@@ -147,15 +148,82 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 }
 
 func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (pluginworker.JobHandler, error) {
-	switch strings.ToLower(strings.TrimSpace(jobType)) {
-	case "", "vacuum":
+	canonicalJobType, err := canonicalPluginWorkerJobType(jobType)
+	if err != nil {
+		return nil, err
+	}
+
+	switch canonicalJobType {
+	case "vacuum":
 		return pluginworker.NewVacuumHandler(dialOption), nil
-	case "volume_balance", "balance", "volume.balance", "volume-balance":
+	case "volume_balance":
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
-	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
+	case "erasure_coding":
 		return pluginworker.NewErasureCodingHandler(dialOption), nil
 	default:
-		return nil, fmt.Errorf("unsupported plugin job type %q", jobType)
+		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
+	}
+}
+
+func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption) ([]pluginworker.JobHandler, error) {
+	parsedJobTypes, err := parsePluginWorkerJobTypes(jobTypes)
+	if err != nil {
+		return nil, err
+	}
+
+	handlers := make([]pluginworker.JobHandler, 0, len(parsedJobTypes))
+	for _, jobType := range parsedJobTypes {
+		handler, buildErr := buildPluginWorkerHandler(jobType, dialOption)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		handlers = append(handlers, handler)
+	}
+	return handlers, nil
+}
+
+func parsePluginWorkerJobTypes(jobTypes string) ([]string, error) {
+	jobTypes = strings.TrimSpace(jobTypes)
+	if jobTypes == "" {
+		return []string{"vacuum"}, nil
+	}
+
+	parts := strings.Split(jobTypes, ",")
+	parsed := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		canonical, err := canonicalPluginWorkerJobType(part)
+		if err != nil {
+			return nil, err
+		}
+		if _, found := seen[canonical]; found {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		parsed = append(parsed, canonical)
+	}
+
+	if len(parsed) == 0 {
+		return []string{"vacuum"}, nil
+	}
+	return parsed, nil
+}
+
+func canonicalPluginWorkerJobType(jobType string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(jobType)) {
+	case "", "vacuum":
+		return "vacuum", nil
+	case "volume_balance", "balance", "volume.balance", "volume-balance":
+		return "volume_balance", nil
+	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
+		return "erasure_coding", nil
+	default:
+		return "", fmt.Errorf("unsupported plugin job type %q", jobType)
 	}
 }
 
