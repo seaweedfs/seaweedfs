@@ -21,19 +21,21 @@ import (
 // BalanceTask implements the Task interface
 type BalanceTask struct {
 	*base.BaseTask
-	server     string
-	volumeID   uint32
-	collection string
-	progress   float64
+	server         string
+	volumeID       uint32
+	collection     string
+	progress       float64
+	grpcDialOption grpc.DialOption
 }
 
 // NewBalanceTask creates a new balance task instance
-func NewBalanceTask(id string, server string, volumeID uint32, collection string) *BalanceTask {
+func NewBalanceTask(id string, server string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *BalanceTask {
 	return &BalanceTask{
-		BaseTask:   base.NewBaseTask(id, types.TaskTypeBalance),
-		server:     server,
-		volumeID:   volumeID,
-		collection: collection,
+		BaseTask:       base.NewBaseTask(id, types.TaskTypeBalance),
+		server:         server,
+		volumeID:       volumeID,
+		collection:     collection,
+		grpcDialOption: grpcDialOption,
 	}
 }
 
@@ -115,7 +117,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 
 	t.ReportProgress(100.0)
 	glog.Infof("Balance task completed successfully: volume %d moved from %s to %s",
-		t.volumeID, t.server, destNode)
+		t.volumeID, sourceNode, destNode)
 	return nil
 }
 
@@ -164,7 +166,7 @@ func (t *BalanceTask) GetProgress() float64 {
 
 // markVolumeReadonly marks the volume readonly
 func (t *BalanceTask) markVolumeReadonly(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
 				VolumeId: uint32(volumeId),
@@ -177,7 +179,7 @@ func (t *BalanceTask) markVolumeReadonly(server pb.ServerAddress, volumeId needl
 func (t *BalanceTask) copyVolume(sourceServer, targetServer pb.ServerAddress, volumeId needle.VolumeId) (uint64, error) {
 	var lastAppendAtNs uint64
 
-	err := operation.WithVolumeServerClient(true, targetServer, grpc.WithInsecure(),
+	err := operation.WithVolumeServerClient(true, targetServer, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			stream, err := client.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
 				VolumeId:       uint32(volumeId),
@@ -213,7 +215,7 @@ func (t *BalanceTask) copyVolume(sourceServer, targetServer pb.ServerAddress, vo
 
 // mountVolume mounts the volume on the target server
 func (t *BalanceTask) mountVolume(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
 				VolumeId: uint32(volumeId),
@@ -224,7 +226,7 @@ func (t *BalanceTask) mountVolume(server pb.ServerAddress, volumeId needle.Volum
 
 // tailVolume syncs remaining updates from source to target
 func (t *BalanceTask) tailVolume(sourceServer, targetServer pb.ServerAddress, volumeId needle.VolumeId, sinceNs uint64) error {
-	return operation.WithVolumeServerClient(true, targetServer, grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(true, targetServer, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeTailReceiver(context.Background(), &volume_server_pb.VolumeTailReceiverRequest{
 				VolumeId:           uint32(volumeId),
@@ -236,20 +238,9 @@ func (t *BalanceTask) tailVolume(sourceServer, targetServer pb.ServerAddress, vo
 		})
 }
 
-// unmountVolume unmounts the volume from the server
-func (t *BalanceTask) unmountVolume(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, grpc.WithInsecure(),
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
-				VolumeId: uint32(volumeId),
-			})
-			return err
-		})
-}
-
 // deleteVolume deletes the volume from the server
 func (t *BalanceTask) deleteVolume(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
 				VolumeId:  uint32(volumeId),
