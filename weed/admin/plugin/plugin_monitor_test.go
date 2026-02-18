@@ -339,3 +339,156 @@ func TestHandleJobCompletedCarriesWorkerIDInActivitiesAndRunHistory(t *testing.T
 		t.Fatalf("run history worker mismatch: got=%q want=%q", history.SuccessfulRuns[0].WorkerID, "worker-b")
 	}
 }
+
+func TestTrackExecutionStartStoresJobPayloadDetails(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-payload", "worker-c", &plugin_pb.JobSpec{
+		JobId:   "job-payload",
+		JobType: "dummy_stress",
+		Summary: "payload summary",
+		Detail:  "payload detail",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"volume_id": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 9},
+			},
+		},
+		Labels: map[string]string{
+			"source": "detector",
+		},
+	}, 2)
+
+	job, found := pluginSvc.GetTrackedJob("job-payload")
+	if !found || job == nil {
+		t.Fatalf("expected tracked job")
+	}
+	if job.Detail != "" {
+		t.Fatalf("expected in-memory tracked job detail to be stripped, got=%q", job.Detail)
+	}
+	if job.Attempt != 2 {
+		t.Fatalf("unexpected attempt: %d", job.Attempt)
+	}
+	if len(job.Labels) != 0 {
+		t.Fatalf("expected in-memory labels to be stripped, got=%+v", job.Labels)
+	}
+	if len(job.Parameters) != 0 {
+		t.Fatalf("expected in-memory parameters to be stripped, got=%+v", job.Parameters)
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-payload", 100, 0)
+	if err != nil {
+		t.Fatalf("BuildJobDetail: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected disk-backed job detail")
+	}
+	if detail.Job.Detail != "payload detail" {
+		t.Fatalf("unexpected disk-backed detail: %q", detail.Job.Detail)
+	}
+	if got := detail.Job.Labels["source"]; got != "detector" {
+		t.Fatalf("unexpected disk-backed label source: %q", got)
+	}
+	if got, ok := detail.Job.Parameters["volume_id"].(map[string]interface{}); !ok || got["int64_value"] != "9" {
+		t.Fatalf("unexpected disk-backed parameters payload: %#v", detail.Job.Parameters["volume_id"])
+	}
+}
+
+func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-detail", "worker-z", &plugin_pb.JobSpec{
+		JobId:   "job-detail",
+		JobType: "vacuum",
+		Summary: "detail summary",
+	}, 1)
+	pluginSvc.handleJobProgressUpdate("worker-z", &plugin_pb.JobProgressUpdate{
+		RequestId: "req-detail",
+		JobId:     "job-detail",
+		JobType:   "vacuum",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "scan",
+		Message:   "scanning volume",
+	})
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId: "req-detail",
+		JobId:     "job-detail",
+		JobType:   "vacuum",
+		Success:   true,
+		Result: &plugin_pb.JobResult{
+			Summary: "done",
+			OutputValues: map[string]*plugin_pb.ConfigValue{
+				"affected": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1},
+				},
+			},
+		},
+		CompletedAt: timestamppb.Now(),
+	})
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-detail", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil {
+		t.Fatalf("expected job detail")
+	}
+	if detail.Job == nil || detail.Job.JobID != "job-detail" {
+		t.Fatalf("unexpected job detail payload: %+v", detail.Job)
+	}
+	if detail.RunRecord == nil || detail.RunRecord.JobID != "job-detail" {
+		t.Fatalf("expected run record for job-detail, got=%+v", detail.RunRecord)
+	}
+	if len(detail.Activities) == 0 {
+		t.Fatalf("expected activity timeline entries")
+	}
+	if detail.Job.ResultOutputValues == nil {
+		t.Fatalf("expected result output values")
+	}
+}
+
+func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-disk", "worker-d", &plugin_pb.JobSpec{
+		JobId:   "job-disk",
+		JobType: "dummy_stress",
+		Summary: "disk summary",
+		Detail:  "disk detail payload",
+	}, 1)
+
+	pluginSvc.jobsMu.Lock()
+	pluginSvc.jobs = map[string]*TrackedJob{}
+	pluginSvc.jobsMu.Unlock()
+	pluginSvc.activitiesMu.Lock()
+	pluginSvc.activities = nil
+	pluginSvc.activitiesMu.Unlock()
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-disk", 100, 0)
+	if err != nil {
+		t.Fatalf("BuildJobDetail: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected detail from disk")
+	}
+	if detail.Job.Detail != "disk detail payload" {
+		t.Fatalf("unexpected disk detail payload: %q", detail.Job.Detail)
+	}
+}

@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,7 @@ const (
 	pluginDirName           = "plugin"
 	jobTypesDirName         = "job_types"
 	jobsDirName             = "jobs"
+	jobDetailsDirName       = "job_details"
 	activitiesDirName       = "activities"
 	descriptorPBFileName    = "descriptor.pb"
 	descriptorJSONFileName  = "descriptor.json"
@@ -47,6 +49,7 @@ type ConfigStore struct {
 	memRunHistory  map[string]*JobTypeRunHistory
 	memTrackedJobs []TrackedJob
 	memActivities  []JobActivity
+	memJobDetails  map[string]TrackedJob
 }
 
 func NewConfigStore(adminDataDir string) (*ConfigStore, error) {
@@ -55,6 +58,7 @@ func NewConfigStore(adminDataDir string) (*ConfigStore, error) {
 		memDescriptors: make(map[string]*plugin_pb.JobTypeDescriptor),
 		memConfigs:     make(map[string]*plugin_pb.PersistedJobTypeConfig),
 		memRunHistory:  make(map[string]*JobTypeRunHistory),
+		memJobDetails:  make(map[string]TrackedJob),
 	}
 
 	if adminDataDir == "" {
@@ -67,6 +71,9 @@ func NewConfigStore(adminDataDir string) (*ConfigStore, error) {
 	}
 	if err := os.MkdirAll(filepath.Join(store.baseDir, jobsDirName), defaultDirPerm); err != nil {
 		return nil, fmt.Errorf("create plugin jobs dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(store.baseDir, jobsDirName, jobDetailsDirName), defaultDirPerm); err != nil {
+		return nil, fmt.Errorf("create plugin job_details dir: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Join(store.baseDir, activitiesDirName), defaultDirPerm); err != nil {
 		return nil, fmt.Errorf("create plugin activities dir: %w", err)
@@ -323,6 +330,71 @@ func (s *ConfigStore) LoadTrackedJobs() ([]TrackedJob, error) {
 	return cloneTrackedJobs(jobs), nil
 }
 
+func (s *ConfigStore) SaveJobDetail(job TrackedJob) error {
+	jobID, err := sanitizeJobID(job.JobID)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	clone := cloneTrackedJob(job)
+	clone.JobID = jobID
+
+	if !s.configured {
+		s.memJobDetails[jobID] = clone
+		return nil
+	}
+
+	encoded, err := json.MarshalIndent(clone, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode job detail: %w", err)
+	}
+
+	path := filepath.Join(s.baseDir, jobsDirName, jobDetailsDirName, jobDetailFileName(jobID))
+	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+		return fmt.Errorf("write job detail: %w", err)
+	}
+
+	return nil
+}
+
+func (s *ConfigStore) LoadJobDetail(jobID string) (*TrackedJob, error) {
+	jobID, err := sanitizeJobID(jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.RLock()
+	if !s.configured {
+		job, ok := s.memJobDetails[jobID]
+		s.mu.RUnlock()
+		if !ok {
+			return nil, nil
+		}
+		clone := cloneTrackedJob(job)
+		return &clone, nil
+	}
+	s.mu.RUnlock()
+
+	path := filepath.Join(s.baseDir, jobsDirName, jobDetailsDirName, jobDetailFileName(jobID))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read job detail: %w", err)
+	}
+
+	var job TrackedJob
+	if err := json.Unmarshal(data, &job); err != nil {
+		return nil, fmt.Errorf("parse job detail: %w", err)
+	}
+	clone := cloneTrackedJob(job)
+	return &clone, nil
+}
+
 func (s *ConfigStore) SaveActivities(activities []JobActivity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -490,6 +562,18 @@ func sanitizeJobType(jobType string) (string, error) {
 	return jobType, nil
 }
 
+func sanitizeJobID(jobID string) (string, error) {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return "", fmt.Errorf("job id is empty")
+	}
+	return jobID, nil
+}
+
+func jobDetailFileName(jobID string) string {
+	return url.PathEscape(jobID) + ".json"
+}
+
 func trimRuns(runs []JobRunRecord, maxKeep int) []JobRunRecord {
 	if len(runs) == 0 {
 		return runs
@@ -523,7 +607,32 @@ func cloneTrackedJobs(in []TrackedJob) []TrackedJob {
 	}
 
 	out := make([]TrackedJob, len(in))
-	copy(out, in)
+	for i := range in {
+		out[i] = cloneTrackedJob(in[i])
+	}
+	return out
+}
+
+func cloneTrackedJob(in TrackedJob) TrackedJob {
+	out := in
+	if in.Parameters != nil {
+		out.Parameters = make(map[string]interface{}, len(in.Parameters))
+		for key, value := range in.Parameters {
+			out.Parameters[key] = value
+		}
+	}
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for key, value := range in.Labels {
+			out.Labels[key] = value
+		}
+	}
+	if in.ResultOutputValues != nil {
+		out.ResultOutputValues = make(map[string]interface{}, len(in.ResultOutputValues))
+		for key, value := range in.ResultOutputValues {
+			out.ResultOutputValues[key] = value
+		}
+	}
 	return out
 }
 

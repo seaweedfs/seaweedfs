@@ -16,6 +16,9 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 	if !hasRoute(router, "GET", "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in no-auth mode")
 	}
+	if !hasRoute(router, "GET", "/api/plugin/jobs/:jobId/detail") {
+		t.Fatalf("expected GET /api/plugin/jobs/:jobId/detail to be registered in no-auth mode")
+	}
 }
 
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
@@ -26,6 +29,9 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 
 	if !hasRoute(router, "GET", "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in auth mode")
+	}
+	if !hasRoute(router, "GET", "/api/plugin/jobs/:jobId/detail") {
+		t.Fatalf("expected GET /api/plugin/jobs/:jobId/detail to be registered in auth mode")
 	}
 }
 

@@ -40,6 +40,9 @@ type TrackedJob struct {
 	WorkerID      string    `json:"worker_id"`
 	DedupeKey     string    `json:"dedupe_key,omitempty"`
 	Summary       string    `json:"summary,omitempty"`
+	Detail        string    `json:"detail,omitempty"`
+	Parameters    map[string]interface{} `json:"parameters,omitempty"`
+	Labels        map[string]string      `json:"labels,omitempty"`
 	State         string    `json:"state"`
 	Progress      float64   `json:"progress"`
 	Stage         string    `json:"stage,omitempty"`
@@ -50,6 +53,7 @@ type TrackedJob struct {
 	CompletedAt   time.Time `json:"completed_at,omitempty"`
 	ErrorMessage  string    `json:"error_message,omitempty"`
 	ResultSummary string    `json:"result_summary,omitempty"`
+	ResultOutputValues map[string]interface{} `json:"result_output_values,omitempty"`
 }
 
 type JobActivity struct {
@@ -62,6 +66,14 @@ type JobActivity struct {
 	Stage      string                 `json:"stage,omitempty"`
 	Details    map[string]interface{} `json:"details,omitempty"`
 	OccurredAt time.Time              `json:"occurred_at"`
+}
+
+type JobDetail struct {
+	Job         *TrackedJob   `json:"job"`
+	RunRecord   *JobRunRecord `json:"run_record,omitempty"`
+	Activities  []JobActivity `json:"activities"`
+	RelatedJobs []TrackedJob  `json:"related_jobs,omitempty"`
+	LastUpdated time.Time     `json:"last_updated"`
 }
 
 type SchedulerJobTypeState struct {

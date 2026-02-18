@@ -33,6 +33,14 @@ func (r *Plugin) loadPersistedMonitorState() error {
 			if strings.TrimSpace(job.JobID) == "" {
 				continue
 			}
+			// Backward compatibility: migrate older inline detail payloads
+			// out of tracked_jobs.json into dedicated per-job detail files.
+			if hasTrackedJobRichDetails(job) {
+				if err := r.store.SaveJobDetail(job); err != nil {
+					glog.Warningf("Plugin failed to migrate detail snapshot for job %s: %v", job.JobID, err)
+				}
+			}
+			stripTrackedJobDetailFields(&job)
 			jobCopy := job
 			r.jobs[job.JobID] = &jobCopy
 		}
@@ -70,7 +78,7 @@ func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []Trac
 		if normalizedState != "" && strings.ToLower(job.State) != normalizedState {
 			continue
 		}
-		items = append(items, *job)
+		items = append(items, cloneTrackedJob(*job))
 	}
 
 	sort.Slice(items, func(i, j int) bool {
@@ -94,7 +102,7 @@ func (r *Plugin) GetTrackedJob(jobID string) (*TrackedJob, bool) {
 	if !ok || job == nil {
 		return nil, false
 	}
-	clone := *job
+	clone := cloneTrackedJob(*job)
 	return &clone, true
 }
 
@@ -118,6 +126,219 @@ func (r *Plugin) ListActivities(jobType string, limit int) []JobActivity {
 		activities = activities[:limit]
 	}
 	return activities
+}
+
+func (r *Plugin) ListJobActivities(jobID string, limit int) []JobActivity {
+	normalizedJobID := strings.TrimSpace(jobID)
+	if normalizedJobID == "" {
+		return nil
+	}
+
+	r.activitiesMu.RLock()
+	activities := make([]JobActivity, 0, len(r.activities))
+	for _, activity := range r.activities {
+		if strings.TrimSpace(activity.JobID) != normalizedJobID {
+			continue
+		}
+		activities = append(activities, activity)
+	}
+	r.activitiesMu.RUnlock()
+
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].OccurredAt.Before(activities[j].OccurredAt)
+	})
+	if limit > 0 && len(activities) > limit {
+		activities = activities[len(activities)-limit:]
+	}
+	return activities
+}
+
+func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit int) (*JobDetail, bool, error) {
+	normalizedJobID := strings.TrimSpace(jobID)
+	if normalizedJobID == "" {
+		return nil, false, nil
+	}
+
+	trackedJobs, err := r.store.LoadTrackedJobs()
+	if err != nil {
+		return nil, false, err
+	}
+
+	var trackedSnapshot *TrackedJob
+	for i := range trackedJobs {
+		if strings.TrimSpace(trackedJobs[i].JobID) != normalizedJobID {
+			continue
+		}
+		candidate := cloneTrackedJob(trackedJobs[i])
+		stripTrackedJobDetailFields(&candidate)
+		trackedSnapshot = &candidate
+		break
+	}
+
+	detailJob, err := r.store.LoadJobDetail(normalizedJobID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if trackedSnapshot == nil && detailJob == nil {
+		return nil, false, nil
+	}
+	if detailJob == nil && trackedSnapshot != nil {
+		clone := cloneTrackedJob(*trackedSnapshot)
+		detailJob = &clone
+	}
+	if detailJob == nil {
+		return nil, false, nil
+	}
+	if trackedSnapshot != nil {
+		mergeTrackedStatusIntoDetail(detailJob, trackedSnapshot)
+	}
+
+	activities, err := r.store.LoadActivities()
+	if err != nil {
+		return nil, true, err
+	}
+
+	detail := &JobDetail{
+		Job:         detailJob,
+		Activities:  filterJobActivitiesFromSlice(activities, normalizedJobID, activityLimit),
+		LastUpdated: time.Now().UTC(),
+	}
+
+	if history, err := r.store.LoadRunHistory(detailJob.JobType); err != nil {
+		return nil, true, err
+	} else if history != nil {
+		for i := range history.SuccessfulRuns {
+			record := history.SuccessfulRuns[i]
+			if strings.TrimSpace(record.JobID) == normalizedJobID {
+				recordCopy := record
+				detail.RunRecord = &recordCopy
+				break
+			}
+		}
+		if detail.RunRecord == nil {
+			for i := range history.ErrorRuns {
+				record := history.ErrorRuns[i]
+				if strings.TrimSpace(record.JobID) == normalizedJobID {
+					recordCopy := record
+					detail.RunRecord = &recordCopy
+					break
+				}
+			}
+		}
+	}
+
+	if relatedLimit > 0 {
+		related := make([]TrackedJob, 0, relatedLimit)
+		for i := range trackedJobs {
+			candidate := cloneTrackedJob(trackedJobs[i])
+			if strings.TrimSpace(candidate.JobType) != strings.TrimSpace(detailJob.JobType) {
+				continue
+			}
+			if strings.TrimSpace(candidate.JobID) == normalizedJobID {
+				continue
+			}
+			stripTrackedJobDetailFields(&candidate)
+			related = append(related, candidate)
+			if len(related) >= relatedLimit {
+				break
+			}
+		}
+		detail.RelatedJobs = related
+	}
+
+	return detail, true, nil
+}
+
+func filterJobActivitiesFromSlice(all []JobActivity, jobID string, limit int) []JobActivity {
+	if strings.TrimSpace(jobID) == "" || len(all) == 0 {
+		return nil
+	}
+
+	activities := make([]JobActivity, 0, len(all))
+	for _, activity := range all {
+		if strings.TrimSpace(activity.JobID) != jobID {
+			continue
+		}
+		activities = append(activities, activity)
+	}
+
+	sort.Slice(activities, func(i, j int) bool {
+		return activities[i].OccurredAt.Before(activities[j].OccurredAt)
+	})
+	if limit > 0 && len(activities) > limit {
+		activities = activities[len(activities)-limit:]
+	}
+	return activities
+}
+
+func stripTrackedJobDetailFields(job *TrackedJob) {
+	if job == nil {
+		return
+	}
+	job.Detail = ""
+	job.Parameters = nil
+	job.Labels = nil
+	job.ResultOutputValues = nil
+}
+
+func hasTrackedJobRichDetails(job TrackedJob) bool {
+	return strings.TrimSpace(job.Detail) != "" ||
+		len(job.Parameters) > 0 ||
+		len(job.Labels) > 0 ||
+		len(job.ResultOutputValues) > 0
+}
+
+func mergeTrackedStatusIntoDetail(detail *TrackedJob, tracked *TrackedJob) {
+	if detail == nil || tracked == nil {
+		return
+	}
+
+	if detail.JobType == "" {
+		detail.JobType = tracked.JobType
+	}
+	if detail.RequestID == "" {
+		detail.RequestID = tracked.RequestID
+	}
+	if detail.WorkerID == "" {
+		detail.WorkerID = tracked.WorkerID
+	}
+	if detail.DedupeKey == "" {
+		detail.DedupeKey = tracked.DedupeKey
+	}
+	if detail.Summary == "" {
+		detail.Summary = tracked.Summary
+	}
+	if detail.State == "" {
+		detail.State = tracked.State
+	}
+	if detail.Progress == 0 {
+		detail.Progress = tracked.Progress
+	}
+	if detail.Stage == "" {
+		detail.Stage = tracked.Stage
+	}
+	if detail.Message == "" {
+		detail.Message = tracked.Message
+	}
+	if detail.Attempt == 0 {
+		detail.Attempt = tracked.Attempt
+	}
+	if detail.CreatedAt.IsZero() {
+		detail.CreatedAt = tracked.CreatedAt
+	}
+	if detail.UpdatedAt.IsZero() {
+		detail.UpdatedAt = tracked.UpdatedAt
+	}
+	if detail.CompletedAt.IsZero() {
+		detail.CompletedAt = tracked.CompletedAt
+	}
+	if detail.ErrorMessage == "" {
+		detail.ErrorMessage = tracked.ErrorMessage
+	}
+	if detail.ResultSummary == "" {
+		detail.ResultSummary = tracked.ResultSummary
+	}
 }
 
 func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobProgressUpdate) {
@@ -213,9 +434,38 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 		tracked.CreatedAt = now
 	}
 	tracked.UpdatedAt = now
+	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
 	r.jobsMu.Unlock()
 	r.persistTrackedJobsSnapshot()
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+		detail.JobID = job.JobId
+		detail.JobType = job.JobType
+		detail.RequestID = requestID
+		detail.WorkerID = workerID
+		detail.DedupeKey = job.DedupeKey
+		detail.Summary = job.Summary
+		detail.Detail = job.Detail
+		detail.Parameters = configValueMapToPlain(job.Parameters)
+		if len(job.Labels) > 0 {
+			labels := make(map[string]string, len(job.Labels))
+			for key, value := range job.Labels {
+				labels[key] = value
+			}
+			detail.Labels = labels
+		} else {
+			detail.Labels = nil
+		}
+		detail.State = trackedSnapshot.State
+		detail.Progress = trackedSnapshot.Progress
+		detail.Stage = trackedSnapshot.Stage
+		detail.Message = trackedSnapshot.Message
+		detail.Attempt = attempt
+		if detail.CreatedAt.IsZero() {
+			detail.CreatedAt = trackedSnapshot.CreatedAt
+		}
+		detail.UpdatedAt = trackedSnapshot.UpdatedAt
+	})
 
 	r.appendActivity(JobActivity{
 		JobID:      job.JobId,
@@ -257,9 +507,35 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 		tracked.CreatedAt = now
 	}
 	tracked.UpdatedAt = now
+	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
 	r.jobsMu.Unlock()
 	r.persistTrackedJobsSnapshot()
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+		detail.JobID = job.JobId
+		detail.JobType = job.JobType
+		detail.DedupeKey = job.DedupeKey
+		detail.Summary = job.Summary
+		detail.Detail = job.Detail
+		detail.Parameters = configValueMapToPlain(job.Parameters)
+		if len(job.Labels) > 0 {
+			labels := make(map[string]string, len(job.Labels))
+			for key, value := range job.Labels {
+				labels[key] = value
+			}
+			detail.Labels = labels
+		} else {
+			detail.Labels = nil
+		}
+		detail.State = trackedSnapshot.State
+		detail.Progress = trackedSnapshot.Progress
+		detail.Stage = trackedSnapshot.Stage
+		detail.Message = trackedSnapshot.Message
+		if detail.CreatedAt.IsZero() {
+			detail.CreatedAt = trackedSnapshot.CreatedAt
+		}
+		detail.UpdatedAt = trackedSnapshot.UpdatedAt
+	})
 
 	r.appendActivity(JobActivity{
 		JobID:      job.JobId,
@@ -319,15 +595,40 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	tracked.UpdatedAt = now
 	tracked.CompletedAt = now
 	r.pruneTrackedJobsLocked()
-	clone := *tracked
+	clone := cloneTrackedJob(*tracked)
 	r.jobsMu.Unlock()
 	r.persistTrackedJobsSnapshot()
+	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) {
+		detail.JobID = completed.JobId
+		if completed.JobType != "" {
+			detail.JobType = completed.JobType
+		}
+		if completed.RequestId != "" {
+			detail.RequestID = completed.RequestId
+		}
+		detail.State = clone.State
+		detail.Progress = clone.Progress
+		detail.Stage = clone.Stage
+		detail.Message = clone.Message
+		detail.ErrorMessage = clone.ErrorMessage
+		detail.ResultSummary = clone.ResultSummary
+		if completed.Success && completed.Result != nil {
+			detail.ResultOutputValues = configValueMapToPlain(completed.Result.OutputValues)
+		} else {
+			detail.ResultOutputValues = nil
+		}
+		if detail.CreatedAt.IsZero() {
+			detail.CreatedAt = clone.CreatedAt
+		}
+		detail.UpdatedAt = clone.UpdatedAt
+		detail.CompletedAt = clone.CompletedAt
+	})
 
 	r.appendActivity(JobActivity{
 		JobID:      completed.JobId,
 		JobType:    completed.JobType,
 		RequestID:  completed.RequestId,
-		WorkerID:   tracked.WorkerID,
+		WorkerID:   clone.WorkerID,
 		Source:     "worker_completion",
 		Message:    clone.Message,
 		Stage:      clone.Stage,
@@ -449,7 +750,9 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 		if job == nil || strings.TrimSpace(job.JobID) == "" {
 			continue
 		}
-		jobs = append(jobs, *job)
+		clone := cloneTrackedJob(*job)
+		stripTrackedJobDetailFields(&clone)
+		jobs = append(jobs, clone)
 	}
 	r.jobsMu.RUnlock()
 
@@ -465,6 +768,34 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 
 	if err := r.store.SaveTrackedJobs(jobs); err != nil {
 		glog.Warningf("Plugin failed to persist tracked jobs: %v", err)
+	}
+}
+
+func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *TrackedJob)) {
+	normalizedJobID := strings.TrimSpace(jobID)
+	if normalizedJobID == "" {
+		return
+	}
+
+	detail, err := r.store.LoadJobDetail(normalizedJobID)
+	if err != nil {
+		glog.Warningf("Plugin failed to load job detail snapshot for %s: %v", normalizedJobID, err)
+		return
+	}
+	if detail == nil {
+		detail = &TrackedJob{JobID: normalizedJobID}
+	}
+	if detail.JobID == "" {
+		detail.JobID = normalizedJobID
+	}
+	if apply != nil {
+		apply(detail)
+	}
+	if detail.UpdatedAt.IsZero() {
+		detail.UpdatedAt = time.Now().UTC()
+	}
+	if err := r.store.SaveJobDetail(*detail); err != nil {
+		glog.Warningf("Plugin failed to persist job detail snapshot for %s: %v", normalizedJobID, err)
 	}
 }
 

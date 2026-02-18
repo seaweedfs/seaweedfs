@@ -1812,6 +1812,14 @@ func (s *AdminServer) GetPluginJob(jobID string) (*adminplugin.TrackedJob, bool)
 	return s.plugin.GetTrackedJob(jobID)
 }
 
+// GetPluginJobDetail returns detailed plugin job information with activity timeline.
+func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLimit int) (*adminplugin.JobDetail, bool, error) {
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
+}
+
 // ListPluginActivities returns plugin job activities for monitoring.
 func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplugin.JobActivity {
 	if s.plugin == nil {

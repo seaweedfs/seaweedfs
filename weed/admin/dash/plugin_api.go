@@ -101,6 +101,30 @@ func (s *AdminServer) GetPluginJobAPI(c *gin.Context) {
 	c.JSON(http.StatusOK, job)
 }
 
+// GetPluginJobDetailAPI returns detailed information for one tracked plugin job.
+func (s *AdminServer) GetPluginJobDetailAPI(c *gin.Context) {
+	jobID := strings.TrimSpace(c.Param("jobId"))
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "jobId is required"})
+		return
+	}
+
+	activityLimit := parsePositiveInt(c.Query("activity_limit"), 500)
+	relatedLimit := parsePositiveInt(c.Query("related_limit"), 20)
+
+	detail, found, err := s.GetPluginJobDetail(jobID, activityLimit, relatedLimit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !found || detail == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job detail not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, detail)
+}
+
 // GetPluginActivitiesAPI returns recent plugin activities.
 func (s *AdminServer) GetPluginActivitiesAPI(c *gin.Context) {
 	jobType := strings.TrimSpace(c.Query("job_type"))

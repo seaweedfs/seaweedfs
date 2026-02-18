@@ -191,3 +191,51 @@ func TestConfigStoreMonitorStateRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected activity details: %+v", gotActivities[0].Details)
 	}
 }
+
+func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewConfigStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+
+	input := TrackedJob{
+		JobID:     "job/detail:1",
+		JobType:   "dummy_stress",
+		Summary:   "detail summary",
+		Detail:    "detail payload",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
+		UpdatedAt: time.Now().UTC(),
+		Parameters: map[string]interface{}{
+			"volume_id": map[string]interface{}{"int64_value": "3"},
+		},
+		Labels: map[string]string{
+			"source": "detector",
+		},
+		ResultOutputValues: map[string]interface{}{
+			"moved": map[string]interface{}{"bool_value": true},
+		},
+	}
+
+	if err := store.SaveJobDetail(input); err != nil {
+		t.Fatalf("SaveJobDetail: %v", err)
+	}
+
+	got, err := store.LoadJobDetail(input.JobID)
+	if err != nil {
+		t.Fatalf("LoadJobDetail: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("LoadJobDetail returned nil")
+	}
+	if got.Detail != input.Detail {
+		t.Fatalf("unexpected detail: got=%q want=%q", got.Detail, input.Detail)
+	}
+	if got.Labels["source"] != "detector" {
+		t.Fatalf("unexpected labels: %+v", got.Labels)
+	}
+	if got.ResultOutputValues == nil {
+		t.Fatalf("expected result output values")
+	}
+}
