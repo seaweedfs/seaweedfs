@@ -43,6 +43,7 @@ type schedulerPolicy struct {
 }
 
 func (r *Plugin) schedulerLoop() {
+	defer r.wg.Done()
 	ticker := time.NewTicker(r.schedulerTick)
 	defer ticker.Stop()
 
@@ -460,10 +461,18 @@ func (r *Plugin) dispatchScheduledProposals(
 				}
 
 				for {
+					select {
+					case <-r.shutdownCh:
+						return
+					default:
+					}
+
 					executor, release, reserveErr := r.reserveScheduledExecutor(jobType, policy)
 					if reserveErr != nil {
-						if strings.Contains(strings.ToLower(reserveErr.Error()), "shutting down") {
+						select {
+						case <-r.shutdownCh:
 							return
+						default:
 						}
 						statsMu.Lock()
 						errorCount++
@@ -770,26 +779,25 @@ func buildScheduledJobSpec(jobType string, proposal *plugin_pb.JobProposal, inde
 	if proposal == nil {
 		return job
 	}
-	if proposal != nil {
-		if proposal.JobType != "" {
-			job.JobType = proposal.JobType
+
+	if proposal.JobType != "" {
+		job.JobType = proposal.JobType
+	}
+	job.Summary = proposal.Summary
+	job.Detail = proposal.Detail
+	if proposal.Priority != plugin_pb.JobPriority_JOB_PRIORITY_UNSPECIFIED {
+		job.Priority = proposal.Priority
+	}
+	job.DedupeKey = proposal.DedupeKey
+	job.Parameters = CloneConfigValueMap(proposal.Parameters)
+	if proposal.Labels != nil {
+		job.Labels = make(map[string]string, len(proposal.Labels))
+		for k, v := range proposal.Labels {
+			job.Labels[k] = v
 		}
-		job.Summary = proposal.Summary
-		job.Detail = proposal.Detail
-		if proposal.Priority != plugin_pb.JobPriority_JOB_PRIORITY_UNSPECIFIED {
-			job.Priority = proposal.Priority
-		}
-		job.DedupeKey = proposal.DedupeKey
-		job.Parameters = CloneConfigValueMap(proposal.Parameters)
-		if proposal.Labels != nil {
-			job.Labels = make(map[string]string, len(proposal.Labels))
-			for k, v := range proposal.Labels {
-				job.Labels[k] = v
-			}
-		}
-		if proposal.NotBefore != nil {
-			job.ScheduledAt = proposal.NotBefore
-		}
+	}
+	if proposal.NotBefore != nil {
+		job.ScheduledAt = proposal.NotBefore
 	}
 
 	return job
