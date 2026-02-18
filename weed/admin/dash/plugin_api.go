@@ -65,7 +65,7 @@ func (s *AdminServer) GetPluginWorkersAPI(c *gin.Context) {
 func (s *AdminServer) GetPluginJobTypesAPI(c *gin.Context) {
 	jobTypes, err := s.ListPluginJobTypes()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if jobTypes == nil {
@@ -146,7 +146,7 @@ func (s *AdminServer) GetPluginSchedulerStatesAPI(c *gin.Context) {
 
 	states, err := s.ListPluginSchedulerStates()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -183,7 +183,7 @@ func (s *AdminServer) RequestPluginJobTypeSchemaAPI(c *gin.Context) {
 	defer cancel()
 	descriptor, err := s.RequestPluginJobTypeDescriptor(ctx, jobType, forceRefresh)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -200,7 +200,7 @@ func (s *AdminServer) GetPluginJobTypeDescriptorAPI(c *gin.Context) {
 
 	descriptor, err := s.LoadPluginJobTypeDescriptor(jobType)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if descriptor == nil {
@@ -221,7 +221,7 @@ func (s *AdminServer) GetPluginJobTypeConfigAPI(c *gin.Context) {
 
 	config, err := s.LoadPluginJobTypeConfig(jobType)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if config == nil {
@@ -271,7 +271,7 @@ func (s *AdminServer) UpdatePluginJobTypeConfigAPI(c *gin.Context) {
 	config.UpdatedBy = username
 
 	if err := s.SavePluginJobTypeConfig(config); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -288,7 +288,7 @@ func (s *AdminServer) GetPluginRunHistoryAPI(c *gin.Context) {
 
 	history, err := s.GetPluginRunHistory(jobType)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if history == nil {
@@ -396,7 +396,7 @@ func (s *AdminServer) TriggerPluginDetectionAPI(c *gin.Context) {
 
 	if err != nil {
 		response["error"] = err.Error()
-		c.JSON(http.StatusBadRequest, response)
+		c.JSON(http.StatusInternalServerError, response)
 		return
 	}
 

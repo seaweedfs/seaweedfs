@@ -1053,9 +1053,16 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 
 func (r *Plugin) safeSendDetectionComplete(requestID string, message *plugin_pb.DetectionComplete) {
 	r.pendingDetectionMu.Lock()
-	state := r.pendingDetection[requestID]
+	state, found := r.pendingDetection[requestID]
+	var ch chan *plugin_pb.DetectionComplete
+	if found && state != nil {
+		ch = state.complete
+	}
 	r.pendingDetectionMu.Unlock()
-	safeSendCh(state.complete, message, r.shutdownCh)
+
+	if ch != nil {
+		safeSendCh(ch, message, r.shutdownCh)
+	}
 }
 
 func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {

@@ -84,7 +84,11 @@ func (r *Plugin) runSchedulerTick() {
 			continue
 		}
 
-		go r.runScheduledDetection(jobType, policy)
+		r.wg.Add(1)
+		go func(jt string, p schedulerPolicy) {
+			defer r.wg.Done()
+			r.runScheduledDetection(jt, p)
+		}(jobType, policy)
 	}
 
 	r.pruneSchedulerState(active)

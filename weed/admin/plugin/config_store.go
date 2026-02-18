@@ -678,7 +678,7 @@ func cloneActivities(in []JobActivity) []JobActivity {
 		if in[i].Details != nil {
 			out[i].Details = make(map[string]interface{}, len(in[i].Details))
 			for key, value := range in[i].Details {
-				out[i].Details[key] = value
+				out[i].Details[key] = deepCopyGenericValue(value)
 			}
 		}
 	}
@@ -710,7 +710,7 @@ func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) erro
 }
 func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(filename)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, defaultDirPerm); err != nil {
 		return fmt.Errorf("create directory %s: %w", dir, err)
 	}
 	tmpFile := filename + ".tmp"
