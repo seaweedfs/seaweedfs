@@ -359,13 +359,13 @@ func mergeTrackedStatusIntoDetail(detail *TrackedJob, tracked *TrackedJob) {
 	if detail.Attempt == 0 {
 		detail.Attempt = tracked.Attempt
 	}
-	if detail.CreatedAt.IsZero() {
+	if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
 		detail.CreatedAt = tracked.CreatedAt
 	}
-	if detail.UpdatedAt.IsZero() {
+	if detail.UpdatedAt == nil || detail.UpdatedAt.IsZero() {
 		detail.UpdatedAt = tracked.UpdatedAt
 	}
-	if detail.CompletedAt.IsZero() {
+	if detail.CompletedAt == nil || detail.CompletedAt.IsZero() {
 		detail.CompletedAt = tracked.CompletedAt
 	}
 	if detail.ErrorMessage == "" {
@@ -655,8 +655,12 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
 			detail.CreatedAt = clone.CreatedAt
 		}
-		detail.UpdatedAt = clone.UpdatedAt
-		detail.CompletedAt = clone.CompletedAt
+		if detail.UpdatedAt == nil || detail.UpdatedAt.IsZero() {
+			detail.UpdatedAt = clone.UpdatedAt
+		}
+		if detail.CompletedAt == nil || detail.CompletedAt.IsZero() {
+			detail.CompletedAt = clone.CompletedAt
+		}
 	})
 
 	r.appendActivity(JobActivity{
@@ -834,7 +838,9 @@ func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *Track
 		return
 	}
 	if detail == nil {
-		return
+		detail = &TrackedJob{
+			JobID: normalizedJobID,
+		}
 	}
 
 	if apply != nil {
@@ -866,6 +872,7 @@ func (r *Plugin) persistActivitiesSnapshot() {
 }
 
 func (r *Plugin) persistenceLoop() {
+	defer r.wg.Done()
 	for {
 		select {
 		case <-r.shutdownCh:
