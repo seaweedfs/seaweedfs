@@ -1270,17 +1270,20 @@ worker:
   replicas: 1
   loggingOverrideLevel: null
   metricsPort: 9327
+  metricsIp: ""  # If empty, defaults to 0.0.0.0
 
   # Admin server to connect to
   adminServer: ""
 
-  # Worker capabilities - comma-separated list
-  # Available: vacuum, balance, erasure_coding
-  # Default: "vacuum,balance,erasure_coding" (all capabilities)
-  capabilities: "vacuum,balance,erasure_coding"
+  # Worker job types - comma-separated list
+  # Available: vacuum, volume_balance, erasure_coding
+  jobType: "vacuum,volume_balance,erasure_coding"
 
-  # Maximum number of concurrent tasks
-  maxConcurrent: 3
+  # Maximum number of concurrent detection requests
+  maxDetect: 1
+
+  # Maximum number of concurrent execution jobs
+  maxExecute: 4
 
   # Working directory for task execution
   workingDir: "/tmp/seaweedfs-worker"
