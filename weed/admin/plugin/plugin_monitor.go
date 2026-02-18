@@ -165,21 +165,16 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 		return nil, false, nil
 	}
 
-	trackedJobs, err := r.store.LoadTrackedJobs()
-	if err != nil {
-		return nil, false, err
-	}
-
-	var trackedSnapshot *TrackedJob
-	for i := range trackedJobs {
-		if strings.TrimSpace(trackedJobs[i].JobID) != normalizedJobID {
-			continue
-		}
-		candidate := cloneTrackedJob(trackedJobs[i])
+	r.jobsMu.RLock()
+	trackedSnapshot, ok := r.jobs[normalizedJobID]
+	if ok && trackedSnapshot != nil {
+		candidate := cloneTrackedJob(*trackedSnapshot)
 		stripTrackedJobDetailFields(&candidate)
 		trackedSnapshot = &candidate
-		break
+	} else {
+		trackedSnapshot = nil
 	}
+	r.jobsMu.RUnlock()
 
 	detailJob, err := r.store.LoadJobDetail(normalizedJobID)
 	if err != nil {
@@ -201,10 +196,9 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	}
 	detailJob.Parameters = enrichTrackedJobParameters(detailJob.JobType, detailJob.Parameters)
 
-	activities, err := r.store.LoadActivities()
-	if err != nil {
-		return nil, true, err
-	}
+	r.activitiesMu.RLock()
+	activities := append([]JobActivity(nil), r.activities...)
+	r.activitiesMu.RUnlock()
 
 	detail := &JobDetail{
 		Job:         detailJob,
@@ -387,8 +381,8 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		job.Message = update.Message
 		job.UpdatedAt = now
 		r.pruneTrackedJobsLocked()
+		r.dirtyJobs = true
 		r.jobsMu.Unlock()
-		r.persistTrackedJobsSnapshot()
 	}
 
 	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
@@ -443,8 +437,8 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	tracked.UpdatedAt = now
 	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
+	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistTrackedJobsSnapshot()
 	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
 		detail.JobID = job.JobId
 		detail.JobType = job.JobType
@@ -516,8 +510,8 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	tracked.UpdatedAt = now
 	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
+	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistTrackedJobsSnapshot()
 	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
 		detail.JobID = job.JobId
 		detail.JobType = job.JobType
@@ -603,8 +597,8 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	tracked.CompletedAt = now
 	r.pruneTrackedJobsLocked()
 	clone := cloneTrackedJob(*tracked)
+	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistTrackedJobsSnapshot()
 	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) {
 		detail.JobID = completed.JobId
 		if completed.JobType != "" {
@@ -681,8 +675,8 @@ func (r *Plugin) appendActivity(activity JobActivity) {
 	if len(r.activities) > maxActivityRecords {
 		r.activities = r.activities[len(r.activities)-maxActivityRecords:]
 	}
+	r.dirtyActivities = true
 	r.activitiesMu.Unlock()
-	r.persistActivitiesSnapshot()
 }
 
 func (r *Plugin) pruneTrackedJobsLocked() {
@@ -747,7 +741,8 @@ func configValueMapToPlain(values map[string]*plugin_pb.ConfigValue) map[string]
 }
 
 func (r *Plugin) persistTrackedJobsSnapshot() {
-	r.jobsMu.RLock()
+	r.jobsMu.Lock()
+	r.dirtyJobs = false
 	jobs := make([]TrackedJob, 0, len(r.jobs))
 	for _, job := range r.jobs {
 		if job == nil || strings.TrimSpace(job.JobID) == "" {
@@ -757,7 +752,11 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 		stripTrackedJobDetailFields(&clone)
 		jobs = append(jobs, clone)
 	}
-	r.jobsMu.RUnlock()
+	r.jobsMu.Unlock()
+
+	if len(jobs) == 0 {
+		return
+	}
 
 	sort.Slice(jobs, func(i, j int) bool {
 		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
@@ -802,9 +801,14 @@ func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *Track
 }
 
 func (r *Plugin) persistActivitiesSnapshot() {
-	r.activitiesMu.RLock()
+	r.activitiesMu.Lock()
+	r.dirtyActivities = false
 	activities := append([]JobActivity(nil), r.activities...)
-	r.activitiesMu.RUnlock()
+	r.activitiesMu.Unlock()
+
+	if len(activities) == 0 {
+		return
+	}
 
 	if len(activities) > maxActivityRecords {
 		activities = activities[len(activities)-maxActivityRecords:]
@@ -812,5 +816,30 @@ func (r *Plugin) persistActivitiesSnapshot() {
 
 	if err := r.store.SaveActivities(activities); err != nil {
 		glog.Warningf("Plugin failed to persist activities: %v", err)
+	}
+}
+
+func (r *Plugin) persistenceLoop() {
+	for {
+		select {
+		case <-r.shutdownCh:
+			r.persistTrackedJobsSnapshot()
+			r.persistActivitiesSnapshot()
+			return
+		case <-r.persistTicker.C:
+			r.jobsMu.RLock()
+			needsJobsFlush := r.dirtyJobs
+			r.jobsMu.RUnlock()
+			if needsJobsFlush {
+				r.persistTrackedJobsSnapshot()
+			}
+
+			r.activitiesMu.RLock()
+			needsActivitiesFlush := r.dirtyActivities
+			r.activitiesMu.RUnlock()
+			if needsActivitiesFlush {
+				r.persistActivitiesSnapshot()
+			}
+		}
 	}
 }

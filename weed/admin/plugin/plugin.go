@@ -79,6 +79,10 @@ type Plugin struct {
 	activitiesMu sync.RWMutex
 	activities   []JobActivity
 
+	dirtyJobs       bool
+	dirtyActivities bool
+	persistTicker   *time.Ticker
+
 	shutdownCh chan struct{}
 }
 
@@ -141,6 +145,7 @@ func New(options Options) (*Plugin, error) {
 		recentDedupeByType:        make(map[string]map[string]time.Time),
 		jobs:                      make(map[string]*TrackedJob),
 		activities:                make([]JobActivity, 0, 256),
+		persistTicker:             time.NewTicker(2 * time.Second),
 		shutdownCh:                make(chan struct{}),
 	}
 
@@ -151,11 +156,16 @@ func New(options Options) (*Plugin, error) {
 	if plugin.clusterContextProvider != nil {
 		go plugin.schedulerLoop()
 	}
+	go plugin.persistenceLoop()
 
 	return plugin, nil
 }
 
 func (r *Plugin) Shutdown() {
+	if r.persistTicker != nil {
+		r.persistTicker.Stop()
+	}
+
 	select {
 	case <-r.shutdownCh:
 		return
