@@ -17,6 +17,8 @@ templ Plugin(page string) {
                             <p class="text-muted mb-0">Cluster-wide worker status, inventory, and scheduler state.</p>
                         } else if currentPage == "configuration" {
                             <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand workflows.</p>
+                        } else if currentPage == "queue" {
+                            <p class="text-muted mb-0">Track currently assigned and running jobs waiting in the execution pipeline.</p>
                         } else if currentPage == "execution" {
                             <p class="text-muted mb-0">Track execution jobs, states, and runtime activity across workers.</p>
                         } else {
@@ -43,6 +45,11 @@ templ Plugin(page string) {
                     <li class="nav-item">
                         <a class={ "nav-link", templ.KV("active", currentPage == "configuration") } href="/plugin/configuration">
                             <i class="fas fa-sliders-h me-1"></i>Configuration
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "queue") } href="/plugin/queue">
+                            <i class="fas fa-list me-1"></i>Job Queue
                         </a>
                     </li>
                     <li class="nav-item">
@@ -337,6 +344,44 @@ templ Plugin(page string) {
             </div>
         </div>
 
+        <div class="plugin-section plugin-section-queue">
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-list me-2"></i>Job Queue</h5>
+                            <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <small class="text-muted">States: assigned/running</small>
+                                <select class="form-select form-select-sm" id="plugin-monitor-queue-job-type-filter" style="min-width: 180px;">
+                                    <option value="">All Job Types</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Job ID</th>
+                                            <th>Type</th>
+                                            <th>State</th>
+                                            <th>Progress</th>
+                                            <th>Worker</th>
+                                            <th>Updated</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-queue-jobs-table-body">
+                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="plugin-section plugin-section-detection">
             <div class="row mb-4">
                 <div class="col-12">
@@ -452,25 +497,36 @@ templ Plugin(page string) {
 
     <style>
         #plugin-page[data-plugin-page="overview"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="overview"] .plugin-section-queue,
         #plugin-page[data-plugin-page="overview"] .plugin-section-detection,
         #plugin-page[data-plugin-page="overview"] .plugin-section-execution {
             display: none;
         }
 
         #plugin-page[data-plugin-page="configuration"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="configuration"] .plugin-section-queue,
         #plugin-page[data-plugin-page="configuration"] .plugin-section-detection,
         #plugin-page[data-plugin-page="configuration"] .plugin-section-execution {
             display: none;
         }
 
+        #plugin-page[data-plugin-page="queue"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="queue"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="queue"] .plugin-section-detection,
+        #plugin-page[data-plugin-page="queue"] .plugin-section-execution {
+            display: none;
+        }
+
         #plugin-page[data-plugin-page="detection"] .plugin-section-overview,
         #plugin-page[data-plugin-page="detection"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="detection"] .plugin-section-queue,
         #plugin-page[data-plugin-page="detection"] .plugin-section-execution {
             display: none;
         }
 
         #plugin-page[data-plugin-page="execution"] .plugin-section-overview,
         #plugin-page[data-plugin-page="execution"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="execution"] .plugin-section-queue,
         #plugin-page[data-plugin-page="execution"] .plugin-section-detection {
             display: none;
         }
@@ -512,6 +568,7 @@ templ Plugin(page string) {
                 selectedJobType: '',
                 jobTypes: [],
                 lastDetectionByJobType: {},
+                monitorQueueJobType: '',
                 monitorDetectionJobType: '',
                 monitorExecutionJobType: '',
                 monitorExecutionJobState: '',
@@ -989,6 +1046,63 @@ templ Plugin(page string) {
                         '<td><small>' + escapeHtml(textOrDash(executionJob.worker_id)) + '</small></td>' +
                         '<td><small>' + escapeHtml(parseTime(executionJob.updated_at) || '-') + '</small></td>' +
                         '<td><small>' + escapeHtml(textOrDash(executionJob.message)) + '</small></td>' +
+                        '</tr>';
+                }
+
+                tbody.innerHTML = rows;
+            }
+
+            function renderQueueJobs() {
+                var tbody = document.getElementById('plugin-queue-jobs-table-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var filteredJobs = [];
+                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
+                for (var i = 0; i < allJobs.length; i++) {
+                    var queueJob = allJobs[i] || {};
+                    var queueJobType = String(queueJob.job_type || '').trim();
+                    if (state.monitorQueueJobType && queueJobType !== state.monitorQueueJobType) {
+                        continue;
+                    }
+                    var normalizedState = normalizeJobStateForFilter(queueJob.state);
+                    if (normalizedState !== 'assigned' && normalizedState !== 'running' && normalizedState !== 'in_progress') {
+                        continue;
+                    }
+                    filteredJobs.push(queueJob);
+                }
+
+                if (!filteredJobs.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No queued/active jobs</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var j = 0; j < filteredJobs.length; j++) {
+                    var queueItem = filteredJobs[j] || {};
+                    var progress = Number(queueItem.progress || 0);
+                    if (!Number.isFinite(progress) || progress < 0) {
+                        progress = 0;
+                    }
+                    if (progress > 100) {
+                        progress = 100;
+                    }
+
+                    var barClass = 'bg-warning';
+                    var queueStateText = String(queueItem.state || 'unknown').toLowerCase();
+                    if (queueStateText.indexOf('run') >= 0 || queueStateText.indexOf('progress') >= 0) {
+                        barClass = 'bg-info';
+                    }
+
+                    rows += '<tr>' +
+                        '<td><small>' + escapeHtml(textOrDash(queueItem.job_id)) + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(queueItem.job_type)) + '</td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(queueItem.state)) + '</span></td>' +
+                        '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(queueItem.worker_id)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(parseTime(queueItem.updated_at) || '-') + '</small></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(queueItem.message)) + '</small></td>' +
                         '</tr>';
                 }
 
@@ -1950,6 +2064,7 @@ templ Plugin(page string) {
                     return String(select.value || '');
                 }
 
+                state.monitorQueueJobType = applyOptions('plugin-monitor-queue-job-type-filter', state.monitorQueueJobType);
                 state.monitorDetectionJobType = applyOptions('plugin-monitor-detection-job-type-filter', state.monitorDetectionJobType);
                 state.monitorExecutionJobType = applyOptions('plugin-monitor-execution-job-type-filter', state.monitorExecutionJobType);
             }
@@ -2130,10 +2245,12 @@ templ Plugin(page string) {
             }
 
             async function refreshJobsAndActivities() {
+                var queueTypeFilter = document.getElementById('plugin-monitor-queue-job-type-filter');
                 var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
                 var executionTypeFilter = document.getElementById('plugin-monitor-execution-job-type-filter');
                 var executionStateFilter = document.getElementById('plugin-monitor-job-state-filter');
 
+                state.monitorQueueJobType = queueTypeFilter ? String(queueTypeFilter.value || '').trim() : '';
                 state.monitorDetectionJobType = detectionTypeFilter ? String(detectionTypeFilter.value || '').trim() : '';
                 state.monitorExecutionJobType = executionTypeFilter ? String(executionTypeFilter.value || '').trim() : '';
                 state.monitorExecutionJobState = executionStateFilter ? String(executionStateFilter.value || '').trim() : '';
@@ -2151,6 +2268,7 @@ templ Plugin(page string) {
                 state.allJobs = state.jobs;
                 state.allActivities = state.activities;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
+                renderQueueJobs();
                 renderDetectionJobs();
                 renderExecutionJobs();
                 renderExecutionActivities();
@@ -2176,6 +2294,14 @@ templ Plugin(page string) {
             }
 
             function bindActions() {
+                var queueTypeFilter = document.getElementById('plugin-monitor-queue-job-type-filter');
+                if (queueTypeFilter) {
+                    queueTypeFilter.addEventListener('change', function() {
+                        state.monitorQueueJobType = String(queueTypeFilter.value || '').trim();
+                        renderQueueJobs();
+                    });
+                }
+
                 var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
                 if (detectionTypeFilter) {
                     detectionTypeFilter.addEventListener('change', function() {

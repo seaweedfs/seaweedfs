@@ -36,6 +36,11 @@ func (h *PluginHandlers) ShowPluginDetection(c *gin.Context) {
 	h.renderPluginPage(c, "detection")
 }
 
+// ShowPluginQueue displays plugin job queue page.
+func (h *PluginHandlers) ShowPluginQueue(c *gin.Context) {
+	h.renderPluginPage(c, "queue")
+}
+
 // ShowPluginExecution displays plugin execution jobs page.
 func (h *PluginHandlers) ShowPluginExecution(c *gin.Context) {
 	h.renderPluginPage(c, "execution")
