@@ -23,6 +23,20 @@ var (
 	StateCanceled  = strings.ToLower(plugin_pb.JobState_JOB_STATE_CANCELED.String())
 )
 
+// activityLess reports whether activity a occurred after activity b (newest-first order).
+// A nil OccurredAt is treated as the zero time.
+func activityLess(a, b JobActivity) bool {
+	ta := time.Time{}
+	if a.OccurredAt != nil {
+		ta = *a.OccurredAt
+	}
+	tb := time.Time{}
+	if b.OccurredAt != nil {
+		tb = *b.OccurredAt
+	}
+	return ta.After(tb)
+}
+
 func (r *Plugin) loadPersistedMonitorState() error {
 	trackedJobs, err := r.store.LoadTrackedJobs()
 	if err != nil {
@@ -135,15 +149,7 @@ func (r *Plugin) ListActivities(jobType string, limit int) []JobActivity {
 	}
 
 	sort.Slice(activities, func(i, j int) bool {
-		ti := time.Time{}
-		if activities[i].OccurredAt != nil {
-			ti = *activities[i].OccurredAt
-		}
-		tj := time.Time{}
-		if activities[j].OccurredAt != nil {
-			tj = *activities[j].OccurredAt
-		}
-		return ti.After(tj)
+		return activityLess(activities[i], activities[j])
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[:limit]
@@ -168,15 +174,7 @@ func (r *Plugin) ListJobActivities(jobID string, limit int) []JobActivity {
 	r.activitiesMu.RUnlock()
 
 	sort.Slice(activities, func(i, j int) bool {
-		ti := time.Time{}
-		if activities[i].OccurredAt != nil {
-			ti = *activities[i].OccurredAt
-		}
-		tj := time.Time{}
-		if activities[j].OccurredAt != nil {
-			tj = *activities[j].OccurredAt
-		}
-		return ti.Before(tj)
+		return !activityLess(activities[i], activities[j]) // oldest-first for job timeline
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[len(activities)-limit:]
@@ -299,15 +297,7 @@ func filterJobActivitiesFromSlice(all []JobActivity, jobID string, limit int) []
 	}
 
 	sort.Slice(activities, func(i, j int) bool {
-		ti := time.Time{}
-		if activities[i].OccurredAt != nil {
-			ti = *activities[i].OccurredAt
-		}
-		tj := time.Time{}
-		if activities[j].OccurredAt != nil {
-			tj = *activities[j].OccurredAt
-		}
-		return ti.Before(tj)
+		return !activityLess(activities[i], activities[j]) // oldest-first for job timeline
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[len(activities)-limit:]
