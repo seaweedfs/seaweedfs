@@ -229,6 +229,48 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	})
 }
 
+func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
+	if job == nil || strings.TrimSpace(job.JobId) == "" {
+		return
+	}
+
+	now := time.Now().UTC()
+
+	r.jobsMu.Lock()
+	tracked := r.jobs[job.JobId]
+	if tracked == nil {
+		tracked = &TrackedJob{
+			JobID:     job.JobId,
+			CreatedAt: now,
+		}
+		r.jobs[job.JobId] = tracked
+	}
+
+	tracked.JobType = job.JobType
+	tracked.DedupeKey = job.DedupeKey
+	tracked.Summary = job.Summary
+	tracked.State = strings.ToLower(plugin_pb.JobState_JOB_STATE_PENDING.String())
+	tracked.Progress = 0
+	tracked.Stage = "queued"
+	tracked.Message = "waiting for available executor"
+	if tracked.CreatedAt.IsZero() {
+		tracked.CreatedAt = now
+	}
+	tracked.UpdatedAt = now
+	r.pruneTrackedJobsLocked()
+	r.jobsMu.Unlock()
+	r.persistTrackedJobsSnapshot()
+
+	r.appendActivity(JobActivity{
+		JobID:      job.JobId,
+		JobType:    job.JobType,
+		Source:     "admin_scheduler",
+		Message:    "job queued for execution",
+		Stage:      "queued",
+		OccurredAt: now,
+	})
+}
+
 func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
 	if completed == nil || strings.TrimSpace(completed.JobId) == "" {
 		return nil

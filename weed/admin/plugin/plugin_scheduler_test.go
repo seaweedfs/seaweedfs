@@ -193,15 +193,21 @@ func TestFilterProposalsWithActiveJobs(t *testing.T) {
 		JobId:   "job-2",
 		JobType: "vacuum",
 	}, 1)
+	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+		JobId:     "job-3",
+		JobType:   "vacuum",
+		DedupeKey: "vacuum:k4",
+	})
 
 	filtered, skipped := pluginSvc.filterProposalsWithActiveJobs("vacuum", []*plugin_pb.JobProposal{
 		{ProposalId: "proposal-1", JobType: "vacuum", DedupeKey: "vacuum:k1"},
 		{ProposalId: "job-2", JobType: "vacuum"},
+		{ProposalId: "proposal-2b", JobType: "vacuum", DedupeKey: "vacuum:k4"},
 		{ProposalId: "proposal-3", JobType: "vacuum", DedupeKey: "vacuum:k3"},
 		{ProposalId: "proposal-4", JobType: "balance", DedupeKey: "balance:k1"},
 	})
-	if skipped != 2 {
-		t.Fatalf("unexpected skipped count: got=%d want=2", skipped)
+	if skipped != 3 {
+		t.Fatalf("unexpected skipped count: got=%d want=3", skipped)
 	}
 	if len(filtered) != 2 {
 		t.Fatalf("unexpected filtered size: got=%d want=2", len(filtered))

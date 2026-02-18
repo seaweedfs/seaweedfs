@@ -407,19 +407,16 @@ func (r *Plugin) dispatchScheduledProposals(
 	clusterContext *plugin_pb.ClusterContext,
 	policy schedulerPolicy,
 ) {
-	type scheduledProposal struct {
-		index    int
-		proposal *plugin_pb.JobProposal
-	}
-
-	jobQueue := make(chan scheduledProposal, len(proposals))
+	jobQueue := make(chan *plugin_pb.JobSpec, len(proposals))
 	for index, proposal := range proposals {
+		job := buildScheduledJobSpec(jobType, proposal, index)
+		r.trackExecutionQueued(job)
 		select {
 		case <-r.shutdownCh:
 			close(jobQueue)
 			return
 		default:
-			jobQueue <- scheduledProposal{index: index, proposal: proposal}
+			jobQueue <- job
 		}
 	}
 	close(jobQueue)
@@ -442,7 +439,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		go func() {
 			defer wg.Done()
 
-			for item := range jobQueue {
+			for job := range jobQueue {
 				select {
 				case <-r.shutdownCh:
 					return
@@ -464,7 +461,6 @@ func (r *Plugin) dispatchScheduledProposals(
 					continue
 				}
 
-				job := buildScheduledJobSpec(jobType, item.proposal, item.index)
 				err := r.executeScheduledJobWithExecutor(executor, job, clusterContext, policy)
 				release()
 
@@ -744,7 +740,7 @@ func proposalExecutionKey(proposal *plugin_pb.JobProposal) string {
 func isActiveTrackedJobState(state string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(state))
 	switch normalized {
-	case "assigned", "running", "in_progress", "job_state_assigned", "job_state_running":
+	case "pending", "assigned", "running", "in_progress", "job_state_pending", "job_state_assigned", "job_state_running":
 		return true
 	default:
 		return false

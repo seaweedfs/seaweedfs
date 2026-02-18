@@ -351,7 +351,7 @@ templ Plugin(page string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-list me-2"></i>Job Queue</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
-                                <small class="text-muted">States: assigned/running</small>
+                                <small class="text-muted">States: pending/assigned/running</small>
                                 <select class="form-select form-select-sm" id="plugin-monitor-queue-job-type-filter" style="min-width: 180px;">
                                     <option value="">All Job Types</option>
                                 </select>
@@ -724,7 +724,7 @@ templ Plugin(page string) {
 
                 var activeCount = allJobs.filter(function(job) {
                     var st = String(job.state || '').toLowerCase();
-                    return st === 'job_state_assigned' || st === 'job_state_running' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
                 }).length;
 
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
@@ -751,7 +751,7 @@ templ Plugin(page string) {
                         continue;
                     }
                     var st = String(job.state || '').toLowerCase();
-                    var isActive = st === 'job_state_assigned' || st === 'job_state_running' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    var isActive = st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
                     if (!isActive) {
                         continue;
                     }
@@ -1067,7 +1067,7 @@ templ Plugin(page string) {
                         continue;
                     }
                     var normalizedState = normalizeJobStateForFilter(queueJob.state);
-                    if (normalizedState !== 'assigned' && normalizedState !== 'running' && normalizedState !== 'in_progress') {
+                    if (normalizedState !== 'pending' && normalizedState !== 'assigned' && normalizedState !== 'running' && normalizedState !== 'in_progress') {
                         continue;
                     }
                     filteredJobs.push(queueJob);
@@ -2390,7 +2390,7 @@ templ Plugin(page string) {
 
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
-                }, 10000);
+                }, 3000);
             }
 
             window.addEventListener('beforeunload', function() {

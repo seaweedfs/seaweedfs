@@ -121,6 +121,50 @@ func TestPluginPersistsMonitorStateAfterJobUpdates(t *testing.T) {
 	}
 }
 
+func TestTrackExecutionQueuedMarksPendingState(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+		JobId:     "job-pending-1",
+		JobType:   "dummy_stress",
+		DedupeKey: "dummy_stress:1",
+		Summary:   "pending queue item",
+	})
+
+	jobs := pluginSvc.ListTrackedJobs("dummy_stress", "", 10)
+	if len(jobs) != 1 {
+		t.Fatalf("expected one tracked pending job, got=%d", len(jobs))
+	}
+	job := jobs[0]
+	if job.JobID != "job-pending-1" {
+		t.Fatalf("unexpected pending job id: %s", job.JobID)
+	}
+	if job.State != "job_state_pending" {
+		t.Fatalf("unexpected pending job state: %s", job.State)
+	}
+	if job.Stage != "queued" {
+		t.Fatalf("unexpected pending job stage: %s", job.Stage)
+	}
+
+	activities := pluginSvc.ListActivities("dummy_stress", 50)
+	found := false
+	for _, activity := range activities {
+		if activity.JobID == "job-pending-1" && activity.Stage == "queued" && activity.Source == "admin_scheduler" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected queued activity for pending job")
+	}
+}
+
 func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	t.Parallel()
 
