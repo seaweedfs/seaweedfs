@@ -3,6 +3,7 @@ package app
 import (
     "fmt"
     "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
@@ -145,14 +146,19 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                         <h6>Present Shards:</h6>
                         <div class="d-flex flex-wrap gap-1">
                             for _, shard := range data.Shards {
-                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                @renderEcShardBadge(shard.ShardID, false)
                             }
+                        </div>
+                        <div class="small text-muted mt-2">
+                            <span class="badge bg-primary me-1">Data</span>
+                            <span class="badge bg-warning text-dark me-2">Parity</span>
+                            Data shards are blue, parity shards are yellow.
                         </div>
                         if len(data.MissingShards) > 0 {
                             <h6 class="mt-2">Missing Shards:</h6>
                             <div class="d-flex flex-wrap gap-1">
                                 for _, shardID := range data.MissingShards {
-                                    <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                    @renderEcShardBadge(uint32(shardID), true)
                                 }
                             </div>
                         }
@@ -240,7 +246,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             for _, shard := range data.Shards {
                                     <tr>
                                         <td>
-                                            <span class="badge bg-primary">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                            @renderEcShardBadge(shard.ShardID, false)
                                         </td>
                                         <td>
                                             <a href={ templ.URL("/cluster/volume-servers/" + shard.Server) } class="text-primary text-decoration-none">
@@ -296,6 +302,29 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             window.location.href = url.toString();
         }
     </script>
+}
+
+templ renderEcShardBadge(shardID uint32, missing bool) {
+    if shardID < erasure_coding.DataShardsCount {
+        if missing {
+            <span class="badge bg-primary opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing data shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
+        } else {
+            <span class="badge bg-primary me-1 mb-1" title={fmt.Sprintf("Data shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
+        }
+    } else {
+        if missing {
+            <span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing parity shard %d", shardID)}>{fmt.Sprintf("P%02d", ecParityIndex(shardID))}</span>
+        } else {
+            <span class="badge bg-warning text-dark me-1 mb-1" title={fmt.Sprintf("Parity shard %d", shardID)}>{fmt.Sprintf("P%02d", ecParityIndex(shardID))}</span>
+        }
+    }
+}
+
+func ecParityIndex(shardID uint32) uint32 {
+    if shardID <= erasure_coding.DataShardsCount {
+        return 0
+    }
+    return shardID - erasure_coding.DataShardsCount
 }
 
 // Helper function to convert bytes to human readable format (uint64 version)
