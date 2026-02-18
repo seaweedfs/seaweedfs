@@ -44,11 +44,13 @@ Examples:
 `,
 }
 
+const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding"
+
 var (
 	pluginWorkerAdminServer = cmdPluginWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	pluginWorkerID          = cmdPluginWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
 	pluginWorkerWorkingDir  = cmdPluginWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
-	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", "vacuum,volume_balance,erasure_coding", "job types to serve (comma-separated list)")
+	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types to serve (comma-separated list)")
 	pluginWorkerHeartbeat   = cmdPluginWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
 	pluginWorkerReconnect   = cmdPluginWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
 	pluginWorkerMaxDetect   = cmdPluginWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")
@@ -61,21 +63,70 @@ func init() {
 }
 
 func runPluginWorker(cmd *Command, args []string) bool {
+	return runPluginWorkerWithOptions(pluginWorkerRunOptions{
+		AdminServer: *pluginWorkerAdminServer,
+		WorkerID:    *pluginWorkerID,
+		WorkingDir:  *pluginWorkerWorkingDir,
+		JobTypes:    *pluginWorkerJobType,
+		Heartbeat:   *pluginWorkerHeartbeat,
+		Reconnect:   *pluginWorkerReconnect,
+		MaxDetect:   *pluginWorkerMaxDetect,
+		MaxExecute:  *pluginWorkerMaxExecute,
+		Address:     *pluginWorkerAddress,
+	})
+}
+
+type pluginWorkerRunOptions struct {
+	AdminServer string
+	WorkerID    string
+	WorkingDir  string
+	JobTypes    string
+	Heartbeat   time.Duration
+	Reconnect   time.Duration
+	MaxDetect   int
+	MaxExecute  int
+	Address     string
+}
+
+func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 	util.LoadConfiguration("security", false)
 
-	resolvedAdminServer := resolvePluginWorkerAdminServer(*pluginWorkerAdminServer)
-	if resolvedAdminServer != *pluginWorkerAdminServer {
-		fmt.Printf("Resolved admin worker gRPC endpoint: %s -> %s\n", *pluginWorkerAdminServer, resolvedAdminServer)
+	options.AdminServer = strings.TrimSpace(options.AdminServer)
+	if options.AdminServer == "" {
+		options.AdminServer = "localhost:23646"
+	}
+
+	options.JobTypes = strings.TrimSpace(options.JobTypes)
+	if options.JobTypes == "" {
+		options.JobTypes = defaultPluginWorkerJobTypes
+	}
+
+	if options.Heartbeat <= 0 {
+		options.Heartbeat = 15 * time.Second
+	}
+	if options.Reconnect <= 0 {
+		options.Reconnect = 5 * time.Second
+	}
+	if options.MaxDetect <= 0 {
+		options.MaxDetect = 1
+	}
+	if options.MaxExecute <= 0 {
+		options.MaxExecute = 4
+	}
+
+	resolvedAdminServer := resolvePluginWorkerAdminServer(options.AdminServer)
+	if resolvedAdminServer != options.AdminServer {
+		fmt.Printf("Resolved admin worker gRPC endpoint: %s -> %s\n", options.AdminServer, resolvedAdminServer)
 	}
 
 	dialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
-	workerID, err := resolvePluginWorkerID(*pluginWorkerID, *pluginWorkerWorkingDir)
+	workerID, err := resolvePluginWorkerID(options.WorkerID, options.WorkingDir)
 	if err != nil {
 		glog.Errorf("Failed to resolve plugin worker ID: %v", err)
 		return false
 	}
 
-	handlers, err := buildPluginWorkerHandlers(*pluginWorkerJobType, dialOption)
+	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption)
 	if err != nil {
 		glog.Errorf("Failed to build plugin worker handlers: %v", err)
 		return false
@@ -84,11 +135,11 @@ func runPluginWorker(cmd *Command, args []string) bool {
 		AdminServer:             resolvedAdminServer,
 		WorkerID:                workerID,
 		WorkerVersion:           version.Version(),
-		WorkerAddress:           *pluginWorkerAddress,
-		HeartbeatInterval:       *pluginWorkerHeartbeat,
-		ReconnectDelay:          *pluginWorkerReconnect,
-		MaxDetectionConcurrency: *pluginWorkerMaxDetect,
-		MaxExecutionConcurrency: *pluginWorkerMaxExecute,
+		WorkerAddress:           options.Address,
+		HeartbeatInterval:       options.Heartbeat,
+		ReconnectDelay:          options.Reconnect,
+		MaxDetectionConcurrency: options.MaxDetect,
+		MaxExecutionConcurrency: options.MaxExecute,
 		GrpcDialOption:          dialOption,
 		Handlers:                handlers,
 	})

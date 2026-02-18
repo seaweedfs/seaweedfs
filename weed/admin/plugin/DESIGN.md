@@ -151,9 +151,8 @@ Execution dispatch:
 
 ## Backward Compatibility
 
-- Existing `worker.proto` + current maintenance manager remain unchanged.
-- Plugin system is introduced as a parallel path (`plugin.proto`, new runtime package).
-- No migration cut-over in this step.
+- Legacy `worker.proto` runtime remains internally available where still referenced.
+- External CLI worker path is moved to plugin runtime behavior.
 - Runtime is enabled by default on admin worker gRPC server.
 
 ## Incremental Rollout Plan
@@ -171,19 +170,20 @@ Phase 4
 - Port one existing job type (e.g. vacuum) as external worker plugin.
 
 Phase 4 status (starter)
-- Added `weed plugin.worker` command as an external `plugin.proto` worker process.
+- Added `weed worker` command as an external `plugin.proto` worker process.
+- Kept `weed plugin.worker` as a compatibility alias to the same implementation.
 - Initial handler implements `vacuum` job type with:
   - declarative descriptor/config form response (`ConfigSchemaResponse`),
   - detection via master topology scan (`RunDetectionRequest`),
   - execution via existing vacuum task logic (`ExecuteJobRequest`),
   - heartbeat/load reporting for monitor UI.
-- Existing maintenance worker path remains unchanged.
+- Legacy maintenance-worker-specific CLI path is removed.
 
 Run example:
 - Start admin: `weed admin -master=localhost:9333`
-- Start plugin worker: `weed plugin.worker -admin=localhost:23646`
-- Optional explicit job type: `weed plugin.worker -admin=localhost:23646 -jobType=vacuum`
-- Optional stable worker ID persistence: `weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin`
+- Start worker: `weed worker -admin=localhost:23646`
+- Optional explicit job type: `weed worker -admin=localhost:23646 -jobType=vacuum`
+- Optional stable worker ID persistence: `weed worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin`
 
 Phase 5
 - Migrate remaining job types and deprecate old mechanism.

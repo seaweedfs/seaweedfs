@@ -120,7 +120,8 @@ var cmdAdmin = &Command{
   Plugin:
     - Always enabled on the worker gRPC port
     - Registers plugin.proto gRPC service on the same worker gRPC port
-    - External workers connect with: weed plugin.worker -admin=<admin_host:admin_port>
+    - External workers connect with: weed worker -admin=<admin_host:admin_port>
+    - Legacy alias remains available: weed plugin.worker -admin=<admin_host:admin_port>
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
 
   Configuration File:
