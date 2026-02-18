@@ -12,13 +12,13 @@ templ Plugin(page string) {
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Plugin</h2>
+                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Workers</h2>
                         if currentPage == "overview" {
-                            <p class="text-muted mb-0">Cluster-wide plugin status, worker inventory, and scheduler state.</p>
+                            <p class="text-muted mb-0">Cluster-wide worker status, inventory, and scheduler state.</p>
                         } else if currentPage == "configuration" {
-                            <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand detection workflows.</p>
+                            <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand workflows.</p>
                         } else {
-                            <p class="text-muted mb-0">Track jobs and activity streams across all plugin job types.</p>
+                            <p class="text-muted mb-0">Track jobs and activity streams across all worker job types.</p>
                         }
                     </div>
                     <div class="btn-group">
@@ -54,15 +54,7 @@ templ Plugin(page string) {
 
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
-                <div class="col-md-3 mb-3">
-                    <div class="card border-primary h-100">
-                        <div class="card-body text-center">
-                            <div class="text-uppercase text-muted small mb-1">Plugin</div>
-                            <h4 class="mb-0" id="plugin-status-enabled">-</h4>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3 mb-3">
+                <div class="col-md-4 mb-3">
                     <div class="card border-info h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Workers</div>
@@ -70,7 +62,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 mb-3">
+                <div class="col-md-4 mb-3">
                     <div class="card border-warning h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
@@ -78,7 +70,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 mb-3">
+                <div class="col-md-4 mb-3">
                     <div class="card border-success h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
@@ -142,6 +134,32 @@ templ Plugin(page string) {
                     </div>
                 </div>
             </div>
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-users me-2"></i>Workers</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Worker</th>
+                                            <th>Address</th>
+                                            <th>Capabilities</th>
+                                            <th>Load</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-workers-table-body">
+                                        <tr><td colspan="4" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="plugin-section plugin-section-configuration">
@@ -153,22 +171,11 @@ templ Plugin(page string) {
                             <small class="text-muted" id="plugin-config-updated-at">Not loaded</small>
                         </div>
                         <div class="card-body">
-                            <div class="row g-2 mb-3">
-                                <div class="col-md-5">
-                                    <label class="form-label mb-1" for="plugin-job-type-select">Job Type</label>
-                                    <select class="form-select" id="plugin-job-type-select">
-                                        <option value="">Select from connected workers</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label mb-1" for="plugin-job-type-input">Or Enter Job Type</label>
-                                    <input type="text" class="form-control" id="plugin-job-type-input" placeholder="job_type"/>
-                                </div>
-                                <div class="col-md-3 d-flex align-items-end gap-2">
-                                    <button type="button" class="btn btn-outline-primary w-100" id="plugin-load-job-type-btn">
-                                        <i class="fas fa-folder-open me-1"></i>Load
-                                    </button>
-                                </div>
+                            <div class="mb-3">
+                                <label class="form-label mb-1" for="plugin-job-type-select">Job Type</label>
+                                <select class="form-select" id="plugin-job-type-select">
+                                    <option value="">Select job type</option>
+                                </select>
                             </div>
 
                             <div class="mb-3">
@@ -179,46 +186,6 @@ templ Plugin(page string) {
                                     </button>
                                 </div>
                                 <div class="alert alert-light border" id="plugin-descriptor-summary">Select a job type to load schema and config.</div>
-                            </div>
-
-                            <div class="mb-3">
-                                <h6>Admin Plugin Settings</h6>
-                                <div class="row g-2" id="plugin-admin-settings-form">
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-enabled">Enabled</label>
-                                        <div class="form-check form-switch mt-2">
-                                            <input class="form-check-input" type="checkbox" id="plugin-admin-enabled"/>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
-                                        <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
-                                        <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-max-results">Max Jobs / Detection</label>
-                                        <input type="number" class="form-control" id="plugin-admin-max-results" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-global-exec">Global Execution Concurrency</label>
-                                        <input type="number" class="form-control" id="plugin-admin-global-exec" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-per-worker-exec">Per Worker Concurrency</label>
-                                        <input type="number" class="form-control" id="plugin-admin-per-worker-exec" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-retry-limit">Retry Limit</label>
-                                        <input type="number" class="form-control" id="plugin-admin-retry-limit" min="0"/>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label" for="plugin-admin-retry-backoff">Retry Backoff (s)</label>
-                                        <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
-                                    </div>
-                                </div>
                             </div>
 
                             <div class="mb-3">
@@ -253,23 +220,44 @@ templ Plugin(page string) {
                 <div class="col-lg-4 mb-3">
                     <div class="card shadow-sm h-100">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-users me-2"></i>Workers</h5>
+                            <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>Admin Plugin Settings</h5>
                         </div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive" style="max-height: 560px; overflow-y: auto;">
-                                <table class="table table-sm table-hover mb-0">
-                                    <thead class="table-light sticky-top">
-                                        <tr>
-                                            <th>Worker</th>
-                                            <th>Address</th>
-                                            <th>Capabilities</th>
-                                            <th>Load</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="plugin-workers-table-body">
-                                        <tr><td colspan="4" class="text-muted text-center py-3">Loading...</td></tr>
-                                    </tbody>
-                                </table>
+                        <div class="card-body">
+                            <div class="row g-2" id="plugin-admin-settings-form">
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-enabled">Enabled</label>
+                                    <div class="form-check form-switch mt-1">
+                                        <input class="form-check-input" type="checkbox" id="plugin-admin-enabled"/>
+                                    </div>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-max-results">Max Jobs / Detection</label>
+                                    <input type="number" class="form-control" id="plugin-admin-max-results" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-global-exec">Global Execution Concurrency</label>
+                                    <input type="number" class="form-control" id="plugin-admin-global-exec" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-per-worker-exec">Per Worker Concurrency</label>
+                                    <input type="number" class="form-control" id="plugin-admin-per-worker-exec" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-retry-limit">Retry Limit</label>
+                                    <input type="number" class="form-control" id="plugin-admin-retry-limit" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-retry-backoff">Retry Backoff (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1589,9 +1577,10 @@ templ Plugin(page string) {
             }
 
             function syncJobTypeControls(jobType) {
-                var input = document.getElementById('plugin-job-type-input');
                 var select = document.getElementById('plugin-job-type-select');
-                input.value = jobType || '';
+                if (!select) {
+                    return;
+                }
 
                 var matched = false;
                 for (var i = 0; i < select.options.length; i++) {
@@ -1607,12 +1596,11 @@ templ Plugin(page string) {
             }
 
             function getSelectedJobType() {
-                var inputValue = String(document.getElementById('plugin-job-type-input').value || '').trim();
-                if (inputValue) {
-                    return inputValue;
+                var select = document.getElementById('plugin-job-type-select');
+                if (!select) {
+                    return '';
                 }
-                var selectValue = String(document.getElementById('plugin-job-type-select').value || '').trim();
-                return selectValue;
+                return String(select.value || '').trim();
             }
 
             function renderJobTypeOptions() {
@@ -1620,7 +1608,7 @@ templ Plugin(page string) {
                 var previous = state.selectedJobType;
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
 
-                var html = '<option value="">Select known job type</option>';
+                var html = '<option value="">Select job type</option>';
                 for (var i = 0; i < jobTypes.length; i++) {
                     html += '<option value="' + escapeHtml(jobTypes[i]) + '">' + escapeHtml(jobTypes[i]) + '</option>';
                 }
@@ -1857,9 +1845,6 @@ templ Plugin(page string) {
 
             async function refreshAll() {
                 try {
-                    var status = await pluginRequest('GET', '/api/plugin/status');
-                    document.getElementById('plugin-status-enabled').textContent = status.enabled ? 'Enabled' : 'Disabled';
-
                     var workers = await pluginRequest('GET', '/api/plugin/workers');
                     state.workers = Array.isArray(workers) ? workers : [];
                     renderWorkers();
@@ -1893,25 +1878,11 @@ templ Plugin(page string) {
                     refreshAll();
                 });
 
-                document.getElementById('plugin-load-job-type-btn').addEventListener('click', async function() {
-                    var jobType = getSelectedJobType();
-                    if (!jobType) {
-                        notify('Enter or select a job type.', 'error');
-                        return;
-                    }
-                    try {
-                        await loadDescriptorAndConfig(jobType, false);
-                    } catch (e) {
-                        // Already shown in UI.
-                    }
-                });
-
                 document.getElementById('plugin-job-type-select').addEventListener('change', async function() {
                     var value = String(this.value || '').trim();
                     if (!value) {
                         return;
                     }
-                    document.getElementById('plugin-job-type-input').value = value;
                     try {
                         await loadDescriptorAndConfig(value, false);
                     } catch (e) {
@@ -1951,12 +1922,6 @@ templ Plugin(page string) {
                 await refreshAll();
 
                 var initialJobType = getSelectedJobType();
-                if (!initialJobType) {
-                    var select = document.getElementById('plugin-job-type-select');
-                    if (select && select.value) {
-                        initialJobType = String(select.value).trim();
-                    }
-                }
                 if (!initialJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
                     initialJobType = String(state.jobTypes[0] || '').trim();
                     syncJobTypeControls(initialJobType);

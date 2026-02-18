@@ -465,12 +465,12 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		if isPluginPage {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<a class=\"nav-link active\" href=\"/plugin\"><i class=\"fas fa-plug me-2\"></i>Plugin</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<a class=\"nav-link active\" href=\"/plugin\"><i class=\"fas fa-plug me-2\"></i>Workers</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<a class=\"nav-link\" href=\"/plugin\"><i class=\"fas fa-plug me-2\"></i>Plugin</a>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<a class=\"nav-link\" href=\"/plugin\"><i class=\"fas fa-plug me-2\"></i>Workers</a>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
