@@ -49,6 +49,47 @@ func TestWorkerBuildHelloUsesConfiguredConcurrency(t *testing.T) {
 	}
 }
 
+func TestWorkerBuildHelloIncludesMultipleCapabilities(t *testing.T) {
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:    "localhost:23646",
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handlers: []JobHandler{
+			&testJobHandler{
+				capability: &plugin_pb.JobTypeCapability{JobType: "vacuum", CanDetect: true, CanExecute: true},
+				descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+			},
+			&testJobHandler{
+				capability: &plugin_pb.JobTypeCapability{JobType: "volume_balance", CanDetect: true, CanExecute: true},
+				descriptor: &plugin_pb.JobTypeDescriptor{JobType: "volume_balance"},
+			},
+		},
+		MaxDetectionConcurrency: 2,
+		MaxExecutionConcurrency: 3,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	hello := worker.buildHello()
+	if hello == nil || len(hello.Capabilities) != 2 {
+		t.Fatalf("expected two capabilities in hello")
+	}
+
+	found := map[string]bool{}
+	for _, capability := range hello.Capabilities {
+		found[capability.JobType] = true
+		if capability.MaxDetectionConcurrency != 2 {
+			t.Fatalf("expected max_detection_concurrency=2, got=%d", capability.MaxDetectionConcurrency)
+		}
+		if capability.MaxExecutionConcurrency != 3 {
+			t.Fatalf("expected max_execution_concurrency=3, got=%d", capability.MaxExecutionConcurrency)
+		}
+	}
+	if !found["vacuum"] || !found["volume_balance"] {
+		t.Fatalf("expected capabilities for vacuum and volume_balance, got=%v", found)
+	}
+}
+
 func TestWorkerCancelWorkByTargetID(t *testing.T) {
 	worker, err := NewWorker(WorkerOptions{
 		AdminServer:    "localhost:23646",
@@ -133,6 +174,44 @@ func TestWorkerHandleCancelRequestAck(t *testing.T) {
 	}
 	if response == nil || response.GetAcknowledge() == nil || response.GetAcknowledge().Accepted {
 		t.Fatalf("expected rejected acknowledge for missing target, got=%+v", response)
+	}
+}
+
+func TestWorkerSchemaRequestRequiresJobTypeWhenMultipleHandlers(t *testing.T) {
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:    "localhost:23646",
+		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handlers: []JobHandler{
+			&testJobHandler{
+				capability: &plugin_pb.JobTypeCapability{JobType: "vacuum"},
+				descriptor: &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+			},
+			&testJobHandler{
+				capability: &plugin_pb.JobTypeCapability{JobType: "erasure_coding"},
+				descriptor: &plugin_pb.JobTypeDescriptor{JobType: "erasure_coding"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	var response *plugin_pb.WorkerToAdminMessage
+	ok := worker.handleAdminMessageForTest(&plugin_pb.AdminToWorkerMessage{
+		RequestId: "schema-req-1",
+		Body: &plugin_pb.AdminToWorkerMessage_RequestConfigSchema{
+			RequestConfigSchema: &plugin_pb.RequestConfigSchema{},
+		},
+	}, func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		response = msg
+		return true
+	})
+	if !ok {
+		t.Fatalf("expected send callback to be invoked")
+	}
+	schema := response.GetConfigSchemaResponse()
+	if schema == nil || schema.Success {
+		t.Fatalf("expected schema error response, got=%+v", response)
 	}
 }
 

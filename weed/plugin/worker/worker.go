@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,7 @@ type WorkerOptions struct {
 	MaxDetectionConcurrency int
 	MaxExecutionConcurrency int
 	GrpcDialOption          grpc.DialOption
+	Handlers                []JobHandler
 	Handler                 JobHandler
 }
 
@@ -64,6 +66,8 @@ type Worker struct {
 
 	detectSlots chan struct{}
 	execSlots   chan struct{}
+
+	handlers map[string]JobHandler
 
 	runningMu   sync.RWMutex
 	runningWork map[string]*plugin_pb.RunningWork
@@ -78,9 +82,6 @@ type Worker struct {
 func NewWorker(options WorkerOptions) (*Worker, error) {
 	if strings.TrimSpace(options.AdminServer) == "" {
 		return nil, fmt.Errorf("admin server is required")
-	}
-	if options.Handler == nil {
-		return nil, fmt.Errorf("job handler is required")
 	}
 	if options.GrpcDialOption == nil {
 		return nil, fmt.Errorf("grpc dial option is required")
@@ -114,10 +115,42 @@ func NewWorker(options WorkerOptions) (*Worker, error) {
 	opts := options
 	opts.WorkerAddress = workerAddress
 
+	allHandlers := make([]JobHandler, 0, len(opts.Handlers)+1)
+	if opts.Handler != nil {
+		allHandlers = append(allHandlers, opts.Handler)
+	}
+	allHandlers = append(allHandlers, opts.Handlers...)
+	if len(allHandlers) == 0 {
+		return nil, fmt.Errorf("at least one job handler is required")
+	}
+
+	handlers := make(map[string]JobHandler, len(allHandlers))
+	for i, handler := range allHandlers {
+		if handler == nil {
+			return nil, fmt.Errorf("job handler at index %d is nil", i)
+		}
+		handlerJobType, err := resolveHandlerJobType(handler)
+		if err != nil {
+			return nil, fmt.Errorf("resolve job handler at index %d: %w", i, err)
+		}
+		key := normalizeJobTypeKey(handlerJobType)
+		if key == "" {
+			return nil, fmt.Errorf("job handler at index %d has empty job type", i)
+		}
+		if _, found := handlers[key]; found {
+			return nil, fmt.Errorf("duplicate job handler for job type %q", handlerJobType)
+		}
+		handlers[key] = handler
+	}
+	if opts.Handler == nil {
+		opts.Handler = allHandlers[0]
+	}
+
 	w := &Worker{
 		opts:        opts,
 		detectSlots: make(chan struct{}, opts.MaxDetectionConcurrency),
 		execSlots:   make(chan struct{}, opts.MaxExecutionConcurrency),
+		handlers:    handlers,
 		runningWork: make(map[string]*plugin_pb.RunningWork),
 		workCancel:  make(map[string]context.CancelFunc),
 		workerID:    workerID,
@@ -313,27 +346,30 @@ func (w *Worker) handleAdminMessage(
 func (w *Worker) handleSchemaRequest(requestID string, request *plugin_pb.RequestConfigSchema, send func(*plugin_pb.WorkerToAdminMessage) bool) {
 	jobType := ""
 	if request != nil {
-		jobType = request.JobType
+		jobType = strings.TrimSpace(request.JobType)
 	}
-	descriptor := w.opts.Handler.Descriptor()
-	if descriptor == nil || descriptor.JobType == "" {
+
+	handler, resolvedJobType, err := w.findHandler(jobType)
+	if err != nil {
 		send(&plugin_pb.WorkerToAdminMessage{
 			Body: &plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse{ConfigSchemaResponse: &plugin_pb.ConfigSchemaResponse{
 				RequestId:    requestID,
 				JobType:      jobType,
 				Success:      false,
-				ErrorMessage: "handler descriptor is not configured",
+				ErrorMessage: err.Error(),
 			}},
 		})
 		return
 	}
-	if jobType != "" && descriptor.JobType != jobType {
+
+	descriptor := handler.Descriptor()
+	if descriptor == nil || descriptor.JobType == "" {
 		send(&plugin_pb.WorkerToAdminMessage{
 			Body: &plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse{ConfigSchemaResponse: &plugin_pb.ConfigSchemaResponse{
 				RequestId:    requestID,
-				JobType:      jobType,
+				JobType:      resolvedJobType,
 				Success:      false,
-				ErrorMessage: fmt.Sprintf("job type %q is not handled by this worker", jobType),
+				ErrorMessage: "handler descriptor is not configured",
 			}},
 		})
 		return
@@ -366,13 +402,26 @@ func (w *Worker) handleDetectionRequest(
 		return
 	}
 
+	handler, resolvedJobType, err := w.findHandler(request.JobType)
+	if err != nil {
+		send(&plugin_pb.WorkerToAdminMessage{
+			Body: &plugin_pb.WorkerToAdminMessage_DetectionComplete{DetectionComplete: &plugin_pb.DetectionComplete{
+				RequestId:    requestID,
+				JobType:      request.JobType,
+				Success:      false,
+				ErrorMessage: err.Error(),
+			}},
+		})
+		return
+	}
+
 	select {
 	case w.detectSlots <- struct{}{}:
 	default:
 		send(&plugin_pb.WorkerToAdminMessage{
 			Body: &plugin_pb.WorkerToAdminMessage_DetectionComplete{DetectionComplete: &plugin_pb.DetectionComplete{
 				RequestId:    requestID,
-				JobType:      request.JobType,
+				JobType:      resolvedJobType,
 				Success:      false,
 				ErrorMessage: "detector is at capacity",
 			}},
@@ -384,7 +433,7 @@ func (w *Worker) handleDetectionRequest(
 	w.setRunningWork(workKey, &plugin_pb.RunningWork{
 		WorkId:          requestID,
 		Kind:            plugin_pb.WorkKind_WORK_KIND_DETECTION,
-		JobType:         request.JobType,
+		JobType:         resolvedJobType,
 		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 		ProgressPercent: 0,
 		Stage:           "detecting",
@@ -410,10 +459,10 @@ func (w *Worker) handleDetectionRequest(
 
 		detectionSender := &detectionSender{
 			requestID: requestID,
-			jobType:   request.JobType,
+			jobType:   resolvedJobType,
 			send:      send,
 		}
-		if err := w.opts.Handler.Detect(requestCtx, request, detectionSender); err != nil {
+		if err := handler.Detect(requestCtx, request, detectionSender); err != nil {
 			detectionSender.SendComplete(&plugin_pb.DetectionComplete{
 				Success:      false,
 				ErrorMessage: err.Error(),
@@ -439,6 +488,20 @@ func (w *Worker) handleExecuteRequest(
 		return
 	}
 
+	handler, resolvedJobType, err := w.findHandler(request.Job.JobType)
+	if err != nil {
+		send(&plugin_pb.WorkerToAdminMessage{
+			Body: &plugin_pb.WorkerToAdminMessage_JobCompleted{JobCompleted: &plugin_pb.JobCompleted{
+				RequestId:    requestID,
+				JobId:        request.Job.JobId,
+				JobType:      request.Job.JobType,
+				Success:      false,
+				ErrorMessage: err.Error(),
+			}},
+		})
+		return
+	}
+
 	select {
 	case w.execSlots <- struct{}{}:
 	default:
@@ -446,7 +509,7 @@ func (w *Worker) handleExecuteRequest(
 			Body: &plugin_pb.WorkerToAdminMessage_JobCompleted{JobCompleted: &plugin_pb.JobCompleted{
 				RequestId:    requestID,
 				JobId:        request.Job.JobId,
-				JobType:      request.Job.JobType,
+				JobType:      resolvedJobType,
 				Success:      false,
 				ErrorMessage: "executor is at capacity",
 			}},
@@ -458,7 +521,7 @@ func (w *Worker) handleExecuteRequest(
 	w.setRunningWork(workKey, &plugin_pb.RunningWork{
 		WorkId:          request.Job.JobId,
 		Kind:            plugin_pb.WorkKind_WORK_KIND_EXECUTION,
-		JobType:         request.Job.JobType,
+		JobType:         resolvedJobType,
 		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 		ProgressPercent: 0,
 		Stage:           "starting",
@@ -485,13 +548,13 @@ func (w *Worker) handleExecuteRequest(
 		executionSender := &executionSender{
 			requestID: requestID,
 			jobID:     request.Job.JobId,
-			jobType:   request.Job.JobType,
+			jobType:   resolvedJobType,
 			send:      send,
 			onProgress: func(progress float64, stage string) {
 				w.updateRunningExecution(workKey, progress, stage)
 			},
 		}
-		if err := w.opts.Handler.Execute(requestCtx, request, executionSender); err != nil {
+		if err := handler.Execute(requestCtx, request, executionSender); err != nil {
 			executionSender.SendCompleted(&plugin_pb.JobCompleted{
 				Success:      false,
 				ErrorMessage: err.Error(),
@@ -501,14 +564,37 @@ func (w *Worker) handleExecuteRequest(
 }
 
 func (w *Worker) buildHello() *plugin_pb.WorkerHello {
-	capability := w.opts.Handler.Capability()
-	if capability == nil {
-		capability = &plugin_pb.JobTypeCapability{}
-	} else {
-		capability = proto.Clone(capability).(*plugin_pb.JobTypeCapability)
+	jobTypeKeys := make([]string, 0, len(w.handlers))
+	for key := range w.handlers {
+		jobTypeKeys = append(jobTypeKeys, key)
 	}
-	capability.MaxDetectionConcurrency = int32(cap(w.detectSlots))
-	capability.MaxExecutionConcurrency = int32(cap(w.execSlots))
+	sort.Strings(jobTypeKeys)
+
+	capabilities := make([]*plugin_pb.JobTypeCapability, 0, len(jobTypeKeys))
+	jobTypes := make([]string, 0, len(jobTypeKeys))
+
+	for _, key := range jobTypeKeys {
+		handler := w.handlers[key]
+		if handler == nil {
+			continue
+		}
+		jobType, _ := resolveHandlerJobType(handler)
+		capability := handler.Capability()
+		if capability == nil {
+			capability = &plugin_pb.JobTypeCapability{}
+		} else {
+			capability = proto.Clone(capability).(*plugin_pb.JobTypeCapability)
+		}
+		if strings.TrimSpace(capability.JobType) == "" {
+			capability.JobType = jobType
+		}
+		capability.MaxDetectionConcurrency = int32(cap(w.detectSlots))
+		capability.MaxExecutionConcurrency = int32(cap(w.execSlots))
+		capabilities = append(capabilities, capability)
+		if capability.JobType != "" {
+			jobTypes = append(jobTypes, capability.JobType)
+		}
+	}
 
 	instanceID := generateWorkerID()
 	return &plugin_pb.WorkerHello{
@@ -517,9 +603,10 @@ func (w *Worker) buildHello() *plugin_pb.WorkerHello {
 		Address:          w.opts.WorkerAddress,
 		WorkerVersion:    w.opts.WorkerVersion,
 		ProtocolVersion:  "plugin.v1",
-		Capabilities:     []*plugin_pb.JobTypeCapability{capability},
+		Capabilities:     capabilities,
 		Metadata: map[string]string{
-			"runtime": "plugin",
+			"runtime":   "plugin",
+			"job_types": strings.Join(jobTypes, ","),
 		},
 	}
 }
@@ -729,4 +816,50 @@ func (w *Worker) cancelWork(targetID string) bool {
 	}
 	cancel()
 	return true
+}
+
+func (w *Worker) findHandler(jobType string) (JobHandler, string, error) {
+	trimmed := strings.TrimSpace(jobType)
+	if trimmed == "" {
+		if len(w.handlers) == 1 {
+			for _, handler := range w.handlers {
+				resolvedJobType, err := resolveHandlerJobType(handler)
+				return handler, resolvedJobType, err
+			}
+		}
+		return nil, "", fmt.Errorf("job type is required when worker serves multiple job types")
+	}
+
+	key := normalizeJobTypeKey(trimmed)
+	handler := w.handlers[key]
+	if handler == nil {
+		return nil, "", fmt.Errorf("job type %q is not handled by this worker", trimmed)
+	}
+	resolvedJobType, err := resolveHandlerJobType(handler)
+	if err != nil {
+		return nil, "", err
+	}
+	return handler, resolvedJobType, nil
+}
+
+func resolveHandlerJobType(handler JobHandler) (string, error) {
+	if handler == nil {
+		return "", fmt.Errorf("job handler is nil")
+	}
+
+	if descriptor := handler.Descriptor(); descriptor != nil {
+		if jobType := strings.TrimSpace(descriptor.JobType); jobType != "" {
+			return jobType, nil
+		}
+	}
+	if capability := handler.Capability(); capability != nil {
+		if jobType := strings.TrimSpace(capability.JobType); jobType != "" {
+			return jobType, nil
+		}
+	}
+	return "", fmt.Errorf("handler job type is not configured")
+}
+
+func normalizeJobTypeKey(jobType string) string {
+	return strings.ToLower(strings.TrimSpace(jobType))
 }
