@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,15 +27,19 @@ type WorkerSession struct {
 
 // Registry tracks connected plugin workers and capability-based selection.
 type Registry struct {
-	mu         sync.RWMutex
-	sessions   map[string]*WorkerSession
-	staleAfter time.Duration
+	mu             sync.RWMutex
+	sessions       map[string]*WorkerSession
+	staleAfter     time.Duration
+	detectorCursor map[string]int
+	executorCursor map[string]int
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		sessions:   make(map[string]*WorkerSession),
-		staleAfter: defaultWorkerStaleTimeout,
+		sessions:       make(map[string]*WorkerSession),
+		staleAfter:     defaultWorkerStaleTimeout,
+		detectorCursor: make(map[string]int),
+		executorCursor: make(map[string]int),
 	}
 }
 
@@ -231,9 +236,10 @@ func (r *Registry) PickExecutor(jobType string) (*WorkerSession, error) {
 
 // ListExecutors returns sorted executor candidates for one job type.
 // Ordering is by most available execution slots, then lexical worker ID.
+// The top tie group is rotated round-robin to prevent sticky assignment.
 func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	candidates := r.collectByKindLocked(jobType, false, time.Now())
 	if len(candidates) == 0 {
@@ -241,6 +247,7 @@ func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
 	}
 
 	sortByKind(candidates, jobType, false)
+	r.rotateTopCandidatesLocked(candidates, jobType, false)
 
 	out := make([]*WorkerSession, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -250,8 +257,8 @@ func (r *Registry) ListExecutors(jobType string) ([]*WorkerSession, error) {
 }
 
 func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	candidates := r.collectByKindLocked(jobType, detect, time.Now())
 
@@ -264,6 +271,7 @@ func (r *Registry) pickByKind(jobType string, detect bool) (*WorkerSession, erro
 	}
 
 	sortByKind(candidates, jobType, detect)
+	r.rotateTopCandidatesLocked(candidates, jobType, detect)
 
 	return cloneWorkerSession(candidates[0]), nil
 }
@@ -313,20 +321,68 @@ func sortByKind(candidates []*WorkerSession, jobType string, detect bool) {
 		ac := a.Capabilities[jobType]
 		bc := b.Capabilities[jobType]
 
-		var aSlots, bSlots int
-		if detect {
-			aSlots = availableDetectionSlots(a, ac)
-			bSlots = availableDetectionSlots(b, bc)
-		} else {
-			aSlots = availableExecutionSlots(a, ac)
-			bSlots = availableExecutionSlots(b, bc)
-		}
+		aSlots := availableSlotsByKind(a, ac, detect)
+		bSlots := availableSlotsByKind(b, bc, detect)
 
 		if aSlots != bSlots {
 			return aSlots > bSlots
 		}
 		return a.WorkerID < b.WorkerID
 	})
+}
+
+func (r *Registry) rotateTopCandidatesLocked(candidates []*WorkerSession, jobType string, detect bool) {
+	if len(candidates) < 2 {
+		return
+	}
+
+	capability := candidates[0].Capabilities[jobType]
+	topSlots := availableSlotsByKind(candidates[0], capability, detect)
+	tieEnd := 1
+	for tieEnd < len(candidates) {
+		nextCapability := candidates[tieEnd].Capabilities[jobType]
+		if availableSlotsByKind(candidates[tieEnd], nextCapability, detect) != topSlots {
+			break
+		}
+		tieEnd++
+	}
+	if tieEnd <= 1 {
+		return
+	}
+
+	cursorKey := strings.TrimSpace(jobType)
+	if cursorKey == "" {
+		cursorKey = "*"
+	}
+
+	var offset int
+	if detect {
+		offset = r.detectorCursor[cursorKey] % tieEnd
+		r.detectorCursor[cursorKey] = (offset + 1) % tieEnd
+	} else {
+		offset = r.executorCursor[cursorKey] % tieEnd
+		r.executorCursor[cursorKey] = (offset + 1) % tieEnd
+	}
+
+	if offset == 0 {
+		return
+	}
+
+	prefix := append([]*WorkerSession(nil), candidates[:tieEnd]...)
+	for i := 0; i < tieEnd; i++ {
+		candidates[i] = prefix[(i+offset)%tieEnd]
+	}
+}
+
+func availableSlotsByKind(
+	session *WorkerSession,
+	capability *plugin_pb.JobTypeCapability,
+	detect bool,
+) int {
+	if detect {
+		return availableDetectionSlots(session, capability)
+	}
+	return availableExecutionSlots(session, capability)
 }
 
 func availableDetectionSlots(session *WorkerSession, capability *plugin_pb.JobTypeCapability) int {

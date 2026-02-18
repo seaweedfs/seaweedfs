@@ -162,6 +162,97 @@ func TestRegistryListExecutorsSortedBySlots(t *testing.T) {
 	}
 }
 
+func TestRegistryPickExecutorRoundRobinForTopTie(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	for _, workerID := range []string{"worker-a", "worker-b", "worker-c"} {
+		r.UpsertFromHello(&plugin_pb.WorkerHello{
+			WorkerId: workerID,
+			Capabilities: []*plugin_pb.JobTypeCapability{
+				{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 1},
+			},
+		})
+	}
+
+	got := make([]string, 0, 6)
+	for i := 0; i < 6; i++ {
+		executor, err := r.PickExecutor("balance")
+		if err != nil {
+			t.Fatalf("PickExecutor: %v", err)
+		}
+		got = append(got, executor.WorkerID)
+	}
+
+	want := []string{"worker-a", "worker-b", "worker-c", "worker-a", "worker-b", "worker-c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected pick order: got=%v want=%v", got, want)
+	}
+}
+
+func TestRegistryListExecutorsRoundRobinForTopTie(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 2},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-b",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 2},
+		},
+	})
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-c",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+
+	r.UpdateHeartbeat("worker-a", &plugin_pb.WorkerHeartbeat{
+		WorkerId:            "worker-a",
+		ExecutionSlotsUsed:  0,
+		ExecutionSlotsTotal: 2,
+	})
+	r.UpdateHeartbeat("worker-b", &plugin_pb.WorkerHeartbeat{
+		WorkerId:            "worker-b",
+		ExecutionSlotsUsed:  0,
+		ExecutionSlotsTotal: 2,
+	})
+	r.UpdateHeartbeat("worker-c", &plugin_pb.WorkerHeartbeat{
+		WorkerId:            "worker-c",
+		ExecutionSlotsUsed:  0,
+		ExecutionSlotsTotal: 1,
+	})
+
+	firstCall, err := r.ListExecutors("balance")
+	if err != nil {
+		t.Fatalf("ListExecutors first call: %v", err)
+	}
+	secondCall, err := r.ListExecutors("balance")
+	if err != nil {
+		t.Fatalf("ListExecutors second call: %v", err)
+	}
+	thirdCall, err := r.ListExecutors("balance")
+	if err != nil {
+		t.Fatalf("ListExecutors third call: %v", err)
+	}
+
+	if firstCall[0].WorkerID != "worker-a" || firstCall[1].WorkerID != "worker-b" || firstCall[2].WorkerID != "worker-c" {
+		t.Fatalf("unexpected first executor order: got=%s,%s,%s", firstCall[0].WorkerID, firstCall[1].WorkerID, firstCall[2].WorkerID)
+	}
+	if secondCall[0].WorkerID != "worker-b" || secondCall[1].WorkerID != "worker-a" || secondCall[2].WorkerID != "worker-c" {
+		t.Fatalf("unexpected second executor order: got=%s,%s,%s", secondCall[0].WorkerID, secondCall[1].WorkerID, secondCall[2].WorkerID)
+	}
+	if thirdCall[0].WorkerID != "worker-a" || thirdCall[1].WorkerID != "worker-b" || thirdCall[2].WorkerID != "worker-c" {
+		t.Fatalf("unexpected third executor order: got=%s,%s,%s", thirdCall[0].WorkerID, thirdCall[1].WorkerID, thirdCall[2].WorkerID)
+	}
+}
+
 func TestRegistrySkipsStaleWorkersForSelectionAndListing(t *testing.T) {
 	t.Parallel()
 
