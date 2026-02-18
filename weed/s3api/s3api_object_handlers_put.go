@@ -3,6 +3,7 @@ package s3api
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -292,6 +293,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
 
+	plaintextHash := md5.New()
+	dataReader = io.TeeReader(dataReader, plaintextHash)
+
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
@@ -425,12 +429,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
-	md5Sum := chunkResult.Md5Hash.Sum(nil)
+	md5Sum := plaintextHash.Sum(nil)
 	contentMd5 := r.Header.Get("Content-Md5")
 	if contentMd5 != "" {
 		expectedMd5, err := base64.StdEncoding.DecodeString(contentMd5)
 		if err != nil {
-			glog.Errorf("putToFiler: Invalid Content-Md5 header: %v, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks), err) // should never happen - we have validation earlier
+			glog.Errorf("putToFiler: Invalid Content-Md5 header: %v, attempting to cleanup %d orphaned chunks", err, len(chunkResult.FileChunks))
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
