@@ -7,7 +7,7 @@ templ Plugin(page string) {
             currentPage = "overview"
         }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-monitoring-tab="detection">
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -109,7 +109,7 @@ templ Plugin(page string) {
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
-                            <small class="text-muted">Per job type detection schedule and detector availability</small>
+                            <small class="text-muted">Per job type detection schedule and execution limits</small>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -122,11 +122,14 @@ templ Plugin(page string) {
                                             <th>In Flight</th>
                                             <th>Next Detection</th>
                                             <th>Interval</th>
-                                            <th>Exec Concurrency</th>
+                                            <th>Exec Global</th>
+                                            <th>Exec/Worker</th>
+                                            <th>Executor Workers</th>
+                                            <th>Effective Exec</th>
                                         </tr>
                                     </thead>
                                     <tbody id="plugin-scheduler-table-body">
-                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                        <tr><td colspan="10" class="text-muted text-center py-3">Loading...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -328,73 +331,129 @@ templ Plugin(page string) {
         </div>
 
         <div class="plugin-section plugin-section-monitoring">
-            <div class="row mb-4">
+            <div class="row mb-3">
                 <div class="col-12">
-                    <div class="card shadow-sm">
-                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Jobs</h5>
-                            <div class="d-flex gap-2 align-items-center flex-wrap">
-                                <select class="form-select form-select-sm" id="plugin-monitor-job-type-filter" style="min-width: 180px;">
-                                    <option value="">All Job Types</option>
-                                </select>
-                                <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
-                                    <option value="">All States</option>
-                                    <option value="assigned">Assigned</option>
-                                    <option value="running">Running</option>
-                                    <option value="succeeded">Succeeded</option>
-                                    <option value="failed">Failed</option>
-                                    <option value="canceled">Canceled</option>
-                                </select>
+                    <ul class="nav nav-tabs" id="plugin-monitor-tabs">
+                        <li class="nav-item">
+                            <button type="button" class="nav-link active" id="plugin-monitor-tab-detection" data-monitor-tab="detection">
+                                <i class="fas fa-search me-1"></i>Detection Jobs
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" id="plugin-monitor-tab-execution" data-monitor-tab="execution">
+                                <i class="fas fa-tasks me-1"></i>Execution Jobs
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="plugin-monitor-pane plugin-monitor-pane-detection">
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card shadow-sm">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <h5 class="mb-0"><i class="fas fa-search me-2"></i>Detection Jobs</h5>
+                                <div class="d-flex gap-2 align-items-center flex-wrap">
+                                    <select class="form-select form-select-sm" id="plugin-monitor-detection-job-type-filter" style="min-width: 180px;">
+                                        <option value="">All Job Types</option>
+                                    </select>
+                                </div>
                             </div>
-                        </div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive">
-                                <table class="table table-hover mb-0">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>Job ID</th>
-                                            <th>Type</th>
-                                            <th>State</th>
-                                            <th>Progress</th>
-                                            <th>Worker</th>
-                                            <th>Updated</th>
-                                            <th>Message</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="plugin-jobs-table-body">
-                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
-                                    </tbody>
-                                </table>
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                                    <table class="table table-sm table-hover mb-0">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Job Type</th>
+                                                <th>Request ID</th>
+                                                <th>Worker</th>
+                                                <th>Stage</th>
+                                                <th>Source</th>
+                                                <th>Message</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="plugin-detection-table-body">
+                                            <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="row mb-4">
-                <div class="col-12">
-                    <div class="card shadow-sm">
-                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Activities</h5>
-                            <small class="text-muted">Filtered by selected job type</small>
+            <div class="plugin-monitor-pane plugin-monitor-pane-execution">
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card shadow-sm">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Execution Jobs</h5>
+                                <div class="d-flex gap-2 align-items-center flex-wrap">
+                                    <select class="form-select form-select-sm" id="plugin-monitor-execution-job-type-filter" style="min-width: 180px;">
+                                        <option value="">All Job Types</option>
+                                    </select>
+                                    <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
+                                        <option value="">All States</option>
+                                        <option value="assigned">Assigned</option>
+                                        <option value="running">Running</option>
+                                        <option value="succeeded">Succeeded</option>
+                                        <option value="failed">Failed</option>
+                                        <option value="canceled">Canceled</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Job ID</th>
+                                                <th>Type</th>
+                                                <th>State</th>
+                                                <th>Progress</th>
+                                                <th>Worker</th>
+                                                <th>Updated</th>
+                                                <th>Message</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="plugin-execution-jobs-table-body">
+                                            <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
-                                <table class="table table-sm table-hover mb-0">
-                                    <thead class="table-light sticky-top">
-                                        <tr>
-                                            <th>Time</th>
-                                            <th>Job Type</th>
-                                            <th>Job ID</th>
-                                            <th>Source</th>
-                                            <th>Stage</th>
-                                            <th>Message</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="plugin-activities-table-body">
-                                        <tr><td colspan="6" class="text-muted text-center py-3">Loading...</td></tr>
-                                    </tbody>
-                                </table>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card shadow-sm">
+                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Execution Activities</h5>
+                                <small class="text-muted">Non-detection events only</small>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                                    <table class="table table-sm table-hover mb-0">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th>Time</th>
+                                                <th>Job Type</th>
+                                                <th>Job ID</th>
+                                                <th>Source</th>
+                                                <th>Stage</th>
+                                                <th>Message</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="plugin-execution-activities-table-body">
+                                            <tr><td colspan="6" class="text-muted text-center py-3">Loading...</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -416,6 +475,14 @@ templ Plugin(page string) {
 
         #plugin-page[data-plugin-page="monitoring"] .plugin-section-overview,
         #plugin-page[data-plugin-page="monitoring"] .plugin-section-configuration {
+            display: none;
+        }
+
+        #plugin-page[data-monitoring-tab="detection"] .plugin-monitor-pane-execution {
+            display: none;
+        }
+
+        #plugin-page[data-monitoring-tab="execution"] .plugin-monitor-pane-detection {
             display: none;
         }
 
@@ -456,8 +523,10 @@ templ Plugin(page string) {
                 selectedJobType: '',
                 jobTypes: [],
                 lastDetectionByJobType: {},
-                monitorJobType: '',
-                monitorJobState: '',
+                monitoringTab: 'detection',
+                monitorDetectionJobType: '',
+                monitorExecutionJobType: '',
+                monitorExecutionJobState: '',
                 workers: [],
                 jobs: [],
                 activities: [],
@@ -704,6 +773,27 @@ templ Plugin(page string) {
                 tbody.innerHTML = rows;
             }
 
+            function computeEffectiveExecutionCapacity(globalExec, perWorkerExec, executorWorkers) {
+                var capacities = [];
+                if (globalExec > 0) {
+                    capacities.push(globalExec);
+                }
+                var workerCapacity = perWorkerExec > 0 && executorWorkers > 0 ? (perWorkerExec * executorWorkers) : 0;
+                if (workerCapacity > 0) {
+                    capacities.push(workerCapacity);
+                }
+                if (!capacities.length) {
+                    return 0;
+                }
+                var effective = capacities[0];
+                for (var i = 1; i < capacities.length; i++) {
+                    if (capacities[i] < effective) {
+                        effective = capacities[i];
+                    }
+                }
+                return effective;
+            }
+
             function renderSchedulerStates() {
                 var tbody = document.getElementById('plugin-scheduler-table-body');
                 if (!tbody) {
@@ -712,7 +802,7 @@ templ Plugin(page string) {
 
                 var states = Array.isArray(state.schedulerStates) ? state.schedulerStates : [];
                 if (!states.length) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No scheduler state available</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" class="text-muted text-center py-3">No scheduler state available</td></tr>';
                     return;
                 }
 
@@ -724,14 +814,14 @@ templ Plugin(page string) {
                     var detector = item.detector_available ? textOrDash(item.detector_worker_id) : 'No detector';
                     var intervalSeconds = Number(item.detection_interval_seconds || 0);
                     var intervalText = intervalSeconds > 0 ? (String(intervalSeconds) + 's') : '-';
-                    var concurrencyText = '-';
-
-                    if (enabled) {
-                        var globalExec = Number(item.global_execution_concurrency || 0);
-                        var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
-                        var executorWorkers = Number(item.executor_worker_count || 0);
-                        concurrencyText = 'G:' + String(globalExec) + ' / W:' + String(perWorkerExec) + ' / E:' + String(executorWorkers);
-                    }
+                    var globalExec = Number(item.global_execution_concurrency || 0);
+                    var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
+                    var executorWorkers = Number(item.executor_worker_count || 0);
+                    var effectiveExec = computeEffectiveExecutionCapacity(globalExec, perWorkerExec, executorWorkers);
+                    var globalExecText = enabled ? String(globalExec) : '-';
+                    var perWorkerExecText = enabled ? String(perWorkerExec) : '-';
+                    var executorWorkersText = enabled ? String(executorWorkers) : '-';
+                    var effectiveExecText = enabled ? String(effectiveExec) : '-';
 
                     var enabledBadge = enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>';
                     var inFlightBadge = inFlight ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="badge bg-light text-dark">No</span>';
@@ -747,7 +837,10 @@ templ Plugin(page string) {
                         '<td>' + inFlightBadge + '</td>' +
                         '<td><small>' + escapeHtml(parseTime(item.next_detection_at) || '-') + '</small></td>' +
                         '<td><small>' + escapeHtml(intervalText) + '</small></td>' +
-                        '<td><small>' + escapeHtml(concurrencyText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(globalExecText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(perWorkerExecText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(executorWorkersText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(effectiveExecText) + '</small></td>' +
                         '</tr>';
                 }
 
@@ -820,17 +913,84 @@ templ Plugin(page string) {
                 tbody.innerHTML = rows;
             }
 
-            function renderJobs() {
-                var tbody = document.getElementById('plugin-jobs-table-body');
-                if (!state.jobs.length) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No jobs tracked yet</td></tr>';
+            function normalizeJobStateForFilter(value) {
+                var normalized = String(value || '').toLowerCase();
+                if (normalized.indexOf('job_state_') === 0) {
+                    normalized = normalized.slice('job_state_'.length);
+                }
+                return normalized;
+            }
+
+            function matchesExecutionStateFilter(jobState, selectedFilter) {
+                var target = normalizeJobStateForFilter(selectedFilter);
+                if (!target) {
+                    return true;
+                }
+                var actual = normalizeJobStateForFilter(jobState);
+                if (actual === target) {
+                    return true;
+                }
+                if (target === 'running' && actual === 'in_progress') {
+                    return true;
+                }
+                return false;
+            }
+
+            function isDetectionActivitySource(source) {
+                var normalized = String(source || '').toLowerCase();
+                if (!normalized) {
+                    return false;
+                }
+                if (normalized === 'worker_detection') {
+                    return true;
+                }
+                return normalized.indexOf('detector') >= 0;
+            }
+
+            function setMonitoringTab(nextTab) {
+                var normalized = nextTab === 'execution' ? 'execution' : 'detection';
+                state.monitoringTab = normalized;
+                page.setAttribute('data-monitoring-tab', normalized);
+
+                var detectionTabButton = document.getElementById('plugin-monitor-tab-detection');
+                var executionTabButton = document.getElementById('plugin-monitor-tab-execution');
+                if (detectionTabButton) {
+                    detectionTabButton.classList.toggle('active', normalized === 'detection');
+                }
+                if (executionTabButton) {
+                    executionTabButton.classList.toggle('active', normalized === 'execution');
+                }
+            }
+
+            function renderExecutionJobs() {
+                var tbody = document.getElementById('plugin-execution-jobs-table-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var filteredJobs = [];
+                var allJobs = Array.isArray(state.allJobs) ? state.allJobs : [];
+                for (var i = 0; i < allJobs.length; i++) {
+                    var job = allJobs[i] || {};
+                    var jobType = String(job.job_type || '').trim();
+                    if (state.monitorExecutionJobType && jobType !== state.monitorExecutionJobType) {
+                        continue;
+                    }
+                    if (!matchesExecutionStateFilter(job.state, state.monitorExecutionJobState)) {
+                        continue;
+                    }
+                    filteredJobs.push(job);
+                }
+
+                if (!filteredJobs.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No execution jobs tracked yet</td></tr>';
                     return;
                 }
 
                 var rows = '';
-                for (var i = 0; i < state.jobs.length; i++) {
-                    var job = state.jobs[i] || {};
-                    var progress = Number(job.progress || 0);
+                for (var j = 0; j < filteredJobs.length; j++) {
+                    var executionJob = filteredJobs[j] || {};
+                    var progress = Number(executionJob.progress || 0);
                     if (!Number.isFinite(progress) || progress < 0) {
                         progress = 0;
                     }
@@ -839,7 +999,7 @@ templ Plugin(page string) {
                     }
 
                     var barClass = 'bg-info';
-                    var stateText = String(job.state || 'unknown').toLowerCase();
+                    var stateText = String(executionJob.state || 'unknown').toLowerCase();
                     if (stateText.indexOf('failed') >= 0) {
                         barClass = 'bg-danger';
                     } else if (stateText.indexOf('succeed') >= 0 || stateText.indexOf('complete') >= 0) {
@@ -849,36 +1009,96 @@ templ Plugin(page string) {
                     }
 
                     rows += '<tr>' +
-                        '<td><small>' + escapeHtml(textOrDash(job.job_id)) + '</small></td>' +
-                        '<td>' + escapeHtml(textOrDash(job.job_type)) + '</td>' +
-                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(job.state)) + '</span></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(executionJob.job_id)) + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(executionJob.job_type)) + '</td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionJob.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
-                        '<td><small>' + escapeHtml(textOrDash(job.worker_id)) + '</small></td>' +
-                        '<td><small>' + escapeHtml(parseTime(job.updated_at) || '-') + '</small></td>' +
-                        '<td><small>' + escapeHtml(textOrDash(job.message)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(executionJob.worker_id)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(parseTime(executionJob.updated_at) || '-') + '</small></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(executionJob.message)) + '</small></td>' +
                         '</tr>';
                 }
 
                 tbody.innerHTML = rows;
             }
 
-            function renderActivities() {
-                var tbody = document.getElementById('plugin-activities-table-body');
-                if (!state.activities.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No activities yet</td></tr>';
+            function renderDetectionJobs() {
+                var tbody = document.getElementById('plugin-detection-table-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var filteredActivities = [];
+                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
+                for (var i = 0; i < allActivities.length; i++) {
+                    var activity = allActivities[i] || {};
+                    var jobType = String(activity.job_type || '').trim();
+                    if (state.monitorDetectionJobType && jobType !== state.monitorDetectionJobType) {
+                        continue;
+                    }
+                    if (!isDetectionActivitySource(activity.source)) {
+                        continue;
+                    }
+                    filteredActivities.push(activity);
+                }
+
+                if (!filteredActivities.length) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center py-3">No detection jobs tracked yet</td></tr>';
                     return;
                 }
 
                 var rows = '';
-                for (var i = 0; i < state.activities.length; i++) {
-                    var act = state.activities[i] || {};
+                for (var j = 0; j < filteredActivities.length; j++) {
+                    var detectionActivity = filteredActivities[j] || {};
                     rows += '<tr>' +
-                        '<td><small>' + escapeHtml(parseTime(act.occurred_at) || '-') + '</small></td>' +
-                        '<td>' + escapeHtml(textOrDash(act.job_type)) + '</td>' +
-                        '<td><small>' + escapeHtml(textOrDash(act.job_id)) + '</small></td>' +
-                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(act.source)) + '</span></td>' +
-                        '<td>' + escapeHtml(textOrDash(act.stage)) + '</td>' +
-                        '<td><small>' + escapeHtml(textOrDash(act.message)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(parseTime(detectionActivity.occurred_at) || '-') + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(detectionActivity.job_type)) + '</td>' +
+                        '<td><small>' + escapeHtml(textOrDash(detectionActivity.request_id)) + '</small></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(detectionActivity.worker_id)) + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(detectionActivity.stage)) + '</td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(detectionActivity.source)) + '</span></td>' +
+                        '<td><small>' + escapeHtml(textOrDash(detectionActivity.message)) + '</small></td>' +
+                        '</tr>';
+                }
+
+                tbody.innerHTML = rows;
+            }
+
+            function renderExecutionActivities() {
+                var tbody = document.getElementById('plugin-execution-activities-table-body');
+                if (!tbody) {
+                    return;
+                }
+
+                var filteredActivities = [];
+                var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
+                for (var i = 0; i < allActivities.length; i++) {
+                    var activity = allActivities[i] || {};
+                    if (isDetectionActivitySource(activity.source)) {
+                        continue;
+                    }
+                    var jobType = String(activity.job_type || '').trim();
+                    if (state.monitorExecutionJobType && jobType !== state.monitorExecutionJobType) {
+                        continue;
+                    }
+                    filteredActivities.push(activity);
+                }
+
+                if (!filteredActivities.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-muted text-center py-3">No execution activities yet</td></tr>';
+                    return;
+                }
+
+                var rows = '';
+                for (var j = 0; j < filteredActivities.length; j++) {
+                    var executionActivity = filteredActivities[j] || {};
+                    rows += '<tr>' +
+                        '<td><small>' + escapeHtml(parseTime(executionActivity.occurred_at) || '-') + '</small></td>' +
+                        '<td>' + escapeHtml(textOrDash(executionActivity.job_type)) + '</td>' +
+                        '<td><small>' + escapeHtml(textOrDash(executionActivity.job_id)) + '</small></td>' +
+                        '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionActivity.source)) + '</span></td>' +
+                        '<td>' + escapeHtml(textOrDash(executionActivity.stage)) + '</td>' +
+                        '<td><small>' + escapeHtml(textOrDash(executionActivity.message)) + '</small></td>' +
                         '</tr>';
                 }
 
@@ -1741,20 +1961,24 @@ templ Plugin(page string) {
             }
 
             function renderMonitorFilterOptions() {
-                var select = document.getElementById('plugin-monitor-job-type-filter');
-                if (!select) {
-                    return;
-                }
-                var current = state.monitorJobType || String(select.value || '');
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
 
-                var html = '<option value=\"\">All Job Types</option>';
-                for (var i = 0; i < jobTypes.length; i++) {
-                    html += '<option value=\"' + escapeHtml(jobTypes[i]) + '\">' + escapeHtml(jobTypes[i]) + '</option>';
+                function applyOptions(selectID, selectedValue) {
+                    var select = document.getElementById(selectID);
+                    if (!select) {
+                        return '';
+                    }
+                    var html = '<option value=\"\">All Job Types</option>';
+                    for (var i = 0; i < jobTypes.length; i++) {
+                        html += '<option value=\"' + escapeHtml(jobTypes[i]) + '\">' + escapeHtml(jobTypes[i]) + '</option>';
+                    }
+                    select.innerHTML = html;
+                    select.value = selectedValue || '';
+                    return String(select.value || '');
                 }
-                select.innerHTML = html;
-                select.value = current;
-                state.monitorJobType = String(select.value || '');
+
+                state.monitorDetectionJobType = applyOptions('plugin-monitor-detection-job-type-filter', state.monitorDetectionJobType);
+                state.monitorExecutionJobType = applyOptions('plugin-monitor-execution-job-type-filter', state.monitorExecutionJobType);
             }
 
             async function loadDescriptorAndConfig(jobType, forceRefresh) {
@@ -1931,49 +2155,30 @@ templ Plugin(page string) {
             }
 
             async function refreshJobsAndActivities() {
-                var typeFilterSelect = document.getElementById('plugin-monitor-job-type-filter');
-                var stateFilterSelect = document.getElementById('plugin-monitor-job-state-filter');
+                var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
+                var executionTypeFilter = document.getElementById('plugin-monitor-execution-job-type-filter');
+                var executionStateFilter = document.getElementById('plugin-monitor-job-state-filter');
 
-                state.monitorJobType = typeFilterSelect ? String(typeFilterSelect.value || '').trim() : '';
-                state.monitorJobState = stateFilterSelect ? String(stateFilterSelect.value || '').trim() : '';
-
-                var jobsURL = '/api/plugin/jobs?limit=200';
-                if (state.monitorJobType) {
-                    jobsURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
-                }
-                if (state.monitorJobState) {
-                    jobsURL += '&state=' + encodeURIComponent(state.monitorJobState);
-                }
-
-                var activitiesURL = '/api/plugin/activities?limit=200';
-                if (state.monitorJobType) {
-                    activitiesURL += '&job_type=' + encodeURIComponent(state.monitorJobType);
-                }
-
-                var schedulerURL = '/api/plugin/scheduler-states';
-                if (state.monitorJobType) {
-                    schedulerURL += '?job_type=' + encodeURIComponent(state.monitorJobType);
-                }
+                state.monitorDetectionJobType = detectionTypeFilter ? String(detectionTypeFilter.value || '').trim() : '';
+                state.monitorExecutionJobType = executionTypeFilter ? String(executionTypeFilter.value || '').trim() : '';
+                state.monitorExecutionJobState = executionStateFilter ? String(executionStateFilter.value || '').trim() : '';
 
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
-                var jobsPromise = pluginRequest('GET', jobsURL);
-                var activitiesPromise = pluginRequest('GET', activitiesURL);
-                var schedulerPromise = pluginRequest('GET', schedulerURL);
+                var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
-                var jobs = await jobsPromise;
-                var activities = await activitiesPromise;
                 var schedulerStates = await schedulerPromise;
 
-                state.jobs = Array.isArray(jobs) ? jobs : [];
-                state.activities = Array.isArray(activities) ? activities : [];
-                state.allJobs = Array.isArray(allJobs) ? allJobs : [];
-                state.allActivities = Array.isArray(allActivities) ? allActivities : [];
+                state.jobs = Array.isArray(allJobs) ? allJobs : [];
+                state.activities = Array.isArray(allActivities) ? allActivities : [];
+                state.allJobs = state.jobs;
+                state.allActivities = state.activities;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
-                renderJobs();
-                renderActivities();
+                renderDetectionJobs();
+                renderExecutionJobs();
+                renderExecutionActivities();
                 renderSchedulerStates();
                 renderStatus();
                 renderJobTypeSummary();
@@ -1996,17 +2201,42 @@ templ Plugin(page string) {
             }
 
             function bindActions() {
-                var monitorTypeFilter = document.getElementById('plugin-monitor-job-type-filter');
-                if (monitorTypeFilter) {
-                    monitorTypeFilter.addEventListener('change', function() {
-                        refreshJobsAndActivities();
+                var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
+                if (detectionTypeFilter) {
+                    detectionTypeFilter.addEventListener('change', function() {
+                        state.monitorDetectionJobType = String(detectionTypeFilter.value || '').trim();
+                        renderDetectionJobs();
+                    });
+                }
+
+                var executionTypeFilter = document.getElementById('plugin-monitor-execution-job-type-filter');
+                if (executionTypeFilter) {
+                    executionTypeFilter.addEventListener('change', function() {
+                        state.monitorExecutionJobType = String(executionTypeFilter.value || '').trim();
+                        renderExecutionJobs();
+                        renderExecutionActivities();
                     });
                 }
 
                 var monitorStateFilter = document.getElementById('plugin-monitor-job-state-filter');
                 if (monitorStateFilter) {
                     monitorStateFilter.addEventListener('change', function() {
-                        refreshJobsAndActivities();
+                        state.monitorExecutionJobState = String(monitorStateFilter.value || '').trim();
+                        renderExecutionJobs();
+                    });
+                }
+
+                var detectionTabButton = document.getElementById('plugin-monitor-tab-detection');
+                if (detectionTabButton) {
+                    detectionTabButton.addEventListener('click', function() {
+                        setMonitoringTab('detection');
+                    });
+                }
+
+                var executionTabButton = document.getElementById('plugin-monitor-tab-execution');
+                if (executionTabButton) {
+                    executionTabButton.addEventListener('click', function() {
+                        setMonitoringTab('execution');
                     });
                 }
 
@@ -2055,6 +2285,7 @@ templ Plugin(page string) {
 
             async function init() {
                 bindActions();
+                setMonitoringTab(state.monitoringTab);
                 await refreshAll();
 
                 var initialJobType = getSelectedJobType();
