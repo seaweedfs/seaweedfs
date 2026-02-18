@@ -259,9 +259,7 @@ func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
 			case <-connCtx.Done():
 				return
 			case <-heartbeatTicker.C:
-				send(&plugin_pb.WorkerToAdminMessage{
-					Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{Heartbeat: w.buildHeartbeat()},
-				})
+				w.sendHeartbeat(send)
 			}
 		}
 	}()
@@ -425,6 +423,7 @@ func (w *Worker) handleDetectionRequest(
 		ProgressPercent: 0,
 		Stage:           "queued",
 	})
+	w.sendHeartbeat(send)
 
 	requestCtx, cancelRequest := context.WithCancel(ctx)
 	w.setWorkCancel(cancelRequest, requestID)
@@ -447,6 +446,7 @@ func (w *Worker) handleDetectionRequest(
 			w.clearWorkCancel(requestID)
 			cancelRequest()
 			w.clearRunningWork(workKey)
+			w.sendHeartbeat(send)
 		}()
 
 		select {
@@ -460,6 +460,7 @@ func (w *Worker) handleDetectionRequest(
 		}
 		defer func() {
 			<-w.detectSlots
+			w.sendHeartbeat(send)
 		}()
 
 		w.setRunningWork(workKey, &plugin_pb.RunningWork{
@@ -470,6 +471,7 @@ func (w *Worker) handleDetectionRequest(
 			ProgressPercent: 0,
 			Stage:           "detecting",
 		})
+		w.sendHeartbeat(send)
 
 		if err := handler.Detect(requestCtx, request, detectionSender); err != nil {
 			detectionSender.SendComplete(&plugin_pb.DetectionComplete{
@@ -525,6 +527,7 @@ func (w *Worker) handleExecuteRequest(
 		})
 		return
 	}
+	w.sendHeartbeat(send)
 
 	workKey := "exec:" + requestID
 	w.setRunningWork(workKey, &plugin_pb.RunningWork{
@@ -535,6 +538,7 @@ func (w *Worker) handleExecuteRequest(
 		ProgressPercent: 0,
 		Stage:           "starting",
 	})
+	w.sendHeartbeat(send)
 
 	send(&plugin_pb.WorkerToAdminMessage{
 		Body: &plugin_pb.WorkerToAdminMessage_Acknowledge{Acknowledge: &plugin_pb.WorkerAcknowledge{
@@ -552,6 +556,7 @@ func (w *Worker) handleExecuteRequest(
 			cancelRequest()
 			<-w.execSlots
 			w.clearRunningWork(workKey)
+			w.sendHeartbeat(send)
 		}()
 
 		executionSender := &executionSender{
@@ -646,6 +651,17 @@ func (w *Worker) buildHeartbeat() *plugin_pb.WorkerHeartbeat {
 			"runtime": "plugin",
 		},
 	}
+}
+
+func (w *Worker) sendHeartbeat(send func(*plugin_pb.WorkerToAdminMessage) bool) {
+	if send == nil {
+		return
+	}
+	send(&plugin_pb.WorkerToAdminMessage{
+		Body: &plugin_pb.WorkerToAdminMessage_Heartbeat{
+			Heartbeat: w.buildHeartbeat(),
+		},
+	})
 }
 
 func (w *Worker) setRunningWork(key string, work *plugin_pb.RunningWork) {

@@ -255,11 +255,17 @@ func TestWorkerHandleDetectionQueuesWhenAtCapacity(t *testing.T) {
 	}
 
 	sendDetection("detect-1")
-	expectDetectionAck(t, recvWorkerMessage(t, msgCh), "detect-1")
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		ack := message.GetAcknowledge()
+		return ack != nil && ack.RequestId == "detect-1" && ack.Accepted
+	}, "detection acknowledge detect-1")
 	<-handler.detectEntered
 
 	sendDetection("detect-2")
-	expectDetectionAck(t, recvWorkerMessage(t, msgCh), "detect-2")
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		ack := message.GetAcknowledge()
+		return ack != nil && ack.RequestId == "detect-2" && ack.Accepted
+	}, "detection acknowledge detect-2")
 
 	select {
 	case unexpected := <-msgCh:
@@ -268,11 +274,141 @@ func TestWorkerHandleDetectionQueuesWhenAtCapacity(t *testing.T) {
 	}
 
 	handler.detectContinue <- struct{}{}
-	expectDetectionCompleteSuccess(t, recvWorkerMessage(t, msgCh), "detect-1")
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		complete := message.GetDetectionComplete()
+		return complete != nil && complete.RequestId == "detect-1" && complete.Success
+	}, "detection complete detect-1")
 
 	<-handler.detectEntered
 	handler.detectContinue <- struct{}{}
-	expectDetectionCompleteSuccess(t, recvWorkerMessage(t, msgCh), "detect-2")
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		complete := message.GetDetectionComplete()
+		return complete != nil && complete.RequestId == "detect-2" && complete.Success
+	}, "detection complete detect-2")
+}
+
+func TestWorkerHeartbeatReflectsActiveDetectionLoad(t *testing.T) {
+	handler := &detectionQueueTestHandler{
+		capability: &plugin_pb.JobTypeCapability{
+			JobType:    "vacuum",
+			CanDetect:  true,
+			CanExecute: false,
+		},
+		descriptor:     &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+		detectEntered:  make(chan struct{}, 1),
+		detectContinue: make(chan struct{}, 1),
+	}
+
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:             "localhost:23646",
+		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handler:                 handler,
+		MaxDetectionConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	msgCh := make(chan *plugin_pb.WorkerToAdminMessage, 16)
+	send := func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		msgCh <- msg
+		return true
+	}
+
+	requestID := "detect-heartbeat-1"
+	worker.handleAdminMessage(context.Background(), &plugin_pb.AdminToWorkerMessage{
+		RequestId: requestID,
+		Body: &plugin_pb.AdminToWorkerMessage_RunDetectionRequest{
+			RunDetectionRequest: &plugin_pb.RunDetectionRequest{
+				JobType: "vacuum",
+			},
+		},
+	}, send)
+
+	<-handler.detectEntered
+
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		heartbeat := message.GetHeartbeat()
+		return heartbeat != nil &&
+			heartbeat.DetectionSlotsUsed > 0 &&
+			heartbeatHasRunningWork(heartbeat, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION)
+	}, "active detection heartbeat")
+
+	handler.detectContinue <- struct{}{}
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		complete := message.GetDetectionComplete()
+		return complete != nil && complete.RequestId == requestID && complete.Success
+	}, "detection complete")
+
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		heartbeat := message.GetHeartbeat()
+		return heartbeat != nil && heartbeat.DetectionSlotsUsed == 0 &&
+			!heartbeatHasRunningWork(heartbeat, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION)
+	}, "idle detection heartbeat")
+}
+
+func TestWorkerHeartbeatReflectsActiveExecutionLoad(t *testing.T) {
+	handler := &executionHeartbeatTestHandler{
+		capability: &plugin_pb.JobTypeCapability{
+			JobType:    "dummy_stress",
+			CanDetect:  false,
+			CanExecute: true,
+		},
+		descriptor:     &plugin_pb.JobTypeDescriptor{JobType: "dummy_stress"},
+		executeEntered: make(chan struct{}, 1),
+		executeDone:    make(chan struct{}, 1),
+	}
+
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:             "localhost:23646",
+		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handler:                 handler,
+		MaxExecutionConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	msgCh := make(chan *plugin_pb.WorkerToAdminMessage, 16)
+	send := func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		msgCh <- msg
+		return true
+	}
+
+	requestID := "exec-heartbeat-1"
+	jobID := "job-heartbeat-1"
+	worker.handleAdminMessage(context.Background(), &plugin_pb.AdminToWorkerMessage{
+		RequestId: requestID,
+		Body: &plugin_pb.AdminToWorkerMessage_ExecuteJobRequest{
+			ExecuteJobRequest: &plugin_pb.ExecuteJobRequest{
+				Job: &plugin_pb.JobSpec{
+					JobId:   jobID,
+					JobType: "dummy_stress",
+				},
+			},
+		},
+	}, send)
+
+	<-handler.executeEntered
+
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		heartbeat := message.GetHeartbeat()
+		return heartbeat != nil &&
+			heartbeat.ExecutionSlotsUsed > 0 &&
+			heartbeatHasRunningWork(heartbeat, jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION)
+	}, "active execution heartbeat")
+
+	handler.executeDone <- struct{}{}
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		completed := message.GetJobCompleted()
+		return completed != nil && completed.RequestId == requestID && completed.Success
+	}, "execution complete")
+
+	waitForWorkerMessage(t, msgCh, func(message *plugin_pb.WorkerToAdminMessage) bool {
+		heartbeat := message.GetHeartbeat()
+		return heartbeat != nil && heartbeat.ExecutionSlotsUsed == 0 &&
+			!heartbeatHasRunningWork(heartbeat, jobID, plugin_pb.WorkKind_WORK_KIND_EXECUTION)
+	}, "idle execution heartbeat")
 }
 
 type testJobHandler struct {
@@ -333,6 +469,45 @@ func (h *detectionQueueTestHandler) Execute(context.Context, *plugin_pb.ExecuteJ
 	return nil
 }
 
+type executionHeartbeatTestHandler struct {
+	capability *plugin_pb.JobTypeCapability
+	descriptor *plugin_pb.JobTypeDescriptor
+
+	executeEntered chan struct{}
+	executeDone    chan struct{}
+}
+
+func (h *executionHeartbeatTestHandler) Capability() *plugin_pb.JobTypeCapability {
+	return h.capability
+}
+
+func (h *executionHeartbeatTestHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
+	return h.descriptor
+}
+
+func (h *executionHeartbeatTestHandler) Detect(context.Context, *plugin_pb.RunDetectionRequest, DetectionSender) error {
+	return nil
+}
+
+func (h *executionHeartbeatTestHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender ExecutionSender) error {
+	select {
+	case h.executeEntered <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.executeDone:
+	}
+
+	return sender.SendCompleted(&plugin_pb.JobCompleted{
+		JobId:   request.Job.JobId,
+		JobType: request.Job.JobType,
+		Success: true,
+	})
+}
+
 func recvWorkerMessage(t *testing.T, msgCh <-chan *plugin_pb.WorkerToAdminMessage) *plugin_pb.WorkerToAdminMessage {
 	t.Helper()
 	select {
@@ -370,6 +545,45 @@ func expectDetectionCompleteSuccess(t *testing.T, message *plugin_pb.WorkerToAdm
 	if !complete.Success {
 		t.Fatalf("expected successful detection complete for request %q, got=%+v", requestID, complete)
 	}
+}
+
+func waitForWorkerMessage(
+	t *testing.T,
+	msgCh <-chan *plugin_pb.WorkerToAdminMessage,
+	predicate func(*plugin_pb.WorkerToAdminMessage) bool,
+	description string,
+) *plugin_pb.WorkerToAdminMessage {
+	t.Helper()
+
+	timeout := time.NewTimer(3 * time.Second)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case message := <-msgCh:
+			if predicate(message) {
+				return message
+			}
+		case <-timeout.C:
+			t.Fatalf("timed out waiting for %s", description)
+			return nil
+		}
+	}
+}
+
+func heartbeatHasRunningWork(heartbeat *plugin_pb.WorkerHeartbeat, workID string, kind plugin_pb.WorkKind) bool {
+	if heartbeat == nil || workID == "" {
+		return false
+	}
+	for _, work := range heartbeat.RunningWork {
+		if work == nil {
+			continue
+		}
+		if work.WorkId == workID && work.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func (w *Worker) handleAdminMessageForTest(
