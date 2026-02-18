@@ -696,14 +696,13 @@ func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, i
 	jobID := fmt.Sprintf("%s-%d-%s", jobType, now.AsTime().UnixNano(), hex.EncodeToString(suffix))
 
 	jobSpec := &plugin_pb.JobSpec{
-		JobId:       jobID,
-		JobType:     jobType,
-		Priority:    plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
-		CreatedAt:   now,
-		Labels:      make(map[string]string),
-		Parameters:  make(map[string]*plugin_pb.ConfigValue),
-		DedupeKey:   "",
-		Description: "",
+		JobId:      jobID,
+		JobType:    jobType,
+		Priority:   plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
+		CreatedAt:  now,
+		Labels:     make(map[string]string),
+		Parameters: make(map[string]*plugin_pb.ConfigValue),
+		DedupeKey:  "",
 	}
 
 	if proposal != nil {
