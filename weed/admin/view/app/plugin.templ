@@ -13,17 +13,7 @@ templ Plugin(page string) {
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
                         <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Workers</h2>
-                        if currentPage == "overview" {
-                            <p class="text-muted mb-0">Cluster-wide worker status, inventory, and scheduler state.</p>
-                        } else if currentPage == "configuration" {
-                            <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand workflows.</p>
-                        } else if currentPage == "queue" {
-                            <p class="text-muted mb-0">Track currently assigned and running jobs waiting in the execution pipeline.</p>
-                        } else if currentPage == "execution" {
-                            <p class="text-muted mb-0">Track execution jobs, states, and runtime activity across workers.</p>
-                        } else {
-                            <p class="text-muted mb-0">Track detection decisions and activity streams across all worker job types.</p>
-                        }
+                        <p class="text-muted mb-0">Cluster-wide worker status, per-job configuration, detection, queue, and execution workflows.</p>
                     </div>
                     <div class="btn-group">
                         <button type="button" class="btn btn-outline-secondary" id="plugin-refresh-all-btn">
@@ -36,31 +26,38 @@ templ Plugin(page string) {
 
         <div class="row mb-3">
             <div class="col-12">
-                <ul class="nav nav-tabs">
+                <ul class="nav nav-tabs" id="plugin-top-tabs">
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "overview") } href="/plugin">
+                        <button type="button" class="nav-link active" data-plugin-top-tab="overview">
                             <i class="fas fa-chart-line me-1"></i>Overview
-                        </a>
+                        </button>
                     </li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="row mb-3 d-none" id="plugin-subtab-row">
+            <div class="col-12">
+                <ul class="nav nav-pills gap-2" id="plugin-subtabs">
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "configuration") } href="/plugin/configuration">
+                        <button type="button" class="nav-link active" data-plugin-subtab="configuration">
                             <i class="fas fa-sliders-h me-1"></i>Configuration
-                        </a>
+                        </button>
                     </li>
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "detection") } href="/plugin/detection">
+                        <button type="button" class="nav-link" data-plugin-subtab="detection">
                             <i class="fas fa-search me-1"></i>Job Detection
-                        </a>
+                        </button>
                     </li>
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "queue") } href="/plugin/queue">
+                        <button type="button" class="nav-link" data-plugin-subtab="queue">
                             <i class="fas fa-list me-1"></i>Job Queue
-                        </a>
+                        </button>
                     </li>
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "execution") } href="/plugin/execution">
+                        <button type="button" class="nav-link" data-plugin-subtab="execution">
                             <i class="fas fa-tasks me-1"></i>Job Execution
-                        </a>
+                        </button>
                     </li>
                 </ul>
             </div>
@@ -189,10 +186,8 @@ templ Plugin(page string) {
                         </div>
                         <div class="card-body">
                             <div class="mb-3">
-                                <label class="form-label mb-1" for="plugin-job-type-select">Job Type</label>
-                                <select class="form-select" id="plugin-job-type-select">
-                                    <option value="">Select job type</option>
-                                </select>
+                                <div class="small text-muted">Selected Job Type</div>
+                                <div class="fw-semibold" id="plugin-selected-job-type">-</div>
                             </div>
 
                             <div class="mb-3">
@@ -352,9 +347,6 @@ templ Plugin(page string) {
                             <h5 class="mb-0"><i class="fas fa-list me-2"></i>Job Queue</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
                                 <small class="text-muted">States: pending/assigned/running</small>
-                                <select class="form-select form-select-sm" id="plugin-monitor-queue-job-type-filter" style="min-width: 180px;">
-                                    <option value="">All Job Types</option>
-                                </select>
                             </div>
                         </div>
                         <div class="card-body p-0">
@@ -388,11 +380,7 @@ templ Plugin(page string) {
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-search me-2"></i>Detection Jobs</h5>
-                            <div class="d-flex gap-2 align-items-center flex-wrap">
-                                <select class="form-select form-select-sm" id="plugin-monitor-detection-job-type-filter" style="min-width: 180px;">
-                                    <option value="">All Job Types</option>
-                                </select>
-                            </div>
+                            <div class="small text-muted">Detection activities for selected job type</div>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
@@ -426,9 +414,6 @@ templ Plugin(page string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Execution Jobs</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
-                                <select class="form-select form-select-sm" id="plugin-monitor-execution-job-type-filter" style="min-width: 180px;">
-                                    <option value="">All Job Types</option>
-                                </select>
                                 <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
                                     <option value="">All States</option>
                                     <option value="assigned">Assigned</option>
@@ -510,39 +495,12 @@ templ Plugin(page string) {
     </div>
 
     <style>
-        #plugin-page[data-plugin-page="overview"] .plugin-section-configuration,
-        #plugin-page[data-plugin-page="overview"] .plugin-section-queue,
-        #plugin-page[data-plugin-page="overview"] .plugin-section-detection,
-        #plugin-page[data-plugin-page="overview"] .plugin-section-execution {
+        .plugin-section {
             display: none;
         }
 
-        #plugin-page[data-plugin-page="configuration"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="configuration"] .plugin-section-queue,
-        #plugin-page[data-plugin-page="configuration"] .plugin-section-detection,
-        #plugin-page[data-plugin-page="configuration"] .plugin-section-execution {
-            display: none;
-        }
-
-        #plugin-page[data-plugin-page="queue"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="queue"] .plugin-section-configuration,
-        #plugin-page[data-plugin-page="queue"] .plugin-section-detection,
-        #plugin-page[data-plugin-page="queue"] .plugin-section-execution {
-            display: none;
-        }
-
-        #plugin-page[data-plugin-page="detection"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="detection"] .plugin-section-configuration,
-        #plugin-page[data-plugin-page="detection"] .plugin-section-queue,
-        #plugin-page[data-plugin-page="detection"] .plugin-section-execution {
-            display: none;
-        }
-
-        #plugin-page[data-plugin-page="execution"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="execution"] .plugin-section-configuration,
-        #plugin-page[data-plugin-page="execution"] .plugin-section-queue,
-        #plugin-page[data-plugin-page="execution"] .plugin-section-detection {
-            display: none;
+        .plugin-section.plugin-section-active {
+            display: block;
         }
 
         .plugin-form-root .card {
@@ -597,9 +555,10 @@ templ Plugin(page string) {
                 selectedJobType: '',
                 jobTypes: [],
                 lastDetectionByJobType: {},
-                monitorQueueJobType: '',
-                monitorDetectionJobType: '',
-                monitorExecutionJobType: '',
+                initialPage: String(page.getAttribute('data-plugin-page') || 'overview').trim().toLowerCase(),
+                activeTopTab: 'overview',
+                activeSubTab: 'configuration',
+                initialNavigationApplied: false,
                 monitorExecutionJobState: '',
                 workers: [],
                 jobs: [],
@@ -607,6 +566,7 @@ templ Plugin(page string) {
                 schedulerStates: [],
                 allJobs: [],
                 allActivities: [],
+                loadedJobType: '',
                 descriptor: null,
                 config: null,
                 refreshTimer: null,
@@ -713,6 +673,170 @@ templ Plugin(page string) {
                     return '';
                 }
                 return date.toLocaleString();
+            }
+
+            function normalizeSubTab(value) {
+                var normalized = String(value || '').toLowerCase();
+                if (normalized === 'configuration' || normalized === 'detection' || normalized === 'queue' || normalized === 'execution') {
+                    return normalized;
+                }
+                return 'configuration';
+            }
+
+            function topTabKeyForJobType(jobType) {
+                var normalized = String(jobType || '').trim();
+                if (!normalized) {
+                    return '';
+                }
+                return 'job:' + normalized;
+            }
+
+            function parseJobTypeFromTopTab(tabKey) {
+                var normalized = String(tabKey || '').trim();
+                if (normalized.indexOf('job:') !== 0) {
+                    return '';
+                }
+                return normalized.slice(4);
+            }
+
+            function hasJobType(jobType) {
+                var normalized = String(jobType || '').trim();
+                if (!normalized) {
+                    return false;
+                }
+                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
+                for (var i = 0; i < jobTypes.length; i++) {
+                    if (String(jobTypes[i] || '').trim() === normalized) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function applyInitialNavigation() {
+                if (state.initialNavigationApplied) {
+                    return;
+                }
+                state.initialNavigationApplied = true;
+                state.activeSubTab = normalizeSubTab(state.initialPage);
+
+                if (state.initialPage === 'overview') {
+                    state.activeTopTab = 'overview';
+                    return;
+                }
+                if (!Array.isArray(state.jobTypes) || state.jobTypes.length === 0) {
+                    state.activeTopTab = 'overview';
+                    return;
+                }
+                state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
+            }
+
+            function ensureActiveNavigation() {
+                state.activeSubTab = normalizeSubTab(state.activeSubTab);
+
+                if (state.selectedJobType && !hasJobType(state.selectedJobType)) {
+                    state.selectedJobType = '';
+                    state.descriptor = null;
+                    state.config = null;
+                }
+
+                var topTabJobType = parseJobTypeFromTopTab(state.activeTopTab);
+                if (topTabJobType && !hasJobType(topTabJobType)) {
+                    state.activeTopTab = 'overview';
+                    topTabJobType = '';
+                }
+
+                if (state.activeTopTab === 'overview') {
+                    if (!state.selectedJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
+                        state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                    }
+                    return;
+                }
+
+                if (!topTabJobType && state.selectedJobType) {
+                    topTabJobType = state.selectedJobType;
+                }
+                if (!topTabJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
+                    topTabJobType = String(state.jobTypes[0] || '').trim();
+                }
+                if (!topTabJobType) {
+                    state.activeTopTab = 'overview';
+                    return;
+                }
+
+                state.selectedJobType = topTabJobType;
+                state.activeTopTab = topTabKeyForJobType(topTabJobType);
+            }
+
+            function renderTopTabs() {
+                var root = document.getElementById('plugin-top-tabs');
+                if (!root) {
+                    return;
+                }
+
+                var html = '' +
+                    '<li class="nav-item">' +
+                    '<button type="button" class="nav-link" data-plugin-top-tab="overview">' +
+                    '<i class="fas fa-chart-line me-1"></i>Overview' +
+                    '</button>' +
+                    '</li>';
+
+                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
+                for (var i = 0; i < jobTypes.length; i++) {
+                    var jobType = String(jobTypes[i] || '').trim();
+                    if (!jobType) {
+                        continue;
+                    }
+                    html += '' +
+                        '<li class="nav-item">' +
+                        '<button type="button" class="nav-link" data-plugin-top-tab="' + escapeHtml(topTabKeyForJobType(jobType)) + '">' +
+                        escapeHtml(jobType) +
+                        '</button>' +
+                        '</li>';
+                }
+                root.innerHTML = html;
+            }
+
+            function renderNavigationState() {
+                var selectedJobTypeLabel = document.getElementById('plugin-selected-job-type');
+                if (selectedJobTypeLabel) {
+                    selectedJobTypeLabel.textContent = state.selectedJobType || '-';
+                }
+
+                var isOverview = state.activeTopTab === 'overview';
+                var subtabRow = document.getElementById('plugin-subtab-row');
+                if (subtabRow) {
+                    subtabRow.classList.toggle('d-none', isOverview);
+                }
+
+                var topTabs = document.querySelectorAll('#plugin-top-tabs [data-plugin-top-tab]');
+                for (var i = 0; i < topTabs.length; i++) {
+                    var topTab = topTabs[i];
+                    var topKey = String(topTab.getAttribute('data-plugin-top-tab') || '');
+                    topTab.classList.toggle('active', topKey === state.activeTopTab);
+                }
+
+                var subTabs = document.querySelectorAll('#plugin-subtabs [data-plugin-subtab]');
+                for (var j = 0; j < subTabs.length; j++) {
+                    var subTab = subTabs[j];
+                    var subKey = String(subTab.getAttribute('data-plugin-subtab') || '');
+                    subTab.classList.toggle('active', !isOverview && subKey === state.activeSubTab);
+                }
+
+                function toggleSection(sectionName, visible) {
+                    var section = document.querySelector('.plugin-section-' + sectionName);
+                    if (!section) {
+                        return;
+                    }
+                    section.classList.toggle('plugin-section-active', !!visible);
+                }
+
+                toggleSection('overview', isOverview);
+                toggleSection('configuration', !isOverview && state.activeSubTab === 'configuration');
+                toggleSection('detection', !isOverview && state.activeSubTab === 'detection');
+                toggleSection('queue', !isOverview && state.activeSubTab === 'queue');
+                toggleSection('execution', !isOverview && state.activeSubTab === 'execution');
             }
 
             function renderJobLink(jobID) {
@@ -1368,7 +1492,7 @@ templ Plugin(page string) {
                 for (var i = 0; i < allJobs.length; i++) {
                     var job = allJobs[i] || {};
                     var jobType = String(job.job_type || '').trim();
-                    if (state.monitorExecutionJobType && jobType !== state.monitorExecutionJobType) {
+                    if (state.selectedJobType && jobType !== state.selectedJobType) {
                         continue;
                     }
                     if (!matchesExecutionStateFilter(job.state, state.monitorExecutionJobState)) {
@@ -1428,7 +1552,7 @@ templ Plugin(page string) {
                 for (var i = 0; i < allJobs.length; i++) {
                     var queueJob = allJobs[i] || {};
                     var queueJobType = String(queueJob.job_type || '').trim();
-                    if (state.monitorQueueJobType && queueJobType !== state.monitorQueueJobType) {
+                    if (state.selectedJobType && queueJobType !== state.selectedJobType) {
                         continue;
                     }
                     var normalizedState = normalizeJobStateForFilter(queueJob.state);
@@ -1485,7 +1609,7 @@ templ Plugin(page string) {
                 for (var i = 0; i < allActivities.length; i++) {
                     var activity = allActivities[i] || {};
                     var jobType = String(activity.job_type || '').trim();
-                    if (state.monitorDetectionJobType && jobType !== state.monitorDetectionJobType) {
+                    if (state.selectedJobType && jobType !== state.selectedJobType) {
                         continue;
                     }
                     if (!isDetectionActivitySource(activity.source)) {
@@ -1530,7 +1654,7 @@ templ Plugin(page string) {
                         continue;
                     }
                     var jobType = String(activity.job_type || '').trim();
-                    if (state.monitorExecutionJobType && jobType !== state.monitorExecutionJobType) {
+                    if (state.selectedJobType && jobType !== state.selectedJobType) {
                         continue;
                     }
                     filteredActivities.push(activity);
@@ -2367,71 +2491,20 @@ templ Plugin(page string) {
                 root.innerHTML = html;
             }
 
-            function syncJobTypeControls(jobType) {
-                var select = document.getElementById('plugin-job-type-select');
-                if (!select) {
-                    return;
-                }
-
-                var matched = false;
-                for (var i = 0; i < select.options.length; i++) {
-                    if (select.options[i].value === jobType) {
-                        select.value = jobType;
-                        matched = true;
-                        break;
-                    }
-                }
-                if (!matched) {
-                    select.value = '';
-                }
-            }
-
             function getSelectedJobType() {
-                var select = document.getElementById('plugin-job-type-select');
-                if (!select) {
-                    return '';
-                }
-                return String(select.value || '').trim();
+                return String(state.selectedJobType || '').trim();
             }
 
-            function renderJobTypeOptions() {
-                var select = document.getElementById('plugin-job-type-select');
-                var previous = state.selectedJobType;
-                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
-
-                var html = '<option value="">Select job type</option>';
-                for (var i = 0; i < jobTypes.length; i++) {
-                    html += '<option value="' + escapeHtml(jobTypes[i]) + '">' + escapeHtml(jobTypes[i]) + '</option>';
-                }
-                select.innerHTML = html;
-
-                if (previous) {
-                    syncJobTypeControls(previous);
-                }
-
-                renderMonitorFilterOptions();
-            }
-
-            function renderMonitorFilterOptions() {
-                var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
-
-                function applyOptions(selectID, selectedValue) {
-                    var select = document.getElementById(selectID);
-                    if (!select) {
-                        return '';
-                    }
-                    var html = '<option value=\"\">All Job Types</option>';
-                    for (var i = 0; i < jobTypes.length; i++) {
-                        html += '<option value=\"' + escapeHtml(jobTypes[i]) + '\">' + escapeHtml(jobTypes[i]) + '</option>';
-                    }
-                    select.innerHTML = html;
-                    select.value = selectedValue || '';
-                    return String(select.value || '');
-                }
-
-                state.monitorQueueJobType = applyOptions('plugin-monitor-queue-job-type-filter', state.monitorQueueJobType);
-                state.monitorDetectionJobType = applyOptions('plugin-monitor-detection-job-type-filter', state.monitorDetectionJobType);
-                state.monitorExecutionJobType = applyOptions('plugin-monitor-execution-job-type-filter', state.monitorExecutionJobType);
+            function resetJobTypePanels() {
+                state.loadedJobType = '';
+                state.descriptor = null;
+                state.config = null;
+                document.getElementById('plugin-descriptor-summary').textContent = 'No descriptor loaded.';
+                document.getElementById('plugin-admin-config-form').innerHTML = '<div class="text-muted">No admin form loaded.</div>';
+                document.getElementById('plugin-worker-config-form').innerHTML = '<div class="text-muted">No worker form loaded.</div>';
+                document.getElementById('plugin-config-updated-at').textContent = 'Not loaded';
+                renderRunHistory(null);
+                renderDetectionResult(null);
             }
 
             async function loadDescriptorAndConfig(jobType, forceRefresh) {
@@ -2440,7 +2513,7 @@ templ Plugin(page string) {
                 }
 
                 state.selectedJobType = jobType;
-                syncJobTypeControls(jobType);
+                renderNavigationState();
 
                 var summary = document.getElementById('plugin-descriptor-summary');
                 summary.textContent = 'Loading descriptor and config...';
@@ -2457,6 +2530,7 @@ templ Plugin(page string) {
                         }
                     }
                 } catch (schemaError) {
+                    state.loadedJobType = '';
                     state.descriptor = null;
                     summary.innerHTML = '<span class="text-danger">Failed to load descriptor: ' + escapeHtml(schemaError.message) + '</span>';
                     document.getElementById('plugin-admin-config-form').innerHTML = '<div class="text-muted">No admin form loaded.</div>';
@@ -2484,6 +2558,7 @@ templ Plugin(page string) {
                 } else {
                     document.getElementById('plugin-config-updated-at').textContent = 'Not saved yet';
                 }
+                state.loadedJobType = jobType;
 
                 await loadRunHistory(jobType);
 
@@ -2610,14 +2685,8 @@ templ Plugin(page string) {
             }
 
             async function refreshJobsAndActivities() {
-                var queueTypeFilter = document.getElementById('plugin-monitor-queue-job-type-filter');
-                var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
-                var executionTypeFilter = document.getElementById('plugin-monitor-execution-job-type-filter');
                 var executionStateFilter = document.getElementById('plugin-monitor-job-state-filter');
 
-                state.monitorQueueJobType = queueTypeFilter ? String(queueTypeFilter.value || '').trim() : '';
-                state.monitorDetectionJobType = detectionTypeFilter ? String(detectionTypeFilter.value || '').trim() : '';
-                state.monitorExecutionJobType = executionTypeFilter ? String(executionTypeFilter.value || '').trim() : '';
                 state.monitorExecutionJobState = executionStateFilter ? String(executionStateFilter.value || '').trim() : '';
 
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
@@ -2644,13 +2713,28 @@ templ Plugin(page string) {
 
             async function refreshAll() {
                 try {
+                    var previousSelectedJobType = state.selectedJobType;
+
                     var workers = await pluginRequest('GET', '/api/plugin/workers');
                     state.workers = Array.isArray(workers) ? workers : [];
                     renderWorkers();
 
                     var jobTypes = await pluginRequest('GET', '/api/plugin/job-types');
                     state.jobTypes = Array.isArray(jobTypes) ? jobTypes : [];
-                    renderJobTypeOptions();
+                    applyInitialNavigation();
+                    ensureActiveNavigation();
+                    renderTopTabs();
+                    renderNavigationState();
+
+                    if (!state.selectedJobType) {
+                        resetJobTypePanels();
+                    } else if (state.loadedJobType !== state.selectedJobType || previousSelectedJobType !== state.selectedJobType) {
+                        try {
+                            await loadDescriptorAndConfig(state.selectedJobType, false);
+                        } catch (loadError) {
+                            // Already rendered in UI.
+                        }
+                    }
 
                     await refreshJobsAndActivities();
                 } catch (e) {
@@ -2659,31 +2743,6 @@ templ Plugin(page string) {
             }
 
             function bindActions() {
-                var queueTypeFilter = document.getElementById('plugin-monitor-queue-job-type-filter');
-                if (queueTypeFilter) {
-                    queueTypeFilter.addEventListener('change', function() {
-                        state.monitorQueueJobType = String(queueTypeFilter.value || '').trim();
-                        renderQueueJobs();
-                    });
-                }
-
-                var detectionTypeFilter = document.getElementById('plugin-monitor-detection-job-type-filter');
-                if (detectionTypeFilter) {
-                    detectionTypeFilter.addEventListener('change', function() {
-                        state.monitorDetectionJobType = String(detectionTypeFilter.value || '').trim();
-                        renderDetectionJobs();
-                    });
-                }
-
-                var executionTypeFilter = document.getElementById('plugin-monitor-execution-job-type-filter');
-                if (executionTypeFilter) {
-                    executionTypeFilter.addEventListener('change', function() {
-                        state.monitorExecutionJobType = String(executionTypeFilter.value || '').trim();
-                        renderExecutionJobs();
-                        renderExecutionActivities();
-                    });
-                }
-
                 var monitorStateFilter = document.getElementById('plugin-monitor-job-state-filter');
                 if (monitorStateFilter) {
                     monitorStateFilter.addEventListener('change', function() {
@@ -2696,20 +2755,8 @@ templ Plugin(page string) {
                     refreshAll();
                 });
 
-                document.getElementById('plugin-job-type-select').addEventListener('change', async function() {
-                    var value = String(this.value || '').trim();
-                    if (!value) {
-                        return;
-                    }
-                    try {
-                        await loadDescriptorAndConfig(value, false);
-                    } catch (e) {
-                        // Already shown in UI.
-                    }
-                });
-
                 document.getElementById('plugin-refresh-schema-btn').addEventListener('click', async function() {
-                    var jobType = state.selectedJobType || getSelectedJobType();
+                    var jobType = getSelectedJobType();
                     if (!jobType) {
                         notify('Select a job type first.', 'error');
                         return;
@@ -2734,11 +2781,63 @@ templ Plugin(page string) {
                     runWorkflow();
                 });
 
-                page.addEventListener('click', function(event) {
+                page.addEventListener('click', async function(event) {
                     var target = event.target;
                     if (!target) {
                         return;
                     }
+
+                    var topTab = target.closest('[data-plugin-top-tab]');
+                    if (topTab) {
+                        event.preventDefault();
+                        var topTabKey = String(topTab.getAttribute('data-plugin-top-tab') || '').trim();
+                        if (!topTabKey) {
+                            return;
+                        }
+                        if (topTabKey === 'overview') {
+                            state.activeTopTab = 'overview';
+                            renderNavigationState();
+                            return;
+                        }
+
+                        var jobType = parseJobTypeFromTopTab(topTabKey);
+                        if (!jobType) {
+                            return;
+                        }
+                        state.activeTopTab = topTabKey;
+                        state.selectedJobType = jobType;
+                        ensureActiveNavigation();
+                        renderNavigationState();
+                        if (state.loadedJobType !== jobType) {
+                            try {
+                                await loadDescriptorAndConfig(jobType, false);
+                            } catch (e) {
+                                // Already rendered in UI.
+                            }
+                        } else {
+                            if (state.lastDetectionByJobType && state.lastDetectionByJobType[jobType]) {
+                                renderDetectionResult(state.lastDetectionByJobType[jobType]);
+                            } else {
+                                renderDetectionResult(null);
+                            }
+                            await loadRunHistory(jobType);
+                        }
+                        renderQueueJobs();
+                        renderDetectionJobs();
+                        renderExecutionJobs();
+                        renderExecutionActivities();
+                        return;
+                    }
+
+                    var subTab = target.closest('[data-plugin-subtab]');
+                    if (subTab) {
+                        event.preventDefault();
+                        var subTabKey = normalizeSubTab(subTab.getAttribute('data-plugin-subtab'));
+                        state.activeSubTab = subTabKey;
+                        renderNavigationState();
+                        return;
+                    }
+
                     var trigger = target.closest('.plugin-job-link');
                     if (!trigger) {
                         return;
@@ -2754,21 +2853,10 @@ templ Plugin(page string) {
 
             async function init() {
                 bindActions();
+                renderTopTabs();
+                ensureActiveNavigation();
+                renderNavigationState();
                 await refreshAll();
-
-                var initialJobType = getSelectedJobType();
-                if (!initialJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                    initialJobType = String(state.jobTypes[0] || '').trim();
-                    syncJobTypeControls(initialJobType);
-                }
-
-                if (initialJobType) {
-                    try {
-                        await loadDescriptorAndConfig(initialJobType, false);
-                    } catch (e) {
-                        // Already shown in UI.
-                    }
-                }
 
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
