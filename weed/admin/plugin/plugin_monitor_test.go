@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -396,6 +398,104 @@ func TestTrackExecutionStartStoresJobPayloadDetails(t *testing.T) {
 	}
 	if got, ok := detail.Job.Parameters["volume_id"].(map[string]interface{}); !ok || got["int64_value"] != "9" {
 		t.Fatalf("unexpected disk-backed parameters payload: %#v", detail.Job.Parameters["volume_id"])
+	}
+}
+
+func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	taskParams := &worker_pb.TaskParams{
+		TaskId:     "task-ec-1",
+		VolumeId:   29,
+		Collection: "photos",
+		Sources: []*worker_pb.TaskSource{
+			{
+				Node:       "source-a:8080",
+				DataCenter: "dc1",
+				Rack:       "rack1",
+				VolumeId:   29,
+			},
+		},
+		Targets: []*worker_pb.TaskTarget{
+			{
+				Node:       "target-a:8080",
+				DataCenter: "dc1",
+				Rack:       "rack2",
+				VolumeId:   29,
+				ShardIds:   []uint32{0, 10},
+			},
+			{
+				Node:       "target-b:8080",
+				DataCenter: "dc2",
+				Rack:       "rack3",
+				VolumeId:   29,
+				ShardIds:   []uint32{1, 11},
+			},
+		},
+		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
+			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
+				DataShards:   10,
+				ParityShards: 4,
+			},
+		},
+	}
+	payload, err := proto.Marshal(taskParams)
+	if err != nil {
+		t.Fatalf("Marshal task params: %v", err)
+	}
+
+	pluginSvc.trackExecutionStart("req-ec-plan", "worker-ec", &plugin_pb.JobSpec{
+		JobId:   "job-ec-plan",
+		JobType: "erasure_coding",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"task_params_pb": {
+				Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: payload},
+			},
+		},
+	}, 1)
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-ec-plan", 100, 0)
+	if err != nil {
+		t.Fatalf("BuildJobDetail: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected disk-backed detail")
+	}
+
+	rawPlan, ok := detail.Job.Parameters["execution_plan"]
+	if !ok {
+		t.Fatalf("expected execution_plan in parameters, got=%+v", detail.Job.Parameters)
+	}
+	plan, ok := rawPlan.(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected execution_plan type: %T", rawPlan)
+	}
+	if plan["job_type"] != "erasure_coding" {
+		t.Fatalf("unexpected execution plan job type: %+v", plan["job_type"])
+	}
+	if plan["volume_id"] != float64(29) {
+		t.Fatalf("unexpected execution plan volume id: %+v", plan["volume_id"])
+	}
+	targets, ok := plan["targets"].([]interface{})
+	if !ok || len(targets) != 2 {
+		t.Fatalf("unexpected targets in execution plan: %+v", plan["targets"])
+	}
+	assignments, ok := plan["shard_assignments"].([]interface{})
+	if !ok || len(assignments) != 4 {
+		t.Fatalf("unexpected shard assignments in execution plan: %+v", plan["shard_assignments"])
+	}
+	firstAssignment, ok := assignments[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected first assignment payload: %+v", assignments[0])
+	}
+	if firstAssignment["shard_id"] != float64(0) || firstAssignment["kind"] != "data" {
+		t.Fatalf("unexpected first assignment: %+v", firstAssignment)
 	}
 }
 

@@ -737,6 +737,192 @@ templ Plugin(page string) {
                 }
             }
 
+            function clonePlainObject(value) {
+                if (!value || typeof value !== 'object') {
+                    return null;
+                }
+                try {
+                    return JSON.parse(JSON.stringify(value));
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function extractExecutionPlan(job) {
+                if (!job || !job.parameters) {
+                    return null;
+                }
+                var plan = job.parameters.execution_plan;
+                if (!plan) {
+                    return null;
+                }
+                if (typeof plan === 'string') {
+                    try {
+                        plan = JSON.parse(plan);
+                    } catch (e) {
+                        return null;
+                    }
+                }
+                if (typeof plan !== 'object' || Array.isArray(plan)) {
+                    return null;
+                }
+                return plan;
+            }
+
+            function removeExecutionPlanForDisplay(parameters) {
+                var copy = clonePlainObject(parameters);
+                if (!copy) {
+                    return parameters;
+                }
+                if (copy.execution_plan !== undefined) {
+                    delete copy.execution_plan;
+                }
+                if (Object.keys(copy).length === 0) {
+                    return null;
+                }
+                return copy;
+            }
+
+            function parseIntOrDefault(value, fallback) {
+                var parsed = parseInt(value, 10);
+                if (Number.isNaN(parsed)) {
+                    return fallback;
+                }
+                return parsed;
+            }
+
+            function normalizeShardIDs(value) {
+                if (!Array.isArray(value)) {
+                    return [];
+                }
+                var out = [];
+                for (var i = 0; i < value.length; i++) {
+                    var parsed = parseIntOrDefault(value[i], -1);
+                    if (parsed >= 0) {
+                        out.push(parsed);
+                    }
+                }
+                out.sort(function(a, b) { return a - b; });
+                return out;
+            }
+
+            function classifyShardLabel(shardID, dataShardCount) {
+                if (shardID < dataShardCount) {
+                    return {
+                        kind: 'data',
+                        label: String(shardID),
+                        className: 'bg-primary',
+                        title: 'Data shard ' + shardID,
+                    };
+                }
+                var parityIndex = shardID - dataShardCount;
+                return {
+                    kind: 'parity',
+                    label: 'P' + String(parityIndex),
+                    className: 'bg-warning text-dark',
+                    title: 'Parity shard ' + shardID,
+                };
+            }
+
+            function renderShardBadges(shardIDs, dataShardCount) {
+                if (!Array.isArray(shardIDs) || shardIDs.length === 0) {
+                    return '<span class="text-muted">-</span>';
+                }
+                var html = '';
+                for (var i = 0; i < shardIDs.length; i++) {
+                    var shard = classifyShardLabel(shardIDs[i], dataShardCount);
+                    html += '<span class="badge me-1 ' + shard.className + '" title="' + escapeHtml(shard.title) + '">' + escapeHtml(shard.label) + '</span>';
+                }
+                return html;
+            }
+
+            function renderExecutionPlan(plan) {
+                if (!plan || typeof plan !== 'object') {
+                    return '';
+                }
+
+                var jobType = String(plan.job_type || '').trim().toLowerCase();
+                if (jobType !== 'erasure_coding') {
+                    var fallbackText = toPrettyJson(plan);
+                    if (!fallbackText) {
+                        return '';
+                    }
+                    return '<div class="mb-3"><h6>Execution Plan</h6><pre class="plugin-job-detail-json">' + escapeHtml(fallbackText) + '</pre></div>';
+                }
+
+                var dataShards = parseIntOrDefault(plan.data_shards, 10);
+                var parityShards = parseIntOrDefault(plan.parity_shards, 4);
+                var totalShards = parseIntOrDefault(plan.total_shards, dataShards + parityShards);
+                var sources = Array.isArray(plan.sources) ? plan.sources : [];
+                var targets = Array.isArray(plan.targets) ? plan.targets : [];
+                var assignments = Array.isArray(plan.shard_assignments) ? plan.shard_assignments : [];
+
+                var html = '';
+                html += '<div class="mb-3"><h6>Execution Plan</h6>';
+                html += '<div class="row g-2 mb-2">' +
+                    '<div class="col-md-3"><small><strong>Volume:</strong> ' + escapeHtml(textOrDash(plan.volume_id)) + '</small></div>' +
+                    '<div class="col-md-3"><small><strong>Collection:</strong> ' + escapeHtml(textOrDash(plan.collection)) + '</small></div>' +
+                    '<div class="col-md-3"><small><strong>Shards:</strong> ' + escapeHtml(String(dataShards)) + '+' + escapeHtml(String(parityShards)) + '</small></div>' +
+                    '<div class="col-md-3"><small><strong>Total:</strong> ' + escapeHtml(String(totalShards)) + '</small></div>' +
+                    '</div>';
+
+                html += '<div class="small text-muted mb-2">' +
+                    '<span class="badge bg-primary me-1">Data</span>' +
+                    '<span class="badge bg-warning text-dark me-2">Parity</span>' +
+                    'Source and target placement per shard.' +
+                    '</div>';
+
+                function renderEndpointsTable(title, endpoints) {
+                    if (!endpoints.length) {
+                        return '<div class="mb-2"><strong>' + escapeHtml(title) + ':</strong> <span class="text-muted">none</span></div>';
+                    }
+                    var table = '<div class="table-responsive mb-2"><table class="table table-sm table-striped mb-0">' +
+                        '<thead><tr><th>#</th><th>Node</th><th>DC</th><th>Rack</th><th>Volume</th><th>Shards</th></tr></thead><tbody>';
+                    for (var i = 0; i < endpoints.length; i++) {
+                        var endpoint = endpoints[i] || {};
+                        var endpointShards = normalizeShardIDs(endpoint.shard_ids);
+                        table += '<tr>' +
+                            '<td>' + escapeHtml(String(i + 1)) + '</td>' +
+                            '<td><code>' + escapeHtml(textOrDash(endpoint.node)) + '</code></td>' +
+                            '<td>' + escapeHtml(textOrDash(endpoint.data_center)) + '</td>' +
+                            '<td>' + escapeHtml(textOrDash(endpoint.rack)) + '</td>' +
+                            '<td>' + escapeHtml(textOrDash(endpoint.volume_id)) + '</td>' +
+                            '<td>' + renderShardBadges(endpointShards, dataShards) + '</td>' +
+                            '</tr>';
+                    }
+                    table += '</tbody></table></div>';
+                    return '<div class="mb-2"><strong>' + escapeHtml(title) + '</strong></div>' + table;
+                }
+
+                html += renderEndpointsTable('Sources', sources);
+                html += renderEndpointsTable('Targets', targets);
+
+                if (assignments.length) {
+                    html += '<div class="mb-2"><strong>Shard Assignments</strong></div>';
+                    html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0">' +
+                        '<thead><tr><th>Shard</th><th>Kind</th><th>Target</th><th>DC</th><th>Rack</th></tr></thead><tbody>';
+                    for (var j = 0; j < assignments.length; j++) {
+                        var assignment = assignments[j] || {};
+                        var shardID = parseIntOrDefault(assignment.shard_id, -1);
+                        if (shardID < 0) {
+                            continue;
+                        }
+                        var shard = classifyShardLabel(shardID, dataShards);
+                        html += '<tr>' +
+                            '<td><span class="badge ' + shard.className + '">' + escapeHtml(shard.label) + '</span></td>' +
+                            '<td>' + escapeHtml(textOrDash(assignment.kind || shard.kind)) + '</td>' +
+                            '<td><code>' + escapeHtml(textOrDash(assignment.target_node)) + '</code></td>' +
+                            '<td>' + escapeHtml(textOrDash(assignment.target_data_center)) + '</td>' +
+                            '<td>' + escapeHtml(textOrDash(assignment.target_rack)) + '</td>' +
+                            '</tr>';
+                    }
+                    html += '</tbody></table></div>';
+                }
+
+                html += '</div>';
+                return html;
+            }
+
             async function openJobDetail(jobID) {
                 var normalizedJobID = String(jobID || '').trim();
                 if (!normalizedJobID) {
@@ -798,7 +984,12 @@ templ Plugin(page string) {
                         html += '<div class="mb-2"><strong>Result:</strong> ' + escapeHtml(String(job.result_summary)) + '</div>';
                     }
 
-                    var parametersText = toPrettyJson(job.parameters);
+                    var executionPlan = extractExecutionPlan(job);
+                    if (executionPlan) {
+                        html += renderExecutionPlan(executionPlan);
+                    }
+
+                    var parametersText = toPrettyJson(removeExecutionPlanForDisplay(job.parameters));
                     if (parametersText) {
                         html += '<div class="mb-3"><h6>Parameters</h6><pre class="plugin-job-detail-json">' + escapeHtml(parametersText) + '</pre></div>';
                     }

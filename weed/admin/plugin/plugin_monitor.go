@@ -193,6 +193,7 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	if trackedSnapshot != nil {
 		mergeTrackedStatusIntoDetail(detailJob, trackedSnapshot)
 	}
+	detailJob.Parameters = enrichTrackedJobParameters(detailJob.JobType, detailJob.Parameters)
 
 	activities, err := r.store.LoadActivities()
 	if err != nil {
@@ -446,7 +447,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 		detail.DedupeKey = job.DedupeKey
 		detail.Summary = job.Summary
 		detail.Detail = job.Detail
-		detail.Parameters = configValueMapToPlain(job.Parameters)
+		detail.Parameters = enrichTrackedJobParameters(job.JobType, configValueMapToPlain(job.Parameters))
 		if len(job.Labels) > 0 {
 			labels := make(map[string]string, len(job.Labels))
 			for key, value := range job.Labels {
@@ -517,7 +518,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 		detail.DedupeKey = job.DedupeKey
 		detail.Summary = job.Summary
 		detail.Detail = job.Detail
-		detail.Parameters = configValueMapToPlain(job.Parameters)
+		detail.Parameters = enrichTrackedJobParameters(job.JobType, configValueMapToPlain(job.Parameters))
 		if len(job.Labels) > 0 {
 			labels := make(map[string]string, len(job.Labels))
 			for key, value := range job.Labels {
