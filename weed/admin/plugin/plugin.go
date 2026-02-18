@@ -614,6 +614,11 @@ func (r *Plugin) ListKnownJobTypes() ([]string, error) {
 	return out, nil
 }
 
+// FilterProposalsWithActiveJobs drops proposals that are already assigned/running.
+func (r *Plugin) FilterProposalsWithActiveJobs(jobType string, proposals []*plugin_pb.JobProposal) ([]*plugin_pb.JobProposal, int) {
+	return r.filterProposalsWithActiveJobs(jobType, proposals)
+}
+
 func (r *Plugin) PickDetectorWorker(jobType string) (*WorkerSession, error) {
 	return r.pickDetector(jobType)
 }

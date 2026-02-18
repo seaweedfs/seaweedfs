@@ -416,6 +416,13 @@ func (s *AdminServer) RunPluginJobTypeAPI(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	detectedCount := len(proposals)
+
+	filteredProposals, skippedActiveCount, err := s.FilterPluginProposalsWithActiveJobs(jobType, proposals)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	type executionResult struct {
 		JobID      string                 `json:"job_id"`
@@ -424,11 +431,11 @@ func (s *AdminServer) RunPluginJobTypeAPI(c *gin.Context) {
 		Completion map[string]interface{} `json:"completion,omitempty"`
 	}
 
-	results := make([]executionResult, 0, len(proposals))
+	results := make([]executionResult, 0, len(filteredProposals))
 	successCount := 0
 	errorCount := 0
 
-	for index, proposal := range proposals {
+	for index, proposal := range filteredProposals {
 		job := buildJobSpecFromProposal(jobType, proposal, index)
 		completed, execErr := s.ExecutePluginJob(ctx, job, clusterContext, req.Attempt)
 
@@ -454,12 +461,14 @@ func (s *AdminServer) RunPluginJobTypeAPI(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"job_type":          jobType,
-		"detected_count":    len(proposals),
-		"executed_count":    len(results),
-		"success_count":     successCount,
-		"error_count":       errorCount,
-		"execution_results": results,
+		"job_type":               jobType,
+		"detected_count":         detectedCount,
+		"ready_to_execute_count": len(filteredProposals),
+		"skipped_active_count":   skippedActiveCount,
+		"executed_count":         len(results),
+		"success_count":          successCount,
+		"error_count":            errorCount,
+		"execution_results":      results,
 	})
 }
 

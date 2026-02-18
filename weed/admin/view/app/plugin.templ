@@ -2117,6 +2117,8 @@ templ Plugin(page string) {
                     var resultRoot = document.getElementById('plugin-detection-results');
                     resultRoot.innerHTML = '<div class="mb-2"><strong>Workflow completed</strong></div>' +
                         '<div>Detected: <strong>' + escapeHtml(String(data.detected_count || 0)) + '</strong></div>' +
+                        '<div>Ready to Execute: <strong>' + escapeHtml(String(data.ready_to_execute_count || 0)) + '</strong></div>' +
+                        '<div>Skipped (Already Active): <strong>' + escapeHtml(String(data.skipped_active_count || 0)) + '</strong></div>' +
                         '<div>Executed: <strong>' + escapeHtml(String(data.executed_count || 0)) + '</strong></div>' +
                         '<div class="text-success">Success: ' + escapeHtml(String(data.success_count || 0)) + '</div>' +
                         '<div class="text-danger">Errors: ' + escapeHtml(String(data.error_count || 0)) + '</div>';

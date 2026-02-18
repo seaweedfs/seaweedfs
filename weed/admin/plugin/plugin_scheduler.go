@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -350,12 +351,27 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		OccurredAt: time.Now().UTC(),
 	})
 
-	filtered := r.filterScheduledProposals(jobType, proposals, defaultScheduledDedupeTTL)
-	if len(filtered) != len(proposals) {
+	filteredByActive, skippedActive := r.filterProposalsWithActiveJobs(jobType, proposals)
+	if skippedActive > 0 {
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
-			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s)", len(proposals)-len(filtered)),
+			Message:    fmt.Sprintf("scheduled detection skipped %d proposal(s) due to active assigned/running jobs", skippedActive),
+			Stage:      "deduped_active_jobs",
+			OccurredAt: time.Now().UTC(),
+		})
+	}
+
+	if len(filteredByActive) == 0 {
+		return
+	}
+
+	filtered := r.filterScheduledProposals(jobType, filteredByActive, defaultScheduledDedupeTTL)
+	if len(filtered) != len(filteredByActive) {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s)", len(filteredByActive)-len(filtered)),
 			Stage:      "deduped",
 			OccurredAt: time.Now().UTC(),
 		})
@@ -660,6 +676,79 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 		return false
 	case <-timer.C:
 		return true
+	}
+}
+
+func (r *Plugin) filterProposalsWithActiveJobs(jobType string, proposals []*plugin_pb.JobProposal) ([]*plugin_pb.JobProposal, int) {
+	if len(proposals) == 0 {
+		return proposals, 0
+	}
+
+	activeKeys := make(map[string]struct{})
+	r.jobsMu.RLock()
+	for _, job := range r.jobs {
+		if job == nil {
+			continue
+		}
+		if strings.TrimSpace(job.JobType) != strings.TrimSpace(jobType) {
+			continue
+		}
+		if !isActiveTrackedJobState(job.State) {
+			continue
+		}
+
+		key := strings.TrimSpace(job.DedupeKey)
+		if key == "" {
+			key = strings.TrimSpace(job.JobID)
+		}
+		if key == "" {
+			continue
+		}
+		activeKeys[key] = struct{}{}
+	}
+	r.jobsMu.RUnlock()
+
+	if len(activeKeys) == 0 {
+		return proposals, 0
+	}
+
+	filtered := make([]*plugin_pb.JobProposal, 0, len(proposals))
+	skipped := 0
+	for _, proposal := range proposals {
+		if proposal == nil {
+			continue
+		}
+		key := proposalExecutionKey(proposal)
+		if key != "" {
+			if _, exists := activeKeys[key]; exists {
+				skipped++
+				continue
+			}
+		}
+		filtered = append(filtered, proposal)
+	}
+
+	return filtered, skipped
+}
+
+func proposalExecutionKey(proposal *plugin_pb.JobProposal) string {
+	if proposal == nil {
+		return ""
+	}
+	key := strings.TrimSpace(proposal.DedupeKey)
+	if key != "" {
+		return key
+	}
+	return strings.TrimSpace(proposal.ProposalId)
+}
+
+func isActiveTrackedJobState(state string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	switch normalized {
+	case "assigned", "running", "in_progress", "job_state_assigned", "job_state_running":
+		return true
+	default:
+		return false
 	}
 }
 

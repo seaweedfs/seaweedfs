@@ -175,6 +175,42 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 	}
 }
 
+func TestFilterProposalsWithActiveJobs(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-1", "worker-a", &plugin_pb.JobSpec{
+		JobId:     "job-1",
+		JobType:   "vacuum",
+		DedupeKey: "vacuum:k1",
+	}, 1)
+	pluginSvc.trackExecutionStart("req-2", "worker-b", &plugin_pb.JobSpec{
+		JobId:   "job-2",
+		JobType: "vacuum",
+	}, 1)
+
+	filtered, skipped := pluginSvc.filterProposalsWithActiveJobs("vacuum", []*plugin_pb.JobProposal{
+		{ProposalId: "proposal-1", JobType: "vacuum", DedupeKey: "vacuum:k1"},
+		{ProposalId: "job-2", JobType: "vacuum"},
+		{ProposalId: "proposal-3", JobType: "vacuum", DedupeKey: "vacuum:k3"},
+		{ProposalId: "proposal-4", JobType: "balance", DedupeKey: "balance:k1"},
+	})
+	if skipped != 2 {
+		t.Fatalf("unexpected skipped count: got=%d want=2", skipped)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("unexpected filtered size: got=%d want=2", len(filtered))
+	}
+	if filtered[0].ProposalId != "proposal-3" || filtered[1].ProposalId != "proposal-4" {
+		t.Fatalf("unexpected filtered proposals: got=%s,%s", filtered[0].ProposalId, filtered[1].ProposalId)
+	}
+}
+
 func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	t.Parallel()
 

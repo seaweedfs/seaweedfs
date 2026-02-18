@@ -1734,6 +1734,18 @@ func (s *AdminServer) RunPluginDetection(
 	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
+// FilterPluginProposalsWithActiveJobs drops proposals already represented by assigned/running jobs.
+func (s *AdminServer) FilterPluginProposalsWithActiveJobs(
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+) ([]*plugin_pb.JobProposal, int, error) {
+	if s.plugin == nil {
+		return nil, 0, fmt.Errorf("plugin is not enabled")
+	}
+	filtered, skipped := s.plugin.FilterProposalsWithActiveJobs(jobType, proposals)
+	return filtered, skipped, nil
+}
+
 // RunPluginDetectionWithReport triggers one detection pass and returns request metadata and proposals.
 func (s *AdminServer) RunPluginDetectionWithReport(
 	ctx context.Context,
