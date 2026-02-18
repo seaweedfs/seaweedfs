@@ -818,9 +818,9 @@ templ Plugin(page string) {
                 var parityIndex = shardID - dataShardCount;
                 return {
                     kind: 'parity',
-                    label: 'P' + String(parityIndex),
+                    label: String(shardID),
                     className: 'bg-warning text-dark',
-                    title: 'Parity shard ' + shardID,
+                    title: 'Parity shard ' + shardID + ' (index ' + parityIndex + ')',
                 };
             }
 

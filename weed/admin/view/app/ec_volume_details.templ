@@ -313,18 +313,11 @@ templ renderEcShardBadge(shardID uint32, missing bool) {
         }
     } else {
         if missing {
-            <span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing parity shard %d", shardID)}>{fmt.Sprintf("P%02d", ecParityIndex(shardID))}</span>
+            <span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing parity shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
         } else {
-            <span class="badge bg-warning text-dark me-1 mb-1" title={fmt.Sprintf("Parity shard %d", shardID)}>{fmt.Sprintf("P%02d", ecParityIndex(shardID))}</span>
+            <span class="badge bg-warning text-dark me-1 mb-1" title={fmt.Sprintf("Parity shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
         }
     }
-}
-
-func ecParityIndex(shardID uint32) uint32 {
-    if shardID <= erasure_coding.DataShardsCount {
-        return 0
-    }
-    return shardID - erasure_coding.DataShardsCount
 }
 
 // Helper function to convert bytes to human readable format (uint64 version)
