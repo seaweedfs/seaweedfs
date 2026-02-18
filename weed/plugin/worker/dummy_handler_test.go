@@ -179,6 +179,56 @@ func TestDummyStressDetectStressLargeTopology(t *testing.T) {
 	}
 }
 
+func TestDummyStressDetectRotatesSelections(t *testing.T) {
+	t.Parallel()
+
+	response := buildLargeDummyVolumeListResponse(5)
+	handler := NewDummyStressHandler(nil)
+	handler.fetchVolumeList = func(context.Context, []string) (*master_pb.VolumeListResponse, error) {
+		return response, nil
+	}
+
+	firstDetect := &dummyDetectCapture{}
+	if err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType:    dummyStressJobType,
+		MaxResults: 2,
+		ClusterContext: &plugin_pb.ClusterContext{
+			MasterGrpcAddresses: []string{"master-a:19333"},
+		},
+	}, firstDetect); err != nil {
+		t.Fatalf("first detect error: %v", err)
+	}
+	if len(firstDetect.proposals) != 2 {
+		t.Fatalf("expected 2 proposals on first detect, got %d", len(firstDetect.proposals))
+	}
+	if firstVolumeID := readInt64Config(firstDetect.proposals[0].Parameters, "volume_id", 0); firstVolumeID != 1 {
+		t.Fatalf("unexpected first detect volume id at [0]: %d", firstVolumeID)
+	}
+	if secondVolumeID := readInt64Config(firstDetect.proposals[1].Parameters, "volume_id", 0); secondVolumeID != 2 {
+		t.Fatalf("unexpected first detect volume id at [1]: %d", secondVolumeID)
+	}
+
+	secondDetect := &dummyDetectCapture{}
+	if err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType:    dummyStressJobType,
+		MaxResults: 2,
+		ClusterContext: &plugin_pb.ClusterContext{
+			MasterGrpcAddresses: []string{"master-a:19333"},
+		},
+	}, secondDetect); err != nil {
+		t.Fatalf("second detect error: %v", err)
+	}
+	if len(secondDetect.proposals) != 2 {
+		t.Fatalf("expected 2 proposals on second detect, got %d", len(secondDetect.proposals))
+	}
+	if firstVolumeID := readInt64Config(secondDetect.proposals[0].Parameters, "volume_id", 0); firstVolumeID != 3 {
+		t.Fatalf("unexpected second detect volume id at [0]: %d", firstVolumeID)
+	}
+	if secondVolumeID := readInt64Config(secondDetect.proposals[1].Parameters, "volume_id", 0); secondVolumeID != 4 {
+		t.Fatalf("unexpected second detect volume id at [1]: %d", secondVolumeID)
+	}
+}
+
 type dummyDetectCapture struct {
 	proposals  []*plugin_pb.JobProposal
 	complete   *plugin_pb.DetectionComplete

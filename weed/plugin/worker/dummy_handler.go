@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -34,6 +35,9 @@ type DummyStressHandler struct {
 	grpcDialOption   grpc.DialOption
 	fetchVolumeList  func(context.Context, []string) (*master_pb.VolumeListResponse, error)
 	sleepWithContext func(context.Context, time.Duration) error
+
+	selectionMu     sync.Mutex
+	nextSelectStart int
 }
 
 func NewDummyStressHandler(grpcDialOption grpc.DialOption) *DummyStressHandler {
@@ -128,24 +132,28 @@ func (h *DummyStressHandler) Detect(
 	totalVolumeIDs := len(volumeIDs)
 
 	maxResults := int(request.MaxResults)
-	hasMore := false
-	if maxResults > 0 && len(volumeIDs) > maxResults {
-		hasMore = true
-		volumeIDs = volumeIDs[:maxResults]
-	}
+	selectedVolumeIDs, hasMore := h.selectVolumeIDs(volumeIDs, maxResults)
 
 	if err := sender.SendActivity(buildDetectorActivity(
 		"decision_summary",
-		fmt.Sprintf("DUMMY STRESS: generated %d proposal(s) from %d volume IDs", len(volumeIDs), totalVolumeIDs),
+		fmt.Sprintf(
+			"DUMMY STRESS: generated %d proposal(s) from %d volume IDs (max_results=%d)",
+			len(selectedVolumeIDs),
+			totalVolumeIDs,
+			maxResults,
+		),
 		map[string]*plugin_pb.ConfigValue{
 			"total_volume_ids": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumeIDs)},
 			},
 			"selected_proposals": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(volumeIDs))},
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(selectedVolumeIDs))},
 			},
 			"has_more": {
 				Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: hasMore},
+			},
+			"next_selection_start_index": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(h.currentSelectionStart())},
 			},
 		},
 	)); err != nil {
@@ -153,11 +161,11 @@ func (h *DummyStressHandler) Detect(
 	}
 
 	previewCount := 3
-	if len(volumeIDs) < previewCount {
-		previewCount = len(volumeIDs)
+	if len(selectedVolumeIDs) < previewCount {
+		previewCount = len(selectedVolumeIDs)
 	}
 	for i := 0; i < previewCount; i++ {
-		volumeID := volumeIDs[i]
+		volumeID := selectedVolumeIDs[i]
 		if err := sender.SendActivity(buildDetectorActivity(
 			"decision_volume",
 			fmt.Sprintf("DUMMY STRESS: selected volume %d for synthetic execution", volumeID),
@@ -171,8 +179,8 @@ func (h *DummyStressHandler) Detect(
 		}
 	}
 
-	proposals := make([]*plugin_pb.JobProposal, 0, len(volumeIDs))
-	for _, volumeID := range volumeIDs {
+	proposals := make([]*plugin_pb.JobProposal, 0, len(selectedVolumeIDs))
+	for _, volumeID := range selectedVolumeIDs {
 		proposalID := fmt.Sprintf("dummy-stress-%d", volumeID)
 		proposals = append(proposals, &plugin_pb.JobProposal{
 			ProposalId: proposalID,
@@ -206,6 +214,40 @@ func (h *DummyStressHandler) Detect(
 		Success:        true,
 		TotalProposals: int32(len(proposals)),
 	})
+}
+
+func (h *DummyStressHandler) selectVolumeIDs(volumeIDs []uint32, maxResults int) ([]uint32, bool) {
+	if len(volumeIDs) == 0 {
+		h.selectionMu.Lock()
+		h.nextSelectStart = 0
+		h.selectionMu.Unlock()
+		return nil, false
+	}
+	if maxResults <= 0 || maxResults >= len(volumeIDs) {
+		out := append(make([]uint32, 0, len(volumeIDs)), volumeIDs...)
+		h.selectionMu.Lock()
+		h.nextSelectStart = 0
+		h.selectionMu.Unlock()
+		return out, false
+	}
+
+	h.selectionMu.Lock()
+	start := h.nextSelectStart % len(volumeIDs)
+	selected := make([]uint32, 0, maxResults)
+	for i := 0; i < maxResults; i++ {
+		idx := (start + i) % len(volumeIDs)
+		selected = append(selected, volumeIDs[idx])
+	}
+	h.nextSelectStart = (start + maxResults) % len(volumeIDs)
+	h.selectionMu.Unlock()
+
+	return selected, true
+}
+
+func (h *DummyStressHandler) currentSelectionStart() int {
+	h.selectionMu.Lock()
+	defer h.selectionMu.Unlock()
+	return h.nextSelectStart
 }
 
 func (h *DummyStressHandler) Execute(
