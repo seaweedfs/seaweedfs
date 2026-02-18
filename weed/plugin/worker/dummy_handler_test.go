@@ -142,6 +142,43 @@ func TestDummyStressDetectAndExecute(t *testing.T) {
 	}
 }
 
+func TestDummyStressDetectStressLargeTopology(t *testing.T) {
+	t.Parallel()
+
+	const volumeCount = 5000
+	const maxResults = 1200
+
+	response := buildLargeDummyVolumeListResponse(volumeCount)
+	handler := NewDummyStressHandler(nil)
+	handler.fetchVolumeList = func(context.Context, []string) (*master_pb.VolumeListResponse, error) {
+		return response, nil
+	}
+
+	detectSender := &dummyDetectCapture{}
+	detectErr := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType:    dummyStressJobType,
+		MaxResults: maxResults,
+		ClusterContext: &plugin_pb.ClusterContext{
+			MasterGrpcAddresses: []string{"master-a:19333"},
+		},
+	}, detectSender)
+	if detectErr != nil {
+		t.Fatalf("Detect error: %v", detectErr)
+	}
+	if detectSender.complete == nil || !detectSender.complete.Success {
+		t.Fatalf("expected successful detection completion")
+	}
+	if len(detectSender.proposals) != maxResults {
+		t.Fatalf("expected %d proposals, got %d", maxResults, len(detectSender.proposals))
+	}
+	if detectSender.complete.TotalProposals != maxResults {
+		t.Fatalf("unexpected total proposals in completion: %d", detectSender.complete.TotalProposals)
+	}
+	if len(detectSender.activities) == 0 {
+		t.Fatalf("expected detector activities")
+	}
+}
+
 type dummyDetectCapture struct {
 	proposals  []*plugin_pb.JobProposal
 	complete   *plugin_pb.DetectionComplete
@@ -215,6 +252,43 @@ func buildDummyVolumeListResponseForTest() *master_pb.VolumeListResponse {
 											EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
 												{Id: 100, Collection: "alpha", EcIndexBits: 0, ShardSizes: []int64{10, 10, 10, 10}},
 											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func buildLargeDummyVolumeListResponse(volumeCount int) *master_pb.VolumeListResponse {
+	volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, volumeCount)
+	for i := 1; i <= volumeCount; i++ {
+		volumeInfos = append(volumeInfos, &master_pb.VolumeInformationMessage{
+			Id:               uint32(i),
+			Collection:       "stress",
+			Size:             uint64(1024 * i),
+			DeletedByteCount: uint64(i % 13),
+		})
+	}
+
+	return &master_pb.VolumeListResponse{
+		TopologyInfo: &master_pb.TopologyInfo{
+			DataCenterInfos: []*master_pb.DataCenterInfo{
+				{
+					Id: "dc-stress",
+					RackInfos: []*master_pb.RackInfo{
+						{
+							Id: "rack-stress",
+							DataNodeInfos: []*master_pb.DataNodeInfo{
+								{
+									Id: "dn-stress",
+									DiskInfos: map[string]*master_pb.DiskInfo{
+										"disk-stress": {
+											VolumeInfos: volumeInfos,
 										},
 									},
 								},

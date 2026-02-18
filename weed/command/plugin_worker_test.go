@@ -152,6 +152,24 @@ func TestParsePluginWorkerJobTypes(t *testing.T) {
 	}
 }
 
+func TestPluginWorkerDefaultJobTypesIncludeDummy(t *testing.T) {
+	jobTypes, err := parsePluginWorkerJobTypes(*pluginWorkerJobType)
+	if err != nil {
+		t.Fatalf("parsePluginWorkerJobTypes(default flag) err = %v", err)
+	}
+
+	foundDummy := false
+	for _, jobType := range jobTypes {
+		if jobType == "dummy_stress" {
+			foundDummy = true
+			break
+		}
+	}
+	if !foundDummy {
+		t.Fatalf("expected default plugin.worker job types to include dummy_stress, got %v", jobTypes)
+	}
+}
+
 func TestResolvePluginWorkerID(t *testing.T) {
 	dir := t.TempDir()
 

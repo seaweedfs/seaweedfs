@@ -45,7 +45,7 @@ const (
 	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
 	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
-	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding"
+	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding,dummy_stress"
 )
 
 var (
