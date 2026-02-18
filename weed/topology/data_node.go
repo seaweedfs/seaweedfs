@@ -269,11 +269,24 @@ func (dn *DataNode) ToInfo() (info DataNodeInfo) {
 
 func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
-		Id:        string(dn.Id()),
-		DiskInfos: make(map[string]*master_pb.DiskInfo),
+		Id: string(dn.Id()),
+		// Start from disk usage counters so empty disks are still represented
+		// even when there are no volumes/EC shards on this data node yet.
+		DiskInfos: dn.diskUsages.ToDiskInfo(),
 		GrpcPort:  uint32(dn.GrpcPort),
 		Address:   dn.Url(), // ip:port for connecting to the volume server
 	}
+	if m.DiskInfos == nil {
+		m.DiskInfos = make(map[string]*master_pb.DiskInfo)
+	}
+	for diskType, diskInfo := range m.DiskInfos {
+		if diskInfo == nil {
+			m.DiskInfos[diskType] = &master_pb.DiskInfo{Type: diskType}
+			continue
+		}
+		diskInfo.Type = diskType
+	}
+
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)
 		m.DiskInfos[string(disk.Id())] = disk.ToDiskInfo()

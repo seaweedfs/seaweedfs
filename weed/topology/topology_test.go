@@ -165,6 +165,29 @@ func TestHandlingVolumeServerHeartbeat(t *testing.T) {
 
 }
 
+func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
+	dn := NewDataNode("node-1")
+	dn.Ip = "127.0.0.1"
+	dn.Port = 18080
+	dn.GrpcPort = 28080
+
+	// Simulate a node that has slot counters but no mounted volumes yet.
+	usage := dn.diskUsages.getOrCreateDisk(types.HardDriveType)
+	usage.maxVolumeCount = 8
+
+	info := dn.ToDataNodeInfo()
+	diskInfo, found := info.DiskInfos[""]
+	if !found {
+		t.Fatalf("expected default disk entry for empty node")
+	}
+	if diskInfo.MaxVolumeCount != 8 {
+		t.Fatalf("unexpected max volume count: got=%d want=8", diskInfo.MaxVolumeCount)
+	}
+	if len(diskInfo.VolumeInfos) != 0 {
+		t.Fatalf("expected no volumes for empty disk, got=%d", len(diskInfo.VolumeInfos))
+	}
+}
+
 func assert(t *testing.T, message string, actual, expected int) {
 	if actual != expected {
 		t.Fatalf("unexpected %s: %d, expected: %d", message, actual, expected)
