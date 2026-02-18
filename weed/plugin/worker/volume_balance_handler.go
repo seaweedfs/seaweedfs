@@ -3,6 +3,7 @@ package pluginworker
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -174,6 +175,16 @@ func (h *VolumeBalanceHandler) Detect(
 
 	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
 	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
+		_ = sender.SendActivity(buildDetectorActivity(
+			"skipped_by_interval",
+			fmt.Sprintf("VOLUME BALANCE: Detection skipped due to min interval (%s)", minInterval),
+			map[string]*plugin_pb.ConfigValue{
+				"min_interval_seconds": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
+				},
+			},
+		))
 		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
 			JobType:   "volume_balance",
 			Proposals: []*plugin_pb.JobProposal{},
@@ -203,6 +214,9 @@ func (h *VolumeBalanceHandler) Detect(
 	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
 	if err != nil {
 		return err
+	}
+	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
 	maxResults := int(request.MaxResults)
@@ -235,6 +249,239 @@ func (h *VolumeBalanceHandler) Detect(
 		Success:        true,
 		TotalProposals: int32(len(proposals)),
 	})
+}
+
+func emitVolumeBalanceDetectionDecisionTrace(
+	sender DetectionSender,
+	metrics []*workertypes.VolumeHealthMetrics,
+	taskConfig *balancetask.Config,
+	results []*workertypes.TaskDetectionResult,
+) error {
+	if sender == nil || taskConfig == nil {
+		return nil
+	}
+
+	totalVolumes := len(metrics)
+	summaryMessage := ""
+	if len(results) == 0 {
+		summaryMessage = fmt.Sprintf(
+			"BALANCE: No tasks created for %d volumes across %d disk type(s). Threshold=%.1f%%, MinServers=%d",
+			totalVolumes,
+			countBalanceDiskTypes(metrics),
+			taskConfig.ImbalanceThreshold*100,
+			taskConfig.MinServerCount,
+		)
+	} else {
+		summaryMessage = fmt.Sprintf(
+			"BALANCE: Created %d task(s) for %d volumes across %d disk type(s). Threshold=%.1f%%, MinServers=%d",
+			len(results),
+			totalVolumes,
+			countBalanceDiskTypes(metrics),
+			taskConfig.ImbalanceThreshold*100,
+			taskConfig.MinServerCount,
+		)
+	}
+
+	if err := sender.SendActivity(buildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+		"total_volumes": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
+		},
+		"selected_tasks": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
+		},
+		"imbalance_threshold_percent": {
+			Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: taskConfig.ImbalanceThreshold * 100},
+		},
+		"min_server_count": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.MinServerCount)},
+		},
+	})); err != nil {
+		return err
+	}
+
+	volumesByDiskType := make(map[string][]*workertypes.VolumeHealthMetrics)
+	for _, metric := range metrics {
+		if metric == nil {
+			continue
+		}
+		diskType := strings.TrimSpace(metric.DiskType)
+		if diskType == "" {
+			diskType = "unknown"
+		}
+		volumesByDiskType[diskType] = append(volumesByDiskType[diskType], metric)
+	}
+
+	diskTypes := make([]string, 0, len(volumesByDiskType))
+	for diskType := range volumesByDiskType {
+		diskTypes = append(diskTypes, diskType)
+	}
+	sort.Strings(diskTypes)
+
+	const minVolumeCount = 2
+	detailCount := 0
+	for _, diskType := range diskTypes {
+		diskMetrics := volumesByDiskType[diskType]
+		volumeCount := len(diskMetrics)
+		if volumeCount < minVolumeCount {
+			message := fmt.Sprintf(
+				"BALANCE [%s]: No tasks created - cluster too small (%d volumes, need ≥%d)",
+				diskType,
+				volumeCount,
+				minVolumeCount,
+			)
+			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+				"disk_type": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
+				},
+				"volume_count": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(volumeCount)},
+				},
+				"required_min_volume_count": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: minVolumeCount},
+				},
+			})); err != nil {
+				return err
+			}
+			detailCount++
+			if detailCount >= 3 {
+				break
+			}
+			continue
+		}
+
+		serverVolumeCounts := make(map[string]int)
+		for _, metric := range diskMetrics {
+			serverVolumeCounts[metric.Server]++
+		}
+		if len(serverVolumeCounts) < taskConfig.MinServerCount {
+			message := fmt.Sprintf(
+				"BALANCE [%s]: No tasks created - too few servers (%d servers, need ≥%d)",
+				diskType,
+				len(serverVolumeCounts),
+				taskConfig.MinServerCount,
+			)
+			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+				"disk_type": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
+				},
+				"server_count": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(serverVolumeCounts))},
+				},
+				"required_min_server_count": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.MinServerCount)},
+				},
+			})); err != nil {
+				return err
+			}
+			detailCount++
+			if detailCount >= 3 {
+				break
+			}
+			continue
+		}
+
+		totalDiskTypeVolumes := len(diskMetrics)
+		avgVolumesPerServer := float64(totalDiskTypeVolumes) / float64(len(serverVolumeCounts))
+		maxVolumes := 0
+		minVolumes := totalDiskTypeVolumes
+		maxServer := ""
+		minServer := ""
+		for server, count := range serverVolumeCounts {
+			if count > maxVolumes {
+				maxVolumes = count
+				maxServer = server
+			}
+			if count < minVolumes {
+				minVolumes = count
+				minServer = server
+			}
+		}
+
+		imbalanceRatio := 0.0
+		if avgVolumesPerServer > 0 {
+			imbalanceRatio = float64(maxVolumes-minVolumes) / avgVolumesPerServer
+		}
+
+		stage := "decision_disk_type"
+		message := ""
+		if imbalanceRatio <= taskConfig.ImbalanceThreshold {
+			message = fmt.Sprintf(
+				"BALANCE [%s]: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
+				diskType,
+				imbalanceRatio*100,
+				taskConfig.ImbalanceThreshold*100,
+				maxVolumes,
+				maxServer,
+				minVolumes,
+				minServer,
+				avgVolumesPerServer,
+			)
+		} else {
+			stage = "decision_candidate"
+			message = fmt.Sprintf(
+				"BALANCE [%s]: Candidate detected. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
+				diskType,
+				imbalanceRatio*100,
+				taskConfig.ImbalanceThreshold*100,
+				maxVolumes,
+				maxServer,
+				minVolumes,
+				minServer,
+				avgVolumesPerServer,
+			)
+		}
+
+		if err := sender.SendActivity(buildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
+			"disk_type": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
+			},
+			"volume_count": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalDiskTypeVolumes)},
+			},
+			"server_count": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(serverVolumeCounts))},
+			},
+			"imbalance_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: imbalanceRatio * 100},
+			},
+			"threshold_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: taskConfig.ImbalanceThreshold * 100},
+			},
+			"max_volumes": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(maxVolumes)},
+			},
+			"min_volumes": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(minVolumes)},
+			},
+			"avg_volumes_per_server": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: avgVolumesPerServer},
+			},
+		})); err != nil {
+			return err
+		}
+
+		detailCount++
+		if detailCount >= 3 {
+			break
+		}
+	}
+
+	return nil
+}
+
+func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
+	diskTypes := make(map[string]struct{})
+	for _, metric := range metrics {
+		if metric == nil {
+			continue
+		}
+		diskType := strings.TrimSpace(metric.DiskType)
+		if diskType == "" {
+			diskType = "unknown"
+		}
+		diskTypes[diskType] = struct{}{}
+	}
+	return len(diskTypes)
 }
 
 func (h *VolumeBalanceHandler) Execute(

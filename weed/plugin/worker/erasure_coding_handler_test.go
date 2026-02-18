@@ -2,12 +2,14 @@ package pluginworker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -230,6 +232,58 @@ func TestErasureCodingHandlerDetectSkipsByMinInterval(t *testing.T) {
 	}
 	if sender.complete == nil || !sender.complete.Success {
 		t.Fatalf("expected successful completion message")
+	}
+	if len(sender.events) == 0 {
+		t.Fatalf("expected detector activity events")
+	}
+	if !strings.Contains(sender.events[0].Message, "min interval") {
+		t.Fatalf("unexpected skip-by-interval message: %q", sender.events[0].Message)
+	}
+}
+
+func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
+	sender := &recordingDetectionSender{}
+	config := erasurecodingtask.NewDefaultConfig()
+	config.QuietForSeconds = 5 * 60
+	config.MinSizeMB = 30
+	config.FullnessRatio = 0.91
+
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{
+			VolumeID:      20,
+			Size:          0,
+			Age:           218*time.Hour + 41*time.Minute,
+			FullnessRatio: 0,
+		},
+		{
+			VolumeID:      27,
+			Size:          uint64(16 * 1024 * 1024 / 10),
+			Age:           91*time.Hour + time.Minute,
+			FullnessRatio: 0.002,
+		},
+		{
+			VolumeID:      12,
+			Size:          0,
+			Age:           219*time.Hour + 49*time.Minute,
+			FullnessRatio: 0,
+		},
+	}
+
+	if err := emitErasureCodingDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+		t.Fatalf("emitErasureCodingDetectionDecisionTrace error: %v", err)
+	}
+	if len(sender.events) < 4 {
+		t.Fatalf("expected at least 4 detection events, got %d", len(sender.events))
+	}
+
+	if sender.events[0].Source != plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR {
+		t.Fatalf("expected detector source, got %v", sender.events[0].Source)
+	}
+	if !strings.Contains(sender.events[0].Message, "EC detection: No tasks created for 3 volumes") {
+		t.Fatalf("unexpected summary message: %q", sender.events[0].Message)
+	}
+	if !strings.Contains(sender.events[1].Message, "ERASURE CODING: Volume 20: size=0.0MB") {
+		t.Fatalf("unexpected first detail message: %q", sender.events[1].Message)
 	}
 }
 

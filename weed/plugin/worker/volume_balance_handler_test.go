@@ -2,11 +2,13 @@ package pluginworker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -204,6 +206,49 @@ func TestVolumeBalanceHandlerDetectSkipsByMinInterval(t *testing.T) {
 	}
 	if sender.complete == nil || !sender.complete.Success {
 		t.Fatalf("expected successful completion message")
+	}
+	if len(sender.events) == 0 {
+		t.Fatalf("expected detector activity events")
+	}
+	if !strings.Contains(sender.events[0].Message, "min interval") {
+		t.Fatalf("unexpected skip-by-interval message: %q", sender.events[0].Message)
+	}
+}
+
+func TestEmitVolumeBalanceDetectionDecisionTraceNoTasks(t *testing.T) {
+	sender := &recordingDetectionSender{}
+	config := balancetask.NewDefaultConfig()
+	config.ImbalanceThreshold = 0.2
+	config.MinServerCount = 2
+
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{VolumeID: 1, Server: "server-a", DiskType: "hdd"},
+		{VolumeID: 2, Server: "server-a", DiskType: "hdd"},
+		{VolumeID: 3, Server: "server-b", DiskType: "hdd"},
+		{VolumeID: 4, Server: "server-b", DiskType: "hdd"},
+	}
+
+	if err := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+		t.Fatalf("emitVolumeBalanceDetectionDecisionTrace error: %v", err)
+	}
+	if len(sender.events) < 2 {
+		t.Fatalf("expected at least 2 detection events, got %d", len(sender.events))
+	}
+	if sender.events[0].Source != plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR {
+		t.Fatalf("expected detector source, got %v", sender.events[0].Source)
+	}
+	if !strings.Contains(sender.events[0].Message, "BALANCE: No tasks created for 4 volumes") {
+		t.Fatalf("unexpected summary message: %q", sender.events[0].Message)
+	}
+	foundDiskTypeDecision := false
+	for _, event := range sender.events {
+		if strings.Contains(event.Message, "BALANCE [hdd]: No tasks created - cluster well balanced") {
+			foundDiskTypeDecision = true
+			break
+		}
+	}
+	if !foundDiskTypeDecision {
+		t.Fatalf("expected per-disk-type decision message")
 	}
 }
 

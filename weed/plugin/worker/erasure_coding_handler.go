@@ -188,6 +188,16 @@ func (h *ErasureCodingHandler) Detect(
 
 	workerConfig := deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues())
 	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
+		_ = sender.SendActivity(buildDetectorActivity(
+			"skipped_by_interval",
+			fmt.Sprintf("ERASURE CODING: Detection skipped due to min interval (%s)", minInterval),
+			map[string]*plugin_pb.ConfigValue{
+				"min_interval_seconds": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
+				},
+			},
+		))
 		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
 			JobType:   "erasure_coding",
 			Proposals: []*plugin_pb.JobProposal{},
@@ -222,6 +232,9 @@ func (h *ErasureCodingHandler) Detect(
 	if err != nil {
 		return err
 	}
+	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
+	}
 
 	maxResults := int(request.MaxResults)
 	hasMore := false
@@ -253,6 +266,186 @@ func (h *ErasureCodingHandler) Detect(
 		Success:        true,
 		TotalProposals: int32(len(proposals)),
 	})
+}
+
+func emitErasureCodingDetectionDecisionTrace(
+	sender DetectionSender,
+	metrics []*workertypes.VolumeHealthMetrics,
+	taskConfig *erasurecodingtask.Config,
+	results []*workertypes.TaskDetectionResult,
+) error {
+	if sender == nil || taskConfig == nil {
+		return nil
+	}
+
+	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
+	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
+	allowedCollections := make(map[string]bool)
+	if strings.TrimSpace(taskConfig.CollectionFilter) != "" {
+		for _, collection := range strings.Split(taskConfig.CollectionFilter, ",") {
+			trimmed := strings.TrimSpace(collection)
+			if trimmed != "" {
+				allowedCollections[trimmed] = true
+			}
+		}
+	}
+
+	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
+	for _, metric := range metrics {
+		if metric == nil {
+			continue
+		}
+		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
+	}
+
+	skippedAlreadyEC := 0
+	skippedTooSmall := 0
+	skippedCollectionFilter := 0
+	skippedQuietTime := 0
+	skippedFullness := 0
+
+	for _, groupMetrics := range volumeGroups {
+		if len(groupMetrics) == 0 {
+			continue
+		}
+		metric := groupMetrics[0]
+		for _, candidate := range groupMetrics {
+			if candidate != nil && candidate.Server < metric.Server {
+				metric = candidate
+			}
+		}
+		if metric == nil {
+			continue
+		}
+
+		if metric.IsECVolume {
+			skippedAlreadyEC++
+			continue
+		}
+		if metric.Size < minSizeBytes {
+			skippedTooSmall++
+			continue
+		}
+		if len(allowedCollections) > 0 && !allowedCollections[metric.Collection] {
+			skippedCollectionFilter++
+			continue
+		}
+		if metric.Age < quietThreshold {
+			skippedQuietTime++
+		}
+		if metric.FullnessRatio < taskConfig.FullnessRatio {
+			skippedFullness++
+		}
+	}
+
+	totalVolumes := len(metrics)
+	summaryMessage := ""
+	if len(results) == 0 {
+		summaryMessage = fmt.Sprintf(
+			"EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			totalVolumes,
+			skippedAlreadyEC,
+			skippedTooSmall,
+			skippedCollectionFilter,
+			skippedQuietTime,
+			skippedFullness,
+		)
+	} else {
+		summaryMessage = fmt.Sprintf(
+			"EC detection: Created %d task(s) from %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			len(results),
+			totalVolumes,
+			skippedAlreadyEC,
+			skippedTooSmall,
+			skippedCollectionFilter,
+			skippedQuietTime,
+			skippedFullness,
+		)
+	}
+
+	if err := sender.SendActivity(buildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+		"total_volumes": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
+		},
+		"selected_tasks": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
+		},
+		"skipped_already_ec": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedAlreadyEC)},
+		},
+		"skipped_too_small": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedTooSmall)},
+		},
+		"skipped_filtered": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedCollectionFilter)},
+		},
+		"skipped_not_quiet": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedQuietTime)},
+		},
+		"skipped_not_full": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedFullness)},
+		},
+		"quiet_for_seconds": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.QuietForSeconds)},
+		},
+		"min_size_mb": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.MinSizeMB)},
+		},
+		"fullness_threshold_percent": {
+			Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: taskConfig.FullnessRatio * 100},
+		},
+	})); err != nil {
+		return err
+	}
+
+	detailsEmitted := 0
+	for _, metric := range metrics {
+		if metric == nil || metric.IsECVolume {
+			continue
+		}
+		sizeMB := float64(metric.Size) / (1024 * 1024)
+		message := fmt.Sprintf(
+			"ERASURE CODING: Volume %d: size=%.1fMB (need ≥%dMB), age=%s (need ≥%s), fullness=%.1f%% (need ≥%.1f%%)",
+			metric.VolumeID,
+			sizeMB,
+			taskConfig.MinSizeMB,
+			metric.Age.Truncate(time.Minute),
+			quietThreshold.Truncate(time.Minute),
+			metric.FullnessRatio*100,
+			taskConfig.FullnessRatio*100,
+		)
+		if err := sender.SendActivity(buildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+			"volume_id": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
+			},
+			"size_mb": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: sizeMB},
+			},
+			"required_min_size_mb": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.MinSizeMB)},
+			},
+			"age_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.Age.Seconds())},
+			},
+			"required_quiet_for_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(taskConfig.QuietForSeconds)},
+			},
+			"fullness_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: metric.FullnessRatio * 100},
+			},
+			"required_fullness_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: taskConfig.FullnessRatio * 100},
+			},
+		})); err != nil {
+			return err
+		}
+		detailsEmitted++
+		if detailsEmitted >= 3 {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (h *ErasureCodingHandler) Execute(
