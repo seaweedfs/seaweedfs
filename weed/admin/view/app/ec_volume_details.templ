@@ -305,19 +305,19 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
 }
 
 templ renderEcShardBadge(shardID uint32, missing bool) {
-    if shardID < erasure_coding.DataShardsCount {
-        if missing {
-            <span class="badge bg-primary opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing data shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
-        } else {
-            <span class="badge bg-primary me-1 mb-1" title={fmt.Sprintf("Data shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
-        }
-    } else {
-        if missing {
-            <span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={fmt.Sprintf("Missing parity shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
-        } else {
-            <span class="badge bg-warning text-dark me-1 mb-1" title={fmt.Sprintf("Parity shard %d", shardID)}>{fmt.Sprintf("%02d", shardID)}</span>
-        }
-    }
+	if shardID < erasure_coding.DataShardsCount {
+		if missing {
+			<span class="badge bg-primary opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-primary me-1 mb-1" title={ fmt.Sprintf("Data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		}
+	} else {
+		if missing {
+			<span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-warning text-dark me-1 mb-1" title={ fmt.Sprintf("Parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		}
+	}
 }
 
 // Helper function to convert bytes to human readable format (uint64 version)
