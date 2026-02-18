@@ -16,6 +16,7 @@ metadata:
     {{- toYaml .Values.master.annotations | nindent 4 }}
 {{- end }}
 spec:
+  type: {{ .Values.master.service.type }}
   clusterIP: None
   publishNotReadyAddresses: true
   ports:
