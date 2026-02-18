@@ -239,8 +239,8 @@ func (s *ConfigStore) AppendRunRecord(jobType string, record *JobRunRecord) erro
 	if safeRecord.JobType == "" {
 		safeRecord.JobType = jobType
 	}
-	if safeRecord.CompletedAt.IsZero() {
-		safeRecord.CompletedAt = time.Now().UTC()
+	if safeRecord.CompletedAt == nil || safeRecord.CompletedAt.IsZero() {
+		safeRecord.CompletedAt = timeToPtr(time.Now().UTC())
 	}
 
 	s.mu.Lock()
@@ -260,7 +260,7 @@ func (s *ConfigStore) AppendRunRecord(jobType string, record *JobRunRecord) erro
 
 	history.SuccessfulRuns = trimRuns(history.SuccessfulRuns, MaxSuccessfulRunHistory)
 	history.ErrorRuns = trimRuns(history.ErrorRuns, MaxErrorRunHistory)
-	history.LastUpdatedTime = time.Now().UTC()
+	history.LastUpdatedTime = timeToPtr(time.Now().UTC())
 
 	return s.saveRunHistoryLocked(jobType, history)
 }
@@ -577,7 +577,15 @@ func trimRuns(runs []JobRunRecord, maxKeep int) []JobRunRecord {
 		return runs
 	}
 	sort.Slice(runs, func(i, j int) bool {
-		return runs[i].CompletedAt.After(runs[j].CompletedAt)
+		ti := time.Time{}
+		if runs[i].CompletedAt != nil {
+			ti = *runs[i].CompletedAt
+		}
+		tj := time.Time{}
+		if runs[j].CompletedAt != nil {
+			tj = *runs[j].CompletedAt
+		}
+		return ti.After(tj)
 	})
 	if len(runs) > maxKeep {
 		runs = runs[:maxKeep]
