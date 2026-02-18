@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,119 +160,67 @@ func TestEcEndToEnd(t *testing.T) {
 
 	client := &http.Client{}
 
-	// 1. Configure Global Maintenance (Scan Interval = 1s) via API
-	t.Log("Configuring Global Maintenance via API...")
+	// 1. Configure plugin job types for fast EC detection/execution.
+	t.Log("Configuring plugin job types via API...")
 
-	// 1.1 Fetch current config
-	req, _ := http.NewRequest("GET", AdminUrl+"/api/maintenance/config", nil)
+	// Disable volume balance to reduce interference for this EC-focused test.
+	balanceConfig := map[string]interface{}{
+		"job_type": "volume_balance",
+		"admin_runtime": map[string]interface{}{
+			"enabled": false,
+		},
+	}
+	jsonBody, _ := json.Marshal(balanceConfig)
+	req, _ := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("Failed to get global config: %v", err)
+		t.Fatalf("Failed to update volume_balance config: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to get global config (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	var globalConfig map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&globalConfig); err != nil {
-		t.Fatalf("Failed to decode global config: %v", err)
+		t.Fatalf("Failed to update volume_balance config (status %d): %s", resp.StatusCode, string(body))
 	}
 	resp.Body.Close()
 
-	// 1.2 Modify config
-	globalConfig["enabled"] = true
-	globalConfig["scan_interval_seconds"] = 1
-
-	// Ensure policy structure exists
-	if globalConfig["policy"] == nil {
-		globalConfig["policy"] = map[string]interface{}{}
+	ecConfig := map[string]interface{}{
+		"job_type": "erasure_coding",
+		"admin_runtime": map[string]interface{}{
+			"enabled":                          true,
+			"detection_interval_seconds":       1,
+			"global_execution_concurrency":     4,
+			"per_worker_execution_concurrency": 4,
+			"max_jobs_per_detection":           100,
+		},
+		"worker_config_values": map[string]interface{}{
+			"quiet_for_seconds": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"min_interval_seconds": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"min_size_mb": map[string]interface{}{
+				"int64_value": "1",
+			},
+			"fullness_ratio": map[string]interface{}{
+				"double_value": 0.0001,
+			},
+		},
 	}
-	policy, _ := globalConfig["policy"].(map[string]interface{})
-
-	// Ensure task_policies structure exists
-	if policy["task_policies"] == nil {
-		policy["task_policies"] = map[string]interface{}{}
-	}
-	taskPolicies, _ := policy["task_policies"].(map[string]interface{})
-
-	// Disable balance tasks to avoid interference with EC test
-	if taskPolicies["balance"] == nil {
-		taskPolicies["balance"] = map[string]interface{}{}
-	}
-	balancePolicy, _ := taskPolicies["balance"].(map[string]interface{})
-	balancePolicy["enabled"] = false
-
-	// Set global max concurrent
-	policy["global_max_concurrent"] = 4
-	globalConfig["policy"] = policy
-
-	// Explicitly set required fields
-	requiredFields := map[string]float64{
-		"worker_timeout_seconds":   300,
-		"task_timeout_seconds":     7200,
-		"retry_delay_seconds":      900,
-		"cleanup_interval_seconds": 86400,
-		"task_retention_seconds":   604800,
-		"max_retries":              3,
-	}
-	for field, val := range requiredFields {
-		if _, ok := globalConfig[field]; !ok || globalConfig[field] == 0 {
-			globalConfig[field] = val
-		}
-	}
-
-	// 1.3 Update config
-	jsonBody, _ := json.Marshal(globalConfig)
-	req, _ = http.NewRequest("PUT", AdminUrl+"/api/maintenance/config", bytes.NewBuffer(jsonBody))
+	jsonBody, _ = json.Marshal(ecConfig)
+	req, _ = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/erasure_coding/config", bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = client.Do(req)
 	if err != nil {
-		t.Fatalf("Failed to update global config: %v", err)
+		t.Fatalf("Failed to update erasure_coding config: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to update global config (status %d): %s", resp.StatusCode, string(body))
+		t.Fatalf("Failed to update erasure_coding config (status %d): %s", resp.StatusCode, string(body))
 	}
 	resp.Body.Close()
 
-	// 2. Configure EC Task (Short intervals) via Form API
-	t.Log("Configuring EC Task via Form API...")
-	formData := url.Values{}
-	formData.Set("enabled", "true")
-	formData.Set("scan_interval_seconds", "1")
-	formData.Set("repeat_interval_seconds", "1")
-	formData.Set("check_interval_seconds", "1")
-	formData.Set("max_concurrent", "4")
-	formData.Set("quiet_for_seconds_value", "1")
-	formData.Set("quiet_for_seconds_unit", "seconds")
-	formData.Set("min_size_mb", "1")
-	formData.Set("fullness_ratio", "0.0001")
-
-	req, _ = http.NewRequest("POST", AdminUrl+"/maintenance/config/erasure_coding", strings.NewReader(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatalf("Failed to update EC config: %v", err)
-	}
-	if resp.StatusCode != 200 && resp.StatusCode != 303 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Failed to update EC config (status %d): %s", resp.StatusCode, string(body))
-	}
-	resp.Body.Close()
-	t.Log("EC Task Configuration updated")
-
-	// 3. Restart Admin to pick up Global Config (Scan Interval)
-	if len(runningCmds) > 0 {
-		adminCmd := runningCmds[len(runningCmds)-1]
-		t.Log("Restarting Admin Server to apply configuration...")
-		stopWeed(t, adminCmd)
-		time.Sleep(10 * time.Second)
-		startWeed(t, "admin_restarted", "admin", "-master=localhost:9333", "-port=23646", "-port.grpc=33646", "-dataDir=./tmp/admin")
-		waitForUrl(t, AdminUrl+"/health", 60)
-	}
-
-	// 4. Upload a file
+	// 2. Upload a file
 	fileSize := 5 * 1024 * 1024
 	data := make([]byte, fileSize)
 	rand.Read(data)
@@ -306,7 +253,7 @@ func TestEcEndToEnd(t *testing.T) {
 	}
 	t.Log("Upload successful")
 
-	// 5. Verify EC Encoding
+	// 3. Verify EC Encoding
 	t.Log("Waiting for EC encoding (checking Master topology)...")
 	startTime := time.Now()
 	ecVerified := false
@@ -336,8 +283,8 @@ func TestEcEndToEnd(t *testing.T) {
 			}
 		}
 
-		// 5.2 Debug: Check workers and tasks
-		wResp, wErr := http.Get(AdminUrl + "/api/maintenance/workers")
+		// 3.2 Debug: Check workers and jobs
+		wResp, wErr := http.Get(AdminUrl + "/api/plugin/workers")
 		workerCount := 0
 		if wErr == nil {
 			var workers []interface{}
@@ -346,7 +293,7 @@ func TestEcEndToEnd(t *testing.T) {
 			workerCount = len(workers)
 		}
 
-		tResp, tErr := http.Get(AdminUrl + "/api/maintenance/tasks")
+		tResp, tErr := http.Get(AdminUrl + "/api/plugin/jobs?limit=1000")
 		taskCount := 0
 		if tErr == nil {
 			var tasks []interface{}
