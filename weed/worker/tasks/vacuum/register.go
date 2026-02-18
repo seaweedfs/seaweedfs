@@ -30,7 +30,7 @@ func RegisterVacuumTask() {
 	config := NewDefaultConfig()
 
 	// Create shared gRPC dial option using TLS configuration
-	dialOpt := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	dialOpt := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
