@@ -34,7 +34,10 @@ const (
 	defaultFilePerm         = 0o644
 )
 
-var validJobTypePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+// validJobTypePattern is the canonical pattern for safe job type names.
+// Only letters, digits, underscore, dash, and dot are allowed, which prevents
+// path traversal because '/', '\\', and whitespace are rejected.
+var validJobTypePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // ConfigStore persists plugin configuration and bounded run history.
 // If admin data dir is empty, it transparently falls back to in-memory mode.
@@ -559,17 +562,23 @@ func sanitizeJobType(jobType string) (string, error) {
 	}
 	// Enforce a strict, path-safe pattern for job types: only letters, digits, underscore, dash and dot.
 	// This prevents path traversal because '/', '\\' and whitespace are rejected.
-	var jobTypePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-	if !jobTypePattern.MatchString(jobType) {
-		return "", fmt.Errorf("invalid job type %q: must match %s", jobType, jobTypePattern.String())
+	if !validJobTypePattern.MatchString(jobType) {
+		return "", fmt.Errorf("invalid job type %q: must match %s", jobType, validJobTypePattern.String())
 	}
 	return jobType, nil
 }
+
+// validJobIDPattern allows letters, digits, dash, underscore, and dot.
+// url.PathEscape in jobDetailFileName provides a second layer of defense.
+var validJobIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func sanitizeJobID(jobID string) (string, error) {
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
 		return "", fmt.Errorf("job id is empty")
+	}
+	if !validJobIDPattern.MatchString(jobID) {
+		return "", fmt.Errorf("invalid job id %q: must match %s", jobID, validJobIDPattern.String())
 	}
 	return jobID, nil
 }
