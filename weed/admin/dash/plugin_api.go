@@ -2,6 +2,8 @@ package dash
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -685,42 +688,37 @@ func normalizeTimeout(timeoutSeconds int, defaultTimeout, maxTimeout time.Durati
 
 func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, index int) *plugin_pb.JobSpec {
 	now := timestamppb.Now()
-
-	jobID := fmt.Sprintf("%s-%d-%d", jobType, now.AsTime().UnixNano(), index)
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		// Fallback to simpler ID if rand fails
+		suffix = []byte(fmt.Sprintf("%d", index))
+	}
+	jobID := fmt.Sprintf("%s-%d-%s", jobType, now.AsTime().UnixNano(), hex.EncodeToString(suffix))
 
 	jobSpec := &plugin_pb.JobSpec{
 		JobId:       jobID,
 		JobType:     jobType,
 		Priority:    plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
-		Parameters:  map[string]*plugin_pb.ConfigValue{},
-		Labels:      map[string]string{},
 		CreatedAt:   now,
-		ScheduledAt: now,
+		Labels:      make(map[string]string),
+		Parameters:  make(map[string]*plugin_pb.ConfigValue),
+		DedupeKey:   "",
+		Description: "",
 	}
 
-	if proposal == nil {
-		return jobSpec
-	}
-
-	if proposal.JobType != "" {
-		jobSpec.JobType = proposal.JobType
-	}
-	jobSpec.DedupeKey = proposal.DedupeKey
-	jobSpec.Priority = proposal.Priority
-	jobSpec.Summary = proposal.Summary
-	jobSpec.Detail = proposal.Detail
-
-	if proposal.Parameters != nil {
-		jobSpec.Parameters = clonePluginConfigValueMap(proposal.Parameters)
-	}
-	if proposal.Labels != nil {
-		jobSpec.Labels = make(map[string]string, len(proposal.Labels))
-		for key, value := range proposal.Labels {
-			jobSpec.Labels[key] = value
+	if proposal != nil {
+		jobSpec.Summary = proposal.Summary
+		jobSpec.Detail = proposal.Detail
+		if proposal.Priority != plugin_pb.JobPriority_JOB_PRIORITY_UNSPECIFIED {
+			jobSpec.Priority = proposal.Priority
 		}
-	}
-	if proposal.NotBefore != nil {
-		jobSpec.ScheduledAt = proposal.NotBefore
+		jobSpec.DedupeKey = proposal.DedupeKey
+		jobSpec.Parameters = plugin.CloneConfigValueMap(proposal.Parameters)
+		if proposal.Labels != nil {
+			for k, v := range proposal.Labels {
+				jobSpec.Labels[k] = v
+			}
+		}
 	}
 
 	return jobSpec
@@ -734,17 +732,4 @@ func parsePositiveInt(raw string, defaultValue int) int {
 	return value
 }
 
-func clonePluginConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugin_pb.ConfigValue {
-	if len(in) == 0 {
-		return map[string]*plugin_pb.ConfigValue{}
-	}
-	out := make(map[string]*plugin_pb.ConfigValue, len(in))
-	for key, value := range in {
-		if value == nil {
-			continue
-		}
-		clone := *value
-		out[key] = &clone
-	}
-	return out
-}
+// cloneConfigValueMap is now exported by the plugin package as CloneConfigValueMap
