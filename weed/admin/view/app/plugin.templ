@@ -455,6 +455,7 @@ templ Plugin(page string) {
             var state = {
                 selectedJobType: '',
                 jobTypes: [],
+                lastDetectionByJobType: {},
                 monitorJobType: '',
                 monitorJobState: '',
                 workers: [],
@@ -1552,25 +1553,69 @@ templ Plugin(page string) {
 
             function renderDetectionResult(data) {
                 var root = document.getElementById('plugin-detection-results');
+                if (!root) {
+                    return;
+                }
+
+                function normalizeProposals(payload) {
+                    if (!payload || typeof payload !== 'object') {
+                        return [];
+                    }
+                    if (Array.isArray(payload.proposals)) {
+                        return payload.proposals;
+                    }
+                    if (payload.proposals && typeof payload.proposals === 'object') {
+                        return Object.keys(payload.proposals).map(function(key) {
+                            return payload.proposals[key];
+                        }).filter(function(item) {
+                            return !!item;
+                        });
+                    }
+                    return [];
+                }
+
+                function proposalID(proposal) {
+                    return proposal.proposal_id || proposal.proposalId || proposal.id || '';
+                }
+
+                function proposalSummary(proposal) {
+                    return proposal.summary || proposal.title || proposalID(proposal) || 'Proposal';
+                }
+
+                function proposalDetail(proposal) {
+                    return proposal.detail || proposal.reason || proposal.message || '-';
+                }
+
                 if (!data) {
                     root.innerHTML = '<div class="text-muted">No results.</div>';
                     return;
                 }
 
-                var proposals = Array.isArray(data.proposals) ? data.proposals : [];
+                var proposals = normalizeProposals(data);
+                var responseCount = Number(data.count || 0);
+                if (!Number.isFinite(responseCount) || responseCount < 0) {
+                    responseCount = proposals.length;
+                }
                 if (!proposals.length) {
-                    root.innerHTML = '<div class="text-muted">No proposals returned.</div>';
+                    root.innerHTML = '<div class="text-muted">No proposals returned (count=' + escapeHtml(String(responseCount)) + ').</div>';
                     return;
                 }
 
                 var html = '<div class="mb-2"><strong>' + escapeHtml(String(proposals.length)) + '</strong> proposal(s)</div>';
                 for (var i = 0; i < proposals.length; i++) {
                     var proposal = proposals[i] || {};
+                    var pID = proposalID(proposal);
+                    var pSummary = proposalSummary(proposal);
+                    var pDetail = proposalDetail(proposal);
+                    var pPriority = proposal.priority;
+                    if (pPriority === null || pPriority === undefined || pPriority === '') {
+                        pPriority = '-';
+                    }
                     html += '<div class="plugin-detection-item">' +
-                        '<div class="fw-semibold">' + escapeHtml(textOrDash(proposal.summary || proposal.proposal_id)) + '</div>' +
-                        '<div><small>proposal_id: ' + escapeHtml(textOrDash(proposal.proposal_id)) + '</small></div>' +
-                        '<div><small>priority: ' + escapeHtml(textOrDash(proposal.priority)) + '</small></div>' +
-                        '<div><small>detail: ' + escapeHtml(textOrDash(proposal.detail)) + '</small></div>' +
+                        '<div class="fw-semibold">' + escapeHtml(textOrDash(pSummary)) + '</div>' +
+                        '<div><small>proposal_id: ' + escapeHtml(textOrDash(pID)) + '</small></div>' +
+                        '<div><small>priority: ' + escapeHtml(textOrDash(pPriority)) + '</small></div>' +
+                        '<div><small>detail: ' + escapeHtml(textOrDash(pDetail)) + '</small></div>' +
                         '</div>';
                 }
                 root.innerHTML = html;
@@ -1690,6 +1735,12 @@ templ Plugin(page string) {
                 }
 
                 await loadRunHistory(jobType);
+
+                if (state.lastDetectionByJobType && state.lastDetectionByJobType[jobType]) {
+                    renderDetectionResult(state.lastDetectionByJobType[jobType]);
+                } else {
+                    renderDetectionResult(null);
+                }
             }
 
             async function loadRunHistory(jobType) {
@@ -1763,10 +1814,17 @@ templ Plugin(page string) {
                     var data = await pluginRequest('POST', '/api/plugin/job-types/' + encodePath(jobType) + '/detect', {
                         max_results: getMaxResults(),
                     });
+                    state.lastDetectionByJobType[jobType] = data;
                     renderDetectionResult(data);
-                    await refreshJobsAndActivities();
                 } catch (e) {
                     notify('Detection failed: ' + e.message, 'error');
+                    return;
+                }
+
+                try {
+                    await refreshJobsAndActivities();
+                } catch (refreshErr) {
+                    notify('Detection succeeded, but monitoring refresh failed: ' + refreshErr.message, 'error');
                 }
             }
 
