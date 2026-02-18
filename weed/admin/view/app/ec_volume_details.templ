@@ -62,11 +62,11 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             <td>
                                 if data.IsComplete {
                                     <span class="badge bg-success">
-                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/14 shards)
+                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 } else {
                                     <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/14 shards)
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 }
                             </td>
@@ -79,7 +79,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         if i > 0 { 
                                             <span>, </span>
                                         }
-                                        <span class="badge bg-danger">{fmt.Sprintf("%02d", shardID)}</span>
+                                        @renderEcShardBadge(uint32(shardID), true)
                                     }
                                 </td>
                             </tr>
@@ -266,7 +266,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                             <span class="text-success">{bytesToHumanReadableUint64(shard.Size)}</span>
                                         </td>
                                         <td>
-                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" class="btn btn-sm btn-primary">
+                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
                                                 <i class="fas fa-external-link-alt me-1"></i>Volume Server
                                             </a>
                                         </td>
