@@ -57,7 +57,7 @@ func TestConfigStoreRunHistoryRetention(t *testing.T) {
 			JobType:     "balance",
 			WorkerID:    "worker-a",
 			Outcome:     RunOutcomeSuccess,
-			CompletedAt: base.Add(time.Duration(i) * time.Minute),
+			CompletedAt: timeToPtr(base.Add(time.Duration(i) * time.Minute)),
 		})
 		if err != nil {
 			t.Fatalf("AppendRunRecord success[%d]: %v", i, err)
@@ -71,7 +71,7 @@ func TestConfigStoreRunHistoryRetention(t *testing.T) {
 			JobType:     "balance",
 			WorkerID:    "worker-b",
 			Outcome:     RunOutcomeError,
-			CompletedAt: base.Add(time.Duration(i) * time.Minute),
+			CompletedAt: timeToPtr(base.Add(time.Duration(i) * time.Minute)),
 		})
 		if err != nil {
 			t.Fatalf("AppendRunRecord error[%d]: %v", i, err)
@@ -90,12 +90,28 @@ func TestConfigStoreRunHistoryRetention(t *testing.T) {
 	}
 
 	for i := 1; i < len(history.SuccessfulRuns); i++ {
-		if history.SuccessfulRuns[i-1].CompletedAt.Before(history.SuccessfulRuns[i].CompletedAt) {
+		t1 := time.Time{}
+		if history.SuccessfulRuns[i-1].CompletedAt != nil {
+			t1 = *history.SuccessfulRuns[i-1].CompletedAt
+		}
+		t2 := time.Time{}
+		if history.SuccessfulRuns[i].CompletedAt != nil {
+			t2 = *history.SuccessfulRuns[i].CompletedAt
+		}
+		if t1.Before(t2) {
 			t.Fatalf("successful run order not descending at %d", i)
 		}
 	}
 	for i := 1; i < len(history.ErrorRuns); i++ {
-		if history.ErrorRuns[i-1].CompletedAt.Before(history.ErrorRuns[i].CompletedAt) {
+		t1 := time.Time{}
+		if history.ErrorRuns[i-1].CompletedAt != nil {
+			t1 = *history.ErrorRuns[i-1].CompletedAt
+		}
+		t2 := time.Time{}
+		if history.ErrorRuns[i].CompletedAt != nil {
+			t2 = *history.ErrorRuns[i].CompletedAt
+		}
+		if t1.Before(t2) {
 			t.Fatalf("error run order not descending at %d", i)
 		}
 	}
@@ -118,7 +134,7 @@ func TestConfigStoreListJobTypes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveJobTypeConfig: %v", err)
 	}
-	if err := store.AppendRunRecord("ec", &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: time.Now().UTC()}); err != nil {
+	if err := store.AppendRunRecord("ec", &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: timeToPtr(time.Now().UTC())}); err != nil {
 		t.Fatalf("AppendRunRecord: %v", err)
 	}
 
@@ -147,8 +163,8 @@ func TestConfigStoreMonitorStateRoundTrip(t *testing.T) {
 			State:     "running",
 			Progress:  55,
 			WorkerID:  "worker-a",
-			CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
-			UpdatedAt: time.Now().UTC().Add(-1 * time.Minute),
+			CreatedAt: timeToPtr(time.Now().UTC().Add(-2 * time.Minute)),
+			UpdatedAt: timeToPtr(time.Now().UTC().Add(-1 * time.Minute)),
 		},
 	}
 	activities := []JobActivity{
@@ -158,7 +174,7 @@ func TestConfigStoreMonitorStateRoundTrip(t *testing.T) {
 			Source:     "worker_progress",
 			Message:    "processing",
 			Stage:      "running",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 			Details: map[string]interface{}{
 				"step": "scan",
 			},
@@ -205,8 +221,8 @@ func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 		JobType:   "vacuum",
 		Summary:   "detail summary",
 		Detail:    "detail payload",
-		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
-		UpdatedAt: time.Now().UTC(),
+		CreatedAt: timeToPtr(time.Now().UTC().Add(-2 * time.Minute)),
+		UpdatedAt: timeToPtr(time.Now().UTC()),
 		Parameters: map[string]interface{}{
 			"volume_id": map[string]interface{}{"int64_value": "3"},
 		},

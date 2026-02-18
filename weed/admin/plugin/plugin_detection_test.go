@@ -27,13 +27,13 @@ func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 
 	oldSuccess := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	latestSuccess := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: oldSuccess}); err != nil {
+	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: timeToPtr(oldSuccess)}); err != nil {
 		t.Fatalf("AppendRunRecord old success: %v", err)
 	}
-	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeError, CompletedAt: latestSuccess.Add(2 * time.Hour)}); err != nil {
+	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeError, CompletedAt: timeToPtr(latestSuccess.Add(2 * time.Hour))}); err != nil {
 		t.Fatalf("AppendRunRecord error run: %v", err)
 	}
-	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: latestSuccess}); err != nil {
+	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{Outcome: RunOutcomeSuccess, CompletedAt: timeToPtr(latestSuccess)}); err != nil {
 		t.Fatalf("AppendRunRecord latest success: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestRunDetectionOmitsLastSuccessfulRunWhenNoSuccessHistory(t *testing.T) {
 
 	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{
 		Outcome:     RunOutcomeError,
-		CompletedAt: time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC),
+		CompletedAt: timeToPtr(time.Date(2026, 2, 10, 0, 0, 0, 0, time.UTC)),
 	}); err != nil {
 		t.Fatalf("AppendRunRecord error run: %v", err)
 	}

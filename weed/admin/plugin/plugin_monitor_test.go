@@ -24,8 +24,8 @@ func TestPluginLoadsPersistedMonitorStateOnStart(t *testing.T) {
 			JobID:     "job-seeded",
 			JobType:   "vacuum",
 			State:     "running",
-			CreatedAt: time.Now().UTC().Add(-2 * time.Minute),
-			UpdatedAt: time.Now().UTC().Add(-1 * time.Minute),
+			CreatedAt: timeToPtr(time.Now().UTC().Add(-2 * time.Minute)),
+			UpdatedAt: timeToPtr(time.Now().UTC().Add(-1 * time.Minute)),
 		},
 	}
 	seedActivities := []JobActivity{
@@ -34,7 +34,7 @@ func TestPluginLoadsPersistedMonitorStateOnStart(t *testing.T) {
 			JobType:    "vacuum",
 			Source:     "worker_progress",
 			Message:    "seeded",
-			OccurredAt: time.Now().UTC().Add(-30 * time.Second),
+			OccurredAt: timeToPtr(time.Now().UTC().Add(-30 * time.Second)),
 		},
 	}
 
@@ -87,6 +87,7 @@ func TestPluginPersistsMonitorStateAfterJobUpdates(t *testing.T) {
 		Result:      &plugin_pb.JobResult{Summary: "done"},
 		CompletedAt: timestamppb.New(time.Now().UTC()),
 	})
+	pluginSvc.Shutdown()
 
 	store, err := NewConfigStore(dataDir)
 	if err != nil {
@@ -315,6 +316,7 @@ func TestHandleJobCompletedCarriesWorkerIDInActivitiesAndRunHistory(t *testing.T
 		},
 		CompletedAt: timestamppb.Now(),
 	})
+	pluginSvc.Shutdown()
 
 	activities := pluginSvc.ListActivities("vacuum", 0)
 	foundWorkerEvent := false
@@ -365,6 +367,7 @@ func TestTrackExecutionStartStoresJobPayloadDetails(t *testing.T) {
 			"source": "detector",
 		},
 	}, 2)
+	pluginSvc.Shutdown()
 
 	job, found := pluginSvc.GetTrackedJob("job-payload")
 	if !found || job == nil {
@@ -459,6 +462,7 @@ func TestTrackExecutionStartStoresErasureCodingExecutionPlan(t *testing.T) {
 			},
 		},
 	}, 1)
+	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-ec-plan", 100, 0)
 	if err != nil {
@@ -536,6 +540,7 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 		},
 		CompletedAt: timestamppb.Now(),
 	})
+	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-detail", 100, 5)
 	if err != nil {
@@ -573,6 +578,7 @@ func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 		Summary: "disk summary",
 		Detail:  "disk detail payload",
 	}, 1)
+	pluginSvc.Shutdown()
 
 	pluginSvc.jobsMu.Lock()
 	pluginSvc.jobs = map[string]*TrackedJob{}
