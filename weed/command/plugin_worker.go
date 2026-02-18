@@ -22,21 +22,22 @@ import (
 )
 
 var cmdPluginWorker = &Command{
-	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum|volume_balance] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
+	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum|volume_balance|erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
 	Short:     "start a plugin.proto worker process",
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
-This command currently provides vacuum and volume_balance job type contracts with
-the plugin stream runtime, including descriptor delivery, heartbeat/load reporting,
-detection, and execution.
+This command currently provides vacuum, volume_balance, and erasure_coding job type
+contracts with the plugin stream runtime, including descriptor delivery,
+heartbeat/load reporting, detection, and execution.
 
 Behavior:
-  - Use -jobType to choose which plugin job handler to serve (vacuum, volume_balance)
+  - Use -jobType to choose which plugin job handler to serve (vacuum, volume_balance, erasure_coding)
   - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
 
 Examples:
   weed plugin.worker -admin=localhost:23646
   weed plugin.worker -admin=localhost:23646 -jobType=volume_balance
+  weed plugin.worker -admin=localhost:23646 -jobType=erasure_coding
   weed plugin.worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
   weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
 `,
@@ -151,6 +152,8 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (plugi
 		return pluginworker.NewVacuumHandler(dialOption), nil
 	case "volume_balance", "balance", "volume.balance", "volume-balance":
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
+	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
+		return pluginworker.NewErasureCodingHandler(dialOption), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", jobType)
 	}

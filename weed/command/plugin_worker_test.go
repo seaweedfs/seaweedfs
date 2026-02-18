@@ -48,6 +48,22 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil balance alias handler")
 	}
 
+	handler, err = buildPluginWorkerHandler("erasure_coding", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandler(erasure_coding) err = %v", err)
+	}
+	if handler == nil {
+		t.Fatalf("expected non-nil erasure_coding handler")
+	}
+
+	handler, err = buildPluginWorkerHandler("ec", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandler(ec alias) err = %v", err)
+	}
+	if handler == nil {
+		t.Fatalf("expected non-nil ec alias handler")
+	}
+
 	_, err = buildPluginWorkerHandler("unknown", dialOption)
 	if err == nil {
 		t.Fatalf("expected unsupported job type error")
