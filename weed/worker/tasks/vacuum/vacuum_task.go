@@ -11,8 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 	"google.golang.org/grpc"
@@ -30,14 +28,14 @@ type VacuumTask struct {
 }
 
 // NewVacuumTask creates a new unified vacuum task instance
-func NewVacuumTask(id string, server string, volumeID uint32, collection string) *VacuumTask {
+func NewVacuumTask(id string, server string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *VacuumTask {
 	return &VacuumTask{
 		BaseTask:         base.NewBaseTask(id, types.TaskTypeVacuum),
 		server:           server,
 		volumeID:         volumeID,
 		collection:       collection,
 		garbageThreshold: 0.3, // Default 30% threshold
-		grpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		grpcDialOption:   grpcDialOption,
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -26,6 +28,9 @@ func init() {
 func RegisterVacuumTask() {
 	// Create configuration instance
 	config := NewDefaultConfig()
+
+	// Create shared gRPC dial option using TLS configuration
+	dialOpt := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	// Create complete task definition
 	taskDef := &base.TaskDefinition{
@@ -50,6 +55,7 @@ func RegisterVacuumTask() {
 				params.Sources[0].Node, // Use first source node
 				params.VolumeId,
 				params.Collection,
+				dialOpt,
 			), nil
 		},
 		DetectionFunc:  Detection,
