@@ -217,7 +217,7 @@ func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 	}
 
 	input := TrackedJob{
-		JobID:     "job/detail:1",
+		JobID:     "job-detail-1",
 		JobType:   "vacuum",
 		Summary:   "detail summary",
 		Detail:    "detail payload",
