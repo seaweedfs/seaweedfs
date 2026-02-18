@@ -32,6 +32,22 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil default handler")
 	}
 
+	handler, err = buildPluginWorkerHandler("volume_balance", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandler(volume_balance) err = %v", err)
+	}
+	if handler == nil {
+		t.Fatalf("expected non-nil volume_balance handler")
+	}
+
+	handler, err = buildPluginWorkerHandler("balance", dialOption)
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandler(balance alias) err = %v", err)
+	}
+	if handler == nil {
+		t.Fatalf("expected non-nil balance alias handler")
+	}
+
 	_, err = buildPluginWorkerHandler("unknown", dialOption)
 	if err == nil {
 		t.Fatalf("expected unsupported job type error")
