@@ -694,6 +694,11 @@ func cloneActivities(in []JobActivity) []JobActivity {
 	return out
 }
 
+// writeProtoFiles writes message to both a binary protobuf file (pbPath) and a
+// human-readable JSON file (jsonPath) using atomicWriteFile for each.
+// The .pb file is the authoritative source of truth: all reads use proto.Unmarshal
+// on the .pb file. The .json file is for human inspection only, so a partial
+// failure where .pb succeeds but .json fails leaves the store in a consistent state.
 func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) error {
 	pbData, err := proto.Marshal(message)
 	if err != nil {
