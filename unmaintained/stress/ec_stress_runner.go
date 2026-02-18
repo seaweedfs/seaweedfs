@@ -438,10 +438,12 @@ func (r *runner) deleteEcVolume(ctx context.Context, volumeID uint32, info *ecVo
 		err := pb.WithVolumeServerClient(false, server, r.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			unmountCtx, unmountCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
 			defer unmountCancel()
-			_, _ = client.VolumeEcShardsUnmount(unmountCtx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+			if _, err := client.VolumeEcShardsUnmount(unmountCtx, &volume_server_pb.VolumeEcShardsUnmountRequest{
 				VolumeId: volumeID,
 				ShardIds: shardIDs,
-			})
+			}); err != nil {
+				log.Printf("volume %d ec shards unmount on %s failed: %v", volumeID, server, err)
+			}
 
 			if len(shardIDs) > 0 {
 				deleteCtx, deleteCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
@@ -456,9 +458,11 @@ func (r *runner) deleteEcVolume(ctx context.Context, volumeID uint32, info *ecVo
 
 			finalDeleteCtx, finalDeleteCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
 			defer finalDeleteCancel()
-			_, _ = client.VolumeDelete(finalDeleteCtx, &volume_server_pb.VolumeDeleteRequest{
+			if _, err := client.VolumeDelete(finalDeleteCtx, &volume_server_pb.VolumeDeleteRequest{
 				VolumeId: volumeID,
-			})
+			}); err != nil {
+				log.Printf("volume %d delete on %s failed: %v", volumeID, server, err)
+			}
 			return nil
 		})
 

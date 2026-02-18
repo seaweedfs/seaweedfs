@@ -358,14 +358,12 @@ func (s *AdminServer) TriggerPluginDetectionAPI(c *gin.Context) {
 	}
 
 	sort.Slice(proposalPayloads, func(i, j int) bool {
-		iPriority := int32(0)
-		jPriority := int32(0)
-		if v, ok := proposalPayloads[i]["priority"].(float64); ok {
-			iPriority = int32(v)
-		}
-		if v, ok := proposalPayloads[j]["priority"].(float64); ok {
-			jPriority = int32(v)
-		}
+		iPriorityStr, _ := proposalPayloads[i]["priority"].(string)
+		jPriorityStr, _ := proposalPayloads[j]["priority"].(string)
+
+		iPriority := plugin_pb.JobPriority_value[iPriorityStr]
+		jPriority := plugin_pb.JobPriority_value[jPriorityStr]
+
 		if iPriority != jPriority {
 			return iPriority > jPriority
 		}
