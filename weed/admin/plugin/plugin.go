@@ -86,8 +86,9 @@ type Plugin struct {
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 
-	shutdownCh chan struct{}
-	wg         sync.WaitGroup
+	shutdownCh   chan struct{}
+	shutdownOnce sync.Once
+	wg           sync.WaitGroup
 }
 
 type streamSession struct {
@@ -176,12 +177,7 @@ func (r *Plugin) Shutdown() {
 		r.persistTicker.Stop()
 	}
 
-	select {
-	case <-r.shutdownCh:
-		return
-	default:
-		close(r.shutdownCh)
-	}
+	r.shutdownOnce.Do(func() { close(r.shutdownCh) })
 
 	r.sessionsMu.Lock()
 	for workerID, session := range r.sessions {
