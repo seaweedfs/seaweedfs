@@ -634,8 +634,11 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 	return clusterContext
 }
 
+const parseProtoJSONBodyMaxBytes = 1 << 20 // 1 MB
+
 func parseProtoJSONBody(c *gin.Context, message proto.Message) error {
-	data, err := io.ReadAll(c.Request.Body)
+	limitedBody := http.MaxBytesReader(c.Writer, c.Request.Body, parseProtoJSONBodyMaxBytes)
+	data, err := io.ReadAll(limitedBody)
 	if err != nil {
 		return fmt.Errorf("failed to read request body: %w", err)
 	}
