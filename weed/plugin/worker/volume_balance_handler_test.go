@@ -97,12 +97,6 @@ func TestDeriveBalanceWorkerConfig(t *testing.T) {
 		"min_interval_seconds": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 33},
 		},
-		"timeout_seconds": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 123},
-		},
-		"force_move": {
-			Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true},
-		},
 	}
 
 	cfg := deriveBalanceWorkerConfig(values)
@@ -114,12 +108,6 @@ func TestDeriveBalanceWorkerConfig(t *testing.T) {
 	}
 	if cfg.MinIntervalSeconds != 33 {
 		t.Fatalf("expected min_interval_seconds 33, got %d", cfg.MinIntervalSeconds)
-	}
-	if cfg.TimeoutSeconds != 123 {
-		t.Fatalf("expected timeout_seconds 123, got %d", cfg.TimeoutSeconds)
-	}
-	if !cfg.ForceMove {
-		t.Fatalf("expected force_move true")
 	}
 }
 
@@ -157,7 +145,7 @@ func TestBuildVolumeBalanceProposal(t *testing.T) {
 		TypedParams: params,
 	}
 
-	proposal, err := buildVolumeBalanceProposal(result, deriveBalanceWorkerConfig(nil))
+	proposal, err := buildVolumeBalanceProposal(result)
 	if err != nil {
 		t.Fatalf("buildVolumeBalanceProposal() err = %v", err)
 	}
@@ -217,4 +205,34 @@ func TestVolumeBalanceHandlerDetectSkipsByMinInterval(t *testing.T) {
 	if sender.complete == nil || !sender.complete.Success {
 		t.Fatalf("expected successful completion message")
 	}
+}
+
+func TestVolumeBalanceDescriptorOmitsExecutionTuningFields(t *testing.T) {
+	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
+	if descriptor == nil || descriptor.WorkerConfigForm == nil {
+		t.Fatalf("expected worker config form in descriptor")
+	}
+	if workerConfigFormHasField(descriptor.WorkerConfigForm, "timeout_seconds") {
+		t.Fatalf("unexpected timeout_seconds in volume balance worker config form")
+	}
+	if workerConfigFormHasField(descriptor.WorkerConfigForm, "force_move") {
+		t.Fatalf("unexpected force_move in volume balance worker config form")
+	}
+}
+
+func workerConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
+	if form == nil {
+		return false
+	}
+	for _, section := range form.Sections {
+		if section == nil {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field != nil && field.Name == fieldName {
+				return true
+			}
+		}
+	}
+	return false
 }

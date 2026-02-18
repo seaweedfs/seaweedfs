@@ -22,8 +22,6 @@ const (
 
 type volumeBalanceWorkerConfig struct {
 	TaskConfig         *balancetask.Config
-	TimeoutSeconds     int32
-	ForceMove          bool
 	MinIntervalSeconds int
 }
 
@@ -85,7 +83,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "volume-balance-worker",
 			Title:       "Volume Balance Worker Config",
-			Description: "Worker-side balance thresholds and execution behavior.",
+			Description: "Worker-side balance thresholds.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "thresholds",
@@ -122,29 +120,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
-				{
-					SectionId:   "execution",
-					Title:       "Execution",
-					Description: "Execution defaults used when proposal payload omits balance params.",
-					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "timeout_seconds",
-							Label:       "Move Timeout (s)",
-							Description: "Maximum duration for one move operation.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
-						},
-						{
-							Name:        "force_move",
-							Label:       "Force Move",
-							Description: "Force move execution when supported by the volume server.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
-						},
-					},
-				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"imbalance_threshold": {
@@ -155,12 +130,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_interval_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
-				},
-				"timeout_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultBalanceTimeoutSeconds)},
-				},
-				"force_move": {
-					Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
 				},
 			},
 		},
@@ -183,12 +152,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_interval_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
-			},
-			"timeout_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultBalanceTimeoutSeconds)},
-			},
-			"force_move": {
-				Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
 			},
 		},
 	}
@@ -251,7 +214,7 @@ func (h *VolumeBalanceHandler) Detect(
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
-		proposal, proposalErr := buildVolumeBalanceProposal(result, workerConfig)
+		proposal, proposalErr := buildVolumeBalanceProposal(result)
 		if proposalErr != nil {
 			glog.Warningf("Plugin worker skip invalid volume_balance proposal: %v", proposalErr)
 			continue
@@ -300,8 +263,7 @@ func (h *VolumeBalanceHandler) Execute(
 		return fmt.Errorf("volume balance target node is required")
 	}
 
-	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
-	applyBalanceExecutionDefaults(params, workerConfig)
+	applyBalanceExecutionDefaults(params)
 
 	task := balancetask.NewBalanceTask(
 		request.Job.JobId,
@@ -412,11 +374,6 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	timeoutSeconds := int32(readInt64Config(values, "timeout_seconds", int64(defaultBalanceTimeoutSeconds)))
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = defaultBalanceTimeoutSeconds
-	}
-
 	minIntervalSeconds := int(readInt64Config(values, "min_interval_seconds", 0))
 	if minIntervalSeconds < 0 {
 		minIntervalSeconds = 0
@@ -424,15 +381,12 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
-		TimeoutSeconds:     timeoutSeconds,
-		ForceMove:          readBoolConfig(values, "force_move", false),
 		MinIntervalSeconds: minIntervalSeconds,
 	}
 }
 
 func buildVolumeBalanceProposal(
 	result *workertypes.TaskDetectionResult,
-	workerConfig *volumeBalanceWorkerConfig,
 ) (*plugin_pb.JobProposal, error) {
 	if result == nil {
 		return nil, fmt.Errorf("task detection result is nil")
@@ -440,12 +394,9 @@ func buildVolumeBalanceProposal(
 	if result.TypedParams == nil {
 		return nil, fmt.Errorf("missing typed params for volume %d", result.VolumeID)
 	}
-	if workerConfig == nil {
-		workerConfig = deriveBalanceWorkerConfig(nil)
-	}
 
 	params := proto.Clone(result.TypedParams).(*worker_pb.TaskParams)
-	applyBalanceExecutionDefaults(params, workerConfig)
+	applyBalanceExecutionDefaults(params)
 
 	paramsPayload, err := proto.Marshal(params)
 	if err != nil {
@@ -579,30 +530,24 @@ func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 	}, nil
 }
 
-func applyBalanceExecutionDefaults(params *worker_pb.TaskParams, workerConfig *volumeBalanceWorkerConfig) {
+func applyBalanceExecutionDefaults(params *worker_pb.TaskParams) {
 	if params == nil {
 		return
-	}
-	if workerConfig == nil {
-		workerConfig = deriveBalanceWorkerConfig(nil)
 	}
 
 	balanceParams := params.GetBalanceParams()
 	if balanceParams == nil {
 		params.TaskParams = &worker_pb.TaskParams_BalanceParams{
 			BalanceParams: &worker_pb.BalanceTaskParams{
-				ForceMove:      workerConfig.ForceMove,
-				TimeoutSeconds: workerConfig.TimeoutSeconds,
+				ForceMove:      false,
+				TimeoutSeconds: defaultBalanceTimeoutSeconds,
 			},
 		}
 		return
 	}
 
 	if balanceParams.TimeoutSeconds <= 0 {
-		balanceParams.TimeoutSeconds = workerConfig.TimeoutSeconds
-	}
-	if !balanceParams.ForceMove && workerConfig.ForceMove {
-		balanceParams.ForceMove = true
+		balanceParams.TimeoutSeconds = defaultBalanceTimeoutSeconds
 	}
 }
 
