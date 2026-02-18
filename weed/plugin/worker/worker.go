@@ -29,6 +29,7 @@ const (
 type DetectionSender interface {
 	SendProposals(*plugin_pb.DetectionProposals) error
 	SendComplete(*plugin_pb.DetectionComplete) error
+	SendActivity(*plugin_pb.ActivityEvent) error
 }
 
 // ExecutionSender sends execution progress/completion responses for one request.
@@ -710,6 +711,36 @@ func (s *detectionSender) SendComplete(complete *plugin_pb.DetectionComplete) er
 	}
 	if !s.send(&plugin_pb.WorkerToAdminMessage{
 		Body: &plugin_pb.WorkerToAdminMessage_DetectionComplete{DetectionComplete: complete},
+	}) {
+		return fmt.Errorf("stream closed")
+	}
+	return nil
+}
+
+func (s *detectionSender) SendActivity(activity *plugin_pb.ActivityEvent) error {
+	if activity == nil {
+		return fmt.Errorf("detection activity is nil")
+	}
+	if activity.CreatedAt == nil {
+		activity.CreatedAt = timestamppb.Now()
+	}
+	if activity.Source == plugin_pb.ActivitySource_ACTIVITY_SOURCE_UNSPECIFIED {
+		activity.Source = plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR
+	}
+
+	update := &plugin_pb.JobProgressUpdate{
+		RequestId:       s.requestID,
+		JobType:         s.jobType,
+		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+		ProgressPercent: 0,
+		Stage:           activity.Stage,
+		Message:         activity.Message,
+		Activities:      []*plugin_pb.ActivityEvent{activity},
+		UpdatedAt:       timestamppb.Now(),
+	}
+
+	if !s.send(&plugin_pb.WorkerToAdminMessage{
+		Body: &plugin_pb.WorkerToAdminMessage_JobProgressUpdate{JobProgressUpdate: update},
 	}) {
 		return fmt.Errorf("stream closed")
 	}

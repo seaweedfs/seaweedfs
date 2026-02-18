@@ -120,50 +120,61 @@ func (r *Plugin) ListActivities(jobType string, limit int) []JobActivity {
 	return activities
 }
 
-func (r *Plugin) handleJobProgressUpdate(update *plugin_pb.JobProgressUpdate) {
-	if update == nil || strings.TrimSpace(update.JobId) == "" {
+func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobProgressUpdate) {
+	if update == nil {
 		return
 	}
 
 	now := time.Now().UTC()
-	workerID := ""
+	resolvedWorkerID := strings.TrimSpace(workerID)
 
-	r.jobsMu.Lock()
-	job := r.jobs[update.JobId]
-	if job == nil {
-		job = &TrackedJob{
-			JobID:     update.JobId,
-			JobType:   update.JobType,
-			RequestID: update.RequestId,
-			CreatedAt: now,
+	if strings.TrimSpace(update.JobId) != "" {
+		r.jobsMu.Lock()
+		job := r.jobs[update.JobId]
+		if job == nil {
+			job = &TrackedJob{
+				JobID:     update.JobId,
+				JobType:   update.JobType,
+				RequestID: update.RequestId,
+				WorkerID:  resolvedWorkerID,
+				CreatedAt: now,
+			}
+			r.jobs[update.JobId] = job
 		}
-		r.jobs[update.JobId] = job
+
+		if update.JobType != "" {
+			job.JobType = update.JobType
+		}
+		if update.RequestId != "" {
+			job.RequestID = update.RequestId
+		}
+		if job.WorkerID != "" {
+			resolvedWorkerID = job.WorkerID
+		} else if resolvedWorkerID != "" {
+			job.WorkerID = resolvedWorkerID
+		}
+		job.State = strings.ToLower(update.State.String())
+		job.Progress = update.ProgressPercent
+		job.Stage = update.Stage
+		job.Message = update.Message
+		job.UpdatedAt = now
+		r.pruneTrackedJobsLocked()
+		r.jobsMu.Unlock()
+		r.persistTrackedJobsSnapshot()
 	}
 
-	if update.JobType != "" {
-		job.JobType = update.JobType
-	}
-	if update.RequestId != "" {
-		job.RequestID = update.RequestId
-	}
-	job.State = strings.ToLower(update.State.String())
-	job.Progress = update.ProgressPercent
-	job.Stage = update.Stage
-	job.Message = update.Message
-	job.UpdatedAt = now
-	workerID = job.WorkerID
-	r.pruneTrackedJobsLocked()
-	r.jobsMu.Unlock()
-	r.persistTrackedJobsSnapshot()
-
-	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, workerID, update.Activities)
+	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
 	if update.Message != "" || update.Stage != "" {
+		source := "worker_progress"
+		if strings.TrimSpace(update.JobId) == "" {
+			source = "worker_detection"
+		}
 		r.appendActivity(JobActivity{
 			JobID:      update.JobId,
 			JobType:    update.JobType,
 			RequestID:  update.RequestId,
-			WorkerID:   workerID,
-			Source:     "worker_progress",
+			WorkerID:   resolvedWorkerID,
+			Source:     source,
 			Message:    update.Message,
 			Stage:      update.Stage,
 			OccurredAt: now,

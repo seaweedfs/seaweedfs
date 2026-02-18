@@ -136,7 +136,7 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 	pluginSvc.trackExecutionStart("req-progress-worker", "worker-a", job, 1)
 
-	pluginSvc.handleJobProgressUpdate(&plugin_pb.JobProgressUpdate{
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
 		RequestId:       "req-progress-worker",
 		JobId:           "job-progress-worker",
 		JobType:         "vacuum",
@@ -180,6 +180,63 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 	if !foundEvent {
 		t.Fatalf("expected worker activity event")
+	}
+}
+
+func TestHandleJobProgressUpdateWithoutJobIDTracksDetectionActivities(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.handleJobProgressUpdate("worker-detector", &plugin_pb.JobProgressUpdate{
+		RequestId: "detect-req-1",
+		JobType:   "vacuum",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "decision_summary",
+		Message:   "VACUUM: No tasks created for 3 volumes",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR,
+				Stage:   "decision_summary",
+				Message: "VACUUM: No tasks created for 3 volumes",
+			},
+		},
+	})
+
+	activities := pluginSvc.ListActivities("vacuum", 0)
+	if len(activities) == 0 {
+		t.Fatalf("expected activity entries")
+	}
+
+	foundDetectionProgress := false
+	foundDetectorEvent := false
+	for _, activity := range activities {
+		if activity.RequestID != "detect-req-1" {
+			continue
+		}
+		if activity.Source == "worker_detection" {
+			foundDetectionProgress = true
+			if activity.WorkerID != "worker-detector" {
+				t.Fatalf("worker_detection worker mismatch: got=%q want=%q", activity.WorkerID, "worker-detector")
+			}
+		}
+		if activity.Source == "activity_source_detector" {
+			foundDetectorEvent = true
+			if activity.WorkerID != "worker-detector" {
+				t.Fatalf("detector event worker mismatch: got=%q want=%q", activity.WorkerID, "worker-detector")
+			}
+		}
+	}
+
+	if !foundDetectionProgress {
+		t.Fatalf("expected worker_detection activity")
+	}
+	if !foundDetectorEvent {
+		t.Fatalf("expected detector activity event")
 	}
 }
 

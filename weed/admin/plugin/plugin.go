@@ -774,7 +774,7 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 	case *plugin_pb.WorkerToAdminMessage_DetectionComplete:
 		r.handleDetectionComplete(workerID, body.DetectionComplete)
 	case *plugin_pb.WorkerToAdminMessage_JobProgressUpdate:
-		r.handleJobProgressUpdate(body.JobProgressUpdate)
+		r.handleJobProgressUpdate(workerID, body.JobProgressUpdate)
 	case *plugin_pb.WorkerToAdminMessage_JobCompleted:
 		r.handleJobCompleted(body.JobCompleted)
 	case *plugin_pb.WorkerToAdminMessage_Acknowledge:

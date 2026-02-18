@@ -170,6 +170,16 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
 	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
+		_ = sender.SendActivity(buildDetectorActivity(
+			"skipped_by_interval",
+			fmt.Sprintf("VACUUM: Detection skipped due to min interval (%s)", minInterval),
+			map[string]*plugin_pb.ConfigValue{
+				"min_interval_seconds": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
+				},
+			},
+		))
 		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
 			JobType:   "vacuum",
 			Proposals: []*plugin_pb.JobProposal{},
@@ -198,6 +208,9 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	results, err := vacuumtask.Detection(metrics, clusterInfo, workerConfig)
 	if err != nil {
 		return err
+	}
+	if traceErr := emitVacuumDetectionDecisionTrace(sender, metrics, workerConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit vacuum detection trace: %v", traceErr)
 	}
 
 	maxResults := int(request.MaxResults)
@@ -230,6 +243,125 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 		Success:        true,
 		TotalProposals: int32(len(proposals)),
 	})
+}
+
+func emitVacuumDetectionDecisionTrace(
+	sender DetectionSender,
+	metrics []*workertypes.VolumeHealthMetrics,
+	workerConfig *vacuumtask.Config,
+	results []*workertypes.TaskDetectionResult,
+) error {
+	if sender == nil || workerConfig == nil {
+		return nil
+	}
+
+	minVolumeAge := time.Duration(workerConfig.MinVolumeAgeSeconds) * time.Second
+	totalVolumes := len(metrics)
+
+	debugCount := 0
+	skippedDueToGarbage := 0
+	skippedDueToAge := 0
+	for _, metric := range metrics {
+		if metric == nil {
+			continue
+		}
+		if metric.GarbageRatio >= workerConfig.GarbageThreshold && metric.Age >= minVolumeAge {
+			continue
+		}
+		if debugCount < 5 {
+			if metric.GarbageRatio < workerConfig.GarbageThreshold {
+				skippedDueToGarbage++
+			}
+			if metric.Age < minVolumeAge {
+				skippedDueToAge++
+			}
+		}
+		debugCount++
+	}
+
+	summaryMessage := ""
+	summaryStage := "decision_summary"
+	if len(results) == 0 {
+		summaryMessage = fmt.Sprintf(
+			"VACUUM: No tasks created for %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
+			totalVolumes,
+			workerConfig.GarbageThreshold*100,
+			minVolumeAge,
+			skippedDueToGarbage,
+			skippedDueToAge,
+		)
+	} else {
+		summaryMessage = fmt.Sprintf(
+			"VACUUM: Created %d task(s) from %d volumes. Threshold=%.2f%%, MinAge=%s",
+			len(results),
+			totalVolumes,
+			workerConfig.GarbageThreshold*100,
+			minVolumeAge,
+		)
+	}
+
+	if err := sender.SendActivity(buildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
+		"total_volumes": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
+		},
+		"selected_tasks": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
+		},
+		"garbage_threshold_percent": {
+			Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: workerConfig.GarbageThreshold * 100},
+		},
+		"min_volume_age_seconds": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinVolumeAgeSeconds)},
+		},
+		"skipped_garbage": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedDueToGarbage)},
+		},
+		"skipped_age": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedDueToAge)},
+		},
+	})); err != nil {
+		return err
+	}
+
+	limit := 3
+	if len(metrics) < limit {
+		limit = len(metrics)
+	}
+	for i := 0; i < limit; i++ {
+		metric := metrics[i]
+		if metric == nil {
+			continue
+		}
+		message := fmt.Sprintf(
+			"VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
+			metric.VolumeID,
+			metric.GarbageRatio*100,
+			workerConfig.GarbageThreshold*100,
+			metric.Age.Truncate(time.Minute),
+			minVolumeAge.Truncate(time.Minute),
+		)
+		if err := sender.SendActivity(buildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+			"volume_id": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
+			},
+			"garbage_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: metric.GarbageRatio * 100},
+			},
+			"required_garbage_percent": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: workerConfig.GarbageThreshold * 100},
+			},
+			"age_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.Age.Seconds())},
+			},
+			"required_age_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(minVolumeAge.Seconds())},
+			},
+		})); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender ExecutionSender) error {
@@ -723,6 +855,16 @@ func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEven
 		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
 		Stage:     stage,
 		Message:   message,
+		CreatedAt: timestamppb.Now(),
+	}
+}
+
+func buildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
+	return &plugin_pb.ActivityEvent{
+		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR,
+		Stage:     stage,
+		Message:   message,
+		Details:   details,
 		CreatedAt: timestamppb.Now(),
 	}
 }

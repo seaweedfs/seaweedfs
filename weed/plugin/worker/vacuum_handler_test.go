@@ -2,11 +2,14 @@ package pluginworker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	vacuumtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
+	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -197,10 +200,53 @@ func TestBuildExecutorActivity(t *testing.T) {
 	}
 }
 
+func TestEmitVacuumDetectionDecisionTraceNoTasks(t *testing.T) {
+	sender := &recordingDetectionSender{}
+	config := vacuumtask.NewDefaultConfig()
+	config.GarbageThreshold = 0.3
+	config.MinVolumeAgeSeconds = int((24 * time.Hour).Seconds())
+
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{
+			VolumeID:     17,
+			GarbageRatio: 0,
+			Age:          218*time.Hour + 23*time.Minute,
+		},
+		{
+			VolumeID:     16,
+			GarbageRatio: 0,
+			Age:          218*time.Hour + 22*time.Minute,
+		},
+		{
+			VolumeID:     6,
+			GarbageRatio: 0,
+			Age:          90*time.Hour + 42*time.Minute,
+		},
+	}
+
+	if err := emitVacuumDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+		t.Fatalf("emitVacuumDetectionDecisionTrace error: %v", err)
+	}
+	if len(sender.events) < 4 {
+		t.Fatalf("expected at least 4 detection events, got %d", len(sender.events))
+	}
+
+	if sender.events[0].Source != plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR {
+		t.Fatalf("expected detector source, got %v", sender.events[0].Source)
+	}
+	if !strings.Contains(sender.events[0].Message, "VACUUM: No tasks created for 3 volumes") {
+		t.Fatalf("unexpected summary message: %q", sender.events[0].Message)
+	}
+	if !strings.Contains(sender.events[1].Message, "VACUUM: Volume 17: garbage=0.00%") {
+		t.Fatalf("unexpected first detail message: %q", sender.events[1].Message)
+	}
+}
+
 type noopDetectionSender struct{}
 
 func (noopDetectionSender) SendProposals(*plugin_pb.DetectionProposals) error { return nil }
 func (noopDetectionSender) SendComplete(*plugin_pb.DetectionComplete) error   { return nil }
+func (noopDetectionSender) SendActivity(*plugin_pb.ActivityEvent) error       { return nil }
 
 type noopExecutionSender struct{}
 
@@ -210,6 +256,7 @@ func (noopExecutionSender) SendCompleted(*plugin_pb.JobCompleted) error     { re
 type recordingDetectionSender struct {
 	proposals *plugin_pb.DetectionProposals
 	complete  *plugin_pb.DetectionComplete
+	events    []*plugin_pb.ActivityEvent
 }
 
 func (r *recordingDetectionSender) SendProposals(proposals *plugin_pb.DetectionProposals) error {
@@ -219,5 +266,12 @@ func (r *recordingDetectionSender) SendProposals(proposals *plugin_pb.DetectionP
 
 func (r *recordingDetectionSender) SendComplete(complete *plugin_pb.DetectionComplete) error {
 	r.complete = complete
+	return nil
+}
+
+func (r *recordingDetectionSender) SendActivity(event *plugin_pb.ActivityEvent) error {
+	if event != nil {
+		r.events = append(r.events, event)
+	}
 	return nil
 }
