@@ -87,6 +87,7 @@ type Plugin struct {
 	ctxCancel context.CancelFunc
 
 	shutdownCh chan struct{}
+	wg         sync.WaitGroup
 }
 
 type streamSession struct {
@@ -158,8 +159,10 @@ func New(options Options) (*Plugin, error) {
 	}
 
 	if plugin.clusterContextProvider != nil {
+		plugin.wg.Add(1)
 		go plugin.schedulerLoop()
 	}
+	plugin.wg.Add(1)
 	go plugin.persistenceLoop()
 
 	return plugin, nil
@@ -207,6 +210,8 @@ func (r *Plugin) Shutdown() {
 		delete(r.pendingExecution, requestID)
 	}
 	r.pendingExecutionMu.Unlock()
+
+	r.wg.Wait()
 }
 
 func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
@@ -845,13 +850,19 @@ func (r *Plugin) safeSendSchemaResponse(requestID string, response *plugin_pb.Co
 	r.pendingSchemaMu.Lock()
 	ch := r.pendingSchema[requestID]
 	r.pendingSchemaMu.Unlock()
+	safeSendCh(ch, response, r.shutdownCh)
+}
+
+func safeSendCh[T any](ch chan T, val T, shutdownCh <-chan struct{}) {
 	if ch == nil {
 		return
 	}
-
+	defer func() {
+		recover()
+	}()
 	select {
-	case ch <- response:
-	case <-r.shutdownCh:
+	case ch <- val:
+	case <-shutdownCh:
 	}
 }
 
@@ -1044,14 +1055,7 @@ func (r *Plugin) safeSendDetectionComplete(requestID string, message *plugin_pb.
 	r.pendingDetectionMu.Lock()
 	state := r.pendingDetection[requestID]
 	r.pendingDetectionMu.Unlock()
-	if state == nil {
-		return
-	}
-
-	select {
-	case state.complete <- message:
-	case <-r.shutdownCh:
-	}
+	safeSendCh(state.complete, message, r.shutdownCh)
 }
 
 func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
@@ -1111,14 +1115,7 @@ func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.Job
 	r.pendingExecutionMu.Lock()
 	ch := r.pendingExecution[requestID]
 	r.pendingExecutionMu.Unlock()
-	if ch == nil {
-		return
-	}
-
-	select {
-	case ch <- completed:
-	case <-r.shutdownCh:
-	}
+	safeSendCh(ch, completed, r.shutdownCh)
 }
 
 func (r *Plugin) putSession(session *streamSession) {
