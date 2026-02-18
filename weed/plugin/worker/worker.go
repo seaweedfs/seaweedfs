@@ -415,29 +415,18 @@ func (w *Worker) handleDetectionRequest(
 		return
 	}
 
-	select {
-	case w.detectSlots <- struct{}{}:
-	default:
-		send(&plugin_pb.WorkerToAdminMessage{
-			Body: &plugin_pb.WorkerToAdminMessage_DetectionComplete{DetectionComplete: &plugin_pb.DetectionComplete{
-				RequestId:    requestID,
-				JobType:      resolvedJobType,
-				Success:      false,
-				ErrorMessage: "detector is at capacity",
-			}},
-		})
-		return
-	}
-
 	workKey := "detect:" + requestID
 	w.setRunningWork(workKey, &plugin_pb.RunningWork{
 		WorkId:          requestID,
 		Kind:            plugin_pb.WorkKind_WORK_KIND_DETECTION,
 		JobType:         resolvedJobType,
-		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+		State:           plugin_pb.JobState_JOB_STATE_ASSIGNED,
 		ProgressPercent: 0,
-		Stage:           "detecting",
+		Stage:           "queued",
 	})
+
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	w.setWorkCancel(cancelRequest, requestID)
 
 	send(&plugin_pb.WorkerToAdminMessage{
 		Body: &plugin_pb.WorkerToAdminMessage_Acknowledge{Acknowledge: &plugin_pb.WorkerAcknowledge{
@@ -448,20 +437,39 @@ func (w *Worker) handleDetectionRequest(
 	})
 
 	go func() {
-		requestCtx, cancelRequest := context.WithCancel(ctx)
-		w.setWorkCancel(cancelRequest, requestID)
-		defer func() {
-			w.clearWorkCancel(requestID)
-			cancelRequest()
-			<-w.detectSlots
-			w.clearRunningWork(workKey)
-		}()
-
 		detectionSender := &detectionSender{
 			requestID: requestID,
 			jobType:   resolvedJobType,
 			send:      send,
 		}
+		defer func() {
+			w.clearWorkCancel(requestID)
+			cancelRequest()
+			w.clearRunningWork(workKey)
+		}()
+
+		select {
+		case <-requestCtx.Done():
+			detectionSender.SendComplete(&plugin_pb.DetectionComplete{
+				Success:      false,
+				ErrorMessage: requestCtx.Err().Error(),
+			})
+			return
+		case w.detectSlots <- struct{}{}:
+		}
+		defer func() {
+			<-w.detectSlots
+		}()
+
+		w.setRunningWork(workKey, &plugin_pb.RunningWork{
+			WorkId:          requestID,
+			Kind:            plugin_pb.WorkKind_WORK_KIND_DETECTION,
+			JobType:         resolvedJobType,
+			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+			ProgressPercent: 0,
+			Stage:           "detecting",
+		})
+
 		if err := handler.Detect(requestCtx, request, detectionSender); err != nil {
 			detectionSender.SendComplete(&plugin_pb.DetectionComplete{
 				Success:      false,

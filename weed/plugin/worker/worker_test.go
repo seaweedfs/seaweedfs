@@ -215,6 +215,66 @@ func TestWorkerSchemaRequestRequiresJobTypeWhenMultipleHandlers(t *testing.T) {
 	}
 }
 
+func TestWorkerHandleDetectionQueuesWhenAtCapacity(t *testing.T) {
+	handler := &detectionQueueTestHandler{
+		capability: &plugin_pb.JobTypeCapability{
+			JobType:    "vacuum",
+			CanDetect:  true,
+			CanExecute: false,
+		},
+		descriptor:     &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
+		detectEntered:  make(chan struct{}, 2),
+		detectContinue: make(chan struct{}, 2),
+	}
+
+	worker, err := NewWorker(WorkerOptions{
+		AdminServer:             "localhost:23646",
+		GrpcDialOption:          grpc.WithTransportCredentials(insecure.NewCredentials()),
+		Handler:                 handler,
+		MaxDetectionConcurrency: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewWorker error = %v", err)
+	}
+
+	msgCh := make(chan *plugin_pb.WorkerToAdminMessage, 8)
+	send := func(msg *plugin_pb.WorkerToAdminMessage) bool {
+		msgCh <- msg
+		return true
+	}
+
+	sendDetection := func(requestID string) {
+		worker.handleAdminMessage(context.Background(), &plugin_pb.AdminToWorkerMessage{
+			RequestId: requestID,
+			Body: &plugin_pb.AdminToWorkerMessage_RunDetectionRequest{
+				RunDetectionRequest: &plugin_pb.RunDetectionRequest{
+					JobType: "vacuum",
+				},
+			},
+		}, send)
+	}
+
+	sendDetection("detect-1")
+	expectDetectionAck(t, recvWorkerMessage(t, msgCh), "detect-1")
+	<-handler.detectEntered
+
+	sendDetection("detect-2")
+	expectDetectionAck(t, recvWorkerMessage(t, msgCh), "detect-2")
+
+	select {
+	case unexpected := <-msgCh:
+		t.Fatalf("did not expect detection completion before slot is available, got=%+v", unexpected)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	handler.detectContinue <- struct{}{}
+	expectDetectionCompleteSuccess(t, recvWorkerMessage(t, msgCh), "detect-1")
+
+	<-handler.detectEntered
+	handler.detectContinue <- struct{}{}
+	expectDetectionCompleteSuccess(t, recvWorkerMessage(t, msgCh), "detect-2")
+}
+
 type testJobHandler struct {
 	capability *plugin_pb.JobTypeCapability
 	descriptor *plugin_pb.JobTypeDescriptor
@@ -234,6 +294,82 @@ func (h *testJobHandler) Detect(context.Context, *plugin_pb.RunDetectionRequest,
 
 func (h *testJobHandler) Execute(context.Context, *plugin_pb.ExecuteJobRequest, ExecutionSender) error {
 	return nil
+}
+
+type detectionQueueTestHandler struct {
+	capability *plugin_pb.JobTypeCapability
+	descriptor *plugin_pb.JobTypeDescriptor
+
+	detectEntered  chan struct{}
+	detectContinue chan struct{}
+}
+
+func (h *detectionQueueTestHandler) Capability() *plugin_pb.JobTypeCapability {
+	return h.capability
+}
+
+func (h *detectionQueueTestHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
+	return h.descriptor
+}
+
+func (h *detectionQueueTestHandler) Detect(ctx context.Context, _ *plugin_pb.RunDetectionRequest, sender DetectionSender) error {
+	select {
+	case h.detectEntered <- struct{}{}:
+	default:
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.detectContinue:
+	}
+
+	return sender.SendComplete(&plugin_pb.DetectionComplete{
+		Success: true,
+	})
+}
+
+func (h *detectionQueueTestHandler) Execute(context.Context, *plugin_pb.ExecuteJobRequest, ExecutionSender) error {
+	return nil
+}
+
+func recvWorkerMessage(t *testing.T, msgCh <-chan *plugin_pb.WorkerToAdminMessage) *plugin_pb.WorkerToAdminMessage {
+	t.Helper()
+	select {
+	case msg := <-msgCh:
+		return msg
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for worker message")
+		return nil
+	}
+}
+
+func expectDetectionAck(t *testing.T, message *plugin_pb.WorkerToAdminMessage, requestID string) {
+	t.Helper()
+	ack := message.GetAcknowledge()
+	if ack == nil {
+		t.Fatalf("expected acknowledge for request %q, got=%+v", requestID, message)
+	}
+	if ack.RequestId != requestID {
+		t.Fatalf("expected acknowledge request_id=%q, got=%q", requestID, ack.RequestId)
+	}
+	if !ack.Accepted {
+		t.Fatalf("expected acknowledge accepted for request %q, got=%+v", requestID, ack)
+	}
+}
+
+func expectDetectionCompleteSuccess(t *testing.T, message *plugin_pb.WorkerToAdminMessage, requestID string) {
+	t.Helper()
+	complete := message.GetDetectionComplete()
+	if complete == nil {
+		t.Fatalf("expected detection complete for request %q, got=%+v", requestID, message)
+	}
+	if complete.RequestId != requestID {
+		t.Fatalf("expected detection complete request_id=%q, got=%q", requestID, complete.RequestId)
+	}
+	if !complete.Success {
+		t.Fatalf("expected successful detection complete for request %q, got=%+v", requestID, complete)
+	}
 }
 
 func (w *Worker) handleAdminMessageForTest(
