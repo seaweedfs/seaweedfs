@@ -48,15 +48,6 @@ services:
       - master
       - volume
       - filer
-  admin:
-    image: chrislusf/seaweedfs
-    ports:
-      - 23646:23646
-    command: 'admin -masters=master:9333'
-    depends_on:
-      - master
-      - volume
-      - filer  
   prometheus:
     image: prom/prometheus:v2.21.0
     ports:
