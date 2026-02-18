@@ -23,36 +23,36 @@ type JobRunRecord struct {
 	Outcome     RunOutcome `json:"outcome"`
 	Message     string     `json:"message,omitempty"`
 	DurationMs  int64      `json:"duration_ms,omitempty"`
-	CompletedAt time.Time  `json:"completed_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 type JobTypeRunHistory struct {
 	JobType         string         `json:"job_type"`
 	SuccessfulRuns  []JobRunRecord `json:"successful_runs"`
 	ErrorRuns       []JobRunRecord `json:"error_runs"`
-	LastUpdatedTime time.Time      `json:"last_updated_time"`
+	LastUpdatedTime *time.Time     `json:"last_updated_time,omitempty"`
 }
 
 type TrackedJob struct {
-	JobID         string    `json:"job_id"`
-	JobType       string    `json:"job_type"`
-	RequestID     string    `json:"request_id"`
-	WorkerID      string    `json:"worker_id"`
-	DedupeKey     string    `json:"dedupe_key,omitempty"`
-	Summary       string    `json:"summary,omitempty"`
-	Detail        string    `json:"detail,omitempty"`
-	Parameters    map[string]interface{} `json:"parameters,omitempty"`
-	Labels        map[string]string      `json:"labels,omitempty"`
-	State         string    `json:"state"`
-	Progress      float64   `json:"progress"`
-	Stage         string    `json:"stage,omitempty"`
-	Message       string    `json:"message,omitempty"`
-	Attempt       int32     `json:"attempt,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	CompletedAt   time.Time `json:"completed_at,omitempty"`
-	ErrorMessage  string    `json:"error_message,omitempty"`
-	ResultSummary string    `json:"result_summary,omitempty"`
+	JobID              string                 `json:"job_id"`
+	JobType            string                 `json:"job_type"`
+	RequestID          string                 `json:"request_id"`
+	WorkerID           string                 `json:"worker_id"`
+	DedupeKey          string                 `json:"dedupe_key,omitempty"`
+	Summary            string                 `json:"summary,omitempty"`
+	Detail             string                 `json:"detail,omitempty"`
+	Parameters         map[string]interface{} `json:"parameters,omitempty"`
+	Labels             map[string]string      `json:"labels,omitempty"`
+	State              string                 `json:"state"`
+	Progress           float64                `json:"progress"`
+	Stage              string                 `json:"stage,omitempty"`
+	Message            string                 `json:"message,omitempty"`
+	Attempt            int32                  `json:"attempt,omitempty"`
+	CreatedAt          *time.Time             `json:"created_at,omitempty"`
+	UpdatedAt          *time.Time             `json:"updated_at,omitempty"`
+	CompletedAt        *time.Time             `json:"completed_at,omitempty"`
+	ErrorMessage       string                 `json:"error_message,omitempty"`
+	ResultSummary      string                 `json:"result_summary,omitempty"`
 	ResultOutputValues map[string]interface{} `json:"result_output_values,omitempty"`
 }
 
@@ -65,7 +65,7 @@ type JobActivity struct {
 	Message    string                 `json:"message"`
 	Stage      string                 `json:"stage,omitempty"`
 	Details    map[string]interface{} `json:"details,omitempty"`
-	OccurredAt time.Time              `json:"occurred_at"`
+	OccurredAt *time.Time             `json:"occurred_at,omitempty"`
 }
 
 type JobDetail struct {
@@ -73,7 +73,7 @@ type JobDetail struct {
 	RunRecord   *JobRunRecord `json:"run_record,omitempty"`
 	Activities  []JobActivity `json:"activities"`
 	RelatedJobs []TrackedJob  `json:"related_jobs,omitempty"`
-	LastUpdated time.Time     `json:"last_updated"`
+	LastUpdated *time.Time    `json:"last_updated,omitempty"`
 }
 
 type SchedulerJobTypeState struct {
@@ -93,4 +93,11 @@ type SchedulerJobTypeState struct {
 	DetectorAvailable             bool       `json:"detector_available"`
 	DetectorWorkerID              string     `json:"detector_worker_id,omitempty"`
 	ExecutorWorkerCount           int        `json:"executor_worker_count"`
+}
+
+func timeToPtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
