@@ -332,9 +332,11 @@ func emitErasureCodingDetectionDecisionTrace(
 		}
 		if metric.Age < quietThreshold {
 			skippedQuietTime++
+			continue
 		}
 		if metric.FullnessRatio < taskConfig.FullnessRatio {
 			skippedFullness++
+			continue
 		}
 	}
 
