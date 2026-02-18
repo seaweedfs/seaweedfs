@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	mrand "math/rand"
 	"net/http"
 	"net/url"
 	"os/signal"
@@ -51,6 +51,7 @@ type runner struct {
 	mu            sync.Mutex
 	sequence      int64
 	ecFirstSeenAt map[uint32]time.Time
+	rng           *mrand.Rand
 }
 
 type ecVolumeInfo struct {
@@ -84,6 +85,7 @@ func main() {
 		httpClient:     &http.Client{Timeout: cfg.RequestTimeout},
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
 		ecFirstSeenAt:  make(map[uint32]time.Time),
+		rng:            mrand.New(mrand.NewSource(time.Now().UnixNano())),
 	}
 
 	log.Printf(
@@ -149,6 +151,7 @@ func loadConfig() (config, error) {
 	if cfg.EcMinAge < 0 {
 		return cfg, fmt.Errorf("ec_min_age must be zero or positive")
 	}
+	// Note: EcMinAge == 0 intentionally disables the age guard, making EC volumes eligible for cleanup immediately.
 	if cfg.MaxCleanupPerCycle <= 0 {
 		return cfg, fmt.Errorf("max_cleanup_per_cycle must be positive")
 	}
@@ -215,7 +218,7 @@ func (r *runner) uploadOneFile(ctx context.Context) error {
 	uploadCtx, cancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
 	defer cancel()
 
-	body := io.LimitReader(rand.Reader, r.cfg.FileSizeBytes)
+	body := io.LimitReader(r.rng, r.cfg.FileSizeBytes)
 	request, err := http.NewRequestWithContext(uploadCtx, http.MethodPut, fileURL, body)
 	if err != nil {
 		return err
@@ -449,8 +452,9 @@ func (r *runner) deleteEcVolume(ctx context.Context, volumeID uint32, info *ecVo
 				deleteCtx, deleteCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
 				defer deleteCancel()
 				if _, err := client.VolumeEcShardsDelete(deleteCtx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-					VolumeId: volumeID,
-					ShardIds: shardIDs,
+					VolumeId:   volumeID,
+					Collection: r.cfg.Collection,
+					ShardIds:   shardIDs,
 				}); err != nil {
 					return err
 				}
