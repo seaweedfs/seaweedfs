@@ -438,14 +438,14 @@ func (s *AdminServer) RunPluginJobTypeAPI(c *gin.Context) {
 
 	proposals, err := s.RunPluginDetection(ctx, jobType, clusterContext, req.MaxResults)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	detectedCount := len(proposals)
 
 	filteredProposals, skippedActiveCount, err := s.FilterPluginProposalsWithActiveJobs(jobType, proposals)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
