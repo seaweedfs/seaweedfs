@@ -15,6 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -26,11 +28,12 @@ import (
 // ErasureCodingTask implements the Task interface
 type ErasureCodingTask struct {
 	*base.BaseTask
-	server     string
-	volumeID   uint32
-	collection string
-	workDir    string
-	progress   float64
+	server         string
+	volumeID       uint32
+	collection     string
+	workDir        string
+	progress       float64
+	grpcDialOption grpc.DialOption
 
 	// EC parameters
 	dataShards      int32
@@ -43,12 +46,13 @@ type ErasureCodingTask struct {
 // NewErasureCodingTask creates a new unified EC task instance
 func NewErasureCodingTask(id string, server string, volumeID uint32, collection string) *ErasureCodingTask {
 	return &ErasureCodingTask{
-		BaseTask:     base.NewBaseTask(id, types.TaskTypeErasureCoding),
-		server:       server,
-		volumeID:     volumeID,
-		collection:   collection,
-		dataShards:   erasure_coding.DataShardsCount,   // Default values
-		parityShards: erasure_coding.ParityShardsCount, // Default values
+		BaseTask:       base.NewBaseTask(id, types.TaskTypeErasureCoding),
+		server:         server,
+		volumeID:       volumeID,
+		collection:     collection,
+		dataShards:     erasure_coding.DataShardsCount,   // Default values
+		parityShards:   erasure_coding.ParityShardsCount, // Default values
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.client"),
 	}
 }
 
@@ -243,7 +247,7 @@ func (t *ErasureCodingTask) GetProgress() float64 {
 
 // markVolumeReadonly marks the volume as readonly on the source server
 func (t *ErasureCodingTask) markVolumeReadonly() error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			_, err := client.VolumeMarkReadonly(context.Background(), &volume_server_pb.VolumeMarkReadonlyRequest{
 				VolumeId: t.volumeID,
@@ -301,7 +305,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]
 
 // copyFileFromSource copies a file from source server to local path using gRPC streaming
 func (t *ErasureCodingTask) copyFileFromSource(ext, localPath string) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
 				VolumeId:   t.volumeID,
@@ -533,7 +537,7 @@ func (t *ErasureCodingTask) distributeEcShards(shardFiles map[string]string) err
 
 // sendShardFileToDestination sends a single shard file to a destination server using ReceiveFile API
 func (t *ErasureCodingTask) sendShardFileToDestination(destServer, filePath, shardType string) error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(destServer), grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(destServer), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			// Open the local shard file
 			file, err := os.Open(filePath)
@@ -665,7 +669,7 @@ func (t *ErasureCodingTask) mountEcShards() error {
 			continue
 		}
 
-		err := operation.WithVolumeServerClient(false, pb.ServerAddress(destNode), grpc.WithInsecure(),
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(destNode), t.grpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
 				_, mountErr := client.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
 					VolumeId:   t.volumeID,
@@ -722,7 +726,7 @@ func (t *ErasureCodingTask) deleteOriginalVolume() error {
 			"volume_id":      t.volumeID,
 		}).Info("Deleting volume from replica server")
 
-		err := operation.WithVolumeServerClient(false, pb.ServerAddress(replicaServer), grpc.WithInsecure(),
+		err := operation.WithVolumeServerClient(false, pb.ServerAddress(replicaServer), t.grpcDialOption,
 			func(client volume_server_pb.VolumeServerClient) error {
 				_, err := client.VolumeDelete(context.Background(), &volume_server_pb.VolumeDeleteRequest{
 					VolumeId:  t.volumeID,

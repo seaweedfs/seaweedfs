@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 	"google.golang.org/grpc"
@@ -24,6 +26,7 @@ type VacuumTask struct {
 	collection       string
 	garbageThreshold float64
 	progress         float64
+	grpcDialOption   grpc.DialOption
 }
 
 // NewVacuumTask creates a new unified vacuum task instance
@@ -34,6 +37,7 @@ func NewVacuumTask(id string, server string, volumeID uint32, collection string)
 		volumeID:         volumeID,
 		collection:       collection,
 		garbageThreshold: 0.3, // Default 30% threshold
+		grpcDialOption:   security.LoadClientTLS(util.GetViper(), "grpc.client"),
 	}
 }
 
@@ -150,7 +154,7 @@ func (t *VacuumTask) GetProgress() float64 {
 func (t *VacuumTask) checkVacuumEligibility() (bool, float64, error) {
 	var garbageRatio float64
 
-	err := operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			resp, err := client.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
 				VolumeId: t.volumeID,
@@ -177,7 +181,7 @@ func (t *VacuumTask) checkVacuumEligibility() (bool, float64, error) {
 
 // performVacuum executes the actual vacuum operation
 func (t *VacuumTask) performVacuum() error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			// Step 1: Compact the volume
 			t.GetLogger().Info("Compacting volume")
@@ -225,7 +229,7 @@ func (t *VacuumTask) performVacuum() error {
 
 // verifyVacuumResults checks the volume status after vacuum
 func (t *VacuumTask) verifyVacuumResults() error {
-	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), grpc.WithInsecure(),
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			resp, err := client.VacuumVolumeCheck(context.Background(), &volume_server_pb.VacuumVolumeCheckRequest{
 				VolumeId: t.volumeID,
