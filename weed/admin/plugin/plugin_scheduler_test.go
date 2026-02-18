@@ -164,14 +164,14 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 		{ProposalId: "p4"}, // same proposal id, no dedupe key
 	}
 
-	filtered := pluginSvc.filterScheduledProposals("vacuum", proposals, time.Hour)
+	filtered := pluginSvc.filterScheduledProposals(proposals)
 	if len(filtered) != 4 {
 		t.Fatalf("unexpected filtered size: got=%d want=4", len(filtered))
 	}
 
-	filtered2 := pluginSvc.filterScheduledProposals("vacuum", proposals, time.Hour)
-	if len(filtered2) != 0 {
-		t.Fatalf("expected second run to be fully deduped, got=%d", len(filtered2))
+	filtered2 := pluginSvc.filterScheduledProposals(proposals)
+	if len(filtered2) != 4 {
+		t.Fatalf("expected second run dedupe to be per-run only, got=%d", len(filtered2))
 	}
 }
 

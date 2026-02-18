@@ -23,7 +23,6 @@ const (
 	maxScheduledExecutionConcurrency           = 32
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
-	defaultScheduledDedupeTTL                  = 24 * time.Hour
 )
 
 type schedulerPolicy struct {
@@ -366,12 +365,12 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		return
 	}
 
-	filtered := r.filterScheduledProposals(jobType, filteredByActive, defaultScheduledDedupeTTL)
+	filtered := r.filterScheduledProposals(filteredByActive)
 	if len(filtered) != len(filteredByActive) {
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
-			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s)", len(filteredByActive)-len(filtered)),
+			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s) within this run", len(filteredByActive)-len(filtered)),
 			Stage:      "deduped",
 			OccurredAt: time.Now().UTC(),
 		})
@@ -752,28 +751,7 @@ func isActiveTrackedJobState(state string) bool {
 	}
 }
 
-func (r *Plugin) filterScheduledProposals(jobType string, proposals []*plugin_pb.JobProposal, dedupeTTL time.Duration) []*plugin_pb.JobProposal {
-	now := time.Now().UTC()
-	if dedupeTTL <= 0 {
-		dedupeTTL = defaultScheduledDedupeTTL
-	}
-
-	r.dedupeMu.Lock()
-	defer r.dedupeMu.Unlock()
-
-	typedCache := r.recentDedupeByType[jobType]
-	if typedCache == nil {
-		typedCache = make(map[string]time.Time)
-		r.recentDedupeByType[jobType] = typedCache
-	}
-
-	cutoff := now.Add(-dedupeTTL)
-	for dedupeKey, seenAt := range typedCache {
-		if seenAt.Before(cutoff) {
-			delete(typedCache, dedupeKey)
-		}
-	}
-
+func (r *Plugin) filterScheduledProposals(proposals []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {
 	filtered := make([]*plugin_pb.JobProposal, 0, len(proposals))
 	seenInRun := make(map[string]struct{}, len(proposals))
 
@@ -794,12 +772,8 @@ func (r *Plugin) filterScheduledProposals(jobType string, proposals []*plugin_pb
 		if _, exists := seenInRun[key]; exists {
 			continue
 		}
-		if _, exists := typedCache[key]; exists {
-			continue
-		}
 
 		seenInRun[key] = struct{}{}
-		typedCache[key] = now
 		filtered = append(filtered, proposal)
 	}
 
