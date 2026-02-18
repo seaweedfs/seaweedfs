@@ -75,13 +75,12 @@ type SSEResponseMetadata struct {
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
+	bucket, object := s3_constants.GetBucketAndObject(r)
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
 		return
 	}
-
-	bucket, object := s3_constants.GetBucketAndObject(r)
 	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
