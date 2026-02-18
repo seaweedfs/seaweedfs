@@ -238,7 +238,7 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType TaskType) bool {
 	// Check total load including pending tasks
 	totalLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
-	if totalLoad >= MaxTotalTaskLoadPerDisk {
+	if MaxTotalTaskLoadPerDisk > 0 && totalLoad >= MaxTotalTaskLoadPerDisk {
 		return false
 	}
 
