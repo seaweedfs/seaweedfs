@@ -85,6 +85,17 @@ type streamSession struct {
 type pendingDetectionState struct {
 	proposals []*plugin_pb.JobProposal
 	complete  chan *plugin_pb.DetectionComplete
+	jobType   string
+	workerID  string
+}
+
+// DetectionReport captures one detection run including request metadata.
+type DetectionReport struct {
+	RequestID string
+	JobType   string
+	WorkerID  string
+	Proposals []*plugin_pb.JobProposal
+	Complete  *plugin_pb.DetectionComplete
 }
 
 func New(options Options) (*Plugin, error) {
@@ -330,13 +341,13 @@ func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
 }
 
-// RunDetection requests one detector worker to produce job proposals for a job type.
-func (r *Plugin) RunDetection(
+// RunDetectionWithReport requests one detector worker and returns proposals with request metadata.
+func (r *Plugin) RunDetectionWithReport(
 	ctx context.Context,
 	jobType string,
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
-) ([]*plugin_pb.JobProposal, error) {
+) (*DetectionReport, error) {
 	detector, err := r.pickDetector(jobType)
 	if err != nil {
 		return nil, err
@@ -355,6 +366,8 @@ func (r *Plugin) RunDetection(
 
 	state := &pendingDetectionState{
 		complete: make(chan *plugin_pb.DetectionComplete, 1),
+		jobType:  jobType,
+		workerID: detector.WorkerID,
 	}
 	r.pendingDetectionMu.Lock()
 	r.pendingDetection[requestID] = state
@@ -364,6 +377,19 @@ func (r *Plugin) RunDetection(
 		delete(r.pendingDetection, requestID)
 		r.pendingDetectionMu.Unlock()
 	}()
+
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		RequestID:  requestID,
+		WorkerID:   detector.WorkerID,
+		Source:     "detector",
+		Stage:      "requested",
+		Message:    "detection requested",
+		OccurredAt: time.Now().UTC(),
+		Details: map[string]interface{}{
+			"max_results": maxResults,
+		},
+	})
 
 	message := &plugin_pb.AdminToWorkerMessage{
 		RequestId: requestID,
@@ -385,26 +411,73 @@ func (r *Plugin) RunDetection(
 
 	if err := r.sendToWorker(detector.WorkerID, message); err != nil {
 		r.clearDetectorLease(jobType, detector.WorkerID)
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			RequestID:  requestID,
+			WorkerID:   detector.WorkerID,
+			Source:     "detector",
+			Stage:      "failed_to_send",
+			Message:    err.Error(),
+			OccurredAt: time.Now().UTC(),
+		})
 		return nil, err
 	}
 
 	select {
 	case <-ctx.Done():
 		r.sendCancel(detector.WorkerID, requestID, plugin_pb.WorkKind_WORK_KIND_DETECTION, ctx.Err())
-		return nil, ctx.Err()
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			RequestID:  requestID,
+			WorkerID:   detector.WorkerID,
+			Source:     "detector",
+			Stage:      "canceled",
+			Message:    "detection canceled",
+			OccurredAt: time.Now().UTC(),
+		})
+		return &DetectionReport{
+			RequestID: requestID,
+			JobType:   jobType,
+			WorkerID:  detector.WorkerID,
+		}, ctx.Err()
 	case complete, ok := <-state.complete:
 		if !ok {
-			return nil, fmt.Errorf("detection request %s interrupted", requestID)
+			return &DetectionReport{
+				RequestID: requestID,
+				JobType:   jobType,
+				WorkerID:  detector.WorkerID,
+			}, fmt.Errorf("detection request %s interrupted", requestID)
 		}
 		proposals := cloneJobProposals(state.proposals)
+		report := &DetectionReport{
+			RequestID: requestID,
+			JobType:   jobType,
+			WorkerID:  detector.WorkerID,
+			Proposals: proposals,
+			Complete:  complete,
+		}
 		if complete == nil {
-			return proposals, fmt.Errorf("detection request %s returned no completion state", requestID)
+			return report, fmt.Errorf("detection request %s returned no completion state", requestID)
 		}
 		if !complete.Success {
-			return proposals, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
+			return report, fmt.Errorf("detection failed for %s: %s", jobType, complete.ErrorMessage)
 		}
-		return proposals, nil
+		return report, nil
 	}
+}
+
+// RunDetection requests one detector worker to produce job proposals for a job type.
+func (r *Plugin) RunDetection(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+) ([]*plugin_pb.JobProposal, error) {
+	report, err := r.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
+	if report == nil {
+		return nil, err
+	}
+	return report.Proposals, err
 }
 
 // ExecuteJob sends one job to a capable executor worker and waits for completion.
@@ -697,9 +770,9 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:
-		r.handleDetectionProposals(body.DetectionProposals)
+		r.handleDetectionProposals(workerID, body.DetectionProposals)
 	case *plugin_pb.WorkerToAdminMessage_DetectionComplete:
-		r.handleDetectionComplete(body.DetectionComplete)
+		r.handleDetectionComplete(workerID, body.DetectionComplete)
 	case *plugin_pb.WorkerToAdminMessage_JobProgressUpdate:
 		r.handleJobProgressUpdate(body.JobProgressUpdate)
 	case *plugin_pb.WorkerToAdminMessage_JobCompleted:
@@ -801,7 +874,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 	return r.store.SaveJobTypeConfig(cfg)
 }
 
-func (r *Plugin) handleDetectionProposals(message *plugin_pb.DetectionProposals) {
+func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.DetectionProposals) {
 	if message == nil || message.RequestId == "" {
 		return
 	}
@@ -812,9 +885,74 @@ func (r *Plugin) handleDetectionProposals(message *plugin_pb.DetectionProposals)
 		state.proposals = append(state.proposals, cloneJobProposals(message.Proposals)...)
 	}
 	r.pendingDetectionMu.Unlock()
+	if state == nil {
+		return
+	}
+
+	resolvedWorkerID := strings.TrimSpace(workerID)
+	if resolvedWorkerID == "" {
+		resolvedWorkerID = state.workerID
+	}
+	resolvedJobType := strings.TrimSpace(message.JobType)
+	if resolvedJobType == "" {
+		resolvedJobType = state.jobType
+	}
+	if resolvedJobType == "" {
+		resolvedJobType = "unknown"
+	}
+
+	r.appendActivity(JobActivity{
+		JobType:    resolvedJobType,
+		RequestID:  message.RequestId,
+		WorkerID:   resolvedWorkerID,
+		Source:     "detector",
+		Stage:      "proposals_batch",
+		Message:    fmt.Sprintf("received %d proposal(s)", len(message.Proposals)),
+		OccurredAt: time.Now().UTC(),
+		Details: map[string]interface{}{
+			"batch_size": len(message.Proposals),
+			"has_more":   message.HasMore,
+		},
+	})
+
+	for _, proposal := range message.Proposals {
+		if proposal == nil {
+			continue
+		}
+		details := map[string]interface{}{
+			"proposal_id": proposal.ProposalId,
+			"dedupe_key":  proposal.DedupeKey,
+			"priority":    proposal.Priority.String(),
+			"summary":     proposal.Summary,
+			"detail":      proposal.Detail,
+			"labels":      proposal.Labels,
+		}
+		if params := configValueMapToPlain(proposal.Parameters); len(params) > 0 {
+			details["parameters"] = params
+		}
+
+		messageText := strings.TrimSpace(proposal.Summary)
+		if messageText == "" {
+			messageText = fmt.Sprintf("proposal %s", strings.TrimSpace(proposal.ProposalId))
+		}
+		if messageText == "" {
+			messageText = "proposal generated"
+		}
+
+		r.appendActivity(JobActivity{
+			JobType:    resolvedJobType,
+			RequestID:  message.RequestId,
+			WorkerID:   resolvedWorkerID,
+			Source:     "detector",
+			Stage:      "proposal",
+			Message:    messageText,
+			OccurredAt: time.Now().UTC(),
+			Details:    details,
+		})
+	}
 }
 
-func (r *Plugin) handleDetectionComplete(message *plugin_pb.DetectionComplete) {
+func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.DetectionComplete) {
 	if message == nil {
 		return
 	}
@@ -831,6 +969,41 @@ func (r *Plugin) handleDetectionComplete(message *plugin_pb.DetectionComplete) {
 	if state == nil {
 		return
 	}
+
+	resolvedWorkerID := strings.TrimSpace(workerID)
+	if resolvedWorkerID == "" {
+		resolvedWorkerID = state.workerID
+	}
+	resolvedJobType := strings.TrimSpace(message.JobType)
+	if resolvedJobType == "" {
+		resolvedJobType = state.jobType
+	}
+	if resolvedJobType == "" {
+		resolvedJobType = "unknown"
+	}
+
+	stage := "completed"
+	messageText := "detection completed"
+	if !message.Success {
+		stage = "failed"
+		messageText = strings.TrimSpace(message.ErrorMessage)
+		if messageText == "" {
+			messageText = "detection failed"
+		}
+	}
+	r.appendActivity(JobActivity{
+		JobType:    resolvedJobType,
+		RequestID:  message.RequestId,
+		WorkerID:   resolvedWorkerID,
+		Source:     "detector",
+		Stage:      stage,
+		Message:    messageText,
+		OccurredAt: time.Now().UTC(),
+		Details: map[string]interface{}{
+			"success":         message.Success,
+			"total_proposals": message.TotalProposals,
+		},
+	})
 
 	select {
 	case state.complete <- message:

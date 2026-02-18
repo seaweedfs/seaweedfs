@@ -306,10 +306,18 @@ func (s *AdminServer) TriggerPluginDetectionAPI(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
-	proposals, err := s.RunPluginDetection(ctx, jobType, clusterContext, req.MaxResults)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	report, err := s.RunPluginDetectionWithReport(ctx, jobType, clusterContext, req.MaxResults)
+	proposals := make([]*plugin_pb.JobProposal, 0)
+	requestID := ""
+	detectorWorkerID := ""
+	totalProposals := int32(0)
+	if report != nil {
+		proposals = report.Proposals
+		requestID = report.RequestID
+		detectorWorkerID = report.WorkerID
+		if report.Complete != nil {
+			totalProposals = report.Complete.TotalProposals
+		}
 	}
 
 	proposalPayloads := make([]map[string]interface{}, 0, len(proposals))
@@ -339,11 +347,35 @@ func (s *AdminServer) TriggerPluginDetectionAPI(c *gin.Context) {
 		return iID < jID
 	})
 
-	c.JSON(http.StatusOK, gin.H{
-		"job_type":  jobType,
-		"count":     len(proposalPayloads),
-		"proposals": proposalPayloads,
-	})
+	activities := s.ListPluginActivities(jobType, 500)
+	filteredActivities := make([]interface{}, 0, len(activities))
+	if requestID != "" {
+		for i := len(activities) - 1; i >= 0; i-- {
+			activity := activities[i]
+			if activity.RequestID != requestID {
+				continue
+			}
+			filteredActivities = append(filteredActivities, activity)
+		}
+	}
+
+	response := gin.H{
+		"job_type":           jobType,
+		"request_id":         requestID,
+		"detector_worker_id": detectorWorkerID,
+		"total_proposals":    totalProposals,
+		"count":              len(proposalPayloads),
+		"proposals":          proposalPayloads,
+		"activities":         filteredActivities,
+	}
+
+	if err != nil {
+		response["error"] = err.Error()
+		c.JSON(http.StatusBadRequest, response)
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // RunPluginJobTypeAPI runs full workflow for one job type: detect then dispatch detected jobs.

@@ -1734,6 +1734,19 @@ func (s *AdminServer) RunPluginDetection(
 	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
+// RunPluginDetectionWithReport triggers one detection pass and returns request metadata and proposals.
+func (s *AdminServer) RunPluginDetectionWithReport(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+) (*adminplugin.DetectionReport, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
+}
+
 // ExecutePluginJob dispatches one job to a capable worker and waits for completion.
 func (s *AdminServer) ExecutePluginJob(
 	ctx context.Context,
