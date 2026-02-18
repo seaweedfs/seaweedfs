@@ -403,6 +403,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		params.Sources[0].Node,
 		params.VolumeId,
 		params.Collection,
+		h.grpcDialOption,
 	)
 	task.SetProgressCallback(func(progress float64, stage string) {
 		message := fmt.Sprintf("vacuum progress %.0f%%", progress)

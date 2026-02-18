@@ -517,6 +517,7 @@ func (h *VolumeBalanceHandler) Execute(
 		params.Sources[0].Node,
 		params.VolumeId,
 		params.Collection,
+		h.grpcDialOption,
 	)
 	task.SetProgressCallback(func(progress float64, stage string) {
 		message := fmt.Sprintf("balance progress %.0f%%", progress)
