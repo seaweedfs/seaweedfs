@@ -171,7 +171,6 @@ Phase 4
 
 Phase 4 status (starter)
 - Added `weed worker` command as an external `plugin.proto` worker process.
-- Kept `weed plugin.worker` as a compatibility alias to the same implementation.
 - Initial handler implements `vacuum` job type with:
   - declarative descriptor/config form response (`ConfigSchemaResponse`),
   - detection via master topology scan (`RunDetectionRequest`),

@@ -77,6 +77,9 @@ type Worker struct {
 	workCancel   map[string]context.CancelFunc
 
 	workerID string
+
+	connectionMu sync.RWMutex
+	connected    bool
 }
 
 // NewWorker creates a plugin worker instance.
@@ -186,6 +189,8 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
+	defer w.setConnected(false)
+
 	dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelDial()
 
@@ -203,6 +208,7 @@ func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
 	if err != nil {
 		return fmt.Errorf("open worker stream: %w", err)
 	}
+	w.setConnected(true)
 
 	sendCh := make(chan *plugin_pb.WorkerToAdminMessage, defaultSendBufferSize)
 	sendErrCh := make(chan error, 1)
@@ -280,6 +286,19 @@ func (w *Worker) runOnce(ctx context.Context, adminAddress string) error {
 
 		w.handleAdminMessage(connCtx, message, send)
 	}
+}
+
+// IsConnected reports whether the worker currently has an active stream to admin.
+func (w *Worker) IsConnected() bool {
+	w.connectionMu.RLock()
+	defer w.connectionMu.RUnlock()
+	return w.connected
+}
+
+func (w *Worker) setConnected(connected bool) {
+	w.connectionMu.Lock()
+	w.connected = connected
+	w.connectionMu.Unlock()
 }
 
 func (w *Worker) handleAdminMessage(

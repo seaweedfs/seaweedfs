@@ -121,12 +121,12 @@ func TestParsePluginWorkerJobTypes(t *testing.T) {
 }
 
 func TestPluginWorkerDefaultJobTypes(t *testing.T) {
-	jobTypes, err := parsePluginWorkerJobTypes(*pluginWorkerJobType)
+	jobTypes, err := parsePluginWorkerJobTypes(defaultPluginWorkerJobTypes)
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(default flag) err = %v", err)
+		t.Fatalf("parsePluginWorkerJobTypes(default setting) err = %v", err)
 	}
 	if len(jobTypes) != 3 {
-		t.Fatalf("expected default plugin.worker job types to include 3 handlers, got %v", jobTypes)
+		t.Fatalf("expected default job types to include 3 handlers, got %v", jobTypes)
 	}
 }
 

@@ -13,68 +13,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc"
 )
 
-var cmdPluginWorker = &Command{
-	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
-	Short:     "start a plugin.proto worker process",
-	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
-
-This command currently provides vacuum, volume_balance, and erasure_coding job type
-contracts with the plugin stream runtime, including descriptor delivery,
-heartbeat/load reporting, detection, and execution.
-
-Behavior:
-  - Use -jobType to choose one or more plugin job handlers (comma-separated list)
-  - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
-
-Examples:
-  weed plugin.worker -admin=localhost:23646
-  weed plugin.worker -admin=localhost:23646 -jobType=volume_balance
-  weed plugin.worker -admin=localhost:23646 -jobType=vacuum,volume_balance
-  weed plugin.worker -admin=localhost:23646 -jobType=erasure_coding
-  weed plugin.worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
-  weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
-`,
-}
-
 const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding"
-
-var (
-	pluginWorkerAdminServer = cmdPluginWorker.Flag.String("admin", "localhost:23646", "admin server address")
-	pluginWorkerID          = cmdPluginWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
-	pluginWorkerWorkingDir  = cmdPluginWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
-	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types to serve (comma-separated list)")
-	pluginWorkerHeartbeat   = cmdPluginWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
-	pluginWorkerReconnect   = cmdPluginWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
-	pluginWorkerMaxDetect   = cmdPluginWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")
-	pluginWorkerMaxExecute  = cmdPluginWorker.Flag.Int("maxExecute", 4, "max concurrent execute requests")
-	pluginWorkerAddress     = cmdPluginWorker.Flag.String("address", "", "worker address advertised to admin")
-)
-
-func init() {
-	cmdPluginWorker.Run = runPluginWorker
-}
-
-func runPluginWorker(cmd *Command, args []string) bool {
-	return runPluginWorkerWithOptions(pluginWorkerRunOptions{
-		AdminServer: *pluginWorkerAdminServer,
-		WorkerID:    *pluginWorkerID,
-		WorkingDir:  *pluginWorkerWorkingDir,
-		JobTypes:    *pluginWorkerJobType,
-		Heartbeat:   *pluginWorkerHeartbeat,
-		Reconnect:   *pluginWorkerReconnect,
-		MaxDetect:   *pluginWorkerMaxDetect,
-		MaxExecute:  *pluginWorkerMaxExecute,
-		Address:     *pluginWorkerAddress,
-	})
-}
 
 type pluginWorkerRunOptions struct {
 	AdminServer string
@@ -86,6 +35,8 @@ type pluginWorkerRunOptions struct {
 	MaxDetect   int
 	MaxExecute  int
 	Address     string
+	MetricsPort int
+	MetricsIP   string
 }
 
 func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
@@ -112,6 +63,10 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 	}
 	if options.MaxExecute <= 0 {
 		options.MaxExecute = 4
+	}
+	options.MetricsIP = strings.TrimSpace(options.MetricsIP)
+	if options.MetricsIP == "" {
+		options.MetricsIP = "0.0.0.0"
 	}
 
 	resolvedAdminServer := resolvePluginWorkerAdminServer(options.AdminServer)
@@ -146,6 +101,10 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 	if err != nil {
 		glog.Errorf("Failed to create plugin worker: %v", err)
 		return false
+	}
+
+	if options.MetricsPort > 0 {
+		go startPluginWorkerMetricsServer(options.MetricsIP, options.MetricsPort, worker)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -360,4 +319,30 @@ func fetchPluginWorkerGrpcPort(host string, httpPort int) (int, error) {
 		lastErr = fmt.Errorf("plugin status endpoint unavailable")
 	}
 	return 0, lastErr
+}
+
+func pluginWorkerHealthHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func pluginWorkerReadyHandler(pluginRuntime *pluginworker.Worker) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if pluginRuntime == nil || !pluginRuntime.IsConnected() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func startPluginWorkerMetricsServer(ip string, port int, pluginRuntime *pluginworker.Worker) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", pluginWorkerHealthHandler)
+	mux.HandleFunc("/ready", pluginWorkerReadyHandler(pluginRuntime))
+	mux.Handle("/metrics", promhttp.HandlerFor(statsCollect.Gather, promhttp.HandlerOpts{}))
+
+	glog.V(0).Infof("Starting plugin worker metrics server at %s", statsCollect.JoinHostPort(ip, port))
+	if err := http.ListenAndServe(statsCollect.JoinHostPort(ip, port), mux); err != nil {
+		glog.Errorf("Plugin worker metrics server failed to start: %v", err)
+	}
 }

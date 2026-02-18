@@ -50,7 +50,6 @@ var Commands = []*Command{
 	cmdWebDav,
 	cmdSftp,
 	cmdWorker,
-	cmdPluginWorker,
 }
 
 type Command struct {
