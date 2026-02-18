@@ -2,11 +2,10 @@ package admin_dockertest
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -235,7 +234,7 @@ func TestEcEndToEnd(t *testing.T) {
 	// 2. Upload a file
 	fileSize := 5 * 1024 * 1024
 	data := make([]byte, fileSize)
-	rand.Read(data)
+	crand.Read(data)
 	fileName := fmt.Sprintf("ec_test_file_%d", time.Now().Unix())
 	t.Logf("Uploading %d bytes file %s to Filer...", fileSize, fileName)
 	uploadUrl := FilerUrl + "/" + fileName
@@ -278,10 +277,10 @@ func TestEcEndToEnd(t *testing.T) {
 	var lastBody []byte
 
 	for time.Since(startTime) < 300*time.Second {
-		// 5.1 Check Master Topology
+		// 3.1 Check Master Topology
 		resp, err := http.Get(MasterUrl + "/dir/status")
 		if err == nil {
-			lastBody, _ = ioutil.ReadAll(resp.Body)
+			lastBody, _ = io.ReadAll(resp.Body)
 			resp.Body.Close()
 
 			// Check total EC shards
