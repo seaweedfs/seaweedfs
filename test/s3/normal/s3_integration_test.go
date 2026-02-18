@@ -86,7 +86,6 @@ func TestS3Integration(t *testing.T) {
 	t.Run("PutObjectWithChecksumAndSSEC", func(t *testing.T) {
 		testPutObjectWithChecksumAndSSEC(t, cluster)
 	})
-	})
 
 	t.Run("GetObject", func(t *testing.T) {
 		testGetObject(t, cluster)
@@ -616,7 +615,6 @@ func testPutPartWithChecksum(t *testing.T, cluster *TestCluster) {
 	require.NoError(t, err, "Failed to complete multipart upload")
 
 	t.Logf("✓ UploadPart with MD5 validation: %s/%s", bucketName, objectKey)
-}
 }
 
 func calculateMd5(objectData string) string {
