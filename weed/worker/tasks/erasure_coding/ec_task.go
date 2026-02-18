@@ -15,8 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
@@ -44,7 +42,7 @@ type ErasureCodingTask struct {
 }
 
 // NewErasureCodingTask creates a new unified EC task instance
-func NewErasureCodingTask(id string, server string, volumeID uint32, collection string) *ErasureCodingTask {
+func NewErasureCodingTask(id string, server string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *ErasureCodingTask {
 	return &ErasureCodingTask{
 		BaseTask:       base.NewBaseTask(id, types.TaskTypeErasureCoding),
 		server:         server,
@@ -52,7 +50,7 @@ func NewErasureCodingTask(id string, server string, volumeID uint32, collection 
 		collection:     collection,
 		dataShards:     erasure_coding.DataShardsCount,   // Default values
 		parityShards:   erasure_coding.ParityShardsCount, // Default values
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		grpcDialOption: grpcDialOption,
 	}
 }
 
