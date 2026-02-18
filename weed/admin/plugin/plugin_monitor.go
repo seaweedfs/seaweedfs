@@ -16,6 +16,12 @@ const (
 	maxActivityRecords  = 4000
 )
 
+var (
+	StateSucceeded = strings.ToLower(plugin_pb.JobState_JOB_STATE_SUCCEEDED.String())
+	StateFailed    = strings.ToLower(plugin_pb.JobState_JOB_STATE_FAILED.String())
+	StateCanceled  = strings.ToLower(plugin_pb.JobState_JOB_STATE_CANCELED.String())
+)
+
 func (r *Plugin) loadPersistedMonitorState() error {
 	trackedJobs, err := r.store.LoadTrackedJobs()
 	if err != nil {
@@ -684,41 +690,37 @@ func (r *Plugin) pruneTrackedJobsLocked() {
 		return
 	}
 
-	type trackedRef struct {
-		jobID   string
-		updated time.Time
+	type sortableJob struct {
+		jobID     string
+		updatedAt time.Time
 	}
-
-	completed := make([]trackedRef, 0, len(r.jobs))
+	terminalJobs := make([]sortableJob, 0)
 	for jobID, job := range r.jobs {
-		if job == nil {
-			continue
-		}
-		if job.State == strings.ToLower(plugin_pb.JobState_JOB_STATE_SUCCEEDED.String()) ||
-			job.State == strings.ToLower(plugin_pb.JobState_JOB_STATE_FAILED.String()) ||
-			job.State == strings.ToLower(plugin_pb.JobState_JOB_STATE_CANCELED.String()) {
-			completed = append(completed, trackedRef{jobID: jobID, updated: job.UpdatedAt})
+		if job.State == StateSucceeded ||
+			job.State == StateFailed ||
+			job.State == StateCanceled {
+			terminalJobs = append(terminalJobs, sortableJob{jobID, job.UpdatedAt})
 		}
 	}
 
-	if len(completed) == 0 {
+	if len(terminalJobs) == 0 {
 		return
 	}
 
-	sort.Slice(completed, func(i, j int) bool {
-		return completed[i].updated.Before(completed[j].updated)
+	sort.Slice(terminalJobs, func(i, j int) bool {
+		return terminalJobs[i].updatedAt.Before(terminalJobs[j].updatedAt)
 	})
 
 	toDelete := len(r.jobs) - maxTrackedJobsTotal
 	if toDelete <= 0 {
 		return
 	}
-	if toDelete > len(completed) {
-		toDelete = len(completed)
+	if toDelete > len(terminalJobs) {
+		toDelete = len(terminalJobs)
 	}
 
 	for i := 0; i < toDelete; i++ {
-		delete(r.jobs, completed[i].jobID)
+		delete(r.jobs, terminalJobs[i].jobID)
 	}
 }
 
@@ -773,10 +775,13 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 }
 
 func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *TrackedJob)) {
-	normalizedJobID := strings.TrimSpace(jobID)
+	normalizedJobID, _ := sanitizeJobID(jobID)
 	if normalizedJobID == "" {
 		return
 	}
+
+	r.jobDetailsMu.Lock()
+	defer r.jobDetailsMu.Unlock()
 
 	detail, err := r.store.LoadJobDetail(normalizedJobID)
 	if err != nil {
@@ -784,17 +789,13 @@ func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *Track
 		return
 	}
 	if detail == nil {
-		detail = &TrackedJob{JobID: normalizedJobID}
+		return
 	}
-	if detail.JobID == "" {
-		detail.JobID = normalizedJobID
-	}
+
 	if apply != nil {
 		apply(detail)
 	}
-	if detail.UpdatedAt.IsZero() {
-		detail.UpdatedAt = time.Now().UTC()
-	}
+
 	if err := r.store.SaveJobDetail(*detail); err != nil {
 		glog.Warningf("Plugin failed to persist job detail snapshot for %s: %v", normalizedJobID, err)
 	}

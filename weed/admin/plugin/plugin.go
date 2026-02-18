@@ -14,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -72,6 +73,8 @@ type Plugin struct {
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
+
+	jobDetailsMu sync.Mutex
 
 	activitiesMu sync.RWMutex
 	activities   []JobActivity
@@ -228,6 +231,18 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 	}
 	go r.prefetchDescriptorsFromHello(hello)
 
+	recvErrCh := make(chan error, 1)
+	go func() {
+		for {
+			message, recvErr := stream.Recv()
+			if recvErr != nil {
+				recvErrCh <- recvErr
+				return
+			}
+			r.handleWorkerMessage(workerID, message)
+		}
+	}()
+
 	for {
 		select {
 		case <-r.shutdownCh:
@@ -237,21 +252,12 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 				return err
 			}
 			return nil
-		default:
-		}
-
-		message, recvErr := stream.Recv()
-		if recvErr != nil {
-			if errors.Is(recvErr, io.EOF) {
-				return nil
-			}
-			if errors.Is(recvErr, context.Canceled) {
+		case recvErr := <-recvErrCh:
+			if errors.Is(recvErr, io.EOF) || errors.Is(recvErr, context.Canceled) {
 				return nil
 			}
 			return fmt.Errorf("receive plugin message from %s: %w", workerID, recvErr)
 		}
-
-		r.handleWorkerMessage(workerID, message)
 	}
 }
 
@@ -815,12 +821,12 @@ func (r *Plugin) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaResp
 		}
 	}
 
-	if response.RequestId == "" {
-		return
-	}
+	r.safeSendSchemaResponse(response.RequestId, response)
+}
 
+func (r *Plugin) safeSendSchemaResponse(requestID string, response *plugin_pb.ConfigSchemaResponse) {
 	r.pendingSchemaMu.Lock()
-	ch := r.pendingSchema[response.RequestId]
+	ch := r.pendingSchema[requestID]
 	r.pendingSchemaMu.Unlock()
 	if ch == nil {
 		return
@@ -828,7 +834,7 @@ func (r *Plugin) handleConfigSchemaResponse(response *plugin_pb.ConfigSchemaResp
 
 	select {
 	case ch <- response:
-	default:
+	case <-r.shutdownCh:
 	}
 }
 
@@ -845,14 +851,14 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		return nil
 	}
 
-	workerDefaults := cloneConfigValueMap(descriptor.WorkerDefaultValues)
+	workerDefaults := CloneConfigValueMap(descriptor.WorkerDefaultValues)
 	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
-		workerDefaults = cloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
+		workerDefaults = CloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
 	}
 
 	adminDefaults := map[string]*plugin_pb.ConfigValue{}
 	if descriptor.AdminConfigForm != nil {
-		adminDefaults = cloneConfigValueMap(descriptor.AdminConfigForm.DefaultValues)
+		adminDefaults = CloneConfigValueMap(descriptor.AdminConfigForm.DefaultValues)
 	}
 
 	adminRuntime := &plugin_pb.AdminRuntimeConfig{}
@@ -1014,9 +1020,20 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		},
 	})
 
+	r.safeSendDetectionComplete(message.RequestId, message)
+}
+
+func (r *Plugin) safeSendDetectionComplete(requestID string, message *plugin_pb.DetectionComplete) {
+	r.pendingDetectionMu.Lock()
+	state := r.pendingDetection[requestID]
+	r.pendingDetectionMu.Unlock()
+	if state == nil {
+		return
+	}
+
 	select {
 	case state.complete <- message:
-	default:
+	case <-r.shutdownCh:
 	}
 }
 
@@ -1026,15 +1043,7 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	}
 
 	if completed.RequestId != "" {
-		r.pendingExecutionMu.Lock()
-		waiter := r.pendingExecution[completed.RequestId]
-		r.pendingExecutionMu.Unlock()
-		if waiter != nil {
-			select {
-			case waiter <- completed:
-			default:
-			}
-		}
+		r.safeSendJobCompleted(completed.RequestId, completed)
 	}
 
 	tracked := r.trackExecutionCompletion(completed)
@@ -1058,13 +1067,12 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	}
 	if completed.Success {
 		record.Outcome = RunOutcomeSuccess
-	}
-	if completed.Success {
 		record.Message = "completed"
 		if completed.Result != nil && completed.Result.Summary != "" {
 			record.Message = completed.Result.Summary
 		}
 	} else {
+		record.Outcome = RunOutcomeError
 		record.Message = completed.ErrorMessage
 	}
 
@@ -1079,6 +1087,20 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 
 	if err := r.store.AppendRunRecord(completed.JobType, record); err != nil {
 		glog.Warningf("Plugin failed to append run record for %s: %v", completed.JobType, err)
+	}
+}
+
+func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.JobCompleted) {
+	r.pendingExecutionMu.Lock()
+	ch := r.pendingExecution[requestID]
+	r.pendingExecutionMu.Unlock()
+	if ch == nil {
+		return
+	}
+
+	select {
+	case ch <- completed:
+	case <-r.shutdownCh:
 	}
 }
 
@@ -1136,7 +1158,7 @@ func (r *Plugin) loadJobTypeConfigPayload(jobType string) (
 	if adminRuntime == nil {
 		adminRuntime = &plugin_pb.AdminRuntimeConfig{}
 	}
-	return adminRuntime, cloneConfigValueMap(config.AdminConfigValues), cloneConfigValueMap(config.WorkerConfigValues), nil
+	return adminRuntime, CloneConfigValueMap(config.AdminConfigValues), CloneConfigValueMap(config.WorkerConfigValues), nil
 }
 
 func cloneJobProposals(in []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {
@@ -1148,17 +1170,7 @@ func cloneJobProposals(in []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {
 		if proposal == nil {
 			continue
 		}
-		clone := *proposal
-		if proposal.Parameters != nil {
-			clone.Parameters = cloneConfigValueMap(proposal.Parameters)
-		}
-		if proposal.Labels != nil {
-			clone.Labels = make(map[string]string, len(proposal.Labels))
-			for k, v := range proposal.Labels {
-				clone.Labels[k] = v
-			}
-		}
-		out = append(out, &clone)
+		out = append(out, proto.Clone(proposal).(*plugin_pb.JobProposal))
 	}
 	return out
 }
@@ -1189,7 +1201,7 @@ func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
 	return timestamppb.New(latest.UTC())
 }
 
-func cloneConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugin_pb.ConfigValue {
+func CloneConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugin_pb.ConfigValue {
 	if len(in) == 0 {
 		return map[string]*plugin_pb.ConfigValue{}
 	}
@@ -1198,8 +1210,7 @@ func cloneConfigValueMap(in map[string]*plugin_pb.ConfigValue) map[string]*plugi
 		if value == nil {
 			continue
 		}
-		clone := *value
-		out[key] = &clone
+		out[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
 	}
 	return out
 }
