@@ -140,13 +140,13 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
 				},
 				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60},
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
 				},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      60 * 60,
+			DetectionIntervalSeconds:      60 * 5,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           500,
 			GlobalExecutionConcurrency:    16,
@@ -165,7 +165,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
 			},
 			"min_interval_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60},
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
 			},
 		},
 	}
