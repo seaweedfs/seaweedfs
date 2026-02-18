@@ -29,6 +29,28 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 	}
 }
 
+func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+
+	assertHasRoute(t, router, "GET", "/plugin")
+	assertHasRoute(t, router, "GET", "/plugin/configuration")
+	assertHasRoute(t, router, "GET", "/plugin/monitoring")
+}
+
+func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+
+	assertHasRoute(t, router, "GET", "/plugin")
+	assertHasRoute(t, router, "GET", "/plugin/configuration")
+	assertHasRoute(t, router, "GET", "/plugin/monitoring")
+}
+
 func newRouteTestAdminHandlers() *AdminHandlers {
 	adminServer := &dash.AdminServer{}
 	return &AdminHandlers{
@@ -52,4 +74,11 @@ func hasRoute(router *gin.Engine, method string, path string) bool {
 		}
 	}
 	return false
+}
+
+func assertHasRoute(t *testing.T, router *gin.Engine, method string, path string) {
+	t.Helper()
+	if !hasRoute(router, method, path) {
+		t.Fatalf("expected %s %s to be registered", method, path)
+	}
 }

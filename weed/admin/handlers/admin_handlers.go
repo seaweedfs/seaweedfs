@@ -131,6 +131,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.POST("/maintenance/config/:taskType", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateTaskConfig)
 		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
 		protected.GET("/plugin", h.pluginHandlers.ShowPlugin)
+		protected.GET("/plugin/configuration", h.pluginHandlers.ShowPluginConfiguration)
+		protected.GET("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -325,6 +327,8 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
 		r.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
 		r.GET("/plugin", h.pluginHandlers.ShowPlugin)
+		r.GET("/plugin/configuration", h.pluginHandlers.ShowPluginConfiguration)
+		r.GET("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")

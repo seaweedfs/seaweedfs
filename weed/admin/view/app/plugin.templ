@@ -1,15 +1,25 @@
 package app
 
-import "fmt"
-
-templ Plugin(enabled bool) {
-    <div class="container-fluid" id="plugin-page" data-plugin-enabled={ fmt.Sprintf("%t", enabled) }>
+templ Plugin(page string) {
+    {{
+        currentPage := page
+        if currentPage == "" {
+            currentPage = "overview"
+        }
+    }}
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
                         <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Plugin</h2>
-                        <p class="text-muted mb-0">Monitor workers, configure job types, and run detection/execution workflows.</p>
+                        if currentPage == "overview" {
+                            <p class="text-muted mb-0">Cluster-wide plugin status, worker inventory, and scheduler state.</p>
+                        } else if currentPage == "configuration" {
+                            <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand detection workflows.</p>
+                        } else {
+                            <p class="text-muted mb-0">Track jobs and activity streams across all plugin job types.</p>
+                        }
                     </div>
                     <div class="btn-group">
                         <button type="button" class="btn btn-outline-secondary" id="plugin-refresh-all-btn">
@@ -20,17 +30,29 @@ templ Plugin(enabled bool) {
             </div>
         </div>
 
-        if !enabled {
-            <div class="row">
-                <div class="col-12">
-                    <div class="alert alert-warning">
-                        <h5 class="alert-heading mb-2"><i class="fas fa-exclamation-triangle me-2"></i>Plugin Disabled</h5>
-                        <p class="mb-2">Start admin server with plugin enabled to use this page.</p>
-                        <code>weed admin -plugin.enabled=true</code>
-                    </div>
-                </div>
+        <div class="row mb-3">
+            <div class="col-12">
+                <ul class="nav nav-tabs">
+                    <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "overview") } href="/plugin">
+                            <i class="fas fa-chart-line me-1"></i>Overview
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "configuration") } href="/plugin/configuration">
+                            <i class="fas fa-sliders-h me-1"></i>Configuration
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "monitoring") } href="/plugin/monitoring">
+                            <i class="fas fa-stream me-1"></i>Monitoring
+                        </a>
+                    </li>
+                </ul>
             </div>
-        } else {
+        </div>
+
+        <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
                 <div class="col-md-3 mb-3">
                     <div class="card border-primary h-100">
@@ -65,7 +87,6 @@ templ Plugin(enabled bool) {
                     </div>
                 </div>
             </div>
-
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card shadow-sm">
@@ -91,7 +112,6 @@ templ Plugin(enabled bool) {
                     </div>
                 </div>
             </div>
-
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card shadow-sm">
@@ -122,7 +142,9 @@ templ Plugin(enabled bool) {
                     </div>
                 </div>
             </div>
+        </div>
 
+        <div class="plugin-section plugin-section-configuration">
             <div class="row mb-4">
                 <div class="col-lg-8 mb-3">
                     <div class="card shadow-sm h-100">
@@ -315,7 +337,9 @@ templ Plugin(enabled bool) {
                     </div>
                 </div>
             </div>
+        </div>
 
+        <div class="plugin-section plugin-section-monitoring">
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card shadow-sm">
@@ -388,11 +412,25 @@ templ Plugin(enabled bool) {
                     </div>
                 </div>
             </div>
-        }
+        </div>
     </div>
 
-    if enabled {
-        <style>
+    <style>
+        #plugin-page[data-plugin-page="overview"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="overview"] .plugin-section-monitoring {
+            display: none;
+        }
+
+        #plugin-page[data-plugin-page="configuration"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="configuration"] .plugin-section-monitoring {
+            display: none;
+        }
+
+        #plugin-page[data-plugin-page="monitoring"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="monitoring"] .plugin-section-configuration {
+            display: none;
+        }
+
         .plugin-form-root .card {
             border: 1px solid #dee2e6;
         }
@@ -1947,5 +1985,4 @@ templ Plugin(enabled bool) {
             init();
         })();
         </script>
-    }
 }
