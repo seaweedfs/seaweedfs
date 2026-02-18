@@ -50,4 +50,4 @@ services:
     depends_on:
       - master
       - volume
-      - filer  
+      - filer
