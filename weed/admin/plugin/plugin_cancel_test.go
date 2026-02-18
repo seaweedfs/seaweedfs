@@ -9,6 +9,7 @@ import (
 )
 
 func TestRunDetectionSendsCancelOnContextDone(t *testing.T) {
+	t.Parallel()
 	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New plugin error: %v", err)
@@ -59,6 +60,7 @@ func TestRunDetectionSendsCancelOnContextDone(t *testing.T) {
 }
 
 func TestExecuteJobSendsCancelOnContextDone(t *testing.T) {
+	t.Parallel()
 	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New plugin error: %v", err)
