@@ -48,18 +48,18 @@ templ Plugin(page string) {
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "detection") } href="/plugin/detection">
+                            <i class="fas fa-search me-1"></i>Job Detection
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class={ "nav-link", templ.KV("active", currentPage == "queue") } href="/plugin/queue">
                             <i class="fas fa-list me-1"></i>Job Queue
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "detection") } href="/plugin/detection">
-                            <i class="fas fa-search me-1"></i>Detection Jobs
-                        </a>
-                    </li>
-                    <li class="nav-item">
                         <a class={ "nav-link", templ.KV("active", currentPage == "execution") } href="/plugin/execution">
-                            <i class="fas fa-tasks me-1"></i>Execution Jobs
+                            <i class="fas fa-tasks me-1"></i>Job Execution
                         </a>
                     </li>
                 </ul>
