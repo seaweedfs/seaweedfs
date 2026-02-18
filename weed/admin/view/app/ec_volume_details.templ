@@ -3,6 +3,7 @@ package app
 import (
     "fmt"
     "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+    "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 )
 
 templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
@@ -61,11 +62,11 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             <td>
                                 if data.IsComplete {
                                     <span class="badge bg-success">
-                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/14 shards)
+                                        <i class="fas fa-check me-1"></i>Complete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 } else {
                                     <span class="badge bg-warning">
-                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/14 shards)
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Incomplete ({data.TotalShards}/{fmt.Sprintf("%d", erasure_coding.TotalShardsCount)} shards)
                                     </span>
                                 }
                             </td>
@@ -78,7 +79,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                         if i > 0 { 
                                             <span>, </span>
                                         }
-                                        <span class="badge bg-danger">{fmt.Sprintf("%02d", shardID)}</span>
+                                        @renderEcShardBadge(uint32(shardID), true)
                                     }
                                 </td>
                             </tr>
@@ -145,14 +146,19 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                         <h6>Present Shards:</h6>
                         <div class="d-flex flex-wrap gap-1">
                             for _, shard := range data.Shards {
-                                <span class="badge bg-success me-1 mb-1">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                @renderEcShardBadge(shard.ShardID, false)
                             }
+                        </div>
+                        <div class="small text-muted mt-2">
+                            <span class="badge bg-primary me-1">Data</span>
+                            <span class="badge bg-warning text-dark me-2">Parity</span>
+                            Data shards are blue, parity shards are yellow.
                         </div>
                         if len(data.MissingShards) > 0 {
                             <h6 class="mt-2">Missing Shards:</h6>
                             <div class="d-flex flex-wrap gap-1">
                                 for _, shardID := range data.MissingShards {
-                                    <span class="badge bg-secondary me-1 mb-1">{fmt.Sprintf("%02d", shardID)}</span>
+                                    @renderEcShardBadge(uint32(shardID), true)
                                 }
                             </div>
                         }
@@ -240,7 +246,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                             for _, shard := range data.Shards {
                                     <tr>
                                         <td>
-                                            <span class="badge bg-primary">{fmt.Sprintf("%02d", shard.ShardID)}</span>
+                                            @renderEcShardBadge(shard.ShardID, false)
                                         </td>
                                         <td>
                                             <a href={ templ.URL("/cluster/volume-servers/" + shard.Server) } class="text-primary text-decoration-none">
@@ -260,7 +266,7 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
                                             <span class="text-success">{bytesToHumanReadableUint64(shard.Size)}</span>
                                         </td>
                                         <td>
-                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" class="btn btn-sm btn-primary">
+                                            <a href={ templ.SafeURL(fmt.Sprintf("http://%s/ui/index.html", shard.Server)) } target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary">
                                                 <i class="fas fa-external-link-alt me-1"></i>Volume Server
                                             </a>
                                         </td>
@@ -296,6 +302,22 @@ templ EcVolumeDetails(data dash.EcVolumeDetailsData) {
             window.location.href = url.toString();
         }
     </script>
+}
+
+templ renderEcShardBadge(shardID uint32, missing bool) {
+	if shardID < erasure_coding.DataShardsCount {
+		if missing {
+			<span class="badge bg-primary opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-primary me-1 mb-1" title={ fmt.Sprintf("Data shard %d", shardID) }>{ fmt.Sprintf("D%02d", shardID) }</span>
+		}
+	} else {
+		if missing {
+			<span class="badge bg-warning text-dark opacity-50 me-1 mb-1" title={ fmt.Sprintf("Missing parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		} else {
+			<span class="badge bg-warning text-dark me-1 mb-1" title={ fmt.Sprintf("Parity shard %d", shardID) }>{ fmt.Sprintf("P%02d", shardID) }</span>
+		}
+	}
 }
 
 // Helper function to convert bytes to human readable format (uint64 version)

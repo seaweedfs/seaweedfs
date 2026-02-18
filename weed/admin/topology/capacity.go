@@ -238,7 +238,7 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType TaskType) bool {
 	// Check total load including pending tasks
 	totalLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
-	if totalLoad >= MaxTotalTaskLoadPerDisk {
+	if MaxTotalTaskLoadPerDisk > 0 && totalLoad >= MaxTotalTaskLoadPerDisk {
 		return false
 	}
 
@@ -299,6 +299,16 @@ func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) 
 	}
 
 	baseAvailable := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
+	if baseAvailable <= 0 &&
+		disk.DiskInfo.DiskInfo.MaxVolumeCount == 0 &&
+		disk.DiskInfo.DiskInfo.VolumeCount == 0 &&
+		len(disk.DiskInfo.DiskInfo.VolumeInfos) == 0 &&
+		len(disk.DiskInfo.DiskInfo.EcShardInfos) == 0 {
+		// Some empty volume servers can report max_volume_counts=0 before
+		// publishing concrete slot limits. Keep one provisional slot so EC
+		// detection still sees the disk for placement planning.
+		baseAvailable = 1
+	}
 	netImpact := at.getEffectiveCapacityUnsafe(disk)
 
 	// Calculate available volume slots (negative impact reduces availability)

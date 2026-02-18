@@ -117,6 +117,12 @@ var cmdAdmin = &Command{
     - TLS is automatically used if certificates are configured
     - Workers fall back to insecure connections if TLS is unavailable
 
+  Plugin:
+    - Always enabled on the worker gRPC port
+    - Registers plugin.proto gRPC service on the same worker gRPC port
+    - External workers connect with: weed worker -admin=<admin_host:admin_port>
+    - Persists plugin metadata under dataDir/plugin when dataDir is configured
+
   Configuration File:
     - The security.toml file is read from ".", "$HOME/.seaweedfs/", 
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
@@ -197,6 +203,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
 	}
+	fmt.Printf("Plugin: Enabled\n")
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -295,7 +302,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		r.StaticFS("/static", http.FS(staticFS))
 	}
 
-	// Create admin server
+	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers

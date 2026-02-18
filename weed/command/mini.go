@@ -13,11 +13,13 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 
@@ -43,6 +45,7 @@ const (
 	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
 	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
+	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding"
 )
 
 var (
@@ -1028,6 +1031,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 
 	// Start worker after admin server is ready
 	startMiniWorker()
+	startMiniPluginWorker(ctx)
 
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
@@ -1163,6 +1167,62 @@ func startMiniWorker() {
 	}
 
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
+}
+
+func startMiniPluginWorker(ctx context.Context) {
+	glog.Infof("Starting plugin worker for admin server")
+
+	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
+	resolvedAdminAddr := resolvePluginWorkerAdminServer(adminAddr)
+	if resolvedAdminAddr != adminAddr {
+		glog.Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
+	}
+
+	workerDir := filepath.Join(*miniDataFolders, "plugin_worker")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		glog.Fatalf("Failed to create plugin worker directory: %v", err)
+	}
+
+	util.LoadConfiguration("security", false)
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
+
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption)
+	if err != nil {
+		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
+	}
+
+	workerID, err := resolvePluginWorkerID("", workerDir)
+	if err != nil {
+		glog.Fatalf("Failed to resolve mini plugin worker ID: %v", err)
+	}
+
+	pluginRuntime, err := pluginworker.NewWorker(pluginworker.WorkerOptions{
+		AdminServer:             resolvedAdminAddr,
+		WorkerID:                workerID,
+		WorkerVersion:           version.Version(),
+		WorkerAddress:           *miniIp,
+		HeartbeatInterval:       15 * time.Second,
+		ReconnectDelay:          5 * time.Second,
+		MaxDetectionConcurrency: 1,
+		MaxExecutionConcurrency: 2,
+		GrpcDialOption:          grpcDialOption,
+		Handlers:                handlers,
+	})
+	if err != nil {
+		glog.Fatalf("Failed to create mini plugin worker: %v", err)
+	}
+
+	go func() {
+		runCtx := ctx
+		if runCtx == nil {
+			runCtx = context.Background()
+		}
+		if runErr := pluginRuntime.Run(runCtx); runErr != nil && runCtx.Err() == nil {
+			glog.Errorf("Mini plugin worker stopped with error: %v", runErr)
+		}
+	}()
+
+	glog.Infof("Plugin worker %s started successfully with job types: %s", workerID, defaultMiniPluginJobTypes)
 }
 
 const credentialsInstructionTemplate = `

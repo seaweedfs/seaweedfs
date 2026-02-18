@@ -212,8 +212,9 @@ To enable workers, add the following to your values.yaml:
 worker:
   enabled: true
   replicas: 2  # Scale based on workload
-  capabilities: "vacuum,balance,erasure_coding"  # Tasks this worker can handle
-  maxConcurrent: 3  # Maximum concurrent tasks per worker
+  jobType: "vacuum,volume_balance,erasure_coding"  # Job types this worker can handle
+  maxDetect: 1  # Maximum concurrent detection requests
+  maxExecute: 4  # Maximum concurrent execution jobs per worker
   
   # Working directory for task execution
   # Default: "/tmp/seaweedfs-worker"
@@ -248,14 +249,14 @@ worker:
       memory: "2Gi"
 ```
 
-### Worker Capabilities
+### Worker Job Types
 
-Workers can be configured with different capabilities:
+Workers can be configured with different job types:
 - **vacuum**: Reclaim deleted file space
-- **balance**: Balance volumes across volume servers
+- **volume_balance**: Balance volumes across volume servers
 - **erasure_coding**: Handle erasure coding operations
 
-You can configure workers with all capabilities or create specialized worker pools with specific capabilities.
+You can configure workers with all job types or create specialized worker pools with specific job types.
 
 ### Worker Deployment Strategy
 
@@ -264,11 +265,11 @@ For production deployments, consider:
 1. **Multiple Workers**: Deploy 2+ worker replicas for high availability
 2. **Resource Allocation**: Workers need sufficient CPU/memory for maintenance tasks
 3. **Storage**: Workers need temporary storage for vacuum and balance operations (size depends on volume size)
-4. **Specialized Workers**: Create separate worker deployments for different capabilities if needed
+4. **Specialized Workers**: Create separate worker deployments for different job types if needed
 
 Example specialized worker configuration:
 
-For specialized worker pools, deploy separate Helm releases with different capabilities:
+For specialized worker pools, deploy separate Helm releases with different job types:
 
 **values-worker-vacuum.yaml** (for vacuum operations):
 ```yaml
@@ -287,8 +288,8 @@ admin:
 worker:
   enabled: true
   replicas: 2
-  capabilities: "vacuum"
-  maxConcurrent: 2
+  jobType: "vacuum"
+  maxExecute: 2
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":
@@ -313,8 +314,8 @@ admin:
 worker:
   enabled: true
   replicas: 1
-  capabilities: "balance"
-  maxConcurrent: 1
+  jobType: "volume_balance"
+  maxExecute: 1
   # REQUIRED: Point to the admin service of your main SeaweedFS release
   # Replace <namespace> with the namespace where your main seaweedfs is deployed
   # Example: If deploying in namespace "production":

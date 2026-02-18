@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -93,6 +95,10 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	grpcServer := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.admin"))
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
+	if plugin := s.adminServer.GetPlugin(); plugin != nil {
+		plugin_pb.RegisterPluginControlServiceServer(grpcServer, plugin)
+		glog.V(0).Infof("Plugin gRPC service registered on worker gRPC server")
+	}
 
 	s.grpcServer = grpcServer
 	s.listener = listener
@@ -112,6 +118,25 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	}()
 
 	return nil
+}
+
+// ListenPort returns the currently bound worker gRPC listen port.
+func (s *WorkerGrpcServer) ListenPort() int {
+	if s == nil || s.listener == nil {
+		return 0
+	}
+	if tcpAddr, ok := s.listener.Addr().(*net.TCPAddr); ok {
+		return tcpAddr.Port
+	}
+	_, portStr, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // Stop stops the gRPC server

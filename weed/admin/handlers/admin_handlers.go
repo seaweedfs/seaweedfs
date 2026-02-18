@@ -23,7 +23,7 @@ type AdminHandlers struct {
 	fileBrowserHandlers    *FileBrowserHandlers
 	userHandlers           *UserHandlers
 	policyHandlers         *PolicyHandlers
-	maintenanceHandlers    *MaintenanceHandlers
+	pluginHandlers         *PluginHandlers
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
 }
@@ -35,7 +35,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
 	policyHandlers := NewPolicyHandlers(adminServer)
-	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
+	pluginHandlers := NewPluginHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
 	return &AdminHandlers{
@@ -45,7 +45,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
 		fileBrowserHandlers:    fileBrowserHandlers,
 		userHandlers:           userHandlers,
 		policyHandlers:         policyHandlers,
-		maintenanceHandlers:    maintenanceHandlers,
+		pluginHandlers:         pluginHandlers,
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
 	}
@@ -119,14 +119,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
 
-		// Maintenance system routes
-		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
-		protected.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
-		protected.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
-		protected.POST("/maintenance/config", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateMaintenanceConfig)
-		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
-		protected.POST("/maintenance/config/:taskType", dash.RequireWriteAccess(), h.maintenanceHandlers.UpdateTaskConfig)
-		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
+		protected.GET("/plugin", h.pluginHandlers.ShowPlugin)
+		protected.GET("/plugin/configuration", h.pluginHandlers.ShowPluginConfiguration)
+		protected.GET("/plugin/queue", h.pluginHandlers.ShowPluginQueue)
+		protected.GET("/plugin/detection", h.pluginHandlers.ShowPluginDetection)
+		protected.GET("/plugin/execution", h.pluginHandlers.ShowPluginExecution)
+		protected.GET("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -226,20 +224,25 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				volumeApi.POST("/:id/:server/vacuum", dash.RequireWriteAccess(), h.clusterHandlers.VacuumVolume)
 			}
 
-			// Maintenance API routes
-			maintenanceApi := api.Group("/maintenance")
+			// Plugin API routes
+			pluginApi := api.Group("/plugin")
 			{
-				maintenanceApi.POST("/scan", dash.RequireWriteAccess(), h.adminServer.TriggerMaintenanceScan)
-				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
-				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
-				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
-				maintenanceApi.POST("/tasks/:id/cancel", dash.RequireWriteAccess(), h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
-				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
-				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
-				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
-				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
-				maintenanceApi.PUT("/config", dash.RequireWriteAccess(), h.adminServer.UpdateMaintenanceConfigAPI)
+				pluginApi.GET("/status", h.adminServer.GetPluginStatusAPI)
+				pluginApi.GET("/workers", h.adminServer.GetPluginWorkersAPI)
+				pluginApi.GET("/job-types", h.adminServer.GetPluginJobTypesAPI)
+				pluginApi.GET("/jobs", h.adminServer.GetPluginJobsAPI)
+				pluginApi.GET("/jobs/:jobId", h.adminServer.GetPluginJobAPI)
+				pluginApi.GET("/jobs/:jobId/detail", h.adminServer.GetPluginJobDetailAPI)
+				pluginApi.GET("/activities", h.adminServer.GetPluginActivitiesAPI)
+				pluginApi.GET("/scheduler-states", h.adminServer.GetPluginSchedulerStatesAPI)
+				pluginApi.GET("/job-types/:jobType/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI)
+				pluginApi.POST("/job-types/:jobType/schema", h.adminServer.RequestPluginJobTypeSchemaAPI)
+				pluginApi.GET("/job-types/:jobType/config", h.adminServer.GetPluginJobTypeConfigAPI)
+				pluginApi.PUT("/job-types/:jobType/config", dash.RequireWriteAccess(), h.adminServer.UpdatePluginJobTypeConfigAPI)
+				pluginApi.GET("/job-types/:jobType/runs", h.adminServer.GetPluginRunHistoryAPI)
+				pluginApi.POST("/job-types/:jobType/detect", dash.RequireWriteAccess(), h.adminServer.TriggerPluginDetectionAPI)
+				pluginApi.POST("/job-types/:jobType/run", dash.RequireWriteAccess(), h.adminServer.RunPluginJobTypeAPI)
+				pluginApi.POST("/jobs/execute", dash.RequireWriteAccess(), h.adminServer.ExecutePluginJobAPI)
 			}
 
 			// Message Queue API routes
@@ -292,14 +295,12 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
 		r.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
 
-		// Maintenance system routes
-		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
-		r.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
-		r.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
-		r.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
-		r.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
-		r.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
-		r.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
+		r.GET("/plugin", h.pluginHandlers.ShowPlugin)
+		r.GET("/plugin/configuration", h.pluginHandlers.ShowPluginConfiguration)
+		r.GET("/plugin/queue", h.pluginHandlers.ShowPluginQueue)
+		r.GET("/plugin/detection", h.pluginHandlers.ShowPluginDetection)
+		r.GET("/plugin/execution", h.pluginHandlers.ShowPluginExecution)
+		r.GET("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring)
 
 		// API routes for AJAX calls
 		api := r.Group("/api")
@@ -398,20 +399,25 @@ func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, adminUser,
 				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
 			}
 
-			// Maintenance API routes
-			maintenanceApi := api.Group("/maintenance")
+			// Plugin API routes
+			pluginApi := api.Group("/plugin")
 			{
-				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
-				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
-				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
-				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
-				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
-				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
-				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
-				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
-				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
-				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
+				pluginApi.GET("/status", h.adminServer.GetPluginStatusAPI)
+				pluginApi.GET("/workers", h.adminServer.GetPluginWorkersAPI)
+				pluginApi.GET("/job-types", h.adminServer.GetPluginJobTypesAPI)
+				pluginApi.GET("/jobs", h.adminServer.GetPluginJobsAPI)
+				pluginApi.GET("/jobs/:jobId", h.adminServer.GetPluginJobAPI)
+				pluginApi.GET("/jobs/:jobId/detail", h.adminServer.GetPluginJobDetailAPI)
+				pluginApi.GET("/activities", h.adminServer.GetPluginActivitiesAPI)
+				pluginApi.GET("/scheduler-states", h.adminServer.GetPluginSchedulerStatesAPI)
+				pluginApi.GET("/job-types/:jobType/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI)
+				pluginApi.POST("/job-types/:jobType/schema", h.adminServer.RequestPluginJobTypeSchemaAPI)
+				pluginApi.GET("/job-types/:jobType/config", h.adminServer.GetPluginJobTypeConfigAPI)
+				pluginApi.PUT("/job-types/:jobType/config", h.adminServer.UpdatePluginJobTypeConfigAPI)
+				pluginApi.GET("/job-types/:jobType/runs", h.adminServer.GetPluginRunHistoryAPI)
+				pluginApi.POST("/job-types/:jobType/detect", h.adminServer.TriggerPluginDetectionAPI)
+				pluginApi.POST("/job-types/:jobType/run", h.adminServer.RunPluginJobTypeAPI)
+				pluginApi.POST("/jobs/execute", h.adminServer.ExecutePluginJobAPI)
 			}
 
 			// Message Queue API routes
