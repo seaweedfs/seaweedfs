@@ -526,11 +526,20 @@ func (r *Plugin) reserveScheduledExecutor(
 	jobType string,
 	policy schedulerPolicy,
 ) (*WorkerSession, func(), error) {
+	deadline := time.Now().Add(policy.ExecutionTimeout)
+	if policy.ExecutionTimeout <= 0 {
+		deadline = time.Now().Add(10 * time.Minute) // Default cap
+	}
+
 	for {
 		select {
 		case <-r.shutdownCh:
 			return nil, nil, fmt.Errorf("plugin is shutting down")
 		default:
+		}
+
+		if time.Now().After(deadline) {
+			return nil, nil, fmt.Errorf("timed out waiting for executor capacity for %s", jobType)
 		}
 
 		executors, err := r.registry.ListExecutors(jobType)
@@ -761,26 +770,26 @@ func buildScheduledJobSpec(jobType string, proposal *plugin_pb.JobProposal, inde
 	if proposal == nil {
 		return job
 	}
-
-	if proposal.JobType != "" {
-		job.JobType = proposal.JobType
-	}
-	job.DedupeKey = proposal.DedupeKey
-	job.Priority = proposal.Priority
-	job.Summary = proposal.Summary
-	job.Detail = proposal.Detail
-
-	if proposal.Parameters != nil {
-		job.Parameters = cloneConfigValueMap(proposal.Parameters)
-	}
-	if proposal.Labels != nil {
-		job.Labels = make(map[string]string, len(proposal.Labels))
-		for key, value := range proposal.Labels {
-			job.Labels[key] = value
+	if proposal != nil {
+		if proposal.JobType != "" {
+			job.JobType = proposal.JobType
 		}
-	}
-	if proposal.NotBefore != nil {
-		job.ScheduledAt = proposal.NotBefore
+		job.Summary = proposal.Summary
+		job.Detail = proposal.Detail
+		if proposal.Priority != plugin_pb.JobPriority_JOB_PRIORITY_UNSPECIFIED {
+			job.Priority = proposal.Priority
+		}
+		job.DedupeKey = proposal.DedupeKey
+		job.Parameters = CloneConfigValueMap(proposal.Parameters)
+		if proposal.Labels != nil {
+			job.Labels = make(map[string]string, len(proposal.Labels))
+			for k, v := range proposal.Labels {
+				job.Labels[k] = v
+			}
+		}
+		if proposal.NotBefore != nil {
+			job.ScheduledAt = proposal.NotBefore
+		}
 	}
 
 	return job
