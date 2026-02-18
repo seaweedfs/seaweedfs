@@ -172,6 +172,29 @@ func TestFilterScheduledProposalsDedupe(t *testing.T) {
 	}
 }
 
+func TestBuildScheduledJobSpecDoesNotReuseProposalID(t *testing.T) {
+	t.Parallel()
+
+	proposal := &plugin_pb.JobProposal{
+		ProposalId: "dummy-stress-2",
+		DedupeKey:  "dummy_stress:2",
+		JobType:    "dummy_stress",
+	}
+
+	jobA := buildScheduledJobSpec("dummy_stress", proposal, 0)
+	jobB := buildScheduledJobSpec("dummy_stress", proposal, 1)
+
+	if jobA.JobId == proposal.ProposalId {
+		t.Fatalf("scheduled job id must not reuse proposal id: %s", jobA.JobId)
+	}
+	if jobB.JobId == proposal.ProposalId {
+		t.Fatalf("scheduled job id must not reuse proposal id: %s", jobB.JobId)
+	}
+	if jobA.JobId == jobB.JobId {
+		t.Fatalf("scheduled job ids must be unique across jobs: %s", jobA.JobId)
+	}
+}
+
 func TestFilterProposalsWithActiveJobs(t *testing.T) {
 	t.Parallel()
 

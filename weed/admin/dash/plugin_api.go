@@ -687,9 +687,6 @@ func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, i
 	now := timestamppb.Now()
 
 	jobID := fmt.Sprintf("%s-%d-%d", jobType, now.AsTime().UnixNano(), index)
-	if proposal != nil && strings.TrimSpace(proposal.ProposalId) != "" {
-		jobID = strings.TrimSpace(proposal.ProposalId)
-	}
 
 	jobSpec := &plugin_pb.JobSpec{
 		JobId:       jobID,

@@ -747,9 +747,6 @@ func buildScheduledJobSpec(jobType string, proposal *plugin_pb.JobProposal, inde
 	now := timestamppb.Now()
 
 	jobID := fmt.Sprintf("%s-scheduled-%d-%d", jobType, now.AsTime().UnixNano(), index)
-	if proposal != nil && proposal.ProposalId != "" {
-		jobID = proposal.ProposalId
-	}
 
 	job := &plugin_pb.JobSpec{
 		JobId:       jobID,
