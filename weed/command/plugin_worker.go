@@ -48,11 +48,11 @@ var (
 	pluginWorkerAdminServer = cmdPluginWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	pluginWorkerID          = cmdPluginWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
 	pluginWorkerWorkingDir  = cmdPluginWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
-	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", "vacuum", "plugin job type to serve")
+	pluginWorkerJobType     = cmdPluginWorker.Flag.String("jobType", "vacuum,volume_balance,erasure_coding", "job types to serve (comma-separated list)")
 	pluginWorkerHeartbeat   = cmdPluginWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
 	pluginWorkerReconnect   = cmdPluginWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
 	pluginWorkerMaxDetect   = cmdPluginWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")
-	pluginWorkerMaxExecute  = cmdPluginWorker.Flag.Int("maxExecute", 2, "max concurrent execute requests")
+	pluginWorkerMaxExecute  = cmdPluginWorker.Flag.Int("maxExecute", 4, "max concurrent execute requests")
 	pluginWorkerAddress     = cmdPluginWorker.Flag.String("address", "", "worker address advertised to admin")
 )
 
