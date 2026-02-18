@@ -119,12 +119,6 @@ func TestDeriveErasureCodingWorkerConfig(t *testing.T) {
 		"min_interval_seconds": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 55},
 		},
-		"working_dir": {
-			Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "/tmp/custom-ec"},
-		},
-		"cleanup_source": {
-			Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false},
-		},
 	}
 
 	cfg := deriveErasureCodingWorkerConfig(values)
@@ -139,12 +133,6 @@ func TestDeriveErasureCodingWorkerConfig(t *testing.T) {
 	}
 	if cfg.MinIntervalSeconds != 55 {
 		t.Fatalf("expected min_interval_seconds 55, got %d", cfg.MinIntervalSeconds)
-	}
-	if cfg.WorkingDir != "/tmp/custom-ec" {
-		t.Fatalf("expected working_dir /tmp/custom-ec, got %q", cfg.WorkingDir)
-	}
-	if cfg.CleanupSource {
-		t.Fatalf("expected cleanup_source false")
 	}
 }
 
@@ -189,7 +177,7 @@ func TestBuildErasureCodingProposal(t *testing.T) {
 		TypedParams: params,
 	}
 
-	proposal, err := buildErasureCodingProposal(result, deriveErasureCodingWorkerConfig(nil))
+	proposal, err := buildErasureCodingProposal(result)
 	if err != nil {
 		t.Fatalf("buildErasureCodingProposal() err = %v", err)
 	}
@@ -242,5 +230,46 @@ func TestErasureCodingHandlerDetectSkipsByMinInterval(t *testing.T) {
 	}
 	if sender.complete == nil || !sender.complete.Success {
 		t.Fatalf("expected successful completion message")
+	}
+}
+
+func TestErasureCodingDescriptorOmitsLocalExecutionFields(t *testing.T) {
+	descriptor := NewErasureCodingHandler(nil).Descriptor()
+	if descriptor == nil || descriptor.WorkerConfigForm == nil {
+		t.Fatalf("expected worker config form in descriptor")
+	}
+	if workerConfigFormHasField(descriptor.WorkerConfigForm, "working_dir") {
+		t.Fatalf("unexpected working_dir in erasure coding worker config form")
+	}
+	if workerConfigFormHasField(descriptor.WorkerConfigForm, "cleanup_source") {
+		t.Fatalf("unexpected cleanup_source in erasure coding worker config form")
+	}
+}
+
+func TestApplyErasureCodingExecutionDefaultsForcesLocalFields(t *testing.T) {
+	params := &worker_pb.TaskParams{
+		TaskId:   "ec-test",
+		VolumeId: 100,
+		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
+			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
+				DataShards:    ecstorage.DataShardsCount,
+				ParityShards:  ecstorage.ParityShardsCount,
+				WorkingDir:    "/tmp/custom-from-job",
+				CleanupSource: false,
+			},
+		},
+	}
+
+	applyErasureCodingExecutionDefaults(params, nil)
+
+	ecParams := params.GetErasureCodingParams()
+	if ecParams == nil {
+		t.Fatalf("expected erasure coding params")
+	}
+	if ecParams.WorkingDir != defaultErasureCodingWorkingDir() {
+		t.Fatalf("expected local working_dir %q, got %q", defaultErasureCodingWorkingDir(), ecParams.WorkingDir)
+	}
+	if !ecParams.CleanupSource {
+		t.Fatalf("expected cleanup_source true")
 	}
 }

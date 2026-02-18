@@ -21,8 +21,6 @@ import (
 
 type erasureCodingWorkerConfig struct {
 	TaskConfig         *erasurecodingtask.Config
-	WorkingDir         string
-	CleanupSource      bool
 	MinIntervalSeconds int
 }
 
@@ -48,7 +46,6 @@ func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
 }
 
 func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
-	defaultWorkingDir := defaultErasureCodingWorkingDir()
 	return &plugin_pb.JobTypeDescriptor{
 		JobType:           "erasure_coding",
 		DisplayName:       "Erasure Coding",
@@ -85,7 +82,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerConfigForm: &plugin_pb.ConfigForm{
 			FormId:      "erasure-coding-worker",
 			Title:       "Erasure Coding Worker Config",
-			Description: "Worker-side detection thresholds and execution defaults.",
+			Description: "Worker-side detection thresholds.",
 			Sections: []*plugin_pb.ConfigSection{
 				{
 					SectionId:   "thresholds",
@@ -131,28 +128,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
-				{
-					SectionId:   "execution",
-					Title:       "Execution",
-					Description: "Execution defaults for erasure coding jobs.",
-					Fields: []*plugin_pb.ConfigField{
-						{
-							Name:        "working_dir",
-							Label:       "Working Directory",
-							Description: "Directory used for local volume and shard files during EC execution.",
-							Placeholder: defaultWorkingDir,
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
-						},
-						{
-							Name:        "cleanup_source",
-							Label:       "Cleanup Source",
-							Description: "Whether to cleanup source replicas after successful EC conversion.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
-						},
-					},
-				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"quiet_for_seconds": {
@@ -166,12 +141,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_interval_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60},
-				},
-				"working_dir": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultWorkingDir},
-				},
-				"cleanup_source": {
-					Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true},
 				},
 			},
 		},
@@ -197,12 +166,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_interval_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60},
-			},
-			"working_dir": {
-				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultWorkingDir},
-			},
-			"cleanup_source": {
-				Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true},
 			},
 		},
 	}
@@ -269,7 +232,7 @@ func (h *ErasureCodingHandler) Detect(
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
-		proposal, proposalErr := buildErasureCodingProposal(result, workerConfig)
+		proposal, proposalErr := buildErasureCodingProposal(result)
 		if proposalErr != nil {
 			glog.Warningf("Plugin worker skip invalid erasure_coding proposal: %v", proposalErr)
 			continue
@@ -312,8 +275,7 @@ func (h *ErasureCodingHandler) Execute(
 		return err
 	}
 
-	workerConfig := deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues())
-	applyErasureCodingExecutionDefaults(params, workerConfig, request.GetClusterContext())
+	applyErasureCodingExecutionDefaults(params, request.GetClusterContext())
 
 	if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
 		return fmt.Errorf("erasure coding source node is required")
@@ -436,11 +398,6 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	}
 	taskConfig.MinSizeMB = minSizeMB
 
-	workingDir := strings.TrimSpace(readStringConfig(values, "working_dir", defaultErasureCodingWorkingDir()))
-	if workingDir == "" {
-		workingDir = defaultErasureCodingWorkingDir()
-	}
-
 	minIntervalSeconds := int(readInt64Config(values, "min_interval_seconds", 60*60))
 	if minIntervalSeconds < 0 {
 		minIntervalSeconds = 0
@@ -448,15 +405,12 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig:         taskConfig,
-		WorkingDir:         workingDir,
-		CleanupSource:      readBoolConfig(values, "cleanup_source", true),
 		MinIntervalSeconds: minIntervalSeconds,
 	}
 }
 
 func buildErasureCodingProposal(
 	result *workertypes.TaskDetectionResult,
-	workerConfig *erasureCodingWorkerConfig,
 ) (*plugin_pb.JobProposal, error) {
 	if result == nil {
 		return nil, fmt.Errorf("task detection result is nil")
@@ -464,12 +418,8 @@ func buildErasureCodingProposal(
 	if result.TypedParams == nil {
 		return nil, fmt.Errorf("missing typed params for volume %d", result.VolumeID)
 	}
-	if workerConfig == nil {
-		workerConfig = deriveErasureCodingWorkerConfig(nil)
-	}
-
 	params := proto.Clone(result.TypedParams).(*worker_pb.TaskParams)
-	applyErasureCodingExecutionDefaults(params, workerConfig, nil)
+	applyErasureCodingExecutionDefaults(params, nil)
 
 	paramsPayload, err := proto.Marshal(params)
 	if err != nil {
@@ -567,9 +517,6 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 	}
 	totalShards := int(dataShards + parityShards)
 
-	workingDir := strings.TrimSpace(readStringConfig(job.Parameters, "working_dir", ""))
-	cleanupSource := readBoolConfig(job.Parameters, "cleanup_source", true)
-
 	if volumeID <= 0 {
 		return nil, fmt.Errorf("missing volume_id in job parameters")
 	}
@@ -613,10 +560,8 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 		Targets: targets,
 		TaskParams: &worker_pb.TaskParams_ErasureCodingParams{
 			ErasureCodingParams: &worker_pb.ErasureCodingTaskParams{
-				DataShards:    dataShards,
-				ParityShards:  parityShards,
-				WorkingDir:    workingDir,
-				CleanupSource: cleanupSource,
+				DataShards:   dataShards,
+				ParityShards: parityShards,
 			},
 		},
 	}, nil
@@ -624,23 +569,17 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 
 func applyErasureCodingExecutionDefaults(
 	params *worker_pb.TaskParams,
-	workerConfig *erasureCodingWorkerConfig,
 	clusterContext *plugin_pb.ClusterContext,
 ) {
 	if params == nil {
 		return
 	}
-	if workerConfig == nil {
-		workerConfig = deriveErasureCodingWorkerConfig(nil)
-	}
 
 	ecParams := params.GetErasureCodingParams()
 	if ecParams == nil {
 		ecParams = &worker_pb.ErasureCodingTaskParams{
-			DataShards:    ecstorage.DataShardsCount,
-			ParityShards:  ecstorage.ParityShardsCount,
-			WorkingDir:    workerConfig.WorkingDir,
-			CleanupSource: workerConfig.CleanupSource,
+			DataShards:   ecstorage.DataShardsCount,
+			ParityShards: ecstorage.ParityShardsCount,
 		}
 		params.TaskParams = &worker_pb.TaskParams_ErasureCodingParams{ErasureCodingParams: ecParams}
 	}
@@ -651,12 +590,8 @@ func applyErasureCodingExecutionDefaults(
 	if ecParams.ParityShards <= 0 {
 		ecParams.ParityShards = ecstorage.ParityShardsCount
 	}
-	if strings.TrimSpace(ecParams.WorkingDir) == "" {
-		ecParams.WorkingDir = workerConfig.WorkingDir
-	}
-	if !ecParams.CleanupSource && workerConfig.CleanupSource {
-		ecParams.CleanupSource = true
-	}
+	ecParams.WorkingDir = defaultErasureCodingWorkingDir()
+	ecParams.CleanupSource = true
 	if strings.TrimSpace(ecParams.MasterClient) == "" && clusterContext != nil && len(clusterContext.MasterGrpcAddresses) > 0 {
 		ecParams.MasterClient = clusterContext.MasterGrpcAddresses[0]
 	}
