@@ -14,6 +14,7 @@ import (
 const (
 	maxTrackedJobsTotal = 1000
 	maxActivityRecords  = 4000
+	maxRelatedJobs      = 100
 )
 
 var (
@@ -187,6 +188,13 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	normalizedJobID := strings.TrimSpace(jobID)
 	if normalizedJobID == "" {
 		return nil, false, nil
+	}
+
+	// Clamp relatedLimit to a safe range to avoid excessive memory allocation from untrusted input.
+	if relatedLimit <= 0 {
+		relatedLimit = 0
+	} else if relatedLimit > maxRelatedJobs {
+		relatedLimit = maxRelatedJobs
 	}
 
 	r.jobsMu.RLock()
