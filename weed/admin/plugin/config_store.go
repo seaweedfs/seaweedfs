@@ -165,9 +165,12 @@ func (s *ConfigStore) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig
 	if config.JobType == "" {
 		return fmt.Errorf("job type config has empty job_type")
 	}
-	if _, err := sanitizeJobType(config.JobType); err != nil {
+	sanitizedJobType, err := sanitizeJobType(config.JobType)
+	if err != nil {
 		return err
 	}
+	// Use the sanitized job type going forward to ensure it is safe for filesystem paths.
+	config.JobType = sanitizedJobType
 
 	clone := proto.Clone(config).(*plugin_pb.PersistedJobTypeConfig)
 
@@ -554,8 +557,11 @@ func sanitizeJobType(jobType string) (string, error) {
 	if jobType == "" {
 		return "", fmt.Errorf("job type is empty")
 	}
-	if !validJobTypePattern.MatchString(jobType) {
-		return "", fmt.Errorf("invalid job type %q: allowed pattern %s", jobType, validJobTypePattern.String())
+	// Enforce a strict, path-safe pattern for job types: only letters, digits, underscore, dash and dot.
+	// This prevents path traversal because '/', '\\' and whitespace are rejected.
+	var jobTypePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	if !jobTypePattern.MatchString(jobType) {
+		return "", fmt.Errorf("invalid job type %q: must match %s", jobType, jobTypePattern.String())
 	}
 	return jobType, nil
 }
