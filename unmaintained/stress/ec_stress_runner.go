@@ -435,32 +435,30 @@ func (r *runner) deleteEcVolume(ctx context.Context, volumeID uint32, info *ecVo
 
 	failureCount := 0
 	for server, shardIDs := range info.NodeShards {
-		server := server
-		shardIDs := append([]uint32(nil), shardIDs...)
-
 		err := pb.WithVolumeServerClient(false, server, r.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-			callCtx, cancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
-			defer cancel()
-
-			_, _ = client.VolumeEcShardsUnmount(callCtx, &volume_server_pb.VolumeEcShardsUnmountRequest{
+			unmountCtx, unmountCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
+			defer unmountCancel()
+			_, _ = client.VolumeEcShardsUnmount(unmountCtx, &volume_server_pb.VolumeEcShardsUnmountRequest{
 				VolumeId: volumeID,
 				ShardIds: shardIDs,
 			})
+
 			if len(shardIDs) > 0 {
-				if _, err := client.VolumeEcShardsDelete(callCtx, &volume_server_pb.VolumeEcShardsDeleteRequest{
-					VolumeId:   volumeID,
-					Collection: info.Collection,
-					ShardIds:   shardIDs,
+				deleteCtx, deleteCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
+				defer deleteCancel()
+				if _, err := client.VolumeEcShardsDelete(deleteCtx, &volume_server_pb.VolumeEcShardsDeleteRequest{
+					VolumeId: volumeID,
+					ShardIds: shardIDs,
 				}); err != nil {
 					return err
 				}
 			}
 
-			_, _ = client.VolumeDelete(callCtx, &volume_server_pb.VolumeDeleteRequest{
-				VolumeId:  volumeID,
-				OnlyEmpty: false,
+			finalDeleteCtx, finalDeleteCancel := context.WithTimeout(ctx, r.cfg.RequestTimeout)
+			defer finalDeleteCancel()
+			_, _ = client.VolumeDelete(finalDeleteCtx, &volume_server_pb.VolumeDeleteRequest{
+				VolumeId: volumeID,
 			})
-
 			return nil
 		})
 
