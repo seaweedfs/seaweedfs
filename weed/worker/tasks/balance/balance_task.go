@@ -118,7 +118,7 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 
 	t.ReportProgress(100.0)
 	glog.Infof("Balance task completed successfully: volume %d moved from %s to %s",
-		t.volumeID, t.server, destNode)
+		t.volumeID, sourceNode, destNode)
 	return nil
 }
 
@@ -234,17 +234,6 @@ func (t *BalanceTask) tailVolume(sourceServer, targetServer pb.ServerAddress, vo
 				SinceNs:            sinceNs,
 				IdleTimeoutSeconds: 60, // 1 minute timeout
 				SourceVolumeServer: string(sourceServer),
-			})
-			return err
-		})
-}
-
-// unmountVolume unmounts the volume from the server
-func (t *BalanceTask) unmountVolume(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeUnmount(context.Background(), &volume_server_pb.VolumeUnmountRequest{
-				VolumeId: uint32(volumeId),
 			})
 			return err
 		})
