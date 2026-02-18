@@ -11,7 +11,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -30,13 +29,13 @@ type BalanceTask struct {
 }
 
 // NewBalanceTask creates a new balance task instance
-func NewBalanceTask(id string, server string, volumeID uint32, collection string) *BalanceTask {
+func NewBalanceTask(id string, server string, volumeID uint32, collection string, grpcDialOption grpc.DialOption) *BalanceTask {
 	return &BalanceTask{
 		BaseTask:       base.NewBaseTask(id, types.TaskTypeBalance),
 		server:         server,
 		volumeID:       volumeID,
 		collection:     collection,
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.client"),
+		grpcDialOption: grpcDialOption,
 	}
 }
 
