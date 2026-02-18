@@ -10,13 +10,13 @@ func TestBuildJobSpecFromProposalDoesNotReuseProposalID(t *testing.T) {
 	t.Parallel()
 
 	proposal := &plugin_pb.JobProposal{
-		ProposalId: "dummy-stress-2",
-		DedupeKey:  "dummy_stress:2",
-		JobType:    "dummy_stress",
+		ProposalId: "vacuum-2",
+		DedupeKey:  "vacuum:2",
+		JobType:    "vacuum",
 	}
 
-	jobA := buildJobSpecFromProposal("dummy_stress", proposal, 0)
-	jobB := buildJobSpecFromProposal("dummy_stress", proposal, 1)
+	jobA := buildJobSpecFromProposal("vacuum", proposal, 0)
+	jobB := buildJobSpecFromProposal("vacuum", proposal, 1)
 
 	if jobA.JobId == proposal.ProposalId {
 		t.Fatalf("job id must not reuse proposal id: %s", jobA.JobId)

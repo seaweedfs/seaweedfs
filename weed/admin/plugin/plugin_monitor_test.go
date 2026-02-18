@@ -134,12 +134,12 @@ func TestTrackExecutionQueuedMarksPendingState(t *testing.T) {
 
 	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
 		JobId:     "job-pending-1",
-		JobType:   "dummy_stress",
-		DedupeKey: "dummy_stress:1",
+		JobType:   "vacuum",
+		DedupeKey: "vacuum:1",
 		Summary:   "pending queue item",
 	})
 
-	jobs := pluginSvc.ListTrackedJobs("dummy_stress", "", 10)
+	jobs := pluginSvc.ListTrackedJobs("vacuum", "", 10)
 	if len(jobs) != 1 {
 		t.Fatalf("expected one tracked pending job, got=%d", len(jobs))
 	}
@@ -154,7 +154,7 @@ func TestTrackExecutionQueuedMarksPendingState(t *testing.T) {
 		t.Fatalf("unexpected pending job stage: %s", job.Stage)
 	}
 
-	activities := pluginSvc.ListActivities("dummy_stress", 50)
+	activities := pluginSvc.ListActivities("vacuum", 50)
 	found := false
 	for _, activity := range activities {
 		if activity.JobID == "job-pending-1" && activity.Stage == "queued" && activity.Source == "admin_scheduler" {
@@ -353,7 +353,7 @@ func TestTrackExecutionStartStoresJobPayloadDetails(t *testing.T) {
 
 	pluginSvc.trackExecutionStart("req-payload", "worker-c", &plugin_pb.JobSpec{
 		JobId:   "job-payload",
-		JobType: "dummy_stress",
+		JobType: "vacuum",
 		Summary: "payload summary",
 		Detail:  "payload detail",
 		Parameters: map[string]*plugin_pb.ConfigValue{
@@ -569,7 +569,7 @@ func TestBuildJobDetailLoadsFromDiskWhenMemoryCleared(t *testing.T) {
 
 	pluginSvc.trackExecutionStart("req-disk", "worker-d", &plugin_pb.JobSpec{
 		JobId:   "job-disk",
-		JobType: "dummy_stress",
+		JobType: "vacuum",
 		Summary: "disk summary",
 		Detail:  "disk detail payload",
 	}, 1)

@@ -176,13 +176,13 @@ func TestBuildScheduledJobSpecDoesNotReuseProposalID(t *testing.T) {
 	t.Parallel()
 
 	proposal := &plugin_pb.JobProposal{
-		ProposalId: "dummy-stress-2",
-		DedupeKey:  "dummy_stress:2",
-		JobType:    "dummy_stress",
+		ProposalId: "vacuum-2",
+		DedupeKey:  "vacuum:2",
+		JobType:    "vacuum",
 	}
 
-	jobA := buildScheduledJobSpec("dummy_stress", proposal, 0)
-	jobB := buildScheduledJobSpec("dummy_stress", proposal, 1)
+	jobA := buildScheduledJobSpec("vacuum", proposal, 0)
+	jobB := buildScheduledJobSpec("vacuum", proposal, 1)
 
 	if jobA.JobId == proposal.ProposalId {
 		t.Fatalf("scheduled job id must not reuse proposal id: %s", jobA.JobId)
@@ -343,12 +343,12 @@ func TestShouldSkipDetectionForWaitingJobs(t *testing.T) {
 	for i := 0; i < threshold; i++ {
 		pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
 			JobId:     fmt.Sprintf("job-waiting-%d", i),
-			JobType:   "dummy_stress",
-			DedupeKey: fmt.Sprintf("dummy_stress:%d", i),
+			JobType:   "vacuum",
+			DedupeKey: fmt.Sprintf("vacuum:%d", i),
 		})
 	}
 
-	skip, waitingCount, waitingThreshold := pluginSvc.shouldSkipDetectionForWaitingJobs("dummy_stress", policy)
+	skip, waitingCount, waitingThreshold := pluginSvc.shouldSkipDetectionForWaitingJobs("vacuum", policy)
 	if !skip {
 		t.Fatalf("expected detection to skip when waiting backlog reaches threshold")
 	}

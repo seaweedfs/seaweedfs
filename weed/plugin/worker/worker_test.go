@@ -350,11 +350,11 @@ func TestWorkerHeartbeatReflectsActiveDetectionLoad(t *testing.T) {
 func TestWorkerHeartbeatReflectsActiveExecutionLoad(t *testing.T) {
 	handler := &executionHeartbeatTestHandler{
 		capability: &plugin_pb.JobTypeCapability{
-			JobType:    "dummy_stress",
+			JobType:    "vacuum",
 			CanDetect:  false,
 			CanExecute: true,
 		},
-		descriptor:     &plugin_pb.JobTypeDescriptor{JobType: "dummy_stress"},
+		descriptor:     &plugin_pb.JobTypeDescriptor{JobType: "vacuum"},
 		executeEntered: make(chan struct{}, 1),
 		executeDone:    make(chan struct{}, 1),
 	}
@@ -383,7 +383,7 @@ func TestWorkerHeartbeatReflectsActiveExecutionLoad(t *testing.T) {
 			ExecuteJobRequest: &plugin_pb.ExecuteJobRequest{
 				Job: &plugin_pb.JobSpec{
 					JobId:   jobID,
-					JobType: "dummy_stress",
+					JobType: "vacuum",
 				},
 			},
 		},

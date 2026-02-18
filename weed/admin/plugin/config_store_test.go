@@ -202,7 +202,7 @@ func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 
 	input := TrackedJob{
 		JobID:     "job/detail:1",
-		JobType:   "dummy_stress",
+		JobType:   "vacuum",
 		Summary:   "detail summary",
 		Detail:    "detail payload",
 		CreatedAt: time.Now().UTC().Add(-2 * time.Minute),

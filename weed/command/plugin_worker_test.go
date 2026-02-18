@@ -64,22 +64,6 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil ec alias handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("dummy_stress", dialOption)
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(dummy_stress) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil dummy_stress handler")
-	}
-
-	handler, err = buildPluginWorkerHandler("stress", dialOption)
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(stress alias) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil stress alias handler")
-	}
-
 	_, err = buildPluginWorkerHandler("unknown", dialOption)
 	if err == nil {
 		t.Fatalf("expected unsupported job type error")
@@ -95,14 +79,6 @@ func TestBuildPluginWorkerHandlers(t *testing.T) {
 	}
 	if len(handlers) != 3 {
 		t.Fatalf("expected 3 handlers, got %d", len(handlers))
-	}
-
-	handlers, err = buildPluginWorkerHandlers("vacuum,dummy_stress,ec", dialOption)
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandlers(dummy) err = %v", err)
-	}
-	if len(handlers) != 3 {
-		t.Fatalf("expected 3 handlers with dummy, got %d", len(handlers))
 	}
 
 	handlers, err = buildPluginWorkerHandlers("balance,ec,vacuum,balance", dialOption)
@@ -139,34 +115,18 @@ func TestParsePluginWorkerJobTypes(t *testing.T) {
 		t.Fatalf("unexpected parsed order %v", jobTypes)
 	}
 
-	jobTypes, err = parsePluginWorkerJobTypes("dummy,stress_test")
-	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(dummy aliases) err = %v", err)
-	}
-	if len(jobTypes) != 1 || jobTypes[0] != "dummy_stress" {
-		t.Fatalf("unexpected dummy alias parse %v", jobTypes)
-	}
-
 	if _, err = parsePluginWorkerJobTypes(" , "); err != nil {
 		t.Fatalf("expected empty list to resolve to default vacuum: %v", err)
 	}
 }
 
-func TestPluginWorkerDefaultJobTypesIncludeDummy(t *testing.T) {
+func TestPluginWorkerDefaultJobTypes(t *testing.T) {
 	jobTypes, err := parsePluginWorkerJobTypes(*pluginWorkerJobType)
 	if err != nil {
 		t.Fatalf("parsePluginWorkerJobTypes(default flag) err = %v", err)
 	}
-
-	foundDummy := false
-	for _, jobType := range jobTypes {
-		if jobType == "dummy_stress" {
-			foundDummy = true
-			break
-		}
-	}
-	if !foundDummy {
-		t.Fatalf("expected default plugin.worker job types to include dummy_stress, got %v", jobTypes)
+	if len(jobTypes) != 3 {
+		t.Fatalf("expected default plugin.worker job types to include 3 handlers, got %v", jobTypes)
 	}
 }
 
