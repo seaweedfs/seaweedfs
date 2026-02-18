@@ -22,11 +22,11 @@ import (
 )
 
 var cmdPluginWorker = &Command{
-	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
+	UsageLine: "plugin.worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding,dummy_stress] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=2]",
 	Short:     "start a plugin.proto worker process",
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
-This command currently provides vacuum, volume_balance, and erasure_coding job type
+This command currently provides vacuum, volume_balance, erasure_coding, and dummy_stress job type
 contracts with the plugin stream runtime, including descriptor delivery,
 heartbeat/load reporting, detection, and execution.
 
@@ -39,6 +39,7 @@ Examples:
   weed plugin.worker -admin=localhost:23646 -jobType=volume_balance
   weed plugin.worker -admin=localhost:23646 -jobType=vacuum,volume_balance
   weed plugin.worker -admin=localhost:23646 -jobType=erasure_coding
+  weed plugin.worker -admin=localhost:23646 -jobType=dummy_stress
   weed plugin.worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
   weed plugin.worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
 `,
@@ -160,6 +161,8 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (plugi
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
 	case "erasure_coding":
 		return pluginworker.NewErasureCodingHandler(dialOption), nil
+	case "dummy_stress":
+		return pluginworker.NewDummyStressHandler(dialOption), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
 	}
@@ -222,6 +225,8 @@ func canonicalPluginWorkerJobType(jobType string) (string, error) {
 		return "volume_balance", nil
 	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
 		return "erasure_coding", nil
+	case "dummy_stress", "dummy-stress", "dummy.stress", "dummy", "stress", "stress_test":
+		return "dummy_stress", nil
 	default:
 		return "", fmt.Errorf("unsupported plugin job type %q", jobType)
 	}
