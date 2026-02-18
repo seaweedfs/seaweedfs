@@ -83,6 +83,9 @@ type Plugin struct {
 	dirtyActivities bool
 	persistTicker   *time.Ticker
 
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+
 	shutdownCh chan struct{}
 }
 
@@ -148,6 +151,7 @@ func New(options Options) (*Plugin, error) {
 		persistTicker:             time.NewTicker(2 * time.Second),
 		shutdownCh:                make(chan struct{}),
 	}
+	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
@@ -162,6 +166,9 @@ func New(options Options) (*Plugin, error) {
 }
 
 func (r *Plugin) Shutdown() {
+	if r.ctxCancel != nil {
+		r.ctxCancel()
+	}
 	if r.persistTicker != nil {
 		r.persistTicker.Stop()
 	}
@@ -405,7 +412,7 @@ func (r *Plugin) RunDetectionWithReport(
 		Source:     "detector",
 		Stage:      "requested",
 		Message:    "detection requested",
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
 		Details: map[string]interface{}{
 			"max_results": maxResults,
 		},
@@ -438,7 +445,7 @@ func (r *Plugin) RunDetectionWithReport(
 			Source:     "detector",
 			Stage:      "failed_to_send",
 			Message:    err.Error(),
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 		return nil, err
 	}
@@ -453,7 +460,7 @@ func (r *Plugin) RunDetectionWithReport(
 			Source:     "detector",
 			Stage:      "canceled",
 			Message:    "detection canceled",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 		return &DetectionReport{
 			RequestID: requestID,
@@ -933,7 +940,7 @@ func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.De
 		Source:     "detector",
 		Stage:      "proposals_batch",
 		Message:    fmt.Sprintf("received %d proposal(s)", len(message.Proposals)),
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
 		Details: map[string]interface{}{
 			"batch_size": len(message.Proposals),
 			"has_more":   message.HasMore,
@@ -971,7 +978,7 @@ func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.De
 			Source:     "detector",
 			Stage:      "proposal",
 			Message:    messageText,
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 			Details:    details,
 		})
 	}
@@ -1023,7 +1030,7 @@ func (r *Plugin) handleDetectionComplete(workerID string, message *plugin_pb.Det
 		Source:     "detector",
 		Stage:      stage,
 		Message:    messageText,
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
 		Details: map[string]interface{}{
 			"success":         message.Success,
 			"total_proposals": message.TotalProposals,
@@ -1070,10 +1077,10 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 		JobType:     completed.JobType,
 		WorkerID:    "",
 		Outcome:     RunOutcomeError,
-		CompletedAt: time.Now().UTC(),
+		CompletedAt: timeToPtr(time.Now().UTC()),
 	}
 	if completed.CompletedAt != nil {
-		record.CompletedAt = completed.CompletedAt.AsTime().UTC()
+		record.CompletedAt = timeToPtr(completed.CompletedAt.AsTime().UTC())
 	}
 	if completed.Success {
 		record.Outcome = RunOutcomeSuccess
@@ -1090,8 +1097,8 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 		if workerID != "" {
 			record.WorkerID = workerID
 		}
-		if !tracked.CreatedAt.IsZero() && !record.CompletedAt.IsZero() && record.CompletedAt.After(tracked.CreatedAt) {
-			record.DurationMs = int64(record.CompletedAt.Sub(tracked.CreatedAt) / time.Millisecond)
+		if tracked.CreatedAt != nil && record.CompletedAt != nil && record.CompletedAt.After(*tracked.CreatedAt) {
+			record.DurationMs = int64(record.CompletedAt.Sub(*tracked.CreatedAt) / time.Millisecond)
 		}
 	}
 
@@ -1198,11 +1205,11 @@ func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
 	var latest time.Time
 	for i := range history.SuccessfulRuns {
 		completedAt := history.SuccessfulRuns[i].CompletedAt
-		if completedAt.IsZero() {
+		if completedAt == nil || completedAt.IsZero() {
 			continue
 		}
 		if latest.IsZero() || completedAt.After(latest) {
-			latest = completedAt
+			latest = *completedAt
 		}
 	}
 	if latest.IsZero() {
