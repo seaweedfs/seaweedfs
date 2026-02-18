@@ -495,6 +495,20 @@ templ Plugin(page string) {
         </div>
     </div>
 
+    <div class="modal fade" id="plugin-job-detail-modal" tabindex="-1" aria-labelledby="plugin-job-detail-modal-label" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="plugin-job-detail-modal-label"><i class="fas fa-file-alt me-2"></i>Job Detail</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="plugin-job-detail-content">
+                    <div class="text-muted">Select a job to view details.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <style>
         #plugin-page[data-plugin-page="overview"] .plugin-section-configuration,
         #plugin-page[data-plugin-page="overview"] .plugin-section-queue,
@@ -554,6 +568,21 @@ templ Plugin(page string) {
             padding: 0.5rem 0.75rem;
             margin-bottom: 0.5rem;
             background: #fbfcfd;
+        }
+
+        .plugin-job-link {
+            text-decoration: none;
+        }
+
+        .plugin-job-detail-json {
+            max-height: 220px;
+            overflow: auto;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 0.5rem;
+            margin-bottom: 0;
+            font-size: 0.82rem;
         }
         </style>
 
@@ -684,6 +713,151 @@ templ Plugin(page string) {
                     return '';
                 }
                 return date.toLocaleString();
+            }
+
+            function renderJobLink(jobID) {
+                var normalized = String(jobID || '').trim();
+                if (!normalized) {
+                    return '<small>-</small>';
+                }
+                return '<button type="button" class="btn btn-link btn-sm p-0 align-baseline plugin-job-link" data-job-id="' + escapeHtml(normalized) + '">' + escapeHtml(normalized) + '</button>';
+            }
+
+            function toPrettyJson(value) {
+                if (value === null || value === undefined || value === '') {
+                    return '';
+                }
+                if (typeof value === 'string') {
+                    return value;
+                }
+                try {
+                    return JSON.stringify(value, null, 2);
+                } catch (e) {
+                    return String(value);
+                }
+            }
+
+            async function openJobDetail(jobID) {
+                var normalizedJobID = String(jobID || '').trim();
+                if (!normalizedJobID) {
+                    return;
+                }
+
+                var modalElement = document.getElementById('plugin-job-detail-modal');
+                var contentRoot = document.getElementById('plugin-job-detail-content');
+                if (!modalElement || !contentRoot) {
+                    return;
+                }
+
+                var modal;
+                if (window.bootstrap && window.bootstrap.Modal) {
+                    modal = window.bootstrap.Modal.getOrCreateInstance(modalElement);
+                }
+                if (modal) {
+                    modal.show();
+                }
+
+                contentRoot.innerHTML = '<div class="text-muted">Loading job detail...</div>';
+                try {
+                    var detail = await pluginRequest('GET', '/api/plugin/jobs/' + encodePath(normalizedJobID) + '/detail?activity_limit=500&related_limit=20');
+                    var job = (detail && detail.job) ? detail.job : {};
+                    var runRecord = detail && detail.run_record ? detail.run_record : null;
+                    var activities = (detail && Array.isArray(detail.activities)) ? detail.activities : [];
+                    var relatedJobs = (detail && Array.isArray(detail.related_jobs)) ? detail.related_jobs : [];
+                    var html = '';
+
+                    html += '<div class="row g-3 mb-3">' +
+                        '<div class="col-lg-8">' +
+                        '<div><strong>Job ID:</strong> ' + escapeHtml(textOrDash(job.job_id || normalizedJobID)) + '</div>' +
+                        '<div><strong>Type:</strong> ' + escapeHtml(textOrDash(job.job_type)) + '</div>' +
+                        '<div><strong>State:</strong> ' + escapeHtml(textOrDash(job.state)) + '</div>' +
+                        '<div><strong>Worker:</strong> ' + escapeHtml(textOrDash(job.worker_id)) + '</div>' +
+                        '<div><strong>Updated:</strong> ' + escapeHtml(parseTime(job.updated_at) || '-') + '</div>' +
+                        '</div>' +
+                        '<div class="col-lg-4">' +
+                        '<div><strong>Attempt:</strong> ' + escapeHtml(textOrDash(job.attempt)) + '</div>' +
+                        '<div><strong>Progress:</strong> ' + escapeHtml(String(Math.round(Number(job.progress || 0)))) + '%</div>' +
+                        '<div><strong>Created:</strong> ' + escapeHtml(parseTime(job.created_at) || '-') + '</div>' +
+                        '<div><strong>Completed:</strong> ' + escapeHtml(parseTime(job.completed_at) || '-') + '</div>' +
+                        '</div>' +
+                        '</div>';
+
+                    if (job.summary) {
+                        html += '<div class="mb-2"><strong>Summary:</strong> ' + escapeHtml(String(job.summary)) + '</div>';
+                    }
+                    if (job.detail) {
+                        html += '<div class="mb-2"><strong>Detail:</strong> ' + escapeHtml(String(job.detail)) + '</div>';
+                    }
+                    if (job.message) {
+                        html += '<div class="mb-2"><strong>Message:</strong> ' + escapeHtml(String(job.message)) + '</div>';
+                    }
+                    if (job.error_message) {
+                        html += '<div class="mb-2 text-danger"><strong>Error:</strong> ' + escapeHtml(String(job.error_message)) + '</div>';
+                    }
+                    if (job.result_summary) {
+                        html += '<div class="mb-2"><strong>Result:</strong> ' + escapeHtml(String(job.result_summary)) + '</div>';
+                    }
+
+                    var parametersText = toPrettyJson(job.parameters);
+                    if (parametersText) {
+                        html += '<div class="mb-3"><h6>Parameters</h6><pre class="plugin-job-detail-json">' + escapeHtml(parametersText) + '</pre></div>';
+                    }
+                    var labelsText = toPrettyJson(job.labels);
+                    if (labelsText) {
+                        html += '<div class="mb-3"><h6>Labels</h6><pre class="plugin-job-detail-json">' + escapeHtml(labelsText) + '</pre></div>';
+                    }
+                    var outputsText = toPrettyJson(job.result_output_values);
+                    if (outputsText) {
+                        html += '<div class="mb-3"><h6>Result Output Values</h6><pre class="plugin-job-detail-json">' + escapeHtml(outputsText) + '</pre></div>';
+                    }
+
+                    if (runRecord) {
+                        html += '<div class="mb-3"><h6>Run Record</h6>' +
+                            '<div><strong>Outcome:</strong> ' + escapeHtml(textOrDash(runRecord.outcome)) + '</div>' +
+                            '<div><strong>Duration:</strong> ' + escapeHtml(formatDurationMs(runRecord.duration_ms)) + '</div>' +
+                            '<div><strong>Completed:</strong> ' + escapeHtml(parseTime(runRecord.completed_at) || '-') + '</div>' +
+                            '<div><strong>Message:</strong> ' + escapeHtml(textOrDash(runRecord.message)) + '</div>' +
+                            '</div>';
+                    }
+
+                    html += '<h6 class="mt-3">Activity Timeline</h6>';
+                    if (!activities.length) {
+                        html += '<div class="text-muted mb-3">No activity records.</div>';
+                    } else {
+                        html += '<div class="table-responsive mb-3"><table class="table table-sm table-striped">' +
+                            '<thead><tr><th>Time</th><th>Stage</th><th>Source</th><th>Worker</th><th>Message</th></tr></thead><tbody>';
+                        for (var i = 0; i < activities.length; i++) {
+                            var activity = activities[i] || {};
+                            html += '<tr>' +
+                                '<td><small>' + escapeHtml(parseTime(activity.occurred_at) || '-') + '</small></td>' +
+                                '<td>' + escapeHtml(textOrDash(activity.stage)) + '</td>' +
+                                '<td>' + escapeHtml(textOrDash(activity.source)) + '</td>' +
+                                '<td>' + escapeHtml(textOrDash(activity.worker_id)) + '</td>' +
+                                '<td><small>' + escapeHtml(textOrDash(activity.message)) + '</small></td>' +
+                                '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                    }
+
+                    if (relatedJobs.length) {
+                        html += '<h6>Related Jobs</h6><div class="table-responsive"><table class="table table-sm table-hover">' +
+                            '<thead><tr><th>Job ID</th><th>State</th><th>Worker</th><th>Updated</th></tr></thead><tbody>';
+                        for (var j = 0; j < relatedJobs.length; j++) {
+                            var related = relatedJobs[j] || {};
+                            html += '<tr>' +
+                                '<td><small>' + escapeHtml(textOrDash(related.job_id)) + '</small></td>' +
+                                '<td>' + escapeHtml(textOrDash(related.state)) + '</td>' +
+                                '<td>' + escapeHtml(textOrDash(related.worker_id)) + '</td>' +
+                                '<td><small>' + escapeHtml(parseTime(related.updated_at) || '-') + '</small></td>' +
+                                '</tr>';
+                        }
+                        html += '</tbody></table></div>';
+                    }
+
+                    contentRoot.innerHTML = html;
+                } catch (e) {
+                    contentRoot.innerHTML = '<div class="alert alert-danger mb-0">Failed to load job detail: ' + escapeHtml(e.message) + '</div>';
+                }
             }
 
             function formatDurationMs(value) {
@@ -1039,7 +1213,7 @@ templ Plugin(page string) {
                     }
 
                     rows += '<tr>' +
-                        '<td><small>' + escapeHtml(textOrDash(executionJob.job_id)) + '</small></td>' +
+                        '<td>' + renderJobLink(executionJob.job_id) + '</td>' +
                         '<td>' + escapeHtml(textOrDash(executionJob.job_type)) + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionJob.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
@@ -1096,7 +1270,7 @@ templ Plugin(page string) {
                     }
 
                     rows += '<tr>' +
-                        '<td><small>' + escapeHtml(textOrDash(queueItem.job_id)) + '</small></td>' +
+                        '<td>' + renderJobLink(queueItem.job_id) + '</td>' +
                         '<td>' + escapeHtml(textOrDash(queueItem.job_type)) + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(queueItem.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
@@ -1182,7 +1356,7 @@ templ Plugin(page string) {
                     rows += '<tr>' +
                         '<td><small>' + escapeHtml(parseTime(executionActivity.occurred_at) || '-') + '</small></td>' +
                         '<td>' + escapeHtml(textOrDash(executionActivity.job_type)) + '</td>' +
-                        '<td><small>' + escapeHtml(textOrDash(executionActivity.job_id)) + '</small></td>' +
+                        '<td>' + renderJobLink(executionActivity.job_id) + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionActivity.source)) + '</span></td>' +
                         '<td>' + escapeHtml(textOrDash(executionActivity.stage)) + '</td>' +
                         '<td><small>' + escapeHtml(textOrDash(executionActivity.message)) + '</small></td>' +
@@ -1836,7 +2010,7 @@ templ Plugin(page string) {
                         var run = successRuns[i] || {};
                         successRows += '<tr>' +
                             '<td><small>' + escapeHtml(parseTime(run.completed_at) || '-') + '</small></td>' +
-                            '<td><small>' + escapeHtml(textOrDash(run.job_id)) + '</small></td>' +
+                            '<td>' + renderJobLink(run.job_id) + '</td>' +
                             '<td><small>' + escapeHtml(textOrDash(run.worker_id)) + '</small></td>' +
                             '<td><small>' + escapeHtml(formatDurationMs(run.duration_ms)) + '</small></td>' +
                             '</tr>';
@@ -1852,7 +2026,7 @@ templ Plugin(page string) {
                         var errorRun = errorRuns[j] || {};
                         errorRows += '<tr>' +
                             '<td><small>' + escapeHtml(parseTime(errorRun.completed_at) || '-') + '</small></td>' +
-                            '<td><small>' + escapeHtml(textOrDash(errorRun.job_id)) + '</small></td>' +
+                            '<td>' + renderJobLink(errorRun.job_id) + '</td>' +
                             '<td><small>' + escapeHtml(textOrDash(errorRun.worker_id)) + '</small></td>' +
                             '<td><small class="text-danger">' + escapeHtml(textOrDash(errorRun.message)) + '</small></td>' +
                             '</tr>';
@@ -2367,6 +2541,23 @@ templ Plugin(page string) {
 
                 document.getElementById('plugin-run-workflow-btn').addEventListener('click', function() {
                     runWorkflow();
+                });
+
+                page.addEventListener('click', function(event) {
+                    var target = event.target;
+                    if (!target) {
+                        return;
+                    }
+                    var trigger = target.closest('.plugin-job-link');
+                    if (!trigger) {
+                        return;
+                    }
+                    event.preventDefault();
+                    var jobID = trigger.getAttribute('data-job-id');
+                    if (!jobID) {
+                        return;
+                    }
+                    openJobDetail(jobID);
                 });
             }
 
