@@ -17,7 +17,6 @@ metadata:
 {{- end }}
 spec:
   type: {{ .Values.master.service.type }}
-  clusterIP: None
   publishNotReadyAddresses: true
   ports:
   - name: "swfs-master"

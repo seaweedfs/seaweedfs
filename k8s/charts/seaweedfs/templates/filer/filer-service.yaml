@@ -18,7 +18,6 @@ metadata:
 {{- end }}
 spec:
   type: {{ .Values.filer.service.type }}
-  clusterIP: None
   publishNotReadyAddresses: true
   ports:
   - name: "swfs-filer"

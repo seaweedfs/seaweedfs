@@ -825,7 +825,6 @@ filer:
       #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
       #   sub_filter_once off;
 
-
   # Service settings
   service:
     type: ClusterIP
@@ -1085,7 +1084,6 @@ sftp:
   metricsPort: 9327
   metricsIp: ""  # If empty, defaults to bindAddress
   loggingOverrideLevel: null
-
 
   # SSH server configuration
   sshPrivateKey: "/etc/sw/seaweedfs_sftp_ssh_private_key"  # Path to the SSH private key file for host authentication
