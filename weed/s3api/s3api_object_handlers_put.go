@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,19 +74,17 @@ type SSEResponseMetadata struct {
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
-
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		return
-	}
-
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+		return
+	}
+	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 
@@ -288,10 +288,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
-
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
+
+	plaintextHash := md5.New()
+	dataReader = io.TeeReader(dataReader, plaintextHash)
 
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
@@ -426,8 +428,21 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
-	md5Sum := chunkResult.Md5Hash.Sum(nil)
-
+	md5Sum := plaintextHash.Sum(nil)
+	contentMd5 := r.Header.Get("Content-Md5")
+	if contentMd5 != "" {
+		expectedMd5, err := base64.StdEncoding.DecodeString(contentMd5)
+		if err != nil {
+			glog.Errorf("putToFiler: Invalid Content-Md5 header: %v, attempting to cleanup %d orphaned chunks", err, len(chunkResult.FileChunks))
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
+		}
+		if !bytes.Equal(md5Sum, expectedMd5) {
+			glog.Warningf("putToFiler: Checksum verification failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrBadDigest, SSEResponseMetadata{}
+		}
+	}
 	glog.V(4).Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
 		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize)
 
