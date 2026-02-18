@@ -170,8 +170,14 @@ func TestEcEndToEnd(t *testing.T) {
 			"enabled": false,
 		},
 	}
-	jsonBody, _ := json.Marshal(balanceConfig)
-	req, _ := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	jsonBody, err := json.Marshal(balanceConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal volume_balance config: %v", err)
+	}
+	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create volume_balance config request: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -207,8 +213,14 @@ func TestEcEndToEnd(t *testing.T) {
 			},
 		},
 	}
-	jsonBody, _ = json.Marshal(ecConfig)
-	req, _ = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/erasure_coding/config", bytes.NewBuffer(jsonBody))
+	jsonBody, err = json.Marshal(ecConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal erasure_coding config: %v", err)
+	}
+	req, err = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/erasure_coding/config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create erasure_coding config request: %v", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = client.Do(req)
 	if err != nil {
@@ -230,7 +242,13 @@ func TestEcEndToEnd(t *testing.T) {
 
 	var uploadErr error
 	for i := 0; i < 10; i++ {
-		req, _ := http.NewRequest("PUT", uploadUrl, bytes.NewBuffer(data))
+		req, err := http.NewRequest("PUT", uploadUrl, bytes.NewBuffer(data))
+		if err != nil {
+			uploadErr = err
+			t.Logf("Upload attempt %d failed to create request: %v", i+1, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 		resp, err := client.Do(req)
 		if err == nil {
 			if resp.StatusCode == 201 {
