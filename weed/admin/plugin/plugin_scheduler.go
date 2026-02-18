@@ -20,10 +20,10 @@ const (
 	defaultScheduledDetectionInterval          = 300 * time.Second
 	defaultScheduledDetectionTimeout           = 45 * time.Second
 	defaultScheduledExecutionTimeout           = 90 * time.Second
-	defaultScheduledMaxResults           int32 = 200
+	defaultScheduledMaxResults           int32 = 1000
 	defaultScheduledExecutionConcurrency       = 1
 	defaultScheduledPerWorkerConcurrency       = 1
-	maxScheduledExecutionConcurrency           = 32
+	maxScheduledExecutionConcurrency           = 128
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
 	defaultWaitingBacklogFloor                 = 8
