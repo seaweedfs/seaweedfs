@@ -240,7 +240,9 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 	glog.V(0).Infof("Plugin worker connected: %s (%s)", workerID, hello.Address)
 
 	sendErrCh := make(chan error, 1)
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		sendErrCh <- r.sendLoop(stream.Context(), stream, session)
 	}()
 
@@ -250,7 +252,9 @@ func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStream
 	go r.prefetchDescriptorsFromHello(hello)
 
 	recvErrCh := make(chan error, 1)
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		for {
 			message, recvErr := stream.Recv()
 			if recvErr != nil {
