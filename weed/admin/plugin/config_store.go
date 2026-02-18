@@ -235,11 +235,12 @@ func (s *ConfigStore) AppendRunRecord(jobType string, record *JobRunRecord) erro
 		return err
 	}
 
-	if record.JobType == "" {
-		record.JobType = jobType
+	safeRecord := *record
+	if safeRecord.JobType == "" {
+		safeRecord.JobType = jobType
 	}
-	if record.CompletedAt.IsZero() {
-		record.CompletedAt = time.Now().UTC()
+	if safeRecord.CompletedAt.IsZero() {
+		safeRecord.CompletedAt = time.Now().UTC()
 	}
 
 	s.mu.Lock()
@@ -249,9 +250,6 @@ func (s *ConfigStore) AppendRunRecord(jobType string, record *JobRunRecord) erro
 	if err != nil {
 		return err
 	}
-
-	safeRecord := *record
-	safeRecord.JobType = jobType
 
 	if safeRecord.Outcome == RunOutcomeSuccess {
 		history.SuccessfulRuns = append(history.SuccessfulRuns, safeRecord)
@@ -299,7 +297,7 @@ func (s *ConfigStore) SaveTrackedJobs(jobs []TrackedJob) error {
 	}
 
 	path := filepath.Join(s.baseDir, jobsDirName, trackedJobsJSONFileName)
-	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(path, encoded, defaultFilePerm); err != nil {
 		return fmt.Errorf("write tracked jobs: %w", err)
 	}
 	return nil
@@ -353,7 +351,7 @@ func (s *ConfigStore) SaveJobDetail(job TrackedJob) error {
 	}
 
 	path := filepath.Join(s.baseDir, jobsDirName, jobDetailsDirName, jobDetailFileName(jobID))
-	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(path, encoded, defaultFilePerm); err != nil {
 		return fmt.Errorf("write job detail: %w", err)
 	}
 
@@ -412,7 +410,7 @@ func (s *ConfigStore) SaveActivities(activities []JobActivity) error {
 	}
 
 	path := filepath.Join(s.baseDir, activitiesDirName, activitiesJSONFileName)
-	if err := os.WriteFile(path, encoded, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(path, encoded, defaultFilePerm); err != nil {
 		return fmt.Errorf("write activities: %w", err)
 	}
 	return nil
@@ -534,7 +532,7 @@ func (s *ConfigStore) saveRunHistoryLocked(jobType string, history *JobTypeRunHi
 	}
 
 	runsPath := filepath.Join(jobTypeDir, runsJSONFileName)
-	if err := os.WriteFile(runsPath, encoded, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(runsPath, encoded, defaultFilePerm); err != nil {
 		return fmt.Errorf("write run history for %s: %w", jobType, err)
 	}
 	return nil
@@ -659,7 +657,7 @@ func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) erro
 	if err != nil {
 		return fmt.Errorf("marshal protobuf: %w", err)
 	}
-	if err := os.WriteFile(pbPath, pbData, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(pbPath, pbData, defaultFilePerm); err != nil {
 		return fmt.Errorf("write protobuf file: %w", err)
 	}
 
@@ -671,9 +669,20 @@ func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) erro
 	if err != nil {
 		return fmt.Errorf("marshal json: %w", err)
 	}
-	if err := os.WriteFile(jsonPath, jsonData, defaultFilePerm); err != nil {
+	if err := atomicWriteFile(jsonPath, jsonData, defaultFilePerm); err != nil {
 		return fmt.Errorf("write json file: %w", err)
 	}
 
+	return nil
+}
+func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
+	tmpFile := filename + ".tmp"
+	if err := os.WriteFile(tmpFile, data, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpFile, filename); err != nil {
+		_ = os.Remove(tmpFile)
+		return err
+	}
 	return nil
 }
