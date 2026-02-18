@@ -52,6 +52,9 @@ type Plugin struct {
 	detectorLeaseMu sync.Mutex
 	detectorLeases  map[string]string
 
+	schedulerExecMu           sync.Mutex
+	schedulerExecReservations map[string]int
+
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
 
@@ -118,23 +121,24 @@ func New(options Options) (*Plugin, error) {
 	}
 
 	plugin := &Plugin{
-		store:                  store,
-		registry:               NewRegistry(),
-		outgoingBuffer:         bufferSize,
-		sendTimeout:            sendTimeout,
-		schedulerTick:          schedulerTick,
-		clusterContextProvider: options.ClusterContextProvider,
-		sessions:               make(map[string]*streamSession),
-		pendingSchema:          make(map[string]chan *plugin_pb.ConfigSchemaResponse),
-		pendingDetection:       make(map[string]*pendingDetectionState),
-		pendingExecution:       make(map[string]chan *plugin_pb.JobCompleted),
-		nextDetectionAt:        make(map[string]time.Time),
-		detectionInFlight:      make(map[string]bool),
-		detectorLeases:         make(map[string]string),
-		recentDedupeByType:     make(map[string]map[string]time.Time),
-		jobs:                   make(map[string]*TrackedJob),
-		activities:             make([]JobActivity, 0, 256),
-		shutdownCh:             make(chan struct{}),
+		store:                     store,
+		registry:                  NewRegistry(),
+		outgoingBuffer:            bufferSize,
+		sendTimeout:               sendTimeout,
+		schedulerTick:             schedulerTick,
+		clusterContextProvider:    options.ClusterContextProvider,
+		sessions:                  make(map[string]*streamSession),
+		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
+		pendingDetection:          make(map[string]*pendingDetectionState),
+		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
+		nextDetectionAt:           make(map[string]time.Time),
+		detectionInFlight:         make(map[string]bool),
+		detectorLeases:            make(map[string]string),
+		schedulerExecReservations: make(map[string]int),
+		recentDedupeByType:        make(map[string]map[string]time.Time),
+		jobs:                      make(map[string]*TrackedJob),
+		activities:                make([]JobActivity, 0, 256),
+		shutdownCh:                make(chan struct{}),
 	}
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {

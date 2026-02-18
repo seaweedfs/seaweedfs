@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+var errExecutorAtCapacity = errors.New("executor is at capacity")
 
 const (
 	defaultSchedulerTick                       = 5 * time.Second
@@ -421,9 +424,6 @@ func (r *Plugin) dispatchScheduledProposals(
 	}
 	close(jobQueue)
 
-	var limiterMu sync.Mutex
-	workerLimiters := make(map[string]chan struct{})
-
 	var wg sync.WaitGroup
 	var statsMu sync.Mutex
 	successCount := 0
@@ -446,42 +446,54 @@ func (r *Plugin) dispatchScheduledProposals(
 				default:
 				}
 
-				executor, release, reserveErr := r.reserveScheduledExecutor(jobType, workerLimiters, &limiterMu, policy)
-				if reserveErr != nil {
+				for {
+					executor, release, reserveErr := r.reserveScheduledExecutor(jobType, policy)
+					if reserveErr != nil {
+						if strings.Contains(strings.ToLower(reserveErr.Error()), "shutting down") {
+							return
+						}
+						statsMu.Lock()
+						errorCount++
+						statsMu.Unlock()
+						r.appendActivity(JobActivity{
+							JobType:    jobType,
+							Source:     "admin_scheduler",
+							Message:    fmt.Sprintf("scheduled execution reservation failed: %v", reserveErr),
+							Stage:      "failed",
+							OccurredAt: time.Now().UTC(),
+						})
+						break
+					}
+
+					err := r.executeScheduledJobWithExecutor(executor, job, clusterContext, policy)
+					release()
+					if errors.Is(err, errExecutorAtCapacity) {
+						r.trackExecutionQueued(job)
+						if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+							return
+						}
+						continue
+					}
+					if err != nil {
+						statsMu.Lock()
+						errorCount++
+						statsMu.Unlock()
+						r.appendActivity(JobActivity{
+							JobID:      job.JobId,
+							JobType:    job.JobType,
+							Source:     "admin_scheduler",
+							Message:    fmt.Sprintf("scheduled execution failed: %v", err),
+							Stage:      "failed",
+							OccurredAt: time.Now().UTC(),
+						})
+						break
+					}
+
 					statsMu.Lock()
-					errorCount++
+					successCount++
 					statsMu.Unlock()
-					r.appendActivity(JobActivity{
-						JobType:    jobType,
-						Source:     "admin_scheduler",
-						Message:    fmt.Sprintf("scheduled execution reservation failed: %v", reserveErr),
-						Stage:      "failed",
-						OccurredAt: time.Now().UTC(),
-					})
-					continue
+					break
 				}
-
-				err := r.executeScheduledJobWithExecutor(executor, job, clusterContext, policy)
-				release()
-
-				if err != nil {
-					statsMu.Lock()
-					errorCount++
-					statsMu.Unlock()
-					r.appendActivity(JobActivity{
-						JobID:      job.JobId,
-						JobType:    job.JobType,
-						Source:     "admin_scheduler",
-						Message:    fmt.Sprintf("scheduled execution failed: %v", err),
-						Stage:      "failed",
-						OccurredAt: time.Now().UTC(),
-					})
-					continue
-				}
-
-				statsMu.Lock()
-				successCount++
-				statsMu.Unlock()
 			}
 		}()
 	}
@@ -499,12 +511,8 @@ func (r *Plugin) dispatchScheduledProposals(
 
 func (r *Plugin) reserveScheduledExecutor(
 	jobType string,
-	workerLimiters map[string]chan struct{},
-	limiterMu *sync.Mutex,
 	policy schedulerPolicy,
 ) (*WorkerSession, func(), error) {
-	reserveDeadline := time.Now().Add(policy.ExecutionTimeout)
-
 	for {
 		select {
 		case <-r.shutdownCh:
@@ -514,40 +522,102 @@ func (r *Plugin) reserveScheduledExecutor(
 
 		executors, err := r.registry.ListExecutors(jobType)
 		if err != nil {
-			if time.Now().After(reserveDeadline) {
-				return nil, nil, err
-			}
 			if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
 				return nil, nil, fmt.Errorf("plugin is shutting down")
 			}
 			continue
 		}
 
-		limiterMu.Lock()
 		for _, executor := range executors {
-			workerLimiter := workerLimiters[executor.WorkerID]
-			if workerLimiter == nil {
-				workerLimiter = make(chan struct{}, policy.PerWorkerConcurrency)
-				workerLimiters[executor.WorkerID] = workerLimiter
+			release, ok := r.tryReserveExecutorCapacity(executor, jobType, policy)
+			if !ok {
+				continue
 			}
-
-			select {
-			case workerLimiter <- struct{}{}:
-				limiterMu.Unlock()
-				release := func() { <-workerLimiter }
-				return executor, release, nil
-			default:
-			}
+			return executor, release, nil
 		}
-		limiterMu.Unlock()
 
-		if time.Now().After(reserveDeadline) {
-			return nil, nil, fmt.Errorf("no executor slot became available for job_type=%s", jobType)
-		}
 		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
 			return nil, nil, fmt.Errorf("plugin is shutting down")
 		}
 	}
+}
+
+func (r *Plugin) tryReserveExecutorCapacity(
+	executor *WorkerSession,
+	jobType string,
+	policy schedulerPolicy,
+) (func(), bool) {
+	if executor == nil || strings.TrimSpace(executor.WorkerID) == "" {
+		return nil, false
+	}
+
+	limit := schedulerWorkerExecutionLimit(executor, jobType, policy)
+	if limit <= 0 {
+		return nil, false
+	}
+	heartbeatUsed := 0
+	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsUsed > 0 {
+		heartbeatUsed = int(executor.Heartbeat.ExecutionSlotsUsed)
+	}
+
+	workerID := strings.TrimSpace(executor.WorkerID)
+
+	r.schedulerExecMu.Lock()
+	reserved := r.schedulerExecReservations[workerID]
+	if heartbeatUsed+reserved >= limit {
+		r.schedulerExecMu.Unlock()
+		return nil, false
+	}
+	r.schedulerExecReservations[workerID] = reserved + 1
+	r.schedulerExecMu.Unlock()
+
+	release := func() {
+		r.releaseExecutorCapacity(workerID)
+	}
+	return release, true
+}
+
+func (r *Plugin) releaseExecutorCapacity(workerID string) {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return
+	}
+
+	r.schedulerExecMu.Lock()
+	defer r.schedulerExecMu.Unlock()
+
+	current := r.schedulerExecReservations[workerID]
+	if current <= 1 {
+		delete(r.schedulerExecReservations, workerID)
+		return
+	}
+	r.schedulerExecReservations[workerID] = current - 1
+}
+
+func schedulerWorkerExecutionLimit(executor *WorkerSession, jobType string, policy schedulerPolicy) int {
+	limit := policy.PerWorkerConcurrency
+	if limit <= 0 {
+		limit = defaultScheduledPerWorkerConcurrency
+	}
+
+	if capability := executor.Capabilities[jobType]; capability != nil && capability.MaxExecutionConcurrency > 0 {
+		capLimit := int(capability.MaxExecutionConcurrency)
+		if capLimit < limit {
+			limit = capLimit
+		}
+	}
+
+	if executor.Heartbeat != nil && executor.Heartbeat.ExecutionSlotsTotal > 0 {
+		heartbeatLimit := int(executor.Heartbeat.ExecutionSlotsTotal)
+		if heartbeatLimit < limit {
+			limit = heartbeatLimit
+		}
+	}
+
+	if limit < 0 {
+		return 0
+	}
+	return limit
 }
 
 func (r *Plugin) executeScheduledJobWithExecutor(
@@ -575,6 +645,9 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		if err == nil {
 			return nil
 		}
+		if isExecutorAtCapacityError(err) {
+			return errExecutorAtCapacity
+		}
 		lastErr = err
 
 		if attempt < maxAttempts {
@@ -596,6 +669,16 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		lastErr = fmt.Errorf("execution failed without an explicit error")
 	}
 	return lastErr
+}
+
+func isExecutorAtCapacityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errExecutorAtCapacity) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "executor is at capacity")
 }
 
 func buildScheduledJobSpec(jobType string, proposal *plugin_pb.JobProposal, index int) *plugin_pb.JobSpec {

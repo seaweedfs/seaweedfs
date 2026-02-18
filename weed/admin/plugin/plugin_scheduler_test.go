@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"sync"
 	"testing"
 	"time"
 
@@ -126,16 +125,13 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 		ExecutorReserveBackoff: time.Millisecond,
 	}
 
-	limiters := make(map[string]chan struct{})
-	var limiterMu sync.Mutex
-
-	executor1, release1, err := pluginSvc.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor("balance", policy)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
 	defer release1()
 
-	executor2, release2, err := pluginSvc.reserveScheduledExecutor("balance", limiters, &limiterMu, policy)
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor("balance", policy)
 	if err != nil {
 		t.Fatalf("reserve executor 2: %v", err)
 	}
@@ -233,12 +229,72 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, _, err = pluginSvc.reserveScheduledExecutor("missing-job-type", map[string]chan struct{}{}, &sync.Mutex{}, policy)
+	pluginSvc.Shutdown()
+	_, _, err = pluginSvc.reserveScheduledExecutor("missing-job-type", policy)
 	if err == nil {
-		t.Fatalf("expected reservation timeout error")
+		t.Fatalf("expected reservation shutdown error")
 	}
-	if time.Since(start) < 20*time.Millisecond {
-		t.Fatalf("reservation returned too early: duration=%v", time.Since(start))
+	if time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("reservation returned too late after shutdown: duration=%v", time.Since(start))
+	}
+}
+
+func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "balance", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+
+	policy := schedulerPolicy{
+		ExecutionTimeout:       time.Second,
+		PerWorkerConcurrency:   8,
+		ExecutorReserveBackoff: 5 * time.Millisecond,
+	}
+
+	_, release1, err := pluginSvc.reserveScheduledExecutor("balance", policy)
+	if err != nil {
+		t.Fatalf("reserve executor 1: %v", err)
+	}
+	defer release1()
+
+	type reserveResult struct {
+		err error
+	}
+	secondReserveCh := make(chan reserveResult, 1)
+	go func() {
+		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor("balance", policy)
+		if release2 != nil {
+			release2()
+		}
+		secondReserveCh <- reserveResult{err: reserveErr}
+	}()
+
+	select {
+	case result := <-secondReserveCh:
+		t.Fatalf("expected second reservation to wait for capacity, got=%v", result.err)
+	case <-time.After(25 * time.Millisecond):
+		// Expected: still waiting.
+	}
+
+	release1()
+
+	select {
+	case result := <-secondReserveCh:
+		if result.err != nil {
+			t.Fatalf("second reservation error: %v", result.err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("second reservation did not acquire after capacity release")
 	}
 }
 
