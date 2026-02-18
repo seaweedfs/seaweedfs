@@ -7,7 +7,7 @@ templ Plugin(page string) {
             currentPage = "overview"
         }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-monitoring-tab="detection">
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -17,8 +17,10 @@ templ Plugin(page string) {
                             <p class="text-muted mb-0">Cluster-wide worker status, inventory, and scheduler state.</p>
                         } else if currentPage == "configuration" {
                             <p class="text-muted mb-0">Configure job types, refresh schemas, and run on-demand workflows.</p>
+                        } else if currentPage == "execution" {
+                            <p class="text-muted mb-0">Track execution jobs, states, and runtime activity across workers.</p>
                         } else {
-                            <p class="text-muted mb-0">Track jobs and activity streams across all worker job types.</p>
+                            <p class="text-muted mb-0">Track detection decisions and activity streams across all worker job types.</p>
                         }
                     </div>
                     <div class="btn-group">
@@ -44,8 +46,13 @@ templ Plugin(page string) {
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class={ "nav-link", templ.KV("active", currentPage == "monitoring") } href="/plugin/monitoring">
-                            <i class="fas fa-stream me-1"></i>Monitoring
+                        <a class={ "nav-link", templ.KV("active", currentPage == "detection") } href="/plugin/detection">
+                            <i class="fas fa-search me-1"></i>Detection Jobs
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class={ "nav-link", templ.KV("active", currentPage == "execution") } href="/plugin/execution">
+                            <i class="fas fa-tasks me-1"></i>Execution Jobs
                         </a>
                     </li>
                 </ul>
@@ -330,130 +337,111 @@ templ Plugin(page string) {
             </div>
         </div>
 
-        <div class="plugin-section plugin-section-monitoring">
-            <div class="row mb-3">
+        <div class="plugin-section plugin-section-detection">
+            <div class="row mb-4">
                 <div class="col-12">
-                    <ul class="nav nav-tabs" id="plugin-monitor-tabs">
-                        <li class="nav-item">
-                            <button type="button" class="nav-link active" id="plugin-monitor-tab-detection" data-monitor-tab="detection">
-                                <i class="fas fa-search me-1"></i>Detection Jobs
-                            </button>
-                        </li>
-                        <li class="nav-item">
-                            <button type="button" class="nav-link" id="plugin-monitor-tab-execution" data-monitor-tab="execution">
-                                <i class="fas fa-tasks me-1"></i>Execution Jobs
-                            </button>
-                        </li>
-                    </ul>
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-search me-2"></i>Detection Jobs</h5>
+                            <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <select class="form-select form-select-sm" id="plugin-monitor-detection-job-type-filter" style="min-width: 180px;">
+                                    <option value="">All Job Types</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Job Type</th>
+                                            <th>Request ID</th>
+                                            <th>Worker</th>
+                                            <th>Stage</th>
+                                            <th>Source</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-detection-table-body">
+                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <div class="plugin-monitor-pane plugin-monitor-pane-detection">
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <div class="card shadow-sm">
-                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                                <h5 class="mb-0"><i class="fas fa-search me-2"></i>Detection Jobs</h5>
-                                <div class="d-flex gap-2 align-items-center flex-wrap">
-                                    <select class="form-select form-select-sm" id="plugin-monitor-detection-job-type-filter" style="min-width: 180px;">
-                                        <option value="">All Job Types</option>
-                                    </select>
-                                </div>
+        <div class="plugin-section plugin-section-execution">
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Execution Jobs</h5>
+                            <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <select class="form-select form-select-sm" id="plugin-monitor-execution-job-type-filter" style="min-width: 180px;">
+                                    <option value="">All Job Types</option>
+                                </select>
+                                <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
+                                    <option value="">All States</option>
+                                    <option value="assigned">Assigned</option>
+                                    <option value="running">Running</option>
+                                    <option value="succeeded">Succeeded</option>
+                                    <option value="failed">Failed</option>
+                                    <option value="canceled">Canceled</option>
+                                </select>
                             </div>
-                            <div class="card-body p-0">
-                                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
-                                    <table class="table table-sm table-hover mb-0">
-                                        <thead class="table-light sticky-top">
-                                            <tr>
-                                                <th>Time</th>
-                                                <th>Job Type</th>
-                                                <th>Request ID</th>
-                                                <th>Worker</th>
-                                                <th>Stage</th>
-                                                <th>Source</th>
-                                                <th>Message</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="plugin-detection-table-body">
-                                            <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Job ID</th>
+                                            <th>Type</th>
+                                            <th>State</th>
+                                            <th>Progress</th>
+                                            <th>Worker</th>
+                                            <th>Updated</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-execution-jobs-table-body">
+                                        <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="plugin-monitor-pane plugin-monitor-pane-execution">
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <div class="card shadow-sm">
-                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                                <h5 class="mb-0"><i class="fas fa-tasks me-2"></i>Execution Jobs</h5>
-                                <div class="d-flex gap-2 align-items-center flex-wrap">
-                                    <select class="form-select form-select-sm" id="plugin-monitor-execution-job-type-filter" style="min-width: 180px;">
-                                        <option value="">All Job Types</option>
-                                    </select>
-                                    <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
-                                        <option value="">All States</option>
-                                        <option value="assigned">Assigned</option>
-                                        <option value="running">Running</option>
-                                        <option value="succeeded">Succeeded</option>
-                                        <option value="failed">Failed</option>
-                                        <option value="canceled">Canceled</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="card-body p-0">
-                                <div class="table-responsive">
-                                    <table class="table table-hover mb-0">
-                                        <thead class="table-light">
-                                            <tr>
-                                                <th>Job ID</th>
-                                                <th>Type</th>
-                                                <th>State</th>
-                                                <th>Progress</th>
-                                                <th>Worker</th>
-                                                <th>Updated</th>
-                                                <th>Message</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="plugin-execution-jobs-table-body">
-                                            <tr><td colspan="7" class="text-muted text-center py-3">Loading...</td></tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Execution Activities</h5>
+                            <small class="text-muted">Non-detection events only</small>
                         </div>
-                    </div>
-                </div>
-
-                <div class="row mb-4">
-                    <div class="col-12">
-                        <div class="card shadow-sm">
-                            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-                                <h5 class="mb-0"><i class="fas fa-stream me-2"></i>Execution Activities</h5>
-                                <small class="text-muted">Non-detection events only</small>
-                            </div>
-                            <div class="card-body p-0">
-                                <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
-                                    <table class="table table-sm table-hover mb-0">
-                                        <thead class="table-light sticky-top">
-                                            <tr>
-                                                <th>Time</th>
-                                                <th>Job Type</th>
-                                                <th>Job ID</th>
-                                                <th>Source</th>
-                                                <th>Stage</th>
-                                                <th>Message</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="plugin-execution-activities-table-body">
-                                            <tr><td colspan="6" class="text-muted text-center py-3">Loading...</td></tr>
-                                        </tbody>
-                                    </table>
-                                </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive" style="max-height: 420px; overflow-y: auto;">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light sticky-top">
+                                        <tr>
+                                            <th>Time</th>
+                                            <th>Job Type</th>
+                                            <th>Job ID</th>
+                                            <th>Source</th>
+                                            <th>Stage</th>
+                                            <th>Message</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="plugin-execution-activities-table-body">
+                                        <tr><td colspan="6" class="text-muted text-center py-3">Loading...</td></tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -464,25 +452,26 @@ templ Plugin(page string) {
 
     <style>
         #plugin-page[data-plugin-page="overview"] .plugin-section-configuration,
-        #plugin-page[data-plugin-page="overview"] .plugin-section-monitoring {
+        #plugin-page[data-plugin-page="overview"] .plugin-section-detection,
+        #plugin-page[data-plugin-page="overview"] .plugin-section-execution {
             display: none;
         }
 
         #plugin-page[data-plugin-page="configuration"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="configuration"] .plugin-section-monitoring {
+        #plugin-page[data-plugin-page="configuration"] .plugin-section-detection,
+        #plugin-page[data-plugin-page="configuration"] .plugin-section-execution {
             display: none;
         }
 
-        #plugin-page[data-plugin-page="monitoring"] .plugin-section-overview,
-        #plugin-page[data-plugin-page="monitoring"] .plugin-section-configuration {
+        #plugin-page[data-plugin-page="detection"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="detection"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="detection"] .plugin-section-execution {
             display: none;
         }
 
-        #plugin-page[data-monitoring-tab="detection"] .plugin-monitor-pane-execution {
-            display: none;
-        }
-
-        #plugin-page[data-monitoring-tab="execution"] .plugin-monitor-pane-detection {
+        #plugin-page[data-plugin-page="execution"] .plugin-section-overview,
+        #plugin-page[data-plugin-page="execution"] .plugin-section-configuration,
+        #plugin-page[data-plugin-page="execution"] .plugin-section-detection {
             display: none;
         }
 
@@ -523,7 +512,6 @@ templ Plugin(page string) {
                 selectedJobType: '',
                 jobTypes: [],
                 lastDetectionByJobType: {},
-                monitoringTab: 'detection',
                 monitorDetectionJobType: '',
                 monitorExecutionJobType: '',
                 monitorExecutionJobState: '',
@@ -945,21 +933,6 @@ templ Plugin(page string) {
                     return true;
                 }
                 return normalized.indexOf('detector') >= 0;
-            }
-
-            function setMonitoringTab(nextTab) {
-                var normalized = nextTab === 'execution' ? 'execution' : 'detection';
-                state.monitoringTab = normalized;
-                page.setAttribute('data-monitoring-tab', normalized);
-
-                var detectionTabButton = document.getElementById('plugin-monitor-tab-detection');
-                var executionTabButton = document.getElementById('plugin-monitor-tab-execution');
-                if (detectionTabButton) {
-                    detectionTabButton.classList.toggle('active', normalized === 'detection');
-                }
-                if (executionTabButton) {
-                    executionTabButton.classList.toggle('active', normalized === 'execution');
-                }
             }
 
             function renderExecutionJobs() {
@@ -2226,20 +2199,6 @@ templ Plugin(page string) {
                     });
                 }
 
-                var detectionTabButton = document.getElementById('plugin-monitor-tab-detection');
-                if (detectionTabButton) {
-                    detectionTabButton.addEventListener('click', function() {
-                        setMonitoringTab('detection');
-                    });
-                }
-
-                var executionTabButton = document.getElementById('plugin-monitor-tab-execution');
-                if (executionTabButton) {
-                    executionTabButton.addEventListener('click', function() {
-                        setMonitoringTab('execution');
-                    });
-                }
-
                 document.getElementById('plugin-refresh-all-btn').addEventListener('click', function() {
                     refreshAll();
                 });
@@ -2285,7 +2244,6 @@ templ Plugin(page string) {
 
             async function init() {
                 bindActions();
-                setMonitoringTab(state.monitoringTab);
                 await refreshAll();
 
                 var initialJobType = getSelectedJobType();

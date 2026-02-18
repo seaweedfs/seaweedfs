@@ -37,6 +37,8 @@ func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 
 	assertHasRoute(t, router, "GET", "/plugin")
 	assertHasRoute(t, router, "GET", "/plugin/configuration")
+	assertHasRoute(t, router, "GET", "/plugin/detection")
+	assertHasRoute(t, router, "GET", "/plugin/execution")
 	assertHasRoute(t, router, "GET", "/plugin/monitoring")
 }
 
@@ -48,6 +50,8 @@ func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
 
 	assertHasRoute(t, router, "GET", "/plugin")
 	assertHasRoute(t, router, "GET", "/plugin/configuration")
+	assertHasRoute(t, router, "GET", "/plugin/detection")
+	assertHasRoute(t, router, "GET", "/plugin/execution")
 	assertHasRoute(t, router, "GET", "/plugin/monitoring")
 }
 

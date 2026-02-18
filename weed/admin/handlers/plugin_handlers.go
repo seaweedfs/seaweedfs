@@ -31,9 +31,20 @@ func (h *PluginHandlers) ShowPluginConfiguration(c *gin.Context) {
 	h.renderPluginPage(c, "configuration")
 }
 
+// ShowPluginDetection displays plugin detection jobs page.
+func (h *PluginHandlers) ShowPluginDetection(c *gin.Context) {
+	h.renderPluginPage(c, "detection")
+}
+
+// ShowPluginExecution displays plugin execution jobs page.
+func (h *PluginHandlers) ShowPluginExecution(c *gin.Context) {
+	h.renderPluginPage(c, "execution")
+}
+
 // ShowPluginMonitoring displays plugin monitoring page.
 func (h *PluginHandlers) ShowPluginMonitoring(c *gin.Context) {
-	h.renderPluginPage(c, "monitoring")
+	// Backward-compatible alias for the old monitoring URL.
+	h.renderPluginPage(c, "detection")
 }
 
 func (h *PluginHandlers) renderPluginPage(c *gin.Context, page string) {
