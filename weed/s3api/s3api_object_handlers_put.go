@@ -288,7 +288,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
-
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
@@ -428,6 +427,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return "", s3err.ErrInternalError, SSEResponseMetadata{}
 	}
 
+	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
 	md5Sum := plaintextHash.Sum(nil)
 	contentMd5 := r.Header.Get("Content-Md5")
