@@ -318,7 +318,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		Source:     "admin_scheduler",
 		Message:    "scheduled detection started",
 		Stage:      "detecting",
-		OccurredAt: start,
+		OccurredAt: timeToPtr(start),
 	})
 
 	if skip, waitingCount, waitingThreshold := r.shouldSkipDetectionForWaitingJobs(jobType, policy); skip {
@@ -327,7 +327,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 			Source:     "admin_scheduler",
 			Message:    fmt.Sprintf("scheduled detection skipped: waiting backlog %d reached threshold %d", waitingCount, waitingThreshold),
 			Stage:      "skipped_waiting_backlog",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 		return
 	}
@@ -339,7 +339,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 			Source:     "admin_scheduler",
 			Message:    fmt.Sprintf("scheduled detection aborted: %v", err),
 			Stage:      "failed",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 		return
 	}
@@ -353,7 +353,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 			Source:     "admin_scheduler",
 			Message:    fmt.Sprintf("scheduled detection failed: %v", err),
 			Stage:      "failed",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 		return
 	}
@@ -363,7 +363,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		Source:     "admin_scheduler",
 		Message:    fmt.Sprintf("scheduled detection completed: %d proposal(s)", len(proposals)),
 		Stage:      "detected",
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
 	})
 
 	filteredByActive, skippedActive := r.filterProposalsWithActiveJobs(jobType, proposals)
@@ -373,7 +373,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 			Source:     "admin_scheduler",
 			Message:    fmt.Sprintf("scheduled detection skipped %d proposal(s) due to active assigned/running jobs", skippedActive),
 			Stage:      "deduped_active_jobs",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 	}
 
@@ -388,7 +388,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 			Source:     "admin_scheduler",
 			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s) within this run", len(filteredByActive)-len(filtered)),
 			Stage:      "deduped",
-			OccurredAt: time.Now().UTC(),
+			OccurredAt: timeToPtr(time.Now().UTC()),
 		})
 	}
 
@@ -473,7 +473,7 @@ func (r *Plugin) dispatchScheduledProposals(
 							Source:     "admin_scheduler",
 							Message:    fmt.Sprintf("scheduled execution reservation failed: %v", reserveErr),
 							Stage:      "failed",
-							OccurredAt: time.Now().UTC(),
+							OccurredAt: timeToPtr(time.Now().UTC()),
 						})
 						break
 					}
@@ -497,7 +497,7 @@ func (r *Plugin) dispatchScheduledProposals(
 							Source:     "admin_scheduler",
 							Message:    fmt.Sprintf("scheduled execution failed: %v", err),
 							Stage:      "failed",
-							OccurredAt: time.Now().UTC(),
+							OccurredAt: timeToPtr(time.Now().UTC()),
 						})
 						break
 					}
@@ -518,7 +518,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		Source:     "admin_scheduler",
 		Message:    fmt.Sprintf("scheduled execution finished: success=%d error=%d", successCount, errorCount),
 		Stage:      "executed",
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: timeToPtr(time.Now().UTC()),
 	})
 }
 
@@ -679,7 +679,7 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 				Source:     "admin_scheduler",
 				Message:    fmt.Sprintf("retrying job attempt %d/%d after error: %v", attempt, maxAttempts, err),
 				Stage:      "retry",
-				OccurredAt: time.Now().UTC(),
+				OccurredAt: timeToPtr(time.Now().UTC()),
 			})
 			if !waitForShutdownOrTimer(r.shutdownCh, policy.RetryBackoff) {
 				return fmt.Errorf("plugin is shutting down")
