@@ -88,8 +88,16 @@ func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []Trac
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		if !items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
-			return items[i].UpdatedAt.After(items[j].UpdatedAt)
+		ti := time.Time{}
+		if items[i].UpdatedAt != nil {
+			ti = *items[i].UpdatedAt
+		}
+		tj := time.Time{}
+		if items[j].UpdatedAt != nil {
+			tj = *items[j].UpdatedAt
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
 		}
 		return items[i].JobID < items[j].JobID
 	})
@@ -126,7 +134,15 @@ func (r *Plugin) ListActivities(jobType string, limit int) []JobActivity {
 	}
 
 	sort.Slice(activities, func(i, j int) bool {
-		return activities[i].OccurredAt.After(activities[j].OccurredAt)
+		ti := time.Time{}
+		if activities[i].OccurredAt != nil {
+			ti = *activities[i].OccurredAt
+		}
+		tj := time.Time{}
+		if activities[j].OccurredAt != nil {
+			tj = *activities[j].OccurredAt
+		}
+		return ti.After(tj)
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[:limit]
@@ -151,7 +167,15 @@ func (r *Plugin) ListJobActivities(jobID string, limit int) []JobActivity {
 	r.activitiesMu.RUnlock()
 
 	sort.Slice(activities, func(i, j int) bool {
-		return activities[i].OccurredAt.Before(activities[j].OccurredAt)
+		ti := time.Time{}
+		if activities[i].OccurredAt != nil {
+			ti = *activities[i].OccurredAt
+		}
+		tj := time.Time{}
+		if activities[j].OccurredAt != nil {
+			tj = *activities[j].OccurredAt
+		}
+		return ti.Before(tj)
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[len(activities)-limit:]
@@ -203,7 +227,7 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	detail := &JobDetail{
 		Job:         detailJob,
 		Activities:  filterJobActivitiesFromSlice(activities, normalizedJobID, activityLimit),
-		LastUpdated: time.Now().UTC(),
+		LastUpdated: timeToPtr(time.Now().UTC()),
 	}
 
 	if history, err := r.store.LoadRunHistory(detailJob.JobType); err != nil {
@@ -231,20 +255,22 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 
 	if relatedLimit > 0 {
 		related := make([]TrackedJob, 0, relatedLimit)
-		for i := range trackedJobs {
-			candidate := cloneTrackedJob(trackedJobs[i])
+		r.jobsMu.RLock()
+		for _, candidate := range r.jobs {
 			if strings.TrimSpace(candidate.JobType) != strings.TrimSpace(detailJob.JobType) {
 				continue
 			}
 			if strings.TrimSpace(candidate.JobID) == normalizedJobID {
 				continue
 			}
-			stripTrackedJobDetailFields(&candidate)
-			related = append(related, candidate)
+			cloned := cloneTrackedJob(*candidate)
+			stripTrackedJobDetailFields(&cloned)
+			related = append(related, cloned)
 			if len(related) >= relatedLimit {
 				break
 			}
 		}
+		r.jobsMu.RUnlock()
 		detail.RelatedJobs = related
 	}
 
@@ -265,7 +291,15 @@ func filterJobActivitiesFromSlice(all []JobActivity, jobID string, limit int) []
 	}
 
 	sort.Slice(activities, func(i, j int) bool {
-		return activities[i].OccurredAt.Before(activities[j].OccurredAt)
+		ti := time.Time{}
+		if activities[i].OccurredAt != nil {
+			ti = *activities[i].OccurredAt
+		}
+		tj := time.Time{}
+		if activities[j].OccurredAt != nil {
+			tj = *activities[j].OccurredAt
+		}
+		return ti.Before(tj)
 	})
 	if limit > 0 && len(activities) > limit {
 		activities = activities[len(activities)-limit:]
@@ -359,7 +393,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 				JobType:   update.JobType,
 				RequestID: update.RequestId,
 				WorkerID:  resolvedWorkerID,
-				CreatedAt: now,
+				CreatedAt: timeToPtr(now),
 			}
 			r.jobs[update.JobId] = job
 		}
@@ -379,7 +413,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		job.Progress = update.ProgressPercent
 		job.Stage = update.Stage
 		job.Message = update.Message
-		job.UpdatedAt = now
+		job.UpdatedAt = timeToPtr(now)
 		r.pruneTrackedJobsLocked()
 		r.dirtyJobs = true
 		r.jobsMu.Unlock()
@@ -399,7 +433,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 			Source:     source,
 			Message:    update.Message,
 			Stage:      update.Stage,
-			OccurredAt: now,
+			OccurredAt: timeToPtr(now),
 		})
 	}
 }
@@ -416,7 +450,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	if tracked == nil {
 		tracked = &TrackedJob{
 			JobID:     job.JobId,
-			CreatedAt: now,
+			CreatedAt: timeToPtr(now),
 		}
 		r.jobs[job.JobId] = tracked
 	}
@@ -431,10 +465,10 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	tracked.Stage = "assigned"
 	tracked.Message = "job assigned to worker"
 	tracked.Attempt = attempt
-	if tracked.CreatedAt.IsZero() {
-		tracked.CreatedAt = now
+	if tracked.CreatedAt == nil || tracked.CreatedAt.IsZero() {
+		tracked.CreatedAt = timeToPtr(now)
 	}
-	tracked.UpdatedAt = now
+	tracked.UpdatedAt = timeToPtr(now)
 	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
 	r.dirtyJobs = true
@@ -462,7 +496,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 		detail.Stage = trackedSnapshot.Stage
 		detail.Message = trackedSnapshot.Message
 		detail.Attempt = attempt
-		if detail.CreatedAt.IsZero() {
+		if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
 			detail.CreatedAt = trackedSnapshot.CreatedAt
 		}
 		detail.UpdatedAt = trackedSnapshot.UpdatedAt
@@ -476,7 +510,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 		Source:     "admin_dispatch",
 		Message:    "job assigned",
 		Stage:      "assigned",
-		OccurredAt: now,
+		OccurredAt: timeToPtr(now),
 	})
 }
 
@@ -492,7 +526,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	if tracked == nil {
 		tracked = &TrackedJob{
 			JobID:     job.JobId,
-			CreatedAt: now,
+			CreatedAt: timeToPtr(now),
 		}
 		r.jobs[job.JobId] = tracked
 	}
@@ -504,10 +538,10 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	tracked.Progress = 0
 	tracked.Stage = "queued"
 	tracked.Message = "waiting for available executor"
-	if tracked.CreatedAt.IsZero() {
-		tracked.CreatedAt = now
+	if tracked.CreatedAt == nil || tracked.CreatedAt.IsZero() {
+		tracked.CreatedAt = timeToPtr(now)
 	}
-	tracked.UpdatedAt = now
+	tracked.UpdatedAt = timeToPtr(now)
 	trackedSnapshot := cloneTrackedJob(*tracked)
 	r.pruneTrackedJobsLocked()
 	r.dirtyJobs = true
@@ -532,7 +566,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 		detail.Progress = trackedSnapshot.Progress
 		detail.Stage = trackedSnapshot.Stage
 		detail.Message = trackedSnapshot.Message
-		if detail.CreatedAt.IsZero() {
+		if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
 			detail.CreatedAt = trackedSnapshot.CreatedAt
 		}
 		detail.UpdatedAt = trackedSnapshot.UpdatedAt
@@ -544,7 +578,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 		Source:     "admin_scheduler",
 		Message:    "job queued for execution",
 		Stage:      "queued",
-		OccurredAt: now,
+		OccurredAt: timeToPtr(now),
 	})
 }
 
@@ -563,7 +597,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 	if tracked == nil {
 		tracked = &TrackedJob{
 			JobID:     completed.JobId,
-			CreatedAt: now,
+			CreatedAt: timeToPtr(now),
 		}
 		r.jobs[completed.JobId] = tracked
 	}
@@ -593,8 +627,8 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		tracked.Message = completed.ErrorMessage
 	}
 
-	tracked.UpdatedAt = now
-	tracked.CompletedAt = now
+	tracked.UpdatedAt = timeToPtr(now)
+	tracked.CompletedAt = timeToPtr(now)
 	r.pruneTrackedJobsLocked()
 	clone := cloneTrackedJob(*tracked)
 	r.dirtyJobs = true
@@ -618,7 +652,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		} else {
 			detail.ResultOutputValues = nil
 		}
-		if detail.CreatedAt.IsZero() {
+		if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
 			detail.CreatedAt = clone.CreatedAt
 		}
 		detail.UpdatedAt = clone.UpdatedAt
@@ -633,7 +667,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		Source:     "worker_completion",
 		Message:    clone.Message,
 		Stage:      clone.Stage,
-		OccurredAt: now,
+		OccurredAt: timeToPtr(now),
 	})
 
 	return &clone
@@ -660,14 +694,14 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 			Message:    event.Message,
 			Stage:      event.Stage,
 			Details:    configValueMapToPlain(event.Details),
-			OccurredAt: timestamp,
+			OccurredAt: timeToPtr(timestamp),
 		})
 	}
 }
 
 func (r *Plugin) appendActivity(activity JobActivity) {
-	if activity.OccurredAt.IsZero() {
-		activity.OccurredAt = time.Now().UTC()
+	if activity.OccurredAt == nil || activity.OccurredAt.IsZero() {
+		activity.OccurredAt = timeToPtr(time.Now().UTC())
 	}
 
 	r.activitiesMu.Lock()
@@ -693,7 +727,11 @@ func (r *Plugin) pruneTrackedJobsLocked() {
 		if job.State == StateSucceeded ||
 			job.State == StateFailed ||
 			job.State == StateCanceled {
-			terminalJobs = append(terminalJobs, sortableJob{jobID, job.UpdatedAt})
+			updAt := time.Time{}
+			if job.UpdatedAt != nil {
+				updAt = *job.UpdatedAt
+			}
+			terminalJobs = append(terminalJobs, sortableJob{jobID, updAt})
 		}
 	}
 
@@ -759,8 +797,16 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 	}
 
 	sort.Slice(jobs, func(i, j int) bool {
-		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
-			return jobs[i].UpdatedAt.After(jobs[j].UpdatedAt)
+		ti := time.Time{}
+		if jobs[i].UpdatedAt != nil {
+			ti = *jobs[i].UpdatedAt
+		}
+		tj := time.Time{}
+		if jobs[j].UpdatedAt != nil {
+			tj = *jobs[j].UpdatedAt
+		}
+		if !ti.Equal(tj) {
+			return ti.After(tj)
 		}
 		return jobs[i].JobID < jobs[j].JobID
 	})
