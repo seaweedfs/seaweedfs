@@ -104,9 +104,6 @@ func buildErasureCodingExecutionPlan(params *worker_pb.TaskParams) map[string]in
 		parityShards = int(erasure_coding.ParityShardsCount)
 	}
 	totalShards := dataShards + parityShards
-	if totalShards <= 0 {
-		totalShards = int(erasure_coding.TotalShardsCount)
-	}
 
 	sources := make([]map[string]interface{}, 0, len(params.Sources))
 	for _, source := range params.Sources {
