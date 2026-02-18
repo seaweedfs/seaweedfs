@@ -230,5 +230,5 @@ func classifyShardID(shardID int, dataShardCount int) (kind string, label string
 	if shardID < dataShardCount {
 		return "data", "D" + strconv.Itoa(shardID)
 	}
-	return "parity", strconv.Itoa(shardID)
+	return "parity", "P" + strconv.Itoa(shardID)
 }
