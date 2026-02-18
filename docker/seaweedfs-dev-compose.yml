@@ -46,7 +46,7 @@ services:
     image: chrislusf/seaweedfs:dev # use a remote dev image
     ports:
       - 23646:23646
-    command: 'admin -masters=master:9333'
+    command: 'admin -master=master:9333'
     depends_on:
       - master
       - volume
