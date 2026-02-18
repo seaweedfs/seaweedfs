@@ -71,6 +71,10 @@ func TestS3Integration(t *testing.T) {
 		testPutObject(t, cluster)
 	})
 
+	t.Run("UploadPart", func(t *testing.T) {
+		testPutPartWithChecksum(t, cluster)
+	})
+
 	t.Run("PutObjectWithChecksum", func(t *testing.T) {
 		testPutObjectWithChecksum(t, cluster)
 	})
@@ -375,11 +379,7 @@ func testPutObjectWithChecksum(t *testing.T, cluster *TestCluster) {
 		Body:       bytes.NewReader([]byte(objectData)),
 		ContentMD5: aws.String(incorrectMD5),
 	})
-	require.Error(t, err, "PutObject should fail with incorrect MD5")
-
-	var awsErr awserr.Error
-	require.ErrorAs(t, err, &awsErr)
-	assert.Equal(t, "BadDigest", awsErr.Code())
+	assertBadDigestError(t, err, "PutObject should fail with incorrect MD5")
 
 	t.Logf("✓ Put object with incorrect MD5 rejected: %s/%s ", bucketName, objectKey)
 
@@ -404,10 +404,83 @@ func testPutObjectWithChecksum(t *testing.T, cluster *TestCluster) {
 	t.Logf("✓ Put object with correct MD5: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
 }
 
+func testPutPartWithChecksum(t *testing.T, cluster *TestCluster) {
+	bucketName := "test-put-checksum-" + randomString(8)
+	objectKey := "test-checksumed-part.txt"
+
+	partData := "Hello, SeaweedFS S3!"
+
+	correctMD5 := calculateMd5(partData)
+	incorrectMD5 := calculateMd5(partData + "incorrect")
+
+	// Create bucket
+	_, err := cluster.s3Client.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+
+	// Wait a bit for bucket to be fully created
+	time.Sleep(100 * time.Millisecond)
+
+	createResp, err := cluster.s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	uploadID := createResp.UploadId
+
+	partBody := []byte(partData)
+
+	_, err = cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadID,
+		PartNumber: aws.Int64(1),
+		Body:       bytes.NewReader(partBody),
+		ContentMD5: aws.String(incorrectMD5),
+	})
+	assertBadDigestError(t, err, "UploadPart should fail with incorrect MD5")
+
+	uploadResp, err := cluster.s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   uploadID,
+		PartNumber: aws.Int64(1),
+		Body:       bytes.NewReader(partBody),
+		ContentMD5: aws.String(correctMD5),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: uploadID,
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: []*s3.CompletedPart{
+				{
+					ETag:       uploadResp.ETag,
+					PartNumber: aws.Int64(1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err, "Failed to complete multipart upload")
+
+	t.Logf("✓ UploadPart with MD5 validation: %s/%s", bucketName, objectKey)
+}
+
 func calculateMd5(objectData string) string {
 	dataBytes := []byte(objectData)
 	hash := md5.Sum(dataBytes)
 	return base64.StdEncoding.EncodeToString(hash[:])
+}
+
+func assertBadDigestError(t *testing.T, err error, description string) {
+	require.Error(t, err, description)
+
+	var awsErr awserr.Error
+	require.ErrorAs(t, err, &awsErr)
+	assert.Equal(t, "BadDigest", awsErr.Code())
 }
 
 func testGetObject(t *testing.T, cluster *TestCluster) {
