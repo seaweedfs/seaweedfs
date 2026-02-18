@@ -624,7 +624,7 @@ func cloneTrackedJob(in TrackedJob) TrackedJob {
 	if in.Parameters != nil {
 		out.Parameters = make(map[string]interface{}, len(in.Parameters))
 		for key, value := range in.Parameters {
-			out.Parameters[key] = value
+			out.Parameters[key] = deepCopyGenericValue(value)
 		}
 	}
 	if in.Labels != nil {
@@ -636,10 +636,29 @@ func cloneTrackedJob(in TrackedJob) TrackedJob {
 	if in.ResultOutputValues != nil {
 		out.ResultOutputValues = make(map[string]interface{}, len(in.ResultOutputValues))
 		for key, value := range in.ResultOutputValues {
-			out.ResultOutputValues[key] = value
+			out.ResultOutputValues[key] = deepCopyGenericValue(value)
 		}
 	}
 	return out
+}
+
+func deepCopyGenericValue(val interface{}) interface{} {
+	switch v := val.(type) {
+	case map[string]interface{}:
+		res := make(map[string]interface{}, len(v))
+		for k, val := range v {
+			res[k] = deepCopyGenericValue(val)
+		}
+		return res
+	case []interface{}:
+		res := make([]interface{}, len(v))
+		for i, val := range v {
+			res[i] = deepCopyGenericValue(val)
+		}
+		return res
+	default:
+		return v
+	}
 }
 
 func cloneActivities(in []JobActivity) []JobActivity {
@@ -684,6 +703,10 @@ func writeProtoFiles(message proto.Message, pbPath string, jsonPath string) erro
 	return nil
 }
 func atomicWriteFile(filename string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create directory %s: %w", dir, err)
+	}
 	tmpFile := filename + ".tmp"
 	if err := os.WriteFile(tmpFile, data, perm); err != nil {
 		return err
