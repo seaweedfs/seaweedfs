@@ -540,11 +540,11 @@ func (s *AdminServer) ExecutePluginJobAPI(c *gin.Context) {
 		if completed != nil {
 			payload, marshalErr := protoMessageToMap(completed)
 			if marshalErr == nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "completion": payload})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "completion": payload})
 				return
 			}
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
