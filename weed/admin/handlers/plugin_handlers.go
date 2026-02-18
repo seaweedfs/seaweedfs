@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -53,11 +54,14 @@ func (h *PluginHandlers) ShowPluginMonitoring(c *gin.Context) {
 }
 
 func (h *PluginHandlers) renderPluginPage(c *gin.Context, page string) {
-	c.Header("Content-Type", "text/html")
 	component := app.Plugin(page)
 	layoutComponent := layout.Layout(c, component)
-	if err := layoutComponent.Render(c.Request.Context(), c.Writer); err != nil {
+
+	var buf bytes.Buffer
+	if err := layoutComponent.Render(c.Request.Context(), &buf); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
 		return
 	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
 }
