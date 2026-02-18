@@ -26,6 +26,8 @@ const (
 	maxScheduledExecutionConcurrency           = 32
 	defaultScheduledRetryBackoff               = 5 * time.Second
 	defaultClusterContextTimeout               = 10 * time.Second
+	defaultWaitingBacklogFloor                 = 8
+	defaultWaitingBacklogMultiplier            = 4
 )
 
 type schedulerPolicy struct {
@@ -318,6 +320,17 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		Stage:      "detecting",
 		OccurredAt: start,
 	})
+
+	if skip, waitingCount, waitingThreshold := r.shouldSkipDetectionForWaitingJobs(jobType, policy); skip {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection skipped: waiting backlog %d reached threshold %d", waitingCount, waitingThreshold),
+			Stage:      "skipped_waiting_backlog",
+			OccurredAt: time.Now().UTC(),
+		})
+		return
+	}
 
 	clusterContext, err := r.loadSchedulerClusterContext()
 	if err != nil {
@@ -671,6 +684,55 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 	return lastErr
 }
 
+func (r *Plugin) shouldSkipDetectionForWaitingJobs(jobType string, policy schedulerPolicy) (bool, int, int) {
+	waitingCount := r.countWaitingTrackedJobs(jobType)
+	threshold := waitingBacklogThreshold(policy)
+	if threshold <= 0 {
+		return false, waitingCount, threshold
+	}
+	return waitingCount >= threshold, waitingCount, threshold
+}
+
+func (r *Plugin) countWaitingTrackedJobs(jobType string) int {
+	normalizedJobType := strings.TrimSpace(jobType)
+	if normalizedJobType == "" {
+		return 0
+	}
+
+	waiting := 0
+	r.jobsMu.RLock()
+	for _, job := range r.jobs {
+		if job == nil {
+			continue
+		}
+		if strings.TrimSpace(job.JobType) != normalizedJobType {
+			continue
+		}
+		if !isWaitingTrackedJobState(job.State) {
+			continue
+		}
+		waiting++
+	}
+	r.jobsMu.RUnlock()
+
+	return waiting
+}
+
+func waitingBacklogThreshold(policy schedulerPolicy) int {
+	concurrency := policy.ExecutionConcurrency
+	if concurrency <= 0 {
+		concurrency = defaultScheduledExecutionConcurrency
+	}
+	threshold := concurrency * defaultWaitingBacklogMultiplier
+	if threshold < defaultWaitingBacklogFloor {
+		threshold = defaultWaitingBacklogFloor
+	}
+	if policy.MaxResults > 0 && threshold > int(policy.MaxResults) {
+		threshold = int(policy.MaxResults)
+	}
+	return threshold
+}
+
 func isExecutorAtCapacityError(err error) bool {
 	if err == nil {
 		return false
@@ -828,6 +890,11 @@ func isActiveTrackedJobState(state string) bool {
 	default:
 		return false
 	}
+}
+
+func isWaitingTrackedJobState(state string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	return normalized == "pending" || normalized == "job_state_pending"
 }
 
 func (r *Plugin) filterScheduledProposals(proposals []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {

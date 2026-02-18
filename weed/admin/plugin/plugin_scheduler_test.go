@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -295,6 +296,57 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("second reservation did not acquire after capacity release")
+	}
+}
+
+func TestShouldSkipDetectionForWaitingJobs(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency: 2,
+		MaxResults:           100,
+	}
+	threshold := waitingBacklogThreshold(policy)
+	if threshold <= 0 {
+		t.Fatalf("expected positive waiting threshold")
+	}
+
+	for i := 0; i < threshold; i++ {
+		pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+			JobId:     fmt.Sprintf("job-waiting-%d", i),
+			JobType:   "dummy_stress",
+			DedupeKey: fmt.Sprintf("dummy_stress:%d", i),
+		})
+	}
+
+	skip, waitingCount, waitingThreshold := pluginSvc.shouldSkipDetectionForWaitingJobs("dummy_stress", policy)
+	if !skip {
+		t.Fatalf("expected detection to skip when waiting backlog reaches threshold")
+	}
+	if waitingCount != threshold {
+		t.Fatalf("unexpected waiting count: got=%d want=%d", waitingCount, threshold)
+	}
+	if waitingThreshold != threshold {
+		t.Fatalf("unexpected waiting threshold: got=%d want=%d", waitingThreshold, threshold)
+	}
+}
+
+func TestWaitingBacklogThresholdHonorsMaxResultsCap(t *testing.T) {
+	t.Parallel()
+
+	policy := schedulerPolicy{
+		ExecutionConcurrency: 8,
+		MaxResults:           6,
+	}
+	threshold := waitingBacklogThreshold(policy)
+	if threshold != 6 {
+		t.Fatalf("expected threshold to be capped by max results, got=%d", threshold)
 	}
 }
 
