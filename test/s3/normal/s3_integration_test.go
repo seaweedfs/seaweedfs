@@ -427,10 +427,10 @@ func testPutObjectWithChecksum(t *testing.T, cluster *TestCluster) {
 	t.Logf("✓ Put object with correct MD5: %s/%s (%d bytes)", bucketName, objectKey, len(objectData))
 }
 
-// This is hacky to be able to send SSEC request through HTTP:
 // putObjectSSEC sends a PutObject request with SSE-C headers over HTTP.
 // The AWS SDK v1 refuses to send SSE-C keys over plain HTTP, so we use the
 // low-level Request API and clear the Validate handlers to bypass that check.
+// We use Clear() because the specific validator is internal and not easily removable by name.
 func putObjectSSEC(client *s3.S3, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	req, output := client.PutObjectRequest(input)
 	req.Handlers.Validate.Clear()
@@ -452,7 +452,7 @@ func testPutObjectWithChecksumAndSSEC(t *testing.T, cluster *TestCluster) {
 
 	correctMD5 := calculateMd5(objectData)
 	incorrectMD5 := calculateMd5(objectData + "incorrect")
-	keyB64, keyMD5B64 := generateSSECKey()
+	keyRaw, keyMD5B64 := generateSSECKey()
 
 	// Put object with SSE-C and incorrect MD5 should be rejected
 	_, err := putObjectSSEC(cluster.s3Client, &s3.PutObjectInput{
@@ -461,7 +461,7 @@ func testPutObjectWithChecksumAndSSEC(t *testing.T, cluster *TestCluster) {
 		Body:                 bytes.NewReader([]byte(objectData)),
 		ContentMD5:           aws.String(incorrectMD5),
 		SSECustomerAlgorithm: aws.String("AES256"),
-		SSECustomerKey:       aws.String(keyB64),
+		SSECustomerKey:       aws.String(keyRaw),
 		SSECustomerKeyMD5:    aws.String(keyMD5B64),
 	})
 	assertBadDigestError(t, err, "PutObject with SSE-C should fail with incorrect MD5")
@@ -475,7 +475,7 @@ func testPutObjectWithChecksumAndSSEC(t *testing.T, cluster *TestCluster) {
 		Body:                 bytes.NewReader([]byte(objectData)),
 		ContentMD5:           aws.String(correctMD5),
 		SSECustomerAlgorithm: aws.String("AES256"),
-		SSECustomerKey:       aws.String(keyB64),
+		SSECustomerKey:       aws.String(keyRaw),
 		SSECustomerKeyMD5:    aws.String(keyMD5B64),
 	})
 	require.NoError(t, err, "Failed to put object with SSE-C and correct MD5")
@@ -485,7 +485,7 @@ func testPutObjectWithChecksumAndSSEC(t *testing.T, cluster *TestCluster) {
 		Bucket:               aws.String(bucketName),
 		Key:                  aws.String(objectKey),
 		SSECustomerAlgorithm: aws.String("AES256"),
-		SSECustomerKey:       aws.String(keyB64),
+		SSECustomerKey:       aws.String(keyRaw),
 		SSECustomerKeyMD5:    aws.String(keyMD5B64),
 	})
 	require.NoError(t, err)
@@ -562,7 +562,7 @@ func testUploadPartWithChecksum(t *testing.T, cluster *TestCluster) {
 
 func testPutPartWithChecksum(t *testing.T, cluster *TestCluster) {
 	bucketName := createTestBucket(t, cluster, "test-put-checksum-")
-	objectKey := "test-checksumed-part.txt"
+	objectKey := "test-checksummed-part.txt"
 
 	partData := "Hello, SeaweedFS S3!"
 
@@ -613,6 +613,14 @@ func testPutPartWithChecksum(t *testing.T, cluster *TestCluster) {
 		},
 	})
 	require.NoError(t, err, "Failed to complete multipart upload")
+
+	// Verify object exists
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(partData)), aws.Int64Value(headResp.ContentLength))
 
 	t.Logf("✓ UploadPart with MD5 validation: %s/%s", bucketName, objectKey)
 }

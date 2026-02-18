@@ -428,7 +428,6 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
-	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
 	md5Sum := plaintextHash.Sum(nil)
 	contentMd5 := r.Header.Get("Content-Md5")
 	if contentMd5 != "" {
