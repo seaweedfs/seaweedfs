@@ -16,9 +16,7 @@ templ Layout(c *gin.Context, content templ.Component) {
   }
   csrfToken := c.GetString("csrf_token")
   
-  // Detect if we're on a configuration page to keep submenu expanded
   currentPath := c.Request.URL.Path
-  isConfigPage := strings.HasPrefix(currentPath, "/maintenance/config") || currentPath == "/config"
   
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
@@ -261,56 +259,9 @@ templ Layout(c *gin.Context, content templ.Component) {
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
-                        <span>MAINTENANCE</span>
+                        <span>WORKERS</span>
                     </h6>
                     <ul class="nav flex-column">
-                        <li class="nav-item">
-                            if isConfigPage {
-                                <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#configurationSubmenu" aria-expanded="true" aria-controls="configurationSubmenu">
-                                    <i class="fas fa-cogs me-2"></i>Configuration
-                                    <i class="fas fa-chevron-down ms-auto"></i>
-                                </a>
-                            } else {
-                                <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#configurationSubmenu" aria-expanded="false" aria-controls="configurationSubmenu">
-                                    <i class="fas fa-cogs me-2"></i>Configuration
-                                    <i class="fas fa-chevron-right ms-auto"></i>
-                                </a>
-                            }
-                            if isConfigPage {
-                                <div class="collapse show" id="configurationSubmenu">
-                                    <ul class="nav flex-column ms-3">
-                                        for _, menuItem := range GetConfigurationMenuItems() {
-                                            {{
-                                                isActiveItem := currentPath == menuItem.URL
-                                            }}
-                                            <li class="nav-item">
-                                                if isActiveItem {
-                                                    <a class="nav-link py-2 active" href={templ.SafeURL(menuItem.URL)}>
-                                                        <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
-                                                    </a>
-                                                } else {
-                                                    <a class="nav-link py-2" href={templ.SafeURL(menuItem.URL)}>
-                                                        <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
-                                                    </a>
-                                                }
-                                            </li>
-                                        }
-                                    </ul>
-                                </div>
-                            } else {
-                                <div class="collapse" id="configurationSubmenu">
-                                    <ul class="nav flex-column ms-3">
-                                        for _, menuItem := range GetConfigurationMenuItems() {
-                                            <li class="nav-item">
-                                                <a class="nav-link py-2" href={templ.SafeURL(menuItem.URL)}>
-                                                    <i class={menuItem.Icon + " me-2"}></i>{menuItem.Name}
-                                                </a>
-                                            </li>
-                                        }
-                                    </ul>
-                                </div>
-                            }
-                        </li>
                         <li class="nav-item">
                             if isPluginPage {
                                 <a class="nav-link active" href="/plugin">
@@ -323,24 +274,46 @@ templ Layout(c *gin.Context, content templ.Component) {
                             }
                         </li>
                         <li class="nav-item">
-                            if currentPath == "/maintenance" {
-                                <a class="nav-link active" href="/maintenance">
+                            if currentPath == "/plugin/detection" {
+                                <a class="nav-link active" href="/plugin/detection">
+                                    <i class="fas fa-search me-2"></i>Job Detection
+                                </a>
+                            } else {
+                                <a class="nav-link" href="/plugin/detection">
+                                    <i class="fas fa-search me-2"></i>Job Detection
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if currentPath == "/plugin/queue" {
+                                <a class="nav-link active" href="/plugin/queue">
                                     <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             } else {
-                                <a class="nav-link" href="/maintenance">
+                                <a class="nav-link" href="/plugin/queue">
                                     <i class="fas fa-list me-2"></i>Job Queue
                                 </a>
                             }
                         </li>
                         <li class="nav-item">
-                            if currentPath == "/maintenance/workers" {
-                                <a class="nav-link active" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Workers
+                            if currentPath == "/plugin/execution" {
+                                <a class="nav-link active" href="/plugin/execution">
+                                    <i class="fas fa-tasks me-2"></i>Job Execution
                                 </a>
                             } else {
-                                <a class="nav-link" href="/maintenance/workers">
-                                    <i class="fas fa-user-cog me-2"></i>Workers
+                                <a class="nav-link" href="/plugin/execution">
+                                    <i class="fas fa-tasks me-2"></i>Job Execution
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if currentPath == "/plugin/configuration" {
+                                <a class="nav-link active" href="/plugin/configuration">
+                                    <i class="fas fa-sliders-h me-2"></i>Configuration
+                                </a>
+                            } else {
+                                <a class="nav-link" href="/plugin/configuration">
+                                    <i class="fas fa-sliders-h me-2"></i>Configuration
                                 </a>
                             }
                         </li>

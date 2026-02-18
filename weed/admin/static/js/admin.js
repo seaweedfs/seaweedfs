@@ -129,21 +129,6 @@ function setupSubmenuBehavior() {
         }
     }
 
-    // If we're on a maintenance page, expand the maintenance submenu
-    if (currentPath.startsWith('/maintenance')) {
-        const maintenanceSubmenu = document.getElementById('maintenanceSubmenu');
-        if (maintenanceSubmenu) {
-            maintenanceSubmenu.classList.add('show');
-
-            // Update the parent toggle button state
-            const toggleButton = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
-            if (toggleButton) {
-                toggleButton.classList.remove('collapsed');
-                toggleButton.setAttribute('aria-expanded', 'true');
-            }
-        }
-    }
-
     // Prevent submenu from collapsing when clicking on submenu items
     const clusterSubmenuLinks = document.querySelectorAll('#clusterSubmenu .nav-link');
     clusterSubmenuLinks.forEach(function (link) {
@@ -155,14 +140,6 @@ function setupSubmenuBehavior() {
 
     const objectStoreSubmenuLinks = document.querySelectorAll('#objectStoreSubmenu .nav-link');
     objectStoreSubmenuLinks.forEach(function (link) {
-        link.addEventListener('click', function (e) {
-            // Don't prevent the navigation, just stop the collapse behavior
-            e.stopPropagation();
-        });
-    });
-
-    const maintenanceSubmenuLinks = document.querySelectorAll('#maintenanceSubmenu .nav-link');
-    maintenanceSubmenuLinks.forEach(function (link) {
         link.addEventListener('click', function (e) {
             // Don't prevent the navigation, just stop the collapse behavior
             e.stopPropagation();
@@ -215,28 +192,6 @@ function setupSubmenuBehavior() {
         });
     }
 
-    // Handle the main maintenance toggle
-    const maintenanceToggle = document.querySelector('[data-bs-target="#maintenanceSubmenu"]');
-    if (maintenanceToggle) {
-        maintenanceToggle.addEventListener('click', function (e) {
-            e.preventDefault();
-
-            const submenu = document.getElementById('maintenanceSubmenu');
-            const isExpanded = submenu.classList.contains('show');
-
-            if (isExpanded) {
-                // Collapse
-                submenu.classList.remove('show');
-                this.classList.add('collapsed');
-                this.setAttribute('aria-expanded', 'false');
-            } else {
-                // Expand
-                submenu.classList.add('show');
-                this.classList.remove('collapsed');
-                this.setAttribute('aria-expanded', 'true');
-            }
-        });
-    }
 }
 
 // Loading indicator functions

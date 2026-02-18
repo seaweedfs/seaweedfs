@@ -72,7 +72,6 @@ func newRouteTestAdminHandlers() *AdminHandlers {
 		fileBrowserHandlers:    &FileBrowserHandlers{adminServer: adminServer},
 		userHandlers:           &UserHandlers{adminServer: adminServer},
 		policyHandlers:         &PolicyHandlers{adminServer: adminServer},
-		maintenanceHandlers:    &MaintenanceHandlers{adminServer: adminServer},
 		pluginHandlers:         &PluginHandlers{adminServer: adminServer},
 		mqHandlers:             &MessageQueueHandlers{adminServer: adminServer},
 		serviceAccountHandlers: &ServiceAccountHandlers{adminServer: adminServer},
