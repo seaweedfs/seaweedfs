@@ -523,7 +523,10 @@ templ Plugin(page string) {
                 var data = await readResponseJSON(response);
                 if (!response.ok) {
                     var message = (data && (data.error || data.message)) ? (data.error || data.message) : ('Request failed: ' + response.status);
-                    throw new Error(message);
+                    var requestError = new Error(message);
+                    requestError.responseData = data;
+                    requestError.responseStatus = response.status;
+                    throw requestError;
                 }
                 return data;
             }
@@ -1586,38 +1589,109 @@ templ Plugin(page string) {
                     return proposal.detail || proposal.reason || proposal.message || '-';
                 }
 
+                function normalizeActivities(payload) {
+                    if (!payload || typeof payload !== 'object') {
+                        return [];
+                    }
+                    if (Array.isArray(payload.activities)) {
+                        return payload.activities;
+                    }
+                    return [];
+                }
+
+                function encodeDetails(details) {
+                    if (!details || typeof details !== 'object') {
+                        return '';
+                    }
+                    var text = '';
+                    try {
+                        text = JSON.stringify(details);
+                    } catch (e) {
+                        text = '';
+                    }
+                    if (!text) {
+                        return '';
+                    }
+                    if (text.length > 360) {
+                        text = text.slice(0, 360) + '...';
+                    }
+                    return text;
+                }
+
                 if (!data) {
                     root.innerHTML = '<div class="text-muted">No results.</div>';
                     return;
                 }
 
                 var proposals = normalizeProposals(data);
+                var activities = normalizeActivities(data);
                 var responseCount = Number(data.count || 0);
                 if (!Number.isFinite(responseCount) || responseCount < 0) {
                     responseCount = proposals.length;
                 }
-                if (!proposals.length) {
-                    root.innerHTML = '<div class="text-muted">No proposals returned (count=' + escapeHtml(String(responseCount)) + ').</div>';
-                    return;
+                var requestID = data.request_id || data.requestId || '';
+                var detectorWorkerID = data.detector_worker_id || data.detectorWorkerId || '';
+                var totalProposals = Number(data.total_proposals || 0);
+                if (!Number.isFinite(totalProposals) || totalProposals < 0) {
+                    totalProposals = responseCount;
                 }
 
-                var html = '<div class="mb-2"><strong>' + escapeHtml(String(proposals.length)) + '</strong> proposal(s)</div>';
-                for (var i = 0; i < proposals.length; i++) {
-                    var proposal = proposals[i] || {};
-                    var pID = proposalID(proposal);
-                    var pSummary = proposalSummary(proposal);
-                    var pDetail = proposalDetail(proposal);
-                    var pPriority = proposal.priority;
-                    if (pPriority === null || pPriority === undefined || pPriority === '') {
-                        pPriority = '-';
-                    }
-                    html += '<div class="plugin-detection-item">' +
-                        '<div class="fw-semibold">' + escapeHtml(textOrDash(pSummary)) + '</div>' +
-                        '<div><small>proposal_id: ' + escapeHtml(textOrDash(pID)) + '</small></div>' +
-                        '<div><small>priority: ' + escapeHtml(textOrDash(pPriority)) + '</small></div>' +
-                        '<div><small>detail: ' + escapeHtml(textOrDash(pDetail)) + '</small></div>' +
-                        '</div>';
+                var html = '';
+                html += '<div class="mb-2"><strong>Detection Run</strong></div>';
+                if (requestID) {
+                    html += '<div><small>request_id: ' + escapeHtml(String(requestID)) + '</small></div>';
                 }
+                if (detectorWorkerID) {
+                    html += '<div><small>detector: ' + escapeHtml(String(detectorWorkerID)) + '</small></div>';
+                }
+                html += '<div><small>proposals: ' + escapeHtml(String(responseCount)) + ' / total: ' + escapeHtml(String(totalProposals)) + '</small></div>';
+                if (data.error) {
+                    html += '<div class="mt-1 text-danger"><small>' + escapeHtml(String(data.error)) + '</small></div>';
+                }
+
+                if (!proposals.length) {
+                    html += '<div class="mt-2 text-muted">No proposals returned.</div>';
+                } else {
+                    html += '<div class="mt-2 mb-1"><strong>' + escapeHtml(String(proposals.length)) + '</strong> proposal(s)</div>';
+                    for (var i = 0; i < proposals.length; i++) {
+                        var proposal = proposals[i] || {};
+                        var pID = proposalID(proposal);
+                        var pSummary = proposalSummary(proposal);
+                        var pDetail = proposalDetail(proposal);
+                        var pPriority = proposal.priority;
+                        if (pPriority === null || pPriority === undefined || pPriority === '') {
+                            pPriority = '-';
+                        }
+                        html += '<div class="plugin-detection-item">' +
+                            '<div class="fw-semibold">' + escapeHtml(textOrDash(pSummary)) + '</div>' +
+                            '<div><small>proposal_id: ' + escapeHtml(textOrDash(pID)) + '</small></div>' +
+                            '<div><small>priority: ' + escapeHtml(textOrDash(pPriority)) + '</small></div>' +
+                            '<div><small>detail: ' + escapeHtml(textOrDash(pDetail)) + '</small></div>' +
+                            '</div>';
+                    }
+                }
+
+                if (activities.length) {
+                    html += '<hr class="my-2"/>';
+                    html += '<div class="mb-2"><strong>Detection Process</strong></div>';
+                    for (var j = 0; j < activities.length; j++) {
+                        var activity = activities[j] || {};
+                        var activityStage = activity.stage || '-';
+                        var activitySource = activity.source || '-';
+                        var activityMessage = activity.message || '-';
+                        var activityTime = parseTime(activity.occurred_at) || '-';
+                        var detailsText = encodeDetails(activity.details);
+                        html += '<div class="plugin-detection-item">' +
+                            '<div class="fw-semibold">' + escapeHtml(textOrDash(activityStage)) + '</div>' +
+                            '<div><small>source: ' + escapeHtml(textOrDash(activitySource)) + ' | at: ' + escapeHtml(activityTime) + '</small></div>' +
+                            '<div><small>' + escapeHtml(textOrDash(activityMessage)) + '</small></div>';
+                        if (detailsText) {
+                            html += '<div><small class="text-muted">details: ' + escapeHtml(detailsText) + '</small></div>';
+                        }
+                        html += '</div>';
+                    }
+                }
+
                 root.innerHTML = html;
             }
 
@@ -1817,6 +1891,10 @@ templ Plugin(page string) {
                     state.lastDetectionByJobType[jobType] = data;
                     renderDetectionResult(data);
                 } catch (e) {
+                    if (e && e.responseData) {
+                        state.lastDetectionByJobType[jobType] = e.responseData;
+                        renderDetectionResult(e.responseData);
+                    }
                     notify('Detection failed: ' + e.message, 'error');
                     return;
                 }
