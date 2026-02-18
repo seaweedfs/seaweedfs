@@ -543,7 +543,7 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 				var templ_7745c5c3_Var22 string
 				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Missing data shard %d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 310, Col: 116}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 310, Col: 108}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
@@ -554,9 +554,9 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var23 string
-				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%02d", shardID))
+				templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("D%02d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 310, Col: 147}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 310, Col: 142}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 				if templ_7745c5c3_Err != nil {
@@ -574,7 +574,7 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 				var templ_7745c5c3_Var24 string
 				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Data shard %d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 312, Col: 97}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 312, Col: 89}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 				if templ_7745c5c3_Err != nil {
@@ -585,9 +585,9 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var25 string
-				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%02d", shardID))
+				templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("D%02d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 312, Col: 128}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 312, Col: 123}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 				if templ_7745c5c3_Err != nil {
@@ -607,7 +607,7 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 				var templ_7745c5c3_Var26 string
 				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Missing parity shard %d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 316, Col: 128}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 316, Col: 120}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 				if templ_7745c5c3_Err != nil {
@@ -618,9 +618,9 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var27 string
-				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%02d", shardID))
+				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%02d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 316, Col: 159}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 316, Col: 154}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 				if templ_7745c5c3_Err != nil {
@@ -638,7 +638,7 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 				var templ_7745c5c3_Var28 string
 				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Parity shard %d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 318, Col: 109}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 318, Col: 101}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
@@ -649,9 +649,9 @@ func renderEcShardBadge(shardID uint32, missing bool) templ.Component {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var29 string
-				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%02d", shardID))
+				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("P%02d", shardID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 318, Col: 140}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `weed/admin/view/app/ec_volume_details.templ`, Line: 318, Col: 135}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
