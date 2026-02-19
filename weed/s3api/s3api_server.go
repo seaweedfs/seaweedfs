@@ -80,6 +80,7 @@ type S3ApiServer struct {
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
+	remoteStorageIdx      *remoteStorageIndex
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -178,6 +179,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		cipher:                option.Cipher,
+		remoteStorageIdx:      newRemoteStorageIndex(),
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting
@@ -278,6 +280,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
+
+	// Load remote storage mappings for lazy cache gateway.
+	// Done in a goroutine so the initial gRPC call doesn't block server startup.
+	go func() {
+		if err := s3ApiServer.remoteStorageIdx.refresh(option.GrpcDialOption, s3ApiServer.getFilerAddress()); err != nil {
+			glog.V(1).Infof("remoteStorageIndex: initial load (no remote mounts may be configured): %v", err)
+		}
+	}()
 
 	return s3ApiServer, nil
 }

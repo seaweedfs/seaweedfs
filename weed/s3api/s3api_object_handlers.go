@@ -777,9 +777,17 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			if objectEntryForSSE == nil {
-				// Not found, return error early to avoid another lookup in proxyToFiler
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
+				var lazyErr error
+				objectEntryForSSE, lazyErr = s3a.lazyFetchFromRemote(r.Context(), bucket, object)
+				if lazyErr != nil {
+					glog.Warningf("GetObjectHandler: remote stat failed for %s/%s: %v", bucket, object, lazyErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return
+				}
+				if objectEntryForSSE == nil {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
+				}
 			}
 		}
 	}
@@ -2250,9 +2258,17 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				return
 			}
 			if objectEntryForSSE == nil {
-				// Not found, return error early to avoid another lookup in proxyToFiler
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
+				var lazyErr error
+				objectEntryForSSE, lazyErr = s3a.lazyFetchFromRemote(r.Context(), bucket, object)
+				if lazyErr != nil {
+					glog.Warningf("HeadObjectHandler: remote stat failed for %s/%s: %v", bucket, object, lazyErr)
+					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+					return
+				}
+				if objectEntryForSSE == nil {
+					s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+					return
+				}
 			}
 		}
 	}
