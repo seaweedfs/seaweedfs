@@ -464,3 +464,65 @@ func listEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir st
 	}
 	return entries, nil
 }
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *FilerEtcStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	// Get user
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	// Verify policy exists
+	policy, err := store.GetPolicy(ctx, policyName)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			return credential.ErrPolicyAlreadyAttached
+		}
+	}
+
+	identity.PolicyNames = append(identity.PolicyNames, policyName)
+	return store.saveIdentity(ctx, identity)
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *FilerEtcStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	var newPolicies []string
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicies = append(newPolicies, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	identity.PolicyNames = newPolicies
+	return store.saveIdentity(ctx, identity)
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *FilerEtcStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	return identity.PolicyNames, nil
+}
