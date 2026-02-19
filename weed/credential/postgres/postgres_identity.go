@@ -453,9 +453,6 @@ func (store *PostgresStore) CreateAccessKey(ctx context.Context, username string
 	return nil
 }
 
-	return nil
-}
-
 func (store *PostgresStore) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
 	if !store.configured {
 		return fmt.Errorf("store not configured")
