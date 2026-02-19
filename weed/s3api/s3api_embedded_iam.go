@@ -417,6 +417,12 @@ func (e *EmbeddedIamApi) CreatePolicy(ctx context.Context, values url.Values) (i
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
+	path := "/"
+	defaultVersionId := "v1"
+	isAttachable := true
+	resp.CreatePolicyResult.Policy.Path = &path
+	resp.CreatePolicyResult.Policy.DefaultVersionId = &defaultVersionId
+	resp.CreatePolicyResult.Policy.IsAttachable = &isAttachable
 	return resp, nil
 }
 
@@ -487,14 +493,9 @@ func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (i
 		return resp, &iamError{Code: "NotImplemented", Error: fmt.Errorf("PathPrefix filtering is not supported yet")}
 	}
 
-	policies, err := e.credentialManager.GetPolicies(ctx)
+	policyNames, err := e.credentialManager.ListPolicyNames(ctx)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-	}
-
-	var policyNames []string
-	for name := range policies {
-		policyNames = append(policyNames, name)
 	}
 	sort.Strings(policyNames)
 
@@ -573,9 +574,6 @@ func (e *EmbeddedIamApi) GetPolicy(ctx context.Context, values url.Values) (iamG
 		DefaultVersionId: &defaultVersionId,
 		IsAttachable:     &isAttachable,
 	}
-	var zeroTime *time.Time
-	resp.GetPolicyResult.Policy.CreateDate = zeroTime // TODO: populate timestamps from credential backend once available.
-	resp.GetPolicyResult.Policy.UpdateDate = zeroTime
 	return resp, nil
 }
 

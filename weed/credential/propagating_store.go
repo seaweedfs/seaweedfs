@@ -236,6 +236,10 @@ func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name stri
 	return nil
 }
 
+func (s *PropagatingCredentialStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListPolicyNames(ctx)
+}
+
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if pm, ok := s.CredentialStore.(PolicyManager); ok {
 		if err := pm.CreatePolicy(ctx, name, document); err != nil {
