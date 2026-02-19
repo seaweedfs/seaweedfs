@@ -67,10 +67,11 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 			diskType = req.DiskType
 		}
 		location := vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-			return location.DiskType == types.ToDiskType(diskType)
+			return location.DiskType == types.ToDiskType(diskType) &&
+				location.AvailableSpace.Load() > volFileInfoResp.DatFileSize
 		})
 		if location == nil {
-			return fmt.Errorf("no space left for disk type %s", types.ToDiskType(diskType).ReadableString())
+			return fmt.Errorf("%s %s", util.ErrVolumeNoSpaceLeft, types.ToDiskType(diskType).ReadableString())
 		}
 
 		dataBaseFileName = storage.VolumeFileName(location.Directory, volFileInfoResp.Collection, int(req.VolumeId))
