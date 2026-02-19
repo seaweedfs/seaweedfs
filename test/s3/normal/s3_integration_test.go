@@ -116,8 +116,9 @@ func findAvailablePort() (int, error) {
 	return addr.Port, nil
 }
 
-// startMiniCluster starts a weed mini instance directly without exec
-func startMiniCluster(t *testing.T) (*TestCluster, error) {
+// startMiniCluster starts a weed mini instance directly without exec.
+// Extra flags (e.g. "-s3.allowDeleteBucketNotEmpty=false") can be appended via extraArgs.
+func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 	// Find available ports
 	masterPort, err := findAvailablePort()
 	if err != nil {
@@ -192,7 +193,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 		// Configure args for mini command
 		// Note: When running via 'go test', os.Args[0] is the test binary
 		// We need to make it look like we're running 'weed mini'
-		os.Args = []string{
+		os.Args = append([]string{
 			"weed",
 			"-dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
@@ -205,7 +206,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"-ip=127.0.0.1",
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
-		}
+		}, extraArgs...)
 
 		// Suppress most logging during tests
 		glog.MaxSize = 1024 * 1024
@@ -777,6 +778,49 @@ func testDeleteBucket(t *testing.T, cluster *TestCluster) {
 	}
 
 	t.Logf("✓ Deleted bucket: %s", bucketName)
+}
+
+func TestS3DeleteBucketNotEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t, "-s3.allowDeleteBucketNotEmpty=false")
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	t.Run("DeleteNonEmptyBucketFails", func(t *testing.T) {
+		bucketName := createTestBucket(t, cluster, "test-notempty-")
+		objectKey := "keep-me.txt"
+
+		// Put an object so the bucket is non-empty
+		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   bytes.NewReader([]byte("data")),
+		})
+		require.NoError(t, err)
+
+		// Attempt to delete the non-empty bucket — must fail with BucketNotEmpty (409)
+		_, err = cluster.s3Client.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+		require.Error(t, err, "deleting a non-empty bucket should fail")
+		var awsErr awserr.Error
+		require.ErrorAs(t, err, &awsErr)
+		assert.Equal(t, "BucketNotEmpty", awsErr.Code(),
+			"expected BucketNotEmpty error code, got %s: %s", awsErr.Code(), awsErr.Message())
+	})
+
+	t.Run("DeleteEmptyBucketSucceeds", func(t *testing.T) {
+		bucketName := createTestBucket(t, cluster, "test-empty-")
+
+		// Delete the empty bucket — should succeed even with the flag
+		_, err := cluster.s3Client.DeleteBucket(&s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+		require.NoError(t, err, "deleting an empty bucket should succeed")
+	})
 }
 
 // randomString generates a random string for unique naming

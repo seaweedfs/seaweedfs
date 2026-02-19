@@ -371,20 +371,24 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if !s3a.option.AllowDeleteBucketNotEmpty {
-			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
-			if err != nil {
-				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
-			}
-			for _, entry := range entries {
-				// Allow bucket deletion if only special directories remain
-				if entry.Name != s3_constants.MultipartUploadsFolder &&
-					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
-				}
+	if !s3a.option.AllowDeleteBucketNotEmpty {
+		entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
+		if err != nil {
+			glog.Errorf("failed to list bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		for _, entry := range entries {
+			// Allow bucket deletion if only special directories remain
+			if entry.Name != s3_constants.MultipartUploadsFolder &&
+				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrBucketNotEmpty)
+				return
 			}
 		}
+	}
+
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
