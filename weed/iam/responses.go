@@ -106,6 +106,29 @@ type DeleteUserPolicyResponse struct {
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteUserPolicyResponse"`
 }
 
+// AttachUserPolicyResponse is the response for AttachUserPolicy action.
+type AttachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AttachUserPolicyResponse"`
+}
+
+// DetachUserPolicyResponse is the response for DetachUserPolicy action.
+type DetachUserPolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DetachUserPolicyResponse"`
+}
+
+// ListAttachedUserPoliciesResponse is the response for ListAttachedUserPolicies action.
+type ListAttachedUserPoliciesResponse struct {
+	CommonResponse
+	XMLName                        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAttachedUserPoliciesResponse"`
+	ListAttachedUserPoliciesResult struct {
+		AttachedPolicies []*iam.AttachedPolicy `xml:"AttachedPolicies>member"`
+		IsTruncated      bool                  `xml:"IsTruncated"`
+		Marker           string                `xml:"Marker,omitempty"`
+	} `xml:"ListAttachedUserPoliciesResult"`
+}
+
 // GetUserPolicyResponse is the response for GetUserPolicy action.
 type GetUserPolicyResponse struct {
 	CommonResponse
