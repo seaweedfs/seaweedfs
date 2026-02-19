@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -127,6 +128,15 @@ func (store *IamGrpcStore) AttachUserPolicy(ctx context.Context, username string
 		return err
 	}
 
+	// Verify policy exists
+	policy, err := store.GetPolicy(ctx, policyName)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		return credential.ErrPolicyNotFound
+	}
+
 	// Check if already attached
 	for _, p := range identity.PolicyNames {
 		if p == policyName {
@@ -157,9 +167,7 @@ func (store *IamGrpcStore) DetachUserPolicy(ctx context.Context, username string
 	}
 
 	if !found {
-		// Policy not attached - for gRPC client, we still attempt to update
-		// The actual validation should happen on the server side
-		return nil
+		return credential.ErrPolicyNotAttached
 	}
 
 	identity.PolicyNames = newPolicies
