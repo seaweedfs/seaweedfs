@@ -637,14 +637,13 @@ func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values
 	}
 
 	if err := e.credentialManager.AttachUserPolicy(ctx, userName, policyName); err != nil {
-		errStr := err.Error()
-		if errors.Is(err, credential.ErrUserNotFound) || (strings.Contains(errStr, "user") && strings.Contains(errStr, "not found")) {
+		if errors.Is(err, credential.ErrUserNotFound) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
-		if errors.Is(err, credential.ErrPolicyNotFound) || (strings.Contains(errStr, "policy") && strings.Contains(errStr, "not found")) {
+		if errors.Is(err, credential.ErrPolicyNotFound) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 		}
-		if errors.Is(err, credential.ErrPolicyAlreadyAttached) || (strings.Contains(errStr, "already attached")) {
+		if errors.Is(err, credential.ErrPolicyAlreadyAttached) {
 			// AWS IAM is idempotent for AttachUserPolicy
 			return resp, nil
 		}
@@ -682,11 +681,10 @@ func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values
 	}
 
 	if err := e.credentialManager.DetachUserPolicy(ctx, userName, policyName); err != nil {
-		errStr := err.Error()
-		if errors.Is(err, credential.ErrUserNotFound) || (strings.Contains(errStr, "user") && strings.Contains(errStr, "not found")) {
+		if errors.Is(err, credential.ErrUserNotFound) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
-		if errors.Is(err, credential.ErrPolicyNotAttached) || (strings.Contains(errStr, "not attached")) {
+		if errors.Is(err, credential.ErrPolicyNotAttached) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not attached to user %s", policyName, userName)}
 		}
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -733,9 +731,8 @@ func (e *EmbeddedIamApi) ListAttachedUserPolicies(ctx context.Context, values ur
 
 	var attachedPolicies []*iam.AttachedPolicy
 	for _, attachedPolicyName := range policyNames {
-		if pathPrefix != "/" {
-			continue
-		}
+		// Policy paths are not tracked in the current configuration, so PathPrefix
+		// filtering is not supported yet. Always return the policy for now.
 		policyNameCopy := attachedPolicyName
 		policyArn := iamPolicyArn(attachedPolicyName)
 		policyArnCopy := policyArn
@@ -1375,6 +1372,9 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		changed = false
 	case "ListAttachedUserPolicies":
 		response, iamErr = e.ListAttachedUserPolicies(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
 		changed = false
 	case "SetUserStatus":
 		response, iamErr = e.SetUserStatus(s3cfg, values)

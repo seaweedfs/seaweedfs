@@ -518,6 +518,100 @@ func TestEmbeddedIamDetachUserPolicy(t *testing.T) {
 	assert.Equal(t, []string{"KeepPolicy"}, api.mockConfig.Identities[0].PolicyNames)
 }
 
+// TestEmbeddedIamAttachAlreadyAttachedPolicy ensures attaching a policy already
+// present on the user is idempotent.
+func TestEmbeddedIamAttachAlreadyAttachedPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestManagedPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamAttachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"TestManagedPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+// TestEmbeddedIamDetachNotAttachedPolicy verifies detaching a policy that's not
+// attached returns NoSuchEntity.
+func TestEmbeddedIamDetachNotAttachedPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "MissingPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DetachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/MissingPolicy"),
+	}
+	req, _ := iam.New(session.New()).DetachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamAttachPolicyLimitExceeded ensures we honor the managed policy limit.
+func TestEmbeddedIamAttachPolicyLimitExceeded(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	existingPolicies := make([]string, 0, MaxManagedPoliciesPerUser)
+	configPolicies := make([]*iam_pb.Policy, 0, MaxManagedPoliciesPerUser+1)
+	for i := 0; i < MaxManagedPoliciesPerUser; i++ {
+		name := fmt.Sprintf("ManagedPolicy%d", i)
+		existingPolicies = append(existingPolicies, name)
+		configPolicies = append(configPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: `{"Version":"2012-10-17","Statement":[]}`,
+		})
+	}
+	configPolicies = append(configPolicies, &iam_pb.Policy{
+		Name:    "NewPolicy",
+		Content: `{"Version":"2012-10-17","Statement":[]}`,
+	})
+
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: existingPolicies},
+		},
+		Policies: configPolicies,
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/NewPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusForbidden, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, iam.ErrCodeLimitExceededException, code)
+	assert.Len(t, api.mockConfig.Identities[0].PolicyNames, MaxManagedPoliciesPerUser)
+}
+
 // TestEmbeddedIamListAttachedUserPolicies tests listing managed policies attached to a user.
 func TestEmbeddedIamListAttachedUserPolicies(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
