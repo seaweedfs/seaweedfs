@@ -144,6 +144,11 @@ func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*polic
 	return cm.Store.GetPolicy(ctx, name)
 }
 
+// ListPolicyNames returns the names of all policies
+func (cm *CredentialManager) ListPolicyNames(ctx context.Context) ([]string, error) {
+	return cm.Store.ListPolicyNames(ctx)
+}
+
 // CreatePolicy creates a new policy (if supported by the store)
 func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	// Check if the store implements PolicyManager interface with CreatePolicy

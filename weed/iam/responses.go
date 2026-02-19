@@ -55,6 +55,32 @@ type CreatePolicyResponse struct {
 	} `xml:"CreatePolicyResult"`
 }
 
+// DeletePolicyResponse is the response for DeletePolicy action.
+type DeletePolicyResponse struct {
+	CommonResponse
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeletePolicyResponse"`
+}
+
+// ListPoliciesResponse is the response for ListPolicies action.
+type ListPoliciesResponse struct {
+	CommonResponse
+	XMLName            xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListPoliciesResponse"`
+	ListPoliciesResult struct {
+		Policies    []*iam.Policy `xml:"Policies>member"`
+		IsTruncated bool          `xml:"IsTruncated"`
+		Marker      string        `xml:"Marker,omitempty"`
+	} `xml:"ListPoliciesResult"`
+}
+
+// GetPolicyResponse is the response for GetPolicy action.
+type GetPolicyResponse struct {
+	CommonResponse
+	XMLName         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetPolicyResponse"`
+	GetPolicyResult struct {
+		Policy iam.Policy `xml:"Policy"`
+	} `xml:"GetPolicyResult"`
+}
+
 // CreateUserResponse is the response for CreateUser action.
 type CreateUserResponse struct {
 	CommonResponse

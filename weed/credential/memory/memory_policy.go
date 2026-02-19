@@ -25,6 +25,23 @@ func (store *MemoryStore) GetPolicies(ctx context.Context) (map[string]policy_en
 	return policies, nil
 }
 
+// ListPolicyNames returns all stored policy names.
+func (store *MemoryStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	names := make([]string, 0, len(store.policies))
+	for name := range store.policies {
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
 // GetPolicy retrieves a specific IAM policy by name from memory
 func (store *MemoryStore) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
 	store.mu.RLock()

@@ -235,3 +235,45 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 
 	return nil, nil // Policy not found
 }
+
+// ListPolicyNames returns all managed policy names stored in the filer.
+func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	names := make([]string, 0)
+
+	store.mu.RLock()
+	configured := store.filerAddressFunc != nil
+	store.mu.RUnlock()
+
+	if !configured {
+		return names, nil
+	}
+
+	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDirectory {
+				continue
+			}
+			name := entry.Name
+			if strings.HasSuffix(name, ".json") {
+				name = name[:len(name)-5]
+			}
+			names = append(names, name)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return names, nil
+}
