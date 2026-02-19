@@ -819,7 +819,7 @@ func extractHostHeader(r *http.Request) string {
 			host = h
 			port = p
 		}
-		if forwardedPort != "" && (port == "" || isDefaultPort(scheme, port)) {
+		if forwardedPort != "" && isDefaultPort(scheme, port) {
 			port = forwardedPort
 		}
 	} else {
