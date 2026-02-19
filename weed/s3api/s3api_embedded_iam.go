@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +72,9 @@ type (
 	iamListAccessKeysResponse           = iamlib.ListAccessKeysResponse
 	iamDeleteAccessKeyResponse          = iamlib.DeleteAccessKeyResponse
 	iamCreatePolicyResponse             = iamlib.CreatePolicyResponse
+	iamDeletePolicyResponse             = iamlib.DeletePolicyResponse
+	iamListPoliciesResponse             = iamlib.ListPoliciesResponse
+	iamGetPolicyResponse                = iamlib.GetPolicyResponse
 	iamCreateUserResponse               = iamlib.CreateUserResponse
 	iamDeleteUserResponse               = iamlib.DeleteUserResponse
 	iamGetUserResponse                  = iamlib.GetUserResponse
@@ -378,23 +382,186 @@ func (e *EmbeddedIamApi) GetPolicyDocument(policy *string) (policy_engine.Policy
 }
 
 // CreatePolicy validates and creates a new IAM managed policy.
-// NOTE: Currently this only validates the policy document and returns policy metadata.
-// The policy is not persisted to a managed policy store. To apply permissions to a user,
-// use PutUserPolicy which stores the policy inline on the user's identity.
-// TODO: Implement managed policy storage for full AWS IAM compatibility (ListPolicies, GetPolicy).
-func (e *EmbeddedIamApi) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreatePolicyResponse, *iamError) {
+func (e *EmbeddedIamApi) CreatePolicy(ctx context.Context, values url.Values) (iamCreatePolicyResponse, *iamError) {
 	var resp iamCreatePolicyResponse
 	policyName := values.Get("PolicyName")
 	policyDocumentString := values.Get("PolicyDocument")
-	_, err := e.GetPolicyDocument(&policyDocumentString)
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
+	if policyDocumentString == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyDocument is required")}
+	}
+	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyId := iamHash(&policyDocumentString)
-	arn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	existing, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if existing != nil {
+		return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("policy %s already exists", policyName)}
+	}
+	if err := e.credentialManager.CreatePolicy(ctx, policyName, policyDocument); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	policyId := iamHash(&policyName)
+	arn := iamPolicyArn(policyName)
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
+	return resp, nil
+}
+
+// DeletePolicy deletes a managed policy by ARN.
+func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (iamDeletePolicyResponse, *iamError) {
+	var resp iamDeletePolicyResponse
+	policyArn := values.Get("PolicyArn")
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if err := e.credentialManager.DeletePolicy(ctx, policyName); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	return resp, nil
+}
+
+// ListPolicies lists managed policies.
+func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (iamListPoliciesResponse, *iamError) {
+	var resp iamListPoliciesResponse
+	pathPrefix := values.Get("PathPrefix")
+	if pathPrefix == "" {
+		pathPrefix = "/"
+	}
+	maxItems := 0
+	if maxItemsStr := values.Get("MaxItems"); maxItemsStr != "" {
+		parsedMaxItems, err := strconv.Atoi(maxItemsStr)
+		if err != nil || parsedMaxItems <= 0 {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("MaxItems must be a positive integer")}
+		}
+		maxItems = parsedMaxItems
+	}
+	marker := values.Get("Marker")
+
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+
+	policies, err := e.credentialManager.GetPolicies(ctx)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	var policyNames []string
+	for name := range policies {
+		policyNames = append(policyNames, name)
+	}
+	sort.Strings(policyNames)
+
+	start := 0
+	markerFound := false
+	if marker != "" {
+		for i, name := range policyNames {
+			if name == marker {
+				start = i + 1
+				markerFound = true
+				break
+			}
+		}
+		if !markerFound && len(policyNames) > 0 {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("marker %s not found", marker)}
+		}
+	}
+	if start > 0 && start < len(policyNames) {
+		policyNames = policyNames[start:]
+	} else if start >= len(policyNames) {
+		policyNames = nil
+	}
+
+	for _, name := range policyNames {
+		// Policy paths are not tracked in the current configuration, so PathPrefix
+		// filtering is not supported yet. Always return the policy for now.
+		if pathPrefix != "/" && pathPrefix != "" {
+			// PathPrefix is currently ignored due to missing policy path metadata.
+		}
+		policyNameCopy := name
+		policyArnCopy := iamPolicyArn(name)
+		policyId := iamHash(&policyNameCopy)
+		path := "/"
+		defaultVersionId := "v1"
+		isAttachable := true
+		resp.ListPoliciesResult.Policies = append(resp.ListPoliciesResult.Policies, &iam.Policy{
+			PolicyName:       &policyNameCopy,
+			Arn:              &policyArnCopy,
+			PolicyId:         &policyId,
+			Path:             &path,
+			DefaultVersionId: &defaultVersionId,
+			IsAttachable:     &isAttachable,
+		})
+	}
+
+	if maxItems > 0 && len(resp.ListPoliciesResult.Policies) > maxItems {
+		resp.ListPoliciesResult.Policies = resp.ListPoliciesResult.Policies[:maxItems]
+		resp.ListPoliciesResult.IsTruncated = true
+		if name := resp.ListPoliciesResult.Policies[maxItems-1].PolicyName; name != nil {
+			resp.ListPoliciesResult.Marker = *name
+		}
+		return resp, nil
+	}
+
+	resp.ListPoliciesResult.IsTruncated = false
+	return resp, nil
+}
+
+// GetPolicy returns metadata for a managed policy.
+func (e *EmbeddedIamApi) GetPolicy(ctx context.Context, values url.Values) (iamGetPolicyResponse, *iamError) {
+	var resp iamGetPolicyResponse
+	policyArn := values.Get("PolicyArn")
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	policyNameCopy := policyName
+	policyArnCopy := iamPolicyArn(policyName)
+	policyId := iamHash(&policyNameCopy)
+	path := "/"
+	defaultVersionId := "v1"
+	isAttachable := true
+	resp.GetPolicyResult.Policy = iam.Policy{
+		PolicyName:       &policyNameCopy,
+		Arn:              &policyArnCopy,
+		PolicyId:         &policyId,
+		Path:             &path,
+		DefaultVersionId: &defaultVersionId,
+		IsAttachable:     &isAttachable,
+	}
 	return resp, nil
 }
 
@@ -1274,7 +1441,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	action := values.Get("Action")
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListServiceAccounts", "GetServiceAccount":
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -1331,15 +1498,17 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	case "DeleteAccessKey":
 		response = e.DeleteAccessKey(s3cfg, values)
 	case "CreatePolicy":
-		response, iamErr = e.CreatePolicy(s3cfg, values)
+		response, iamErr = e.CreatePolicy(ctx, values)
 		if iamErr != nil {
 			glog.Errorf("CreatePolicy: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		changed = false
 	case "DeletePolicy":
-		// Managed policies are not stored separately, so deletion is a no-op.
-		// Returns success for AWS compatibility.
-		response = struct{}{}
+		response, iamErr = e.DeletePolicy(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
 		changed = false
 	case "PutUserPolicy":
 		response, iamErr = e.PutUserPolicy(s3cfg, values)
@@ -1372,6 +1541,18 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		changed = false
 	case "ListAttachedUserPolicies":
 		response, iamErr = e.ListAttachedUserPolicies(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "ListPolicies":
+		response, iamErr = e.ListPolicies(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "GetPolicy":
+		response, iamErr = e.GetPolicy(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
@@ -1428,7 +1609,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if iamErr == nil && (action == "AttachUserPolicy" || action == "DetachUserPolicy") {
+	} else if iamErr == nil && (action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy") {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
