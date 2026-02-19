@@ -394,12 +394,12 @@ func (e *EmbeddedIamApi) CreatePolicy(ctx context.Context, values url.Values) (i
 	if policyDocumentString == "" {
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyDocument is required")}
 	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
 	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
-	}
-	if e.credentialManager == nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
 	}
 	existing, err := e.credentialManager.GetPolicy(ctx, policyName)
 	if err != nil {
@@ -1624,7 +1624,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if iamErr == nil && (action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy") {
+	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" || action == "CreatePolicy" || action == "DeletePolicy" {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
