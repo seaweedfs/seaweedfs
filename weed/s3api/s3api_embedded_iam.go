@@ -474,32 +474,20 @@ func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (i
 	}
 	sort.Strings(policyNames)
 
-	start := 0
-	markerFound := false
 	if marker != "" {
-		for i, name := range policyNames {
-			if name == marker {
-				start = i + 1
-				markerFound = true
-				break
+		i := sort.SearchStrings(policyNames, marker)
+		if i < len(policyNames) && policyNames[i] == marker {
+			policyNames = policyNames[i+1:]
+		} else {
+			if len(policyNames) > 0 {
+				return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("marker %s not found", marker)}
 			}
+			policyNames = nil
 		}
-		if !markerFound && len(policyNames) > 0 {
-			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("marker %s not found", marker)}
-		}
-	}
-	if start > 0 && start < len(policyNames) {
-		policyNames = policyNames[start:]
-	} else if start >= len(policyNames) {
-		policyNames = nil
 	}
 
+	// Policy paths are not tracked in the current configuration, so PathPrefix filtering is not supported yet.
 	for _, name := range policyNames {
-		// Policy paths are not tracked in the current configuration, so PathPrefix
-		// filtering is not supported yet. Always return the policy for now.
-		if pathPrefix != "/" && pathPrefix != "" {
-			// PathPrefix is currently ignored due to missing policy path metadata.
-		}
 		policyNameCopy := name
 		policyArnCopy := iamPolicyArn(name)
 		policyId := iamHash(&policyNameCopy)
@@ -1507,6 +1495,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	case "DeletePolicy":
 		response, iamErr = e.DeletePolicy(ctx, values)
 		if iamErr != nil {
+			glog.Errorf("DeletePolicy: %+v", iamErr.Error)
 			return nil, iamErr
 		}
 		changed = false
