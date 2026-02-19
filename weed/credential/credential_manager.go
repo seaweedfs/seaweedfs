@@ -20,7 +20,7 @@ type FilerAddressSetter interface {
 
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
-	store CredentialStore
+	Store CredentialStore
 }
 
 // NewCredentialManager creates a new credential manager with the specified store
@@ -46,128 +46,128 @@ func NewCredentialManager(storeName CredentialStoreTypeName, configuration util.
 	}
 
 	return &CredentialManager{
-		store: store,
+		Store: store,
 	}, nil
 }
 
 func (cm *CredentialManager) SetMasterClient(masterClient *wdclient.MasterClient, grpcDialOption grpc.DialOption) {
-	cm.store = NewPropagatingCredentialStore(cm.store, masterClient, grpcDialOption)
+	cm.Store = NewPropagatingCredentialStore(cm.Store, masterClient, grpcDialOption)
 }
 
 // SetFilerAddressFunc sets the function to get the current filer address
 func (cm *CredentialManager) SetFilerAddressFunc(getFiler func() pb.ServerAddress, grpcDialOption grpc.DialOption) {
-	if s, ok := cm.store.(FilerAddressSetter); ok {
+	if s, ok := cm.Store.(FilerAddressSetter); ok {
 		s.SetFilerAddressFunc(getFiler, grpcDialOption)
 	}
 }
 
 // GetStore returns the underlying credential store
 func (cm *CredentialManager) GetStore() CredentialStore {
-	return cm.store
+	return cm.Store
 }
 
 // GetStoreName returns the name of the underlying credential store
 func (cm *CredentialManager) GetStoreName() string {
-	if cm.store != nil {
-		return string(cm.store.GetName())
+	if cm.Store != nil {
+		return string(cm.Store.GetName())
 	}
 	return ""
 }
 
 // LoadConfiguration loads the S3 API configuration
 func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
-	return cm.store.LoadConfiguration(ctx)
+	return cm.Store.LoadConfiguration(ctx)
 }
 
 // SaveConfiguration saves the S3 API configuration
 func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	return cm.store.SaveConfiguration(ctx, config)
+	return cm.Store.SaveConfiguration(ctx, config)
 }
 
 // CreateUser creates a new user
 func (cm *CredentialManager) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
-	return cm.store.CreateUser(ctx, identity)
+	return cm.Store.CreateUser(ctx, identity)
 }
 
 // GetUser retrieves a user by username
 func (cm *CredentialManager) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
-	return cm.store.GetUser(ctx, username)
+	return cm.Store.GetUser(ctx, username)
 }
 
 // UpdateUser updates an existing user
 func (cm *CredentialManager) UpdateUser(ctx context.Context, username string, identity *iam_pb.Identity) error {
-	return cm.store.UpdateUser(ctx, username, identity)
+	return cm.Store.UpdateUser(ctx, username, identity)
 }
 
 // DeleteUser removes a user
 func (cm *CredentialManager) DeleteUser(ctx context.Context, username string) error {
-	return cm.store.DeleteUser(ctx, username)
+	return cm.Store.DeleteUser(ctx, username)
 }
 
 // ListUsers returns all usernames
 func (cm *CredentialManager) ListUsers(ctx context.Context) ([]string, error) {
-	return cm.store.ListUsers(ctx)
+	return cm.Store.ListUsers(ctx)
 }
 
 // GetUserByAccessKey retrieves a user by access key
 func (cm *CredentialManager) GetUserByAccessKey(ctx context.Context, accessKey string) (*iam_pb.Identity, error) {
-	return cm.store.GetUserByAccessKey(ctx, accessKey)
+	return cm.Store.GetUserByAccessKey(ctx, accessKey)
 }
 
 // CreateAccessKey creates a new access key for a user
 func (cm *CredentialManager) CreateAccessKey(ctx context.Context, username string, credential *iam_pb.Credential) error {
-	return cm.store.CreateAccessKey(ctx, username, credential)
+	return cm.Store.CreateAccessKey(ctx, username, credential)
 }
 
 // DeleteAccessKey removes an access key for a user
 func (cm *CredentialManager) DeleteAccessKey(ctx context.Context, username string, accessKey string) error {
-	return cm.store.DeleteAccessKey(ctx, username, accessKey)
+	return cm.Store.DeleteAccessKey(ctx, username, accessKey)
 }
 
 // GetPolicies returns all policies
 func (cm *CredentialManager) GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error) {
-	return cm.store.GetPolicies(ctx)
+	return cm.Store.GetPolicies(ctx)
 }
 
 // PutPolicy creates or updates a policy
 func (cm *CredentialManager) PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	return cm.store.PutPolicy(ctx, name, document)
+	return cm.Store.PutPolicy(ctx, name, document)
 }
 
 // DeletePolicy removes a policy
 func (cm *CredentialManager) DeletePolicy(ctx context.Context, name string) error {
-	return cm.store.DeletePolicy(ctx, name)
+	return cm.Store.DeletePolicy(ctx, name)
 }
 
 // GetPolicy retrieves a policy by name
 func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error) {
-	return cm.store.GetPolicy(ctx, name)
+	return cm.Store.GetPolicy(ctx, name)
 }
 
 // CreatePolicy creates a new policy (if supported by the store)
 func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	// Check if the store implements PolicyManager interface with CreatePolicy
-	if policyStore, ok := cm.store.(PolicyManager); ok {
+	if policyStore, ok := cm.Store.(PolicyManager); ok {
 		return policyStore.CreatePolicy(ctx, name, document)
 	}
 	// Fallback to PutPolicy for stores that only implement CredentialStore
-	return cm.store.PutPolicy(ctx, name, document)
+	return cm.Store.PutPolicy(ctx, name, document)
 }
 
 // UpdatePolicy updates an existing policy (if supported by the store)
 func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	// Check if the store implements PolicyManager interface with UpdatePolicy
-	if policyStore, ok := cm.store.(PolicyManager); ok {
+	if policyStore, ok := cm.Store.(PolicyManager); ok {
 		return policyStore.UpdatePolicy(ctx, name, document)
 	}
 	// Fallback to PutPolicy for stores that only implement CredentialStore
-	return cm.store.PutPolicy(ctx, name, document)
+	return cm.Store.PutPolicy(ctx, name, document)
 }
 
 // Shutdown performs cleanup
 func (cm *CredentialManager) Shutdown() {
-	if cm.store != nil {
-		cm.store.Shutdown()
+	if cm.Store != nil {
+		cm.Store.Shutdown()
 	}
 }
 
@@ -194,25 +194,40 @@ func GetAvailableStores() []CredentialStoreTypeName {
 
 // CreateServiceAccount creates a new service account
 func (cm *CredentialManager) CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error {
-	return cm.store.CreateServiceAccount(ctx, sa)
+	return cm.Store.CreateServiceAccount(ctx, sa)
 }
 
 // UpdateServiceAccount updates an existing service account
 func (cm *CredentialManager) UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error {
-	return cm.store.UpdateServiceAccount(ctx, id, sa)
+	return cm.Store.UpdateServiceAccount(ctx, id, sa)
 }
 
 // DeleteServiceAccount removes a service account
 func (cm *CredentialManager) DeleteServiceAccount(ctx context.Context, id string) error {
-	return cm.store.DeleteServiceAccount(ctx, id)
+	return cm.Store.DeleteServiceAccount(ctx, id)
 }
 
 // GetServiceAccount retrieves a service account by ID
 func (cm *CredentialManager) GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error) {
-	return cm.store.GetServiceAccount(ctx, id)
+	return cm.Store.GetServiceAccount(ctx, id)
 }
 
 // ListServiceAccounts returns all service accounts
 func (cm *CredentialManager) ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error) {
-	return cm.store.ListServiceAccounts(ctx)
+	return cm.Store.ListServiceAccounts(ctx)
+}
+
+// AttachUserPolicy attaches a managed policy to a user
+func (cm *CredentialManager) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	return cm.Store.AttachUserPolicy(ctx, username, policyName)
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (cm *CredentialManager) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	return cm.Store.DetachUserPolicy(ctx, username, policyName)
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (cm *CredentialManager) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	return cm.Store.ListAttachedUserPolicies(ctx, username)
 }

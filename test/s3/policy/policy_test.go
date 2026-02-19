@@ -14,6 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -130,6 +135,72 @@ func TestS3PolicyShellRevised(t *testing.T) {
 	}
 }
 
+func TestS3IAMAttachDetachUserPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	policyName := uniqueName("managed-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}`
+	tmpPolicyFile, err := os.CreateTemp("", "test_policy_attach_*.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpPolicyFile.Name())
+	_, err = tmpPolicyFile.WriteString(policyContent)
+	require.NoError(t, err)
+	require.NoError(t, tmpPolicyFile.Close())
+
+	weedCmd := "weed"
+	masterAddr := string(pb.NewServerAddress("127.0.0.1", cluster.masterPort, cluster.masterGrpcPort))
+	filerAddr := string(pb.NewServerAddress("127.0.0.1", cluster.filerPort, cluster.filerGrpcPort))
+	execShell(t, weedCmd, masterAddr, filerAddr, fmt.Sprintf("s3.policy -put -name=%s -file=%s", policyName, tmpPolicyFile.Name()))
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+
+	userName := uniqueName("iam-user")
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err)
+
+	listOut, err := iamClient.ListAttachedUserPolicies(&iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err)
+	require.True(t, attachedPolicyContains(listOut.AttachedPolicies, policyName))
+
+	_, err = iamClient.DetachUserPolicy(&iam.DetachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err)
+
+	listOut, err = iamClient.ListAttachedUserPolicies(&iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err)
+	require.False(t, attachedPolicyContains(listOut.AttachedPolicies, policyName))
+
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String("arn:aws:iam:::policy/does-not-exist"),
+	})
+	require.Error(t, err)
+	if awsErr, ok := err.(awserr.Error); ok {
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	}
+}
+
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=...
 	args := []string{"shell", "-master=" + master, "-filer=" + filer}
@@ -143,6 +214,43 @@ func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 		t.Fatalf("Failed to run %s: %v\nOutput: %s", shellCmd, err, string(out))
 	}
 	return string(out)
+}
+
+func newIAMClient(t *testing.T, endpoint string) *iam.IAM {
+	t.Helper()
+
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if accessKey == "" {
+		accessKey = "admin"
+	}
+	if secretKey == "" {
+		secretKey = "admin"
+	}
+
+	sess, err := session.NewSession(&aws.Config{
+		Region:           aws.String("us-east-1"),
+		Endpoint:         aws.String(endpoint),
+		DisableSSL:       aws.Bool(true),
+		S3ForcePathStyle: aws.Bool(true),
+		Credentials:      credentials.NewStaticCredentials(accessKey, secretKey, ""),
+	})
+	require.NoError(t, err)
+
+	return iam.New(sess)
+}
+
+func attachedPolicyContains(policies []*iam.AttachedPolicy, policyName string) bool {
+	for _, policy := range policies {
+		if policy.PolicyName != nil && *policy.PolicyName == policyName {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueName(prefix string) string {
+	return fmt.Sprintf("%s-%s", prefix, strconv.FormatInt(time.Now().UnixNano(), 36))
 }
 
 // --- Test setup helpers ---
@@ -250,6 +358,7 @@ enabled = true
 			"-master.volumeSizeLimitMB=32",
 			"-ip=127.0.0.1",
 			"-master.peers=none",
+			"-s3.iam.readOnly=false",
 		}
 		glog.MaxSize = 1024 * 1024
 		for _, cmd := range command.Commands {

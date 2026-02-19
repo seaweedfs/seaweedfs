@@ -93,10 +93,16 @@ func (store *PostgresStore) createTables() error {
 			email VARCHAR(255),
 			account_data JSONB,
 			actions JSONB,
+			policy_names JSONB DEFAULT '[]',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+	`
+
+	// Migration: Add policy_names column if it doesn't exist (for existing installations)
+	addPolicyNamesColumn := `
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_names JSONB DEFAULT '[]';
 	`
 
 	// Create credentials table
@@ -137,6 +143,11 @@ func (store *PostgresStore) createTables() error {
 	// Execute table creation
 	if _, err := store.db.Exec(usersTable); err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	// Run migration to add policy_names column for existing installations
+	if _, err := store.db.Exec(addPolicyNamesColumn); err != nil {
+		return fmt.Errorf("failed to add policy_names column: %w", err)
 	}
 
 	if _, err := store.db.Exec(credentialsTable); err != nil {
