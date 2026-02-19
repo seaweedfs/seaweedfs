@@ -317,7 +317,7 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 		return err
 	}
 
-	conn, err := pb.GrpcDial(context.Background(), c.brokerAddress, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := pb.GrpcDial(context.Background(), c.brokerAddress, false, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
 	}

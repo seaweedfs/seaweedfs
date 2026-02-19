@@ -82,6 +82,17 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 	return grpc.NewServer(options...)
 }
 
+// GrpcDial establishes a gRPC connection.
+// IMPORTANT: This function intentionally uses the deprecated grpc.DialContext/grpc.Dial behavior
+// to preserve the "passthrough" resolver semantics required for Kubernetes ndots/search-domain DNS behavior.
+// This allows kube DNS suffixes to be correctly appended by the OS resolver.
+//
+// Switching to grpc.NewClient (which defaults to the "dns" resolver) would break this behavior
+// in environments with ndots:5 and many-dot hostnames.
+//
+// Safe alternatives if switching to grpc.NewClient:
+// 1. Prefix the target with "passthrough:///" (e.g., "passthrough:///my-service:8080")
+// 2. Call resolver.SetDefaultScheme("passthrough") during init.
 func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	// opts = append(opts, grpc.WithBlock())
 	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
