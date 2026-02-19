@@ -62,26 +62,30 @@ const (
 	// Operational limits (AWS IAM compatible)
 	MaxServiceAccountsPerUser = 100  // Maximum service accounts per user
 	MaxDescriptionLength      = 1000 // Maximum description length in characters
+	MaxManagedPoliciesPerUser = 10   // Maximum managed policies attached to a user
 )
 
 // Type aliases for IAM response types from shared package
 type (
-	iamListUsersResponse        = iamlib.ListUsersResponse
-	iamListAccessKeysResponse   = iamlib.ListAccessKeysResponse
-	iamDeleteAccessKeyResponse  = iamlib.DeleteAccessKeyResponse
-	iamCreatePolicyResponse     = iamlib.CreatePolicyResponse
-	iamCreateUserResponse       = iamlib.CreateUserResponse
-	iamDeleteUserResponse       = iamlib.DeleteUserResponse
-	iamGetUserResponse          = iamlib.GetUserResponse
-	iamUpdateUserResponse       = iamlib.UpdateUserResponse
-	iamCreateAccessKeyResponse  = iamlib.CreateAccessKeyResponse
-	iamPutUserPolicyResponse    = iamlib.PutUserPolicyResponse
-	iamDeleteUserPolicyResponse = iamlib.DeleteUserPolicyResponse
-	iamGetUserPolicyResponse    = iamlib.GetUserPolicyResponse
-	iamSetUserStatusResponse    = iamlib.SetUserStatusResponse
-	iamUpdateAccessKeyResponse  = iamlib.UpdateAccessKeyResponse
-	iamErrorResponse            = iamlib.ErrorResponse
-	iamError                    = iamlib.Error
+	iamListUsersResponse                = iamlib.ListUsersResponse
+	iamListAccessKeysResponse           = iamlib.ListAccessKeysResponse
+	iamDeleteAccessKeyResponse          = iamlib.DeleteAccessKeyResponse
+	iamCreatePolicyResponse             = iamlib.CreatePolicyResponse
+	iamCreateUserResponse               = iamlib.CreateUserResponse
+	iamDeleteUserResponse               = iamlib.DeleteUserResponse
+	iamGetUserResponse                  = iamlib.GetUserResponse
+	iamUpdateUserResponse               = iamlib.UpdateUserResponse
+	iamCreateAccessKeyResponse          = iamlib.CreateAccessKeyResponse
+	iamPutUserPolicyResponse            = iamlib.PutUserPolicyResponse
+	iamDeleteUserPolicyResponse         = iamlib.DeleteUserPolicyResponse
+	iamGetUserPolicyResponse            = iamlib.GetUserPolicyResponse
+	iamAttachUserPolicyResponse         = iamlib.AttachUserPolicyResponse
+	iamDetachUserPolicyResponse         = iamlib.DetachUserPolicyResponse
+	iamListAttachedUserPoliciesResponse = iamlib.ListAttachedUserPoliciesResponse
+	iamSetUserStatusResponse            = iamlib.SetUserStatusResponse
+	iamUpdateAccessKeyResponse          = iamlib.UpdateAccessKeyResponse
+	iamErrorResponse                    = iamlib.ErrorResponse
+	iamError                            = iamlib.Error
 	// Service account response types
 	iamServiceAccountInfo           = iamlib.ServiceAccountInfo
 	iamCreateServiceAccountResponse = iamlib.CreateServiceAccountResponse
@@ -375,7 +379,7 @@ func (e *EmbeddedIamApi) GetPolicyDocument(policy *string) (policy_engine.Policy
 // NOTE: Currently this only validates the policy document and returns policy metadata.
 // The policy is not persisted to a managed policy store. To apply permissions to a user,
 // use PutUserPolicy which stores the policy inline on the user's identity.
-// TODO: Implement managed policy storage for full AWS IAM compatibility (ListPolicies, GetPolicy, AttachUserPolicy).
+// TODO: Implement managed policy storage for full AWS IAM compatibility (ListPolicies, GetPolicy).
 func (e *EmbeddedIamApi) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamCreatePolicyResponse, *iamError) {
 	var resp iamCreatePolicyResponse
 	policyName := values.Get("PolicyName")
@@ -390,6 +394,40 @@ func (e *EmbeddedIamApi) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values u
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
 	return resp, nil
+}
+
+func iamPolicyNameFromArn(policyArn string) (string, error) {
+	const policyPathDelimiter = ":policy/"
+	idx := strings.Index(policyArn, policyPathDelimiter)
+	if idx < 0 {
+		return "", fmt.Errorf("invalid policy arn: %s", policyArn)
+	}
+
+	policyPath := strings.Trim(policyArn[idx+len(policyPathDelimiter):], "/")
+	if policyPath == "" {
+		return "", fmt.Errorf("invalid policy arn: %s", policyArn)
+	}
+
+	parts := strings.Split(policyPath, "/")
+	policyName := parts[len(parts)-1]
+	if policyName == "" {
+		return "", fmt.Errorf("invalid policy arn: %s", policyArn)
+	}
+
+	return policyName, nil
+}
+
+func iamPolicyArn(policyName string) string {
+	return fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+}
+
+func findManagedPolicyByName(s3cfg *iam_pb.S3ApiConfiguration, policyName string) *iam_pb.Policy {
+	for _, policy := range s3cfg.Policies {
+		if policy.Name == policyName {
+			return policy
+		}
+	}
+	return nil
 }
 
 // getActions extracts actions from a policy document.
@@ -556,6 +594,168 @@ func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 			return resp, nil
 		}
 	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// AttachUserPolicy attaches a managed policy to a user.
+func (e *EmbeddedIamApi) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamAttachUserPolicyResponse, *iamError) {
+	var resp iamAttachUserPolicyResponse
+
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	policyArn := values.Get("PolicyArn")
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	if findManagedPolicyByName(s3cfg, policyName) == nil {
+		return resp, &iamError{
+			Code:  iam.ErrCodeNoSuchEntityException,
+			Error: fmt.Errorf("policy with arn %s does not exist", policyArn),
+		}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+
+		for _, attachedPolicyName := range ident.PolicyNames {
+			if attachedPolicyName == policyName {
+				return resp, nil
+			}
+		}
+
+		if len(ident.PolicyNames) >= MaxManagedPoliciesPerUser {
+			return resp, &iamError{
+				Code:  iam.ErrCodeLimitExceededException,
+				Error: fmt.Errorf("cannot attach more than %d managed policies to user %s", MaxManagedPoliciesPerUser, userName),
+			}
+		}
+
+		ident.PolicyNames = append(ident.PolicyNames, policyName)
+		return resp, nil
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// DetachUserPolicy detaches a managed policy from a user.
+func (e *EmbeddedIamApi) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamDetachUserPolicyResponse, *iamError) {
+	var resp iamDetachUserPolicyResponse
+
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	policyArn := values.Get("PolicyArn")
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+
+	if findManagedPolicyByName(s3cfg, policyName) == nil {
+		return resp, &iamError{
+			Code:  iam.ErrCodeNoSuchEntityException,
+			Error: fmt.Errorf("policy with arn %s does not exist", policyArn),
+		}
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+
+		filteredPolicyNames := ident.PolicyNames[:0]
+		for _, attachedPolicyName := range ident.PolicyNames {
+			if attachedPolicyName != policyName {
+				filteredPolicyNames = append(filteredPolicyNames, attachedPolicyName)
+			}
+		}
+		ident.PolicyNames = filteredPolicyNames
+		return resp, nil
+	}
+
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+}
+
+// ListAttachedUserPolicies lists managed policies attached to a user.
+func (e *EmbeddedIamApi) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamListAttachedUserPoliciesResponse, *iamError) {
+	var resp iamListAttachedUserPoliciesResponse
+
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+
+	pathPrefix := values.Get("PathPrefix")
+	if pathPrefix == "" {
+		pathPrefix = "/"
+	}
+
+	maxItems := 0
+	if maxItemsStr := values.Get("MaxItems"); maxItemsStr != "" {
+		parsedMaxItems, err := strconv.Atoi(maxItemsStr)
+		if err != nil || parsedMaxItems <= 0 {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("MaxItems must be a positive integer")}
+		}
+		maxItems = parsedMaxItems
+	}
+	marker := values.Get("Marker")
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+
+		var attachedPolicies []*iam.AttachedPolicy
+		for _, attachedPolicyName := range ident.PolicyNames {
+			if pathPrefix != "/" {
+				continue
+			}
+			policyNameCopy := attachedPolicyName
+			policyArn := iamPolicyArn(attachedPolicyName)
+			policyArnCopy := policyArn
+			attachedPolicies = append(attachedPolicies, &iam.AttachedPolicy{
+				PolicyName: &policyNameCopy,
+				PolicyArn:  &policyArnCopy,
+			})
+		}
+
+		start := 0
+		if marker != "" {
+			for i, p := range attachedPolicies {
+				if p.PolicyName != nil && *p.PolicyName == marker {
+					start = i + 1
+					break
+				}
+			}
+		}
+		if start > 0 && start < len(attachedPolicies) {
+			attachedPolicies = attachedPolicies[start:]
+		} else if start >= len(attachedPolicies) {
+			attachedPolicies = nil
+		}
+
+		if maxItems > 0 && len(attachedPolicies) > maxItems {
+			resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies[:maxItems]
+			resp.ListAttachedUserPoliciesResult.IsTruncated = true
+			if name := resp.ListAttachedUserPoliciesResult.AttachedPolicies[maxItems-1].PolicyName; name != nil {
+				resp.ListAttachedUserPoliciesResult.Marker = *name
+			}
+			return resp, nil
+		}
+
+		resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies
+		resp.ListAttachedUserPoliciesResult.IsTruncated = false
+		return resp, nil
+	}
+
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
@@ -1057,7 +1257,7 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 	action := values.Get("Action")
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListServiceAccounts", "GetServiceAccount":
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -1141,6 +1341,22 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 		if iamErr != nil {
 			return nil, iamErr
 		}
+	case "AttachUserPolicy":
+		response, iamErr = e.AttachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "DetachUserPolicy":
+		response, iamErr = e.DetachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "ListAttachedUserPolicies":
+		response, iamErr = e.ListAttachedUserPolicies(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
 	case "SetUserStatus":
 		response, iamErr = e.SetUserStatus(s3cfg, values)
 		if iamErr != nil {
