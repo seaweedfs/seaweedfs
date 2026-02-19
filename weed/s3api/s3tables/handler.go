@@ -168,46 +168,26 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 
 // Principal/authorization helpers
 
-// getAccountID returns a stable caller identifier for ownership and permission checks.
-// Prefer JWT/STS user claims to avoid collapsing all assumed-role callers to the same
-// account ID (e.g. 000000000000), which would effectively grant cross-user access.
+// getAccountID returns the authenticated account ID from the request or the handler's default.
+// This is also used as the principal for permission checks, ensuring alignment between
+// the caller identity and ownership verification when IAM is enabled.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw != nil {
-		// Use reflection to access identity fields and avoid import cycles.
+		// Use reflection to access the Account.Id field to avoid import cycle
 		val := reflect.ValueOf(identityRaw)
 		if val.Kind() == reflect.Ptr {
 			val = val.Elem()
 		}
 		if val.Kind() == reflect.Struct {
-			// Prefer stable user claims from JWT/STS identities.
-			claimsField := val.FieldByName("Claims")
-			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
-				for _, claimKey := range []string{"preferred_username", "sub", "email"} {
-					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
-					if !claimVal.IsValid() {
-						continue
-					}
-					if claimVal.Kind() == reflect.Interface && !claimVal.IsNil() {
-						claimVal = claimVal.Elem()
-					}
-					if claimVal.Kind() == reflect.String {
-						if principal := normalizePrincipalID(claimVal.String()); principal != "" {
-							return principal
-						}
-					}
-				}
-			}
-
 			accountField := val.FieldByName("Account")
 			if accountField.IsValid() && !accountField.IsNil() {
 				accountVal := accountField.Elem()
 				if accountVal.Kind() == reflect.Struct {
 					idField := accountVal.FieldByName("Id")
 					if idField.IsValid() && idField.Kind() == reflect.String {
-						if principal := normalizePrincipalID(idField.String()); principal != "" {
-							return principal
-						}
+						id := idField.String()
+						return id
 					}
 				}
 			}
@@ -215,33 +195,13 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	}
 
 	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
-		if principal := normalizePrincipalID(identityName); principal != "" {
-			return principal
-		}
+		return identityName
 	}
 
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
-		if principal := normalizePrincipalID(accountID); principal != "" {
-			return principal
-		}
+		return accountID
 	}
 	return h.accountID
-}
-
-func normalizePrincipalID(id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return ""
-	}
-	// If this is an ARN (common for assumed roles), use the trailing segment as a
-	// stable-ish principal key instead of embedding the full ARN in ownership fields.
-	if strings.HasPrefix(id, "arn:") {
-		if idx := strings.LastIndex(id, "/"); idx >= 0 && idx+1 < len(id) {
-			return strings.TrimSpace(id[idx+1:])
-		}
-		return ""
-	}
-	return id
 }
 
 // getIdentityActions extracts the action list from the identity object in the request context.
