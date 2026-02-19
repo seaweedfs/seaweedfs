@@ -242,6 +242,45 @@ func TestS3IAMListPoliciesAndGetPolicy(t *testing.T) {
 	require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
 }
 
+func TestS3IAMDeletePolicyInUse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	policyName := uniqueName("managed-delete-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}`
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+	_, err = iamClient.CreatePolicy(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(policyContent),
+	})
+	require.NoError(t, err)
+
+	userName := uniqueName("iam-user-delete-policy")
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err)
+
+	_, err = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
+	require.Error(t, err)
+	var awsErr awserr.Error
+	require.True(t, errors.As(err, &awsErr))
+	require.Equal(t, iam.ErrCodeDeleteConflictException, awsErr.Code())
+}
+
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=...
 	args := []string{"shell", "-master=" + master, "-filer=" + filer}
