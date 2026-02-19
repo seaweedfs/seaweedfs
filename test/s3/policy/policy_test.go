@@ -201,6 +201,37 @@ func TestS3IAMAttachDetachUserPolicy(t *testing.T) {
 	}
 }
 
+func TestS3IAMListPoliciesAndGetPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	policyName := uniqueName("managed-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListAllMyBuckets","Resource":"*"}]}`
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+	_, err = iamClient.CreatePolicy(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(policyContent),
+	})
+	require.NoError(t, err)
+
+	listOut, err := iamClient.ListPolicies(&iam.ListPoliciesInput{})
+	require.NoError(t, err)
+	require.True(t, managedPolicyContains(listOut.Policies, policyName))
+
+	getOut, err := iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: aws.String(policyArn)})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.Policy)
+	require.NotNil(t, getOut.Policy.PolicyName)
+	require.Equal(t, policyName, *getOut.Policy.PolicyName)
+}
+
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=...
 	args := []string{"shell", "-master=" + master, "-filer=" + filer}
@@ -241,6 +272,15 @@ func newIAMClient(t *testing.T, endpoint string) *iam.IAM {
 }
 
 func attachedPolicyContains(policies []*iam.AttachedPolicy, policyName string) bool {
+	for _, policy := range policies {
+		if policy.PolicyName != nil && *policy.PolicyName == policyName {
+			return true
+		}
+	}
+	return false
+}
+
+func managedPolicyContains(policies []*iam.Policy, policyName string) bool {
 	for _, policy := range policies {
 		if policy.PolicyName != nil && *policy.PolicyName == policyName {
 			return true
