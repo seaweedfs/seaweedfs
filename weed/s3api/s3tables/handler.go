@@ -170,9 +170,9 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 
 // getAccountID returns a stable caller identifier for ownership and permission checks.
 // Reflection depends on the identity shape produced by JWT/STS auth (Account *struct{Id string},
-// Claims map[string]interface{} containing string values for preferred_username/sub/email,
-// and optional identity name/header values). Changing those fields without updating the reflection
-// here will break the handler, so refactorers should replace this with a typed interface if needed.
+// Claims map[string]interface{} containing string values for preferred_username/sub, and optional
+// identity name/header values). Changing those fields without updating the reflection here will
+// break the handler, so refactorers should replace this with a typed interface if needed.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw != nil {
@@ -182,10 +182,12 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 			val = val.Elem()
 		}
 		if val.Kind() == reflect.Struct {
-			// Prefer stable user claims from JWT/STS identities.
+			// Prefer stable claims from JWT/STS identities. Only "sub" is guaranteed durable per OIDC;
+			// preferred_username is ergonomic but can rotate and may orphan ownership data, while email
+			// is explicitly excluded to avoid storing PII in metadata.
 			claimsField := val.FieldByName("Claims")
 			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
-				for _, claimKey := range []string{"preferred_username", "sub", "email"} {
+				for _, claimKey := range []string{"sub", "preferred_username"} {
 					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
 					if !claimVal.IsValid() {
 						continue
@@ -230,6 +232,11 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	return h.accountID
 }
 
+// normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.
+// WARNING: this assumes identity names are unique per account; distinct principals such as
+// arn:aws:iam::111:user/alice and arn:aws:iam::222:user/alice will both normalize to "alice".
+// If future work adds multi-account support, revisit this function to include the account ID or full ARN
+// so ownership checks remain correct.
 func normalizePrincipalID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" {
