@@ -170,6 +170,8 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusForbidden, errorResp)
 	case iam.ErrCodeServiceFailureException:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
+	case "NotImplemented":
+		s3err.WriteXMLResponse(w, r, http.StatusNotImplemented, errorResp)
 	default:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	}
@@ -598,7 +600,8 @@ func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 }
 
 // AttachUserPolicy attaches a managed policy to a user.
-func (e *EmbeddedIamApi) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamAttachUserPolicyResponse, *iamError) {
+// AttachUserPolicy attaches a managed policy to a user.
+func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values) (iamAttachUserPolicyResponse, *iamError) {
 	var resp iamAttachUserPolicyResponse
 
 	userName := values.Get("UserName")
@@ -612,40 +615,27 @@ func (e *EmbeddedIamApi) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 	}
 
-	if findManagedPolicyByName(s3cfg, policyName) == nil {
-		return resp, &iamError{
-			Code:  iam.ErrCodeNoSuchEntityException,
-			Error: fmt.Errorf("policy with arn %s does not exist", policyArn),
+	if err := e.credentialManager.AttachUserPolicy(ctx, userName, policyName); err != nil {
+		errStr := err.Error()
+		if errors.Is(err, credential.ErrUserNotFound) || strings.Contains(errStr, "user") && strings.Contains(errStr, "not found") {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
+		if errors.Is(err, credential.ErrPolicyNotFound) || strings.Contains(errStr, "policy") && strings.Contains(errStr, "not found") {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+		}
+		if errors.Is(err, credential.ErrPolicyAlreadyAttached) || strings.Contains(errStr, "already attached") {
+			// AWS IAM is idempotent for AttachUserPolicy
+			return resp, nil
+		}
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	for _, ident := range s3cfg.Identities {
-		if ident.Name != userName {
-			continue
-		}
-
-		for _, attachedPolicyName := range ident.PolicyNames {
-			if attachedPolicyName == policyName {
-				return resp, nil
-			}
-		}
-
-		if len(ident.PolicyNames) >= MaxManagedPoliciesPerUser {
-			return resp, &iamError{
-				Code:  iam.ErrCodeLimitExceededException,
-				Error: fmt.Errorf("cannot attach more than %d managed policies to user %s", MaxManagedPoliciesPerUser, userName),
-			}
-		}
-
-		ident.PolicyNames = append(ident.PolicyNames, policyName)
-		return resp, nil
-	}
-
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	return resp, nil
 }
 
 // DetachUserPolicy detaches a managed policy from a user.
-func (e *EmbeddedIamApi) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamDetachUserPolicyResponse, *iamError) {
+// DetachUserPolicy detaches a managed policy from a user.
+func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values) (iamDetachUserPolicyResponse, *iamError) {
 	var resp iamDetachUserPolicyResponse
 
 	userName := values.Get("UserName")
@@ -659,33 +649,24 @@ func (e *EmbeddedIamApi) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 	}
 
-	if findManagedPolicyByName(s3cfg, policyName) == nil {
-		return resp, &iamError{
-			Code:  iam.ErrCodeNoSuchEntityException,
-			Error: fmt.Errorf("policy with arn %s does not exist", policyArn),
+	if err := e.credentialManager.DetachUserPolicy(ctx, userName, policyName); err != nil {
+		errStr := err.Error()
+		if errors.Is(err, credential.ErrUserNotFound) || strings.Contains(errStr, "user") && strings.Contains(errStr, "not found") {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
+		if errors.Is(err, credential.ErrPolicyNotAttached) || strings.Contains(errStr, "not attached") {
+			// AWS IAM is idempotent for DetachUserPolicy
+			return resp, nil
+		}
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	for _, ident := range s3cfg.Identities {
-		if ident.Name != userName {
-			continue
-		}
-
-		filteredPolicyNames := ident.PolicyNames[:0]
-		for _, attachedPolicyName := range ident.PolicyNames {
-			if attachedPolicyName != policyName {
-				filteredPolicyNames = append(filteredPolicyNames, attachedPolicyName)
-			}
-		}
-		ident.PolicyNames = filteredPolicyNames
-		return resp, nil
-	}
-
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	return resp, nil
 }
 
 // ListAttachedUserPolicies lists managed policies attached to a user.
-func (e *EmbeddedIamApi) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (iamListAttachedUserPoliciesResponse, *iamError) {
+// ListAttachedUserPolicies lists managed policies attached to a user.
+func (e *EmbeddedIamApi) ListAttachedUserPolicies(ctx context.Context, values url.Values) (iamListAttachedUserPoliciesResponse, *iamError) {
 	var resp iamListAttachedUserPoliciesResponse
 
 	userName := values.Get("UserName")
@@ -708,55 +689,55 @@ func (e *EmbeddedIamApi) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfigurati
 	}
 	marker := values.Get("Marker")
 
-	for _, ident := range s3cfg.Identities {
-		if ident.Name != userName {
+	policyNames, err := e.credentialManager.ListAttachedUserPolicies(ctx, userName)
+	if err != nil {
+		if errors.Is(err, credential.ErrUserNotFound) {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+		}
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	var attachedPolicies []*iam.AttachedPolicy
+	for _, attachedPolicyName := range policyNames {
+		if pathPrefix != "/" {
 			continue
 		}
+		policyNameCopy := attachedPolicyName
+		policyArn := iamPolicyArn(attachedPolicyName)
+		policyArnCopy := policyArn
+		attachedPolicies = append(attachedPolicies, &iam.AttachedPolicy{
+			PolicyName: &policyNameCopy,
+			PolicyArn:  &policyArnCopy,
+		})
+	}
 
-		var attachedPolicies []*iam.AttachedPolicy
-		for _, attachedPolicyName := range ident.PolicyNames {
-			if pathPrefix != "/" {
-				continue
-			}
-			policyNameCopy := attachedPolicyName
-			policyArn := iamPolicyArn(attachedPolicyName)
-			policyArnCopy := policyArn
-			attachedPolicies = append(attachedPolicies, &iam.AttachedPolicy{
-				PolicyName: &policyNameCopy,
-				PolicyArn:  &policyArnCopy,
-			})
-		}
-
-		start := 0
-		if marker != "" {
-			for i, p := range attachedPolicies {
-				if p.PolicyName != nil && *p.PolicyName == marker {
-					start = i + 1
-					break
-				}
+	start := 0
+	if marker != "" {
+		for i, p := range attachedPolicies {
+			if p.PolicyName != nil && *p.PolicyName == marker {
+				start = i + 1
+				break
 			}
 		}
-		if start > 0 && start < len(attachedPolicies) {
-			attachedPolicies = attachedPolicies[start:]
-		} else if start >= len(attachedPolicies) {
-			attachedPolicies = nil
-		}
+	}
+	if start > 0 && start < len(attachedPolicies) {
+		attachedPolicies = attachedPolicies[start:]
+	} else if start >= len(attachedPolicies) {
+		attachedPolicies = nil
+	}
 
-		if maxItems > 0 && len(attachedPolicies) > maxItems {
-			resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies[:maxItems]
-			resp.ListAttachedUserPoliciesResult.IsTruncated = true
-			if name := resp.ListAttachedUserPoliciesResult.AttachedPolicies[maxItems-1].PolicyName; name != nil {
-				resp.ListAttachedUserPoliciesResult.Marker = *name
-			}
-			return resp, nil
+	if maxItems > 0 && len(attachedPolicies) > maxItems {
+		resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies[:maxItems]
+		resp.ListAttachedUserPoliciesResult.IsTruncated = true
+		if name := resp.ListAttachedUserPoliciesResult.AttachedPolicies[maxItems-1].PolicyName; name != nil {
+			resp.ListAttachedUserPoliciesResult.Marker = *name
 		}
-
-		resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies
-		resp.ListAttachedUserPoliciesResult.IsTruncated = false
 		return resp, nil
 	}
 
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	resp.ListAttachedUserPoliciesResult.AttachedPolicies = attachedPolicies
+	resp.ListAttachedUserPoliciesResult.IsTruncated = false
+	return resp, nil
 }
 
 // SetUserStatus enables or disables a user without deleting them.
@@ -1249,7 +1230,9 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 // ExecuteAction executes an IAM action with the given values.
 // If skipPersist is true, the changed configuration is not saved to the persistent store.
-func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (interface{}, *iamError) {
+// ExecuteAction executes an IAM action with the given values.
+// If skipPersist is true, the changed configuration is not saved to the persistent store.
+func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool) (interface{}, *iamError) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
@@ -1342,20 +1325,19 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 			return nil, iamErr
 		}
 	case "AttachUserPolicy":
-		response, iamErr = e.AttachUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			return nil, iamErr
+		response, iamErr = e.AttachUserPolicy(ctx, values)
+		if iamErr == nil {
+			_ = e.GetS3ApiConfiguration(s3cfg)
 		}
+		changed = false
 	case "DetachUserPolicy":
-		response, iamErr = e.DetachUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			return nil, iamErr
+		response, iamErr = e.DetachUserPolicy(ctx, values)
+		if iamErr == nil {
+			_ = e.GetS3ApiConfiguration(s3cfg)
 		}
+		changed = false
 	case "ListAttachedUserPolicies":
-		response, iamErr = e.ListAttachedUserPolicies(s3cfg, values)
-		if iamErr != nil {
-			return nil, iamErr
-		}
+		response, iamErr = e.ListAttachedUserPolicies(ctx, values)
 		changed = false
 	case "SetUserStatus":
 		response, iamErr = e.SetUserStatus(s3cfg, values)
@@ -1409,8 +1391,14 @@ func (e *EmbeddedIamApi) ExecuteAction(values url.Values, skipPersist bool) (int
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
+	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" {
+		// Even if changed=false (persisted via credentialManager), we should still reload
+		// if we are utilizing the local in-memory cache for speed
+		if err := e.ReloadConfiguration(); err != nil {
+			glog.Errorf("Failed to reload IAM configuration after managed policy mutation: %v", err)
+		}
 	}
-	return response, nil
+	return response, iamErr
 }
 
 // DoActions handles IAM API actions.
@@ -1430,7 +1418,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		values.Set("CreatedBy", createdBy)
 	}
 
-	response, iamErr := e.ExecuteAction(values, false)
+	response, iamErr := e.ExecuteAction(r.Context(), values, false)
 	if iamErr != nil {
 		e.writeIamErrorResponse(w, r, iamErr)
 		return
