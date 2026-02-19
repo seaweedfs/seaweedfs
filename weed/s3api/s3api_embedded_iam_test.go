@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -30,22 +33,44 @@ type EmbeddedIamApiForTest struct {
 }
 
 func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
+	store := &memory.MemoryStore{}
+	store.Initialize(nil, "")
+	cm := &credential.CredentialManager{Store: store}
 	e := &EmbeddedIamApiForTest{
 		EmbeddedIamApi: &EmbeddedIamApi{
-			iam: &IdentityAccessManagement{},
+			iam:               &IdentityAccessManagement{credentialManager: cm},
+			credentialManager: cm,
 		},
 		mockConfig: &iam_pb.S3ApiConfiguration{},
 	}
+	var syncOnce sync.Once
 	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
-		if e.mockConfig != nil {
-			cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-			proto.Merge(s3cfg, cloned)
+		// If mockConfig was set directly in test, sync it to store first (only once)
+		syncOnce.Do(func() {
+			if e.mockConfig != nil && len(e.mockConfig.Identities) > 0 {
+				_ = cm.SaveConfiguration(context.Background(), e.mockConfig)
+			}
+		})
+		config, err := cm.LoadConfiguration(context.Background())
+		if err == nil {
+			e.mockConfig = config
+			proto.Reset(s3cfg)
+			// Manually copy identities and other fields to avoid Merge issues with slices
+			s3cfg.Identities = make([]*iam_pb.Identity, len(config.Identities))
+			for i, ident := range config.Identities {
+				s3cfg.Identities[i] = proto.Clone(ident).(*iam_pb.Identity)
+			}
+			s3cfg.Policies = make([]*iam_pb.Policy, len(config.Policies))
+			for i, p := range config.Policies {
+				s3cfg.Policies[i] = proto.Clone(p).(*iam_pb.Policy)
+			}
+			e.mockConfig = config
 		}
-		return nil
+		return err
 	}
 	e.putS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
 		e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-		return nil
+		return cm.SaveConfiguration(context.Background(), s3cfg)
 	}
 	e.reloadConfigurationFunc = func() error {
 		return nil
@@ -53,175 +78,10 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 	return e
 }
 
-// Override GetS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	if e.mockConfig != nil {
-		cloned := proto.Clone(e.mockConfig).(*iam_pb.S3ApiConfiguration)
-		proto.Merge(s3cfg, cloned)
-	}
-	return nil
-}
-
-// Override PutS3ApiConfiguration for testing
-func (e *EmbeddedIamApiForTest) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
-	// Use proto.Clone for proper deep copy semantics
-	e.mockConfig = proto.Clone(s3cfg).(*iam_pb.S3ApiConfiguration)
-	return nil
-}
-
 // DoActions handles IAM API actions for testing
 func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-	values := r.PostForm
-	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := e.GetS3ApiConfiguration(s3cfg); err != nil {
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
-
-	var response interface{}
-	var iamErr *iamError
-	changed := true
-
-	action := r.Form.Get("Action")
-
-	if e.readOnly {
-		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListServiceAccounts", "GetServiceAccount":
-			// Allowed read-only actions
-		default:
-			e.writeIamErrorResponse(w, r, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")})
-			return
-		}
-	}
-
-	switch action {
-	case "ListUsers":
-		response = e.ListUsers(s3cfg, values)
-		changed = false
-	case "ListAccessKeys":
-		e.handleImplicitUsername(r, values)
-		response = e.ListAccessKeys(s3cfg, values)
-		changed = false
-	case "CreateUser":
-		response, iamErr = e.CreateUser(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "GetUser":
-		userName := values.Get("UserName")
-		response, iamErr = e.GetUser(s3cfg, userName)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-		changed = false
-	case "UpdateUser":
-		response, iamErr = e.UpdateUser(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	case "DeleteUser":
-		userName := values.Get("UserName")
-		response, iamErr = e.DeleteUser(s3cfg, userName)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "CreateAccessKey":
-		e.handleImplicitUsername(r, values)
-		response, iamErr = e.CreateAccessKey(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-	case "DeleteAccessKey":
-		e.handleImplicitUsername(r, values)
-		response = e.DeleteAccessKey(s3cfg, values)
-	case "CreatePolicy":
-		response, iamErr = e.CreatePolicy(s3cfg, values)
-		if iamErr != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
-			return
-		}
-	case "PutUserPolicy":
-		response, iamErr = e.PutUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "GetUserPolicy":
-		response, iamErr = e.GetUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-		changed = false
-	case "DeleteUserPolicy":
-		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "AttachUserPolicy":
-		response, iamErr = e.AttachUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "DetachUserPolicy":
-		response, iamErr = e.DetachUserPolicy(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "ListAttachedUserPolicies":
-		response, iamErr = e.ListAttachedUserPolicies(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-		changed = false
-	case "SetUserStatus":
-		response, iamErr = e.SetUserStatus(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	case "UpdateAccessKey":
-		e.handleImplicitUsername(r, values)
-		response, iamErr = e.UpdateAccessKey(s3cfg, values)
-		if iamErr != nil {
-			e.writeIamErrorResponse(w, r, iamErr)
-			return
-		}
-	default:
-		http.Error(w, "Not implemented", http.StatusNotImplemented)
-		return
-	}
-
-	if changed {
-		if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	xmlBytes, err := xml.Marshal(response)
-	if err != nil {
-		// This should not happen in tests, but log it for debugging
-		http.Error(w, "Internal error: failed to marshal response", http.StatusInternalServerError)
-		return
-	}
-	_, _ = w.Write(xmlBytes)
+	// Call the real DoActions
+	e.EmbeddedIamApi.DoActions(w, r)
 }
 
 // executeEmbeddedIamRequest executes an IAM request against the given API instance.
@@ -248,11 +108,38 @@ type embeddedIamErrorResponseForTest struct {
 }
 
 func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {
-	var er embeddedIamErrorResponseForTest
-	if err := xml.Unmarshal(response.Body.Bytes(), &er); err != nil {
-		return "", ""
+	body := response.Body.Bytes()
+	// Try parsing with ErrorResponse root
+	type localError struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
 	}
-	return er.Error.Code, er.Error.Message
+	type localResponse struct {
+		XMLName xml.Name   `xml:"ErrorResponse"`
+		Error   localError `xml:"Error"`
+	}
+	var lr localResponse
+	if err := xml.Unmarshal(body, &lr); err == nil && lr.Error.Code != "" {
+		return lr.Error.Code, lr.Error.Message
+	}
+
+	// Try parsing with Error root
+	type simpleError struct {
+		XMLName xml.Name `xml:"Error"`
+		Code    string   `xml:"Code"`
+		Message string   `xml:"Message"`
+	}
+	var se simpleError
+	if err := xml.Unmarshal(body, &se); err == nil && se.Code != "" {
+		return se.Code, se.Message
+	}
+
+	var er embeddedIamErrorResponseForTest
+	if err := xml.Unmarshal(body, &er); err == nil {
+		return er.Error.Code, er.Error.Message
+	}
+
+	return "", ""
 }
 
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
@@ -1042,7 +929,7 @@ func TestEmbeddedIamUpdateUserNotFound(t *testing.T) {
 	req, _ := iam.New(session.New()).UpdateUserRequest(params)
 	_ = req.Build()
 	response, _ := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
-	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Equal(t, http.StatusNotFound, response.Code)
 }
 
 // TestEmbeddedIamCreateAccessKeyForExistingUser tests CreateAccessKey creates credentials for existing user
@@ -1832,7 +1719,7 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(vals, false)
+	resp, iamErr := api.ExecuteAction(context.Background(), vals, false)
 	assert.Nil(t, iamErr)
 
 	// Verify response type
