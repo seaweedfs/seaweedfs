@@ -169,8 +169,10 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 // Principal/authorization helpers
 
 // getAccountID returns a stable caller identifier for ownership and permission checks.
-// Prefer JWT/STS user claims to avoid collapsing all assumed-role callers to the same
-// account ID (e.g. 000000000000), which would effectively grant cross-user access.
+// Reflection depends on the identity shape produced by JWT/STS auth (Account *struct{Id string},
+// Claims map[string]interface{} containing string values for preferred_username/sub/email,
+// and optional identity name/header values). Changing those fields without updating the reflection
+// here will break the handler, so refactorers should replace this with a typed interface if needed.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw != nil {
@@ -239,7 +241,10 @@ func normalizePrincipalID(id string) string {
 		if idx := strings.LastIndex(id, "/"); idx >= 0 && idx+1 < len(id) {
 			return strings.TrimSpace(id[idx+1:])
 		}
-		return ""
+		if idx := strings.LastIndex(id, ":"); idx >= 0 && idx+1 < len(id) {
+			return strings.TrimSpace(id[idx+1:])
+		}
+		return strings.TrimSpace(id)
 	}
 	return id
 }

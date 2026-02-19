@@ -208,8 +208,9 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 		candidates = append(candidates, operation+":"+ctx.TableBucketName, fullAction+":"+ctx.TableBucketName)
 	}
 	for _, action := range ctx.IdentityActions {
-		// Legacy static identities may still use broad admin markers.
-		if action == "*" || action == "Admin" || action == string(s3_constants.ACTION_ADMIN) || action == "s3:*" || action == "s3tables:*" {
+		// Legacy static identities may still use broad admin markers or s3 wildcards.
+		// s3:* is treated as s3tables:* so shared admin policies still permit table access.
+		if action == "*" || action == string(s3_constants.ACTION_ADMIN) || action == "s3:*" || action == "s3tables:*" {
 			return true
 		}
 		for _, candidate := range candidates {
