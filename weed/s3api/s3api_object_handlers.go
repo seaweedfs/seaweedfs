@@ -1093,10 +1093,14 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		BucketTrafficSent(cw.written, r)
 	}
 	if err != nil {
-		// Distinguish client disconnect (expected) from real server errors
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		switch {
+		case errors.Is(err, context.Canceled):
+			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
 			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
-		} else {
+		case errors.Is(err, context.DeadlineExceeded):
+			// Server-side deadline exceeded - unexpected, warrants operator attention
+			glog.Warningf("streamFromVolumeServers: server-side deadline exceeded after writing %d bytes: %v", cw.written, err)
+		default:
 			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
 		}
 		// Streaming error after WriteHeader was called - response already partially written
