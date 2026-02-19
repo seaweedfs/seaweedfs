@@ -61,12 +61,12 @@ func (cm *CredentialManager) SetFilerAddressFunc(getFiler func() pb.ServerAddres
 	}
 }
 
-// GetStore returns the underlying credential Store
+// GetStore returns the underlying credential store
 func (cm *CredentialManager) GetStore() CredentialStore {
 	return cm.Store
 }
 
-// GetStoreName returns the name of the underlying credential Store
+// GetStoreName returns the name of the underlying credential store
 func (cm *CredentialManager) GetStoreName() string {
 	if cm.Store != nil {
 		return string(cm.Store.GetName())
@@ -144,23 +144,23 @@ func (cm *CredentialManager) GetPolicy(ctx context.Context, name string) (*polic
 	return cm.Store.GetPolicy(ctx, name)
 }
 
-// CreatePolicy creates a new policy (if supported by the Store)
+// CreatePolicy creates a new policy (if supported by the store)
 func (cm *CredentialManager) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	// Check if the Store implements PolicyManager interface with CreatePolicy
+	// Check if the store implements PolicyManager interface with CreatePolicy
 	if policyStore, ok := cm.Store.(PolicyManager); ok {
 		return policyStore.CreatePolicy(ctx, name, document)
 	}
-	// Fallback to PutPolicy for Stores that only implement CredentialStore
+	// Fallback to PutPolicy for stores that only implement CredentialStore
 	return cm.Store.PutPolicy(ctx, name, document)
 }
 
-// UpdatePolicy updates an existing policy (if supported by the Store)
+// UpdatePolicy updates an existing policy (if supported by the store)
 func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
-	// Check if the Store implements PolicyManager interface with UpdatePolicy
+	// Check if the store implements PolicyManager interface with UpdatePolicy
 	if policyStore, ok := cm.Store.(PolicyManager); ok {
 		return policyStore.UpdatePolicy(ctx, name, document)
 	}
-	// Fallback to PutPolicy for Stores that only implement CredentialStore
+	// Fallback to PutPolicy for stores that only implement CredentialStore
 	return cm.Store.PutPolicy(ctx, name, document)
 }
 
@@ -171,25 +171,25 @@ func (cm *CredentialManager) Shutdown() {
 	}
 }
 
-// getAvailableStores returns a comma-separated list of available Store names
+// getAvailableStores returns a comma-separated list of available store names
 func getAvailableStores() string {
-	var StoreNames []string
-	for _, Store := range Stores {
-		StoreNames = append(StoreNames, string(Store.GetName()))
+	var storeNames []string
+	for _, store := range Stores {
+		storeNames = append(storeNames, string(store.GetName()))
 	}
-	return strings.Join(StoreNames, ", ")
+	return strings.Join(storeNames, ", ")
 }
 
-// GetAvailableStores returns a list of available credential Store names
+// GetAvailableStores returns a list of available credential store names
 func GetAvailableStores() []CredentialStoreTypeName {
-	var StoreNames []CredentialStoreTypeName
-	for _, Store := range Stores {
-		StoreNames = append(StoreNames, Store.GetName())
+	var storeNames []CredentialStoreTypeName
+	for _, store := range Stores {
+		storeNames = append(storeNames, store.GetName())
 	}
-	if StoreNames == nil {
+	if storeNames == nil {
 		return []CredentialStoreTypeName{}
 	}
-	return StoreNames
+	return storeNames
 }
 
 // CreateServiceAccount creates a new service account
