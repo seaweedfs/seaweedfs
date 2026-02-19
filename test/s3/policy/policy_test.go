@@ -358,6 +358,7 @@ enabled = true
 			"-master.volumeSizeLimitMB=32",
 			"-ip=127.0.0.1",
 			"-master.peers=none",
+			"-s3.iam.readOnly=false",
 		}
 		glog.MaxSize = 1024 * 1024
 		for _, cmd := range command.Commands {
