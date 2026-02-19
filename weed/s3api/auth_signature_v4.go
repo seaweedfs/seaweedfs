@@ -769,7 +769,7 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
 		// `host` is not a case-sensitive header, unlike other headers such as `x-amz-date`.
-		if header == "host" {
+		if strings.ToLower(header) == "host" {
 			// Get host value.
 			hostHeaderValue := extractHostHeader(r)
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
@@ -815,12 +815,12 @@ func extractHostHeader(r *http.Request) string {
 		} else {
 			host = strings.TrimSpace(forwardedHost)
 		}
-		port = forwardedPort
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
-			if port == "" {
-				port = p
-			}
+			port = p
+		}
+		if forwardedPort != "" && isDefaultPort(scheme, port) {
+			port = forwardedPort
 		}
 	} else {
 		host = r.Host

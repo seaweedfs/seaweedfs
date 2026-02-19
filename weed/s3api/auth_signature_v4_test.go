@@ -292,6 +292,47 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedProto: "http",
 			expected:       "[::ffff:127.0.0.1]:8080",
 		},
+		{
+			name:       "Simple port 442",
+			hostHeader: "bucket.domain.com:442",
+			expected:   "bucket.domain.com:442",
+		},
+		{
+			name:          "Port 442 with X-Forwarded-Host",
+			hostHeader:    "backend:8333",
+			forwardedHost: "bucket.domain.com:442",
+			expected:      "bucket.domain.com:442",
+		},
+		{
+			name:          "Port 442 with X-Forwarded-Port",
+			hostHeader:    "backend:8333",
+			forwardedHost: "bucket.domain.com",
+			forwardedPort: "442",
+			expected:      "bucket.domain.com:442",
+		},
+		{
+			name:           "HTTPS with port 442 (should NOT strip)",
+			hostHeader:     "bucket.domain.com:442",
+			forwardedProto: "https",
+			expected:       "bucket.domain.com:442",
+		},
+		{
+			name:          "X-Forwarded-Host with multiple hosts (including port)",
+			forwardedHost: "bucket.domain.com:442, internal.proxy",
+			expected:      "bucket.domain.com:442",
+		},
+		{
+			name:       "IPv6 with port",
+			hostHeader: "[2001:db8::1]:442",
+			expected:   "[2001:db8::1]:442",
+		},
+		{
+			name:           "X-Forwarded-Host with port 442, but X-Forwarded-Port is 80 (should PREFER 442)",
+			forwardedHost:  "bucket.domain.com:442",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expected:       "bucket.domain.com:442",
+		},
 	}
 
 	for _, tt := range tests {
@@ -318,6 +359,43 @@ func TestExtractHostHeader(t *testing.T) {
 			result := extractHostHeader(req)
 			if result != tt.expected {
 				t.Errorf("extractHostHeader() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractSignedHeadersCase(t *testing.T) {
+	tests := []struct {
+		name        string
+		host        string
+		signedHeads []string
+		expected    string
+	}{
+		{
+			name:        "lowercase host",
+			host:        "bucket.domain.com:442",
+			signedHeads: []string{"host"},
+			expected:    "host:bucket.domain.com:442\n",
+		},
+		{
+			name:        "uppercase Host",
+			host:        "bucket.domain.com:442",
+			signedHeads: []string{"Host"},
+			expected:    "host:bucket.domain.com:442\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r, _ := http.NewRequest("GET", "http://"+tt.host+"/", nil)
+			r.Host = tt.host
+			extracted, errCode := extractSignedHeaders(tt.signedHeads, r)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("extractSignedHeaders failed: %v", errCode)
+			}
+			actual := getCanonicalHeaders(extracted)
+			if actual != tt.expected {
+				t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, actual)
 			}
 		})
 	}
