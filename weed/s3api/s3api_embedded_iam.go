@@ -176,6 +176,8 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	case "NotImplemented":
 		s3err.WriteXMLResponse(w, r, http.StatusNotImplemented, errorResp)
+	case iam.ErrCodeDeleteConflictException:
+		s3err.WriteXMLResponse(w, r, http.StatusConflict, errorResp)
 	default:
 		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalErrorResponse)
 	}
@@ -410,7 +412,7 @@ func (e *EmbeddedIamApi) CreatePolicy(ctx context.Context, values url.Values) (i
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	policyId := iamHash(&policyName)
+	policyId := fmt.Sprintf("%s-%d", iamHash(&policyName), time.Now().UnixNano())
 	arn := iamPolicyArn(policyName)
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
@@ -435,6 +437,24 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (i
 	}
 	if policy == nil {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	users, err := e.credentialManager.ListUsers(ctx)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	for _, user := range users {
+		attachedPolicies, err := e.credentialManager.ListAttachedUserPolicies(ctx, user)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+		for _, attached := range attachedPolicies {
+			if attached == policyName {
+				return resp, &iamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("policy %s is attached to user %s", policyName, user),
+				}
+			}
+		}
 	}
 	if err := e.credentialManager.DeletePolicy(ctx, policyName); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -463,6 +483,10 @@ func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (i
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
 	}
 
+	if pathPrefix != "/" && pathPrefix != "" {
+		return resp, &iamError{Code: "NotImplemented", Error: fmt.Errorf("PathPrefix filtering is not supported yet")}
+	}
+
 	policies, err := e.credentialManager.GetPolicies(ctx)
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -478,10 +502,9 @@ func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (i
 		i := sort.SearchStrings(policyNames, marker)
 		if i < len(policyNames) && policyNames[i] == marker {
 			policyNames = policyNames[i+1:]
+		} else if i < len(policyNames) {
+			policyNames = policyNames[i:]
 		} else {
-			if len(policyNames) > 0 {
-				return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("marker %s not found", marker)}
-			}
 			policyNames = nil
 		}
 	}
@@ -550,6 +573,9 @@ func (e *EmbeddedIamApi) GetPolicy(ctx context.Context, values url.Values) (iamG
 		DefaultVersionId: &defaultVersionId,
 		IsAttachable:     &isAttachable,
 	}
+	var zeroTime *time.Time
+	resp.GetPolicyResult.Policy.CreateDate = zeroTime // TODO: populate timestamps from credential backend once available.
+	resp.GetPolicyResult.Policy.UpdateDate = zeroTime
 	return resp, nil
 }
 

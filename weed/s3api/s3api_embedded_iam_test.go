@@ -518,6 +518,31 @@ func TestEmbeddedIamDetachUserPolicy(t *testing.T) {
 	assert.Equal(t, []string{"KeepPolicy"}, api.mockConfig.Identities[0].PolicyNames)
 }
 
+// TestEmbeddedIamDeletePolicyInUse ensures deleting a policy that is still attached returns conflict.
+func TestEmbeddedIamDeletePolicyInUse(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DeletePolicyInput{
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestPolicy"),
+	}
+	req, _ := iam.New(session.New()).DeletePolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusConflict, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, iam.ErrCodeDeleteConflictException, code)
+}
+
 // TestEmbeddedIamAttachAlreadyAttachedPolicy ensures attaching a policy already
 // present on the user is idempotent.
 func TestEmbeddedIamAttachAlreadyAttachedPolicy(t *testing.T) {

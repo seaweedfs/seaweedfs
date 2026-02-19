@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -210,6 +211,8 @@ func TestS3IAMListPoliciesAndGetPolicy(t *testing.T) {
 	require.NoError(t, err)
 	defer cluster.Stop()
 
+	time.Sleep(500 * time.Millisecond)
+
 	policyName := uniqueName("managed-policy")
 	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 	policyContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListAllMyBuckets","Resource":"*"}]}`
@@ -230,6 +233,13 @@ func TestS3IAMListPoliciesAndGetPolicy(t *testing.T) {
 	require.NotNil(t, getOut.Policy)
 	require.NotNil(t, getOut.Policy.PolicyName)
 	require.Equal(t, policyName, *getOut.Policy.PolicyName)
+
+	missingArn := fmt.Sprintf("arn:aws:iam:::policy/%s", uniqueName("missing"))
+	_, err = iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: aws.String(missingArn)})
+	require.Error(t, err)
+	var awsErr awserr.Error
+	require.True(t, errors.As(err, &awsErr))
+	require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
 }
 
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
