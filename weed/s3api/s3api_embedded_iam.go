@@ -423,15 +423,6 @@ func iamPolicyArn(policyName string) string {
 	return fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 }
 
-func findManagedPolicyByName(s3cfg *iam_pb.S3ApiConfiguration, policyName string) *iam_pb.Policy {
-	for _, policy := range s3cfg.Policies {
-		if policy.Name == policyName {
-			return policy
-		}
-	}
-	return nil
-}
-
 // getActions extracts actions from a policy document.
 // S3 ARN format: arn:aws:s3:::bucket or arn:aws:s3:::bucket/path/*
 // res[5] contains the bucket and optional path after :::
@@ -647,13 +638,13 @@ func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values
 
 	if err := e.credentialManager.AttachUserPolicy(ctx, userName, policyName); err != nil {
 		errStr := err.Error()
-		if errors.Is(err, credential.ErrUserNotFound) || strings.Contains(errStr, "user") && strings.Contains(errStr, "not found") {
+		if errors.Is(err, credential.ErrUserNotFound) || (strings.Contains(errStr, "user") && strings.Contains(errStr, "not found")) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
-		if errors.Is(err, credential.ErrPolicyNotFound) || strings.Contains(errStr, "policy") && strings.Contains(errStr, "not found") {
+		if errors.Is(err, credential.ErrPolicyNotFound) || (strings.Contains(errStr, "policy") && strings.Contains(errStr, "not found")) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 		}
-		if errors.Is(err, credential.ErrPolicyAlreadyAttached) || strings.Contains(errStr, "already attached") {
+		if errors.Is(err, credential.ErrPolicyAlreadyAttached) || (strings.Contains(errStr, "already attached")) {
 			// AWS IAM is idempotent for AttachUserPolicy
 			return resp, nil
 		}
@@ -692,12 +683,11 @@ func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values
 
 	if err := e.credentialManager.DetachUserPolicy(ctx, userName, policyName); err != nil {
 		errStr := err.Error()
-		if errors.Is(err, credential.ErrUserNotFound) || strings.Contains(errStr, "user") && strings.Contains(errStr, "not found") {
+		if errors.Is(err, credential.ErrUserNotFound) || (strings.Contains(errStr, "user") && strings.Contains(errStr, "not found")) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 		}
-		if errors.Is(err, credential.ErrPolicyNotAttached) || strings.Contains(errStr, "not attached") {
-			// AWS IAM is idempotent for DetachUserPolicy
-			return resp, nil
+		if errors.Is(err, credential.ErrPolicyNotAttached) || (strings.Contains(errStr, "not attached")) {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not attached to user %s", policyName, userName)}
 		}
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
@@ -756,12 +746,17 @@ func (e *EmbeddedIamApi) ListAttachedUserPolicies(ctx context.Context, values ur
 	}
 
 	start := 0
+	markerFound := false
 	if marker != "" {
 		for i, p := range attachedPolicies {
 			if p.PolicyName != nil && *p.PolicyName == marker {
 				start = i + 1
+				markerFound = true
 				break
 			}
+		}
+		if !markerFound && len(attachedPolicies) > 0 {
+			return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("marker %s not found", marker)}
 		}
 	}
 	if start > 0 && start < len(attachedPolicies) {
@@ -1368,9 +1363,15 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 	case "AttachUserPolicy":
 		response, iamErr = e.AttachUserPolicy(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
 		changed = false
 	case "DetachUserPolicy":
 		response, iamErr = e.DetachUserPolicy(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
 		changed = false
 	case "ListAttachedUserPolicies":
 		response, iamErr = e.ListAttachedUserPolicies(ctx, values)
@@ -1427,7 +1428,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after mutation: %v", err)
 			// Don't fail the request since the persistent save succeeded
 		}
-	} else if action == "AttachUserPolicy" || action == "DetachUserPolicy" {
+	} else if iamErr == nil && (action == "AttachUserPolicy" || action == "DetachUserPolicy") {
 		// Even if changed=false (persisted via credentialManager), we should still reload
 		// if we are utilizing the local in-memory cache for speed
 		if err := e.ReloadConfiguration(); err != nil {
