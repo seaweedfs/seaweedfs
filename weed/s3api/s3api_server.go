@@ -884,10 +884,10 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		configRoot.Policy.StoreType = sts.StoreTypeMemory
 	}
 	if configRoot.Policy.DefaultEffect == "" {
-		// Default to Allow (open) with in-memory store so that
-		// users can start using STS without locking themselves out immediately.
-		// For other stores (e.g. filer), default to Deny (closed) for security.
-		if configRoot.Policy.StoreType == sts.StoreTypeMemory {
+		// Secure default when an explicit IAM config file is provided:
+		// omitted defaultEffect should be Deny to avoid unintentional privilege escalation.
+		// Keep zero-config startup behavior (no config file path) open for memory store.
+		if configPath == "" && configRoot.Policy.StoreType == sts.StoreTypeMemory {
 			configRoot.Policy.DefaultEffect = sts.EffectAllow
 		} else {
 			configRoot.Policy.DefaultEffect = sts.EffectDeny
