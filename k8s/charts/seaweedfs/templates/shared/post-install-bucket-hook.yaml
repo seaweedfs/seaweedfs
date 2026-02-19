@@ -3,6 +3,15 @@
 {{- $s3Enabled := false }}
 {{- $enableAuth := false }}
 {{- $existingConfigSecret := "" }}
+{{- $bucketsFolder := "/buckets" }}
+{{- $bucketEnvVars := merge (dict) (.Values.global.extraEnvironmentVars | default dict) }}
+{{- if .Values.allInOne.enabled }}
+  {{- $bucketEnvVars = merge $bucketEnvVars (.Values.allInOne.extraEnvironmentVars | default dict) }}
+{{- else }}
+  {{- $bucketEnvVars = merge $bucketEnvVars (.Values.filer.extraEnvironmentVars | default dict) }}
+{{- end }}
+{{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
+{{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}
 
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
@@ -109,12 +118,38 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
           {{- range $createBuckets }}
-            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ .name }}"; then
-              echo "Bucket '{{ .name }}' already exists, skipping creation."
+            {{- $bucketName := .name }}
+            {{- $bucketLock := or .lock .objectLock .withLock }}
+            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
+              echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
             else
-              echo "Creating bucket '{{ .name }}'..."
-              /bin/echo "s3.bucket.create --name {{ .name }}" | /usr/bin/weed shell
+              echo "Creating bucket '{{ $bucketName }}'..."
+              /bin/echo "s3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}" | /usr/bin/weed shell
             fi
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketLock := or .lock .objectLock .withLock }}
+          {{- if $bucketLock }}
+            /bin/echo "s3.bucket.lock -name {{ .name }} -enable" | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketVersioning := "" }}
+          {{- if kindIs "bool" .versioning }}
+            {{- if .versioning }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- end }}
+          {{- else if kindIs "string" .versioning }}
+            {{- $bucketVersioning = .versioning }}
+          {{- end }}
+          {{- if $bucketVersioning }}
+            /bin/echo "s3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}" | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- if .ttl }}
+            /bin/echo "fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply" | /usr/bin/weed shell
+          {{- end }}
           {{- end }}
           {{- range $createBuckets }}
           {{- if .anonymousRead }}

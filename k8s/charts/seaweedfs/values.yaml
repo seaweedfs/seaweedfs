@@ -893,9 +893,15 @@ filer:
     auditLogConfig: {}
     # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+    # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # objectLock enables S3 Object Lock (irreversible, forces versioning)
+    # versioning: Enabled or Suspended (or true to enable)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
+    #     ttl: 7d
+    #     objectLock: true
+    #     versioning: enabled
     #   - name: bucket-b
     #     anonymousRead: false
 
@@ -921,9 +927,15 @@ s3:
   auditLogConfig: {}
   # You may specify buckets to be created during the install or upgrade process.
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+  # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+  # objectLock enables S3 Object Lock (irreversible, forces versioning)
+  # versioning: Enabled or Suspended (or true to enable)
   # createBuckets:
   #   - name: bucket-a
   #     anonymousRead: true
+  #     ttl: 7d
+  #     objectLock: true
+  #     versioning: enabled
   #   - name: bucket-b
   #     anonymousRead: false
 
@@ -1424,9 +1436,15 @@ allInOne:
     auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+    # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # objectLock enables S3 Object Lock (irreversible, forces versioning)
+    # versioning: Enabled or Suspended (or true to enable)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
+    #     ttl: 7d
+    #     objectLock: true
+    #     versioning: enabled
     #   - name: bucket-b
     #     anonymousRead: false
 
