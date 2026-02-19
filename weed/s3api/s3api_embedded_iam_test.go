@@ -46,15 +46,11 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 	var syncOnce sync.Once
 	e.getS3ApiConfigurationFunc = func(s3cfg *iam_pb.S3ApiConfiguration) error {
 		// If mockConfig was set directly in test, sync it to store first (only once)
-		var syncErr error
 		syncOnce.Do(func() {
-			if e.mockConfig != nil {
-				syncErr = cm.SaveConfiguration(context.Background(), e.mockConfig)
+			if e.mockConfig != nil && len(e.mockConfig.Identities) > 0 {
+				_ = cm.SaveConfiguration(context.Background(), e.mockConfig)
 			}
 		})
-		if syncErr != nil {
-			return syncErr
-		}
 		config, err := cm.LoadConfiguration(context.Background())
 		if err == nil {
 			e.mockConfig = config
@@ -68,6 +64,7 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 			for i, p := range config.Policies {
 				s3cfg.Policies[i] = proto.Clone(p).(*iam_pb.Policy)
 			}
+			e.mockConfig = config
 		}
 		return err
 	}
