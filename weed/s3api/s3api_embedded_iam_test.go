@@ -73,6 +73,11 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 		return cm.SaveConfiguration(context.Background(), s3cfg)
 	}
 	e.reloadConfigurationFunc = func() error {
+		config, err := cm.LoadConfiguration(context.Background())
+		if err != nil {
+			return err
+		}
+		e.mockConfig = config
 		return nil
 	}
 	return e
