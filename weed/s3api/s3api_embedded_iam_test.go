@@ -541,6 +541,12 @@ func TestEmbeddedIamDeletePolicyInUse(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, response.Code)
 	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
 	assert.Equal(t, iam.ErrCodeDeleteConflictException, code)
+
+	assert.Len(t, api.mockConfig.Policies, 1)
+	assert.Equal(t, "TestPolicy", api.mockConfig.Policies[0].Name)
+	assert.Len(t, api.mockConfig.Identities, 1)
+	assert.Equal(t, "TestUser", api.mockConfig.Identities[0].Name)
+	assert.Contains(t, api.mockConfig.Identities[0].PolicyNames, "TestPolicy")
 }
 
 // TestEmbeddedIamAttachAlreadyAttachedPolicy ensures attaching a policy already

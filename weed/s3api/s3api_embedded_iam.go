@@ -412,7 +412,7 @@ func (e *EmbeddedIamApi) CreatePolicy(ctx context.Context, values url.Values) (i
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	policyId := fmt.Sprintf("%s-%d", iamHash(&policyName), time.Now().UnixNano())
+	policyId := iamHash(&policyName)
 	arn := iamPolicyArn(policyName)
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
@@ -483,7 +483,7 @@ func (e *EmbeddedIamApi) ListPolicies(ctx context.Context, values url.Values) (i
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
 	}
 
-	if pathPrefix != "/" && pathPrefix != "" {
+	if pathPrefix != "/" {
 		return resp, &iamError{Code: "NotImplemented", Error: fmt.Errorf("PathPrefix filtering is not supported yet")}
 	}
 
