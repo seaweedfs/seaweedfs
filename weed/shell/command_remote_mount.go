@@ -56,6 +56,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
+	noSync := remoteMountCommand.Bool("noSync", false, "skip pulling remote metadata; use with S3 lazy-cache gateway when the remote bucket is very large")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -77,9 +78,14 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	// sync metadata from remote
-	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
-		return fmt.Errorf("pull metadata: %w", err)
+	if *noSync {
+		if err = ensureMountDir(commandEnv, *dir, *nonEmpty, remoteConf); err != nil {
+			return fmt.Errorf("create mount directory: %w", err)
+		}
+	} else {
+		if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
+			return fmt.Errorf("pull metadata: %w", err)
+		}
 	}
 
 	// store a mount configuration in filer
@@ -88,6 +94,53 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	return nil
+}
+
+func ensureMountDir(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		parent, name := util.FullPath(dir).DirAndName()
+		resp, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+			Directory: parent,
+			Name:      name,
+		})
+		if lookupErr != nil {
+			if strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+				return filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
+					Directory: parent,
+					Entry: &filer_pb.Entry{
+						Name:        name,
+						IsDirectory: true,
+						Attributes: &filer_pb.FuseAttributes{
+							Mtime:    time.Now().Unix(),
+							Crtime:   time.Now().Unix(),
+							FileMode: uint32(0755 | os.ModeDir),
+						},
+						RemoteEntry: &filer_pb.RemoteEntry{
+							StorageName: remoteConf.Name,
+						},
+					},
+				})
+			}
+			return lookupErr
+		}
+		if resp.Entry == nil || !resp.Entry.IsDirectory {
+			return fmt.Errorf("%s already exists and is not a directory", dir)
+		}
+		if !nonEmpty {
+			mountToDirIsEmpty := true
+			listErr := filer_pb.SeaweedList(context.Background(), client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+				mountToDirIsEmpty = false
+				return nil
+			}, "", false, 1)
+			if listErr != nil {
+				return fmt.Errorf("list %s: %v", dir, listErr)
+			}
+			if !mountToDirIsEmpty {
+				return fmt.Errorf("dir %s is not empty", dir)
+			}
+		}
+		return nil
+	})
 }
 
 func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
@@ -127,7 +180,7 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 						Attributes: &filer_pb.FuseAttributes{
 							Mtime:    time.Now().Unix(),
 							Crtime:   time.Now().Unix(),
-							FileMode: uint32(0644 | os.ModeDir),
+							FileMode: uint32(0755 | os.ModeDir),
 						},
 						RemoteEntry: &filer_pb.RemoteEntry{
 							StorageName: remoteConf.Name,
