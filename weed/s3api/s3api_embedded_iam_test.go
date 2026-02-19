@@ -91,7 +91,7 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListServiceAccounts", "GetServiceAccount":
 			// Allowed read-only actions
 		default:
 			e.writeIamErrorResponse(w, r, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")})
@@ -169,6 +169,25 @@ func (e *EmbeddedIamApiForTest) DoActions(w http.ResponseWriter, r *http.Request
 			e.writeIamErrorResponse(w, r, iamErr)
 			return
 		}
+	case "AttachUserPolicy":
+		response, iamErr = e.AttachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "DetachUserPolicy":
+		response, iamErr = e.DetachUserPolicy(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+	case "ListAttachedUserPolicies":
+		response, iamErr = e.ListAttachedUserPolicies(s3cfg, values)
+		if iamErr != nil {
+			e.writeIamErrorResponse(w, r, iamErr)
+			return
+		}
+		changed = false
 	case "SetUserStatus":
 		response, iamErr = e.SetUserStatus(s3cfg, values)
 		if iamErr != nil {
@@ -526,6 +545,116 @@ func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
 	apiRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+// TestEmbeddedIamAttachUserPolicy tests attaching a managed policy to a user.
+func TestEmbeddedIamAttachUserPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamAttachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"TestManagedPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+// TestEmbeddedIamAttachUserPolicyNoSuchPolicy tests attach failure when managed policy does not exist.
+func TestEmbeddedIamAttachUserPolicyNoSuchPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	params := &iam.AttachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/DoesNotExist"),
+	}
+	req, _ := iam.New(session.New()).AttachUserPolicyRequest(params)
+	_ = req.Build()
+
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, response.Code)
+	code, _ := extractEmbeddedIamErrorCodeAndMessage(response)
+	assert.Equal(t, "NoSuchEntity", code)
+}
+
+// TestEmbeddedIamDetachUserPolicy tests detaching a managed policy from a user.
+func TestEmbeddedIamDetachUserPolicy(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"TestManagedPolicy", "KeepPolicy"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "TestManagedPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+			{Name: "KeepPolicy", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.DetachUserPolicyInput{
+		UserName:  aws.String("TestUser"),
+		PolicyArn: aws.String("arn:aws:iam:::policy/TestManagedPolicy"),
+	}
+	req, _ := iam.New(session.New()).DetachUserPolicyRequest(params)
+	_ = req.Build()
+
+	out := iamDetachUserPolicyResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Equal(t, []string{"KeepPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+// TestEmbeddedIamListAttachedUserPolicies tests listing managed policies attached to a user.
+func TestEmbeddedIamListAttachedUserPolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser", PolicyNames: []string{"PolicyA", "PolicyB"}},
+		},
+		Policies: []*iam_pb.Policy{
+			{Name: "PolicyA", Content: `{"Version":"2012-10-17","Statement":[]}`},
+			{Name: "PolicyB", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+
+	params := &iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String("TestUser"),
+	}
+	req, _ := iam.New(session.New()).ListAttachedUserPoliciesRequest(params)
+	_ = req.Build()
+
+	out := iamListAttachedUserPoliciesResponse{}
+	response, err := executeEmbeddedIamRequest(api, req.HTTPRequest, &out)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.False(t, out.ListAttachedUserPoliciesResult.IsTruncated)
+	assert.Len(t, out.ListAttachedUserPoliciesResult.AttachedPolicies, 2)
+
+	got := map[string]string{}
+	for _, attached := range out.ListAttachedUserPoliciesResult.AttachedPolicies {
+		got[aws.StringValue(attached.PolicyName)] = aws.StringValue(attached.PolicyArn)
+	}
+	assert.Equal(t, "arn:aws:iam:::policy/PolicyA", got["PolicyA"])
+	assert.Equal(t, "arn:aws:iam:::policy/PolicyB", got["PolicyB"])
 }
 
 // TestEmbeddedIamUpdateUser tests updating a user
