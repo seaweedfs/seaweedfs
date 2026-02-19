@@ -91,15 +91,13 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 // in environments with ndots:5 and many-dot hostnames.
 //
 // Safe alternatives if switching to grpc.NewClient:
-// 1. Prefix the target with "passthrough:///" (e.g., "passthrough:///my-service:8080")
-// 2. Call resolver.SetDefaultScheme("passthrough") during init.
+//  1. Prefix the target with "passthrough:///" (e.g., "passthrough:///my-service:8080"). This is the recommended primary migration path.
+//  2. Call resolver.SetDefaultScheme("passthrough") exactly once during init().
+//     WARNING: This is NOT thread-safe, and mutates global resolver state affecting all grpc.NewClient calls in the process.
 func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	// opts = append(opts, grpc.WithBlock())
-	// opts = append(opts, grpc.WithTimeout(time.Duration(5*time.Second)))
 	var options []grpc.DialOption
 
 	options = append(options,
-		// grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(Max_Message_Size),
 			grpc.MaxCallRecvMsgSize(Max_Message_Size),
