@@ -106,7 +106,6 @@ func (c *BrokerClient) findBrokerBalancer() error {
 	defer conn.Close()
 
 	client := filer_pb.NewSeaweedFilerClient(conn)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -317,7 +316,7 @@ func (c *BrokerClient) ConfigureTopic(ctx context.Context, namespace, topicName 
 		return err
 	}
 
-	conn, err := pb.GrpcDial(context.Background(), c.brokerAddress, false, c.grpcDialOption)
+	conn, err := pb.GrpcDial(ctx, c.brokerAddress, false, c.grpcDialOption)
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker at %s: %v", c.brokerAddress, err)
 	}
@@ -429,7 +428,7 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	glog.V(2).Infof("Found broker at address: %s", c.brokerAddress)
 
 	// Step 2: Connect to broker
-	conn, err := pb.GrpcDial(context.Background(), c.brokerAddress, false, c.grpcDialOption)
+	conn, err := pb.GrpcDial(ctx, c.brokerAddress, false, c.grpcDialOption)
 	if err != nil {
 		glog.V(2).Infof("Failed to connect to broker %s: %v", c.brokerAddress, err)
 		// Return empty slice if connection fails - prevents double-counting
