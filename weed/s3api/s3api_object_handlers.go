@@ -1093,7 +1093,12 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		BucketTrafficSent(cw.written, r)
 	}
 	if err != nil {
-		glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
+		// Distinguish client disconnect (expected) from real server errors
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
+		} else {
+			glog.Errorf("streamFromVolumeServers: streamFn failed after writing %d bytes: %v", cw.written, err)
+		}
 		// Streaming error after WriteHeader was called - response already partially written
 		return newStreamErrorWithResponse(err)
 	}

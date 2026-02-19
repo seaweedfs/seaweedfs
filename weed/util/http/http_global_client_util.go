@@ -311,11 +311,11 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
-	maybeAddAuth(req, jwt)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return false, err
 	}
+	maybeAddAuth(req, jwt)
 
 	if isFullChunk {
 		req.Header.Add("Accept-Encoding", "gzip")
