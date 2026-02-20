@@ -17,6 +17,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+var ErrNoRemoteMount = errors.New("no remote mount for path")
+
 type mountEntry struct {
 	loc    *remote_pb.RemoteStorageLocation
 	client remote_storage.RemoteStorageClient
@@ -111,7 +113,7 @@ func (s3a *S3ApiServer) lazyFetchFromRemote(ctx context.Context, bucket, object 
 
 	client, mountLoc, relPath, found := s3a.remoteStorageIdx.findForPath(objectFilerPath)
 	if !found {
-		return nil, nil
+		return nil, ErrNoRemoteMount
 	}
 
 	result, err, _ := s3a.remoteStorageIdx.fetchGroup.Do(objectFilerPath, func() (interface{}, error) {
@@ -119,7 +121,7 @@ func (s3a *S3ApiServer) lazyFetchFromRemote(ctx context.Context, bucket, object 
 	})
 	if err != nil {
 		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
-			return nil, nil
+			return nil, ErrObjectNotFound
 		}
 		return nil, err
 	}
@@ -127,11 +129,23 @@ func (s3a *S3ApiServer) lazyFetchFromRemote(ctx context.Context, bucket, object 
 	return entry, nil
 }
 
-func (s3a *S3ApiServer) doLazyFetch(ctx context.Context, objectFilerPath string, client remote_storage.RemoteStorageClient, mountLoc *remote_pb.RemoteStorageLocation, relPath, bucket, object string) (*filer_pb.Entry, error) {
-	remotePath := strings.TrimSuffix(mountLoc.Path, "/") + relPath
-	if remotePath == "" {
-		remotePath = "/"
+func (s3a *S3ApiServer) ensureRemoteEntryInFiler(ctx context.Context, bucket, object string) error {
+	if s3a.remoteStorageIdx == nil || s3a.remoteStorageIdx.isEmpty() {
+		return nil
 	}
+	entry, err := s3a.fetchObjectEntry(bucket, object)
+	if err != nil {
+		return err
+	}
+	if entry != nil {
+		return nil
+	}
+	_, err = s3a.lazyFetchFromRemote(ctx, bucket, object)
+	return err
+}
+
+func (s3a *S3ApiServer) doLazyFetch(ctx context.Context, objectFilerPath string, client remote_storage.RemoteStorageClient, mountLoc *remote_pb.RemoteStorageLocation, relPath, bucket, object string) (*filer_pb.Entry, error) {
+	remotePath := "/" + strings.TrimLeft(strings.TrimSuffix(mountLoc.Path, "/")+relPath, "/")
 
 	remoteLoc := &remote_pb.RemoteStorageLocation{
 		Name:   mountLoc.Name,

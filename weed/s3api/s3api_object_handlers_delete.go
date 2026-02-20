@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -14,6 +15,15 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+func ensureRemoteErrorToS3(err error, key, versionId string) DeleteError {
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		apiErr := s3err.GetAPIError(s3err.ErrNoSuchKey)
+		return DeleteError{Code: apiErr.Code, Message: apiErr.Description, Key: key, VersionId: versionId}
+	}
+	apiErr := s3err.GetAPIError(s3err.ErrInternalError)
+	return DeleteError{Code: apiErr.Code, Message: err.Error(), Key: key, VersionId: versionId}
+}
 
 const (
 	deleteMultipleObjectsLimit = 1000
@@ -129,6 +139,26 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		target := util.NewFullPath(s3a.bucketDir(bucket), object)
 		dir, name := target.DirAndName()
 
+		if err := s3a.ensureRemoteEntryInFiler(r.Context(), bucket, object); err != nil {
+			if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrNoRemoteMount) {
+				if auditLog != nil {
+					auditLog.Key = strings.TrimPrefix(object, "/")
+					s3err.PostAccessLog(*auditLog)
+				}
+				stats_collect.RecordBucketActiveTime(bucket)
+				stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Inc()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if errors.Is(err, filer_pb.ErrNotFound) {
+				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+				return
+			}
+			glog.Warningf("DeleteObjectHandler: failed to populate remote entry for %s/%s: %v", bucket, object, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			return doDeleteEntry(client, dir, name, true, false)
 			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
@@ -233,6 +263,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	versioningSuspended := (versioningState == s3_constants.VersioningSuspended)
 	versioningConfigured := (versioningState != "")
 
+	ctx := r.Context()
 	s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
@@ -344,6 +375,22 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				target := util.NewFullPath(s3a.bucketDir(bucket), object.Key)
 				parentDirectoryPath, entryName := target.DirAndName()
 				isDeleteData, isRecursive := true, false
+
+				if err := s3a.ensureRemoteEntryInFiler(ctx, bucket, object.Key); err != nil {
+					if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrNoRemoteMount) {
+						if !deleteObjects.Quiet {
+							deletedObjects = append(deletedObjects, object)
+						}
+						if auditLog != nil {
+							auditLog.Key = object.Key
+							s3err.PostAccessLog(*auditLog)
+						}
+						continue
+					}
+					apiErr := ensureRemoteErrorToS3(err, object.Key, object.VersionId)
+					deleteErrors = append(deleteErrors, apiErr)
+					continue
+				}
 
 				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {

@@ -780,6 +780,10 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				var lazyErr error
 				objectEntryForSSE, lazyErr = s3a.lazyFetchFromRemote(r.Context(), bucket, object)
 				if lazyErr != nil {
+					if errors.Is(lazyErr, ErrObjectNotFound) || errors.Is(lazyErr, ErrNoRemoteMount) {
+						s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+						return
+					}
 					glog.Warningf("GetObjectHandler: remote stat failed for %s/%s: %v", bucket, object, lazyErr)
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 					return
@@ -2261,6 +2265,10 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				var lazyErr error
 				objectEntryForSSE, lazyErr = s3a.lazyFetchFromRemote(r.Context(), bucket, object)
 				if lazyErr != nil {
+					if errors.Is(lazyErr, ErrObjectNotFound) || errors.Is(lazyErr, ErrNoRemoteMount) {
+						s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+						return
+					}
 					glog.Warningf("HeadObjectHandler: remote stat failed for %s/%s: %v", bucket, object, lazyErr)
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 					return
