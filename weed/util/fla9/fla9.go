@@ -905,6 +905,7 @@ func (f *FlagSet) parseOne() (bool, error) {
 // are defined and before flags are accessed by the program.
 // The return value will be ErrHelp if -help or -h were set but not defined.
 func (f *FlagSet) Parse(arguments []string) error {
+	f.actual = nil
 	if _, ok := f.formal[DefaultConfigFlagName]; !ok {
 		f.String(DefaultConfigFlagName, "", "a file of command line options, each line in optionName=optionValue format")
 	}
