@@ -281,13 +281,14 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// Start bucket size metrics collection in background
 	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
 
-	// Load remote storage mappings for lazy cache gateway.
-	// Done in a goroutine so the initial gRPC call doesn't block server startup.
+	// Load remote storage mappings for lazy cache gateway and keep them refreshed.
+	// Initial load is async so it doesn't block server startup.
 	go func() {
 		if err := s3ApiServer.remoteStorageIdx.refresh(option.GrpcDialOption, s3ApiServer.getFilerAddress()); err != nil {
 			glog.V(1).Infof("remoteStorageIndex: initial load (no remote mounts may be configured): %v", err)
 		}
 	}()
+	s3ApiServer.remoteStorageIdx.startRefreshLoop(option.GrpcDialOption, s3ApiServer.getFilerAddress(), 30*time.Second)
 
 	return s3ApiServer, nil
 }

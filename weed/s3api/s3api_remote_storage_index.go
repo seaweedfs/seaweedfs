@@ -3,8 +3,10 @@ package s3api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -42,28 +44,17 @@ func (idx *remoteStorageIndex) refresh(grpcDialOption grpc.DialOption, filerAddr
 		return err
 	}
 
-	idx.mu.RLock()
-	existingClients := make(map[string]remote_storage.RemoteStorageClient, len(idx.mounts))
-	for _, m := range idx.mounts {
-		existingClients[m.loc.Name] = m.client
-	}
-	idx.mu.RUnlock()
-
 	newMounts := make(map[string]mountEntry, len(mappings.Mappings))
 	for dir, loc := range mappings.Mappings {
-		client, ok := existingClients[loc.Name]
-		if !ok {
-			conf, confErr := filer.ReadRemoteStorageConf(grpcDialOption, filerAddress, loc.Name)
-			if confErr != nil {
-				glog.Warningf("remoteStorageIndex: failed to load conf for %s: %v", loc.Name, confErr)
-				continue
-			}
-			var clientErr error
-			client, clientErr = remote_storage.GetRemoteStorage(conf)
-			if clientErr != nil {
-				glog.Warningf("remoteStorageIndex: failed to build client for %s: %v", loc.Name, clientErr)
-				continue
-			}
+		conf, confErr := filer.ReadRemoteStorageConf(grpcDialOption, filerAddress, loc.Name)
+		if confErr != nil {
+			glog.Warningf("remoteStorageIndex: failed to load conf for %s: %v", loc.Name, confErr)
+			continue
+		}
+		client, clientErr := remote_storage.GetRemoteStorage(conf)
+		if clientErr != nil {
+			glog.Warningf("remoteStorageIndex: failed to build client for %s: %v", loc.Name, clientErr)
+			continue
 		}
 		newMounts[dir] = mountEntry{loc: loc, client: client}
 	}
@@ -72,6 +63,18 @@ func (idx *remoteStorageIndex) refresh(grpcDialOption grpc.DialOption, filerAddr
 	idx.mounts = newMounts
 	idx.mu.Unlock()
 	return nil
+}
+
+func (idx *remoteStorageIndex) startRefreshLoop(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := idx.refresh(grpcDialOption, filerAddress); err != nil {
+				glog.V(1).Infof("remoteStorageIndex: periodic refresh failed: %v", err)
+			}
+		}
+	}()
 }
 
 func (idx *remoteStorageIndex) isEmpty() bool {
@@ -125,7 +128,13 @@ func (s3a *S3ApiServer) lazyFetchFromRemote(ctx context.Context, bucket, object 
 		}
 		return nil, err
 	}
-	entry, _ := result.(*filer_pb.Entry)
+	if result == nil {
+		return nil, nil
+	}
+	entry, ok := result.(*filer_pb.Entry)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type %T from doLazyFetch", result)
+	}
 	return entry, nil
 }
 

@@ -22,7 +22,7 @@ func ensureRemoteErrorToS3(err error, key, versionId string) DeleteError {
 		return DeleteError{Code: apiErr.Code, Message: apiErr.Description, Key: key, VersionId: versionId}
 	}
 	apiErr := s3err.GetAPIError(s3err.ErrInternalError)
-	return DeleteError{Code: apiErr.Code, Message: err.Error(), Key: key, VersionId: versionId}
+	return DeleteError{Code: apiErr.Code, Message: apiErr.Description, Key: key, VersionId: versionId}
 }
 
 const (
@@ -148,10 +148,6 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 				stats_collect.RecordBucketActiveTime(bucket)
 				stats_collect.S3DeletedObjectsCounter.WithLabelValues(bucket).Inc()
 				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			if errors.Is(err, filer_pb.ErrNotFound) {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
 				return
 			}
 			glog.Warningf("DeleteObjectHandler: failed to populate remote entry for %s/%s: %v", bucket, object, err)

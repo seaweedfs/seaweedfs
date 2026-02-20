@@ -1,7 +1,6 @@
 package remote_cache
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -40,21 +39,31 @@ func TestRemoteMountBasic(t *testing.T) {
 }
 
 // TestRemoteMountNoSync tests mounting with -noSync flag (lazy-cache gateway mode).
-// With -noSync, no metadata is pulled; objects are fetched on demand via StatFile + ReadFile.
+// With -noSync, no metadata is pulled; objects are fetched on demand via lazy fetch.
+// It puts a remote object directly into remotesourcebucket, mounts with -noSync, then
+// polls the primary S3 API until the object is accessible via lazy fetch.
 func TestRemoteMountNoSync(t *testing.T) {
 	checkServersRunning(t)
 
-	testDir := fmt.Sprintf("/buckets/nosync%d", time.Now().UnixNano()%1000000)
-	testKey := fmt.Sprintf("lazy-fetch-%d.txt", time.Now().UnixNano())
-	testData := []byte("noSync lazy fetch test data")
-
 	remoteClient := createS3Client(remoteEndpoint)
+	testKey := fmt.Sprintf("nosync-lazy-%d.txt", time.Now().UnixNano())
+	testData := []byte("lazy fetch test data")
+
 	_, err := remoteClient.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String("remotesourcebucket"),
 		Key:    aws.String(testKey),
-		Body:   bytes.NewReader(testData),
+		Body:   aws.ReadSeekCloser(strings.NewReader(string(testData))),
 	})
-	require.NoError(t, err, "failed to put object in remote bucket")
+	require.NoError(t, err, "failed to put object into remote bucket")
+
+	t.Cleanup(func() {
+		remoteClient.DeleteObject(&s3.DeleteObjectInput{
+			Bucket: aws.String("remotesourcebucket"),
+			Key:    aws.String(testKey),
+		})
+	})
+
+	testDir := fmt.Sprintf("/buckets/nosync%d", time.Now().UnixNano()%1000000)
 
 	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -noSync=true", testDir)
 	output, err := runWeedShellWithOutput(t, cmd)
@@ -65,17 +74,23 @@ func TestRemoteMountNoSync(t *testing.T) {
 	require.NoError(t, err, "failed to list mounts")
 	assert.Contains(t, output, testDir, "noSync mount not found in list")
 
-	bucket := strings.TrimPrefix(testDir, "/buckets/")
-	resp, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(testKey),
-	})
-	require.NoError(t, err, "GET through noSync mount should succeed (lazy fetch)")
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	assert.Equal(t, testData, data, "lazy-fetched content mismatch")
+	bucketName := strings.TrimPrefix(testDir, "/buckets/")
+	var fetchedData []byte
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, getErr := getPrimaryClient().GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(testKey),
+		})
+		if getErr == nil {
+			fetchedData, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.NoError(t, err, "failed to read lazy-fetched object body")
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	assert.Equal(t, testData, fetchedData, "lazy-fetched data mismatch")
 
 	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
 	_, err = runWeedShellWithOutput(t, cmd)
