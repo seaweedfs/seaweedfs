@@ -26,11 +26,11 @@ func (vs *VolumeServer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return vs.currentMaster
 }
 
-func (vs *VolumeServer) checkWithMaster(ctx context.Context) (err error) {
+func (vs *VolumeServer) checkWithMaster() (err error) {
 	for {
 		for _, master := range vs.SeedMasterNodes {
 			err = operation.WithMasterServerClient(false, master, vs.grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-				resp, err := masterClient.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+				resp, err := masterClient.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
 				if err != nil {
 					return fmt.Errorf("get master %s configuration: %v", master, err)
 				}
@@ -48,7 +48,7 @@ func (vs *VolumeServer) checkWithMaster(ctx context.Context) (err error) {
 	}
 }
 
-func (vs *VolumeServer) heartbeat(ctx context.Context) {
+func (vs *VolumeServer) heartbeat() {
 
 	glog.V(0).Infof("Volume server start with seed master nodes: %v", vs.SeedMasterNodes)
 	vs.store.SetDataCenter(vs.dataCenter)
@@ -68,7 +68,7 @@ func (vs *VolumeServer) heartbeat(ctx context.Context) {
 				master = newLeader
 			}
 			vs.store.MasterAddress = master
-			newLeader, err = vs.doHeartbeatWithRetry(ctx, master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
+			newLeader, err = vs.doHeartbeatWithRetry(master, grpcDialOption, vs.pulsePeriod, duplicateRetryCount)
 			if err != nil {
 				glog.V(0).Infof("heartbeat to %s error: %v", master, err)
 
@@ -106,13 +106,13 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 	return false
 }
 
-func (vs *VolumeServer) doHeartbeat(ctx context.Context, masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
-	return vs.doHeartbeatWithRetry(ctx, masterAddress, grpcDialOption, sleepInterval, 0)
+func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
+	return vs.doHeartbeatWithRetry(masterAddress, grpcDialOption, sleepInterval, 0)
 }
 
-func (vs *VolumeServer) doHeartbeatWithRetry(ctx context.Context, masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration, duplicateRetryCount int) (newLeader pb.ServerAddress, err error) {
+func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration, duplicateRetryCount int) (newLeader pb.ServerAddress, err error) {
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	grpcConnection, err := pb.GrpcDial(ctx, masterAddress.ToGrpcAddress(), false, grpcDialOption)

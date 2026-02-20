@@ -2,7 +2,6 @@ package s3tables
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -82,13 +81,64 @@ func TestS3TablesCreateBucketIAMPolicy(t *testing.T) {
 	allowedBucket := "tables-allowed"
 	deniedBucket := "tables-denied"
 	iamConfigDir := t.TempDir()
-	s3ConfigPath := writeS3APIConfig(t, iamConfigDir)
-	iamConfigPath := writeIAMConfig(t, iamConfigDir, allowedBucket)
+	iamConfigPath := filepath.Join(iamConfigDir, "iam_config.json")
+	iamConfig := fmt.Sprintf(`{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "%s"
+  },
+  "accounts": [
+    {
+      "id": "%s",
+      "displayName": "tables-integration"
+    }
+  ],
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "%s",
+          "secretKey": "%s"
+        }
+      ],
+      "account": {
+        "id": "%s",
+        "displayName": "tables-integration"
+      },
+      "policyNames": ["S3TablesBucketPolicy"]
+    }
+  ],
+  "policy": {
+    "defaultEffect": "Deny",
+    "storeType": "memory"
+  },
+  "policies": [
+    {
+      "name": "S3TablesBucketPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3tables:CreateTableBucket"],
+            "Resource": [
+              "arn:aws:s3tables:%s:%s:bucket/%s",
+              "arn:aws:s3:::%s"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}`, testIAMSigningKey, testAccountID, testAccessKey, testSecretKey, testAccountID, testRegion, testAccountID, allowedBucket, allowedBucket)
+	require.NoError(t, os.WriteFile(iamConfigPath, []byte(iamConfig), 0644))
 
 	cluster, err := startMiniClusterWithExtraArgs(t, []string{
-		"-s3.config=" + s3ConfigPath,
+		"-s3.config=" + iamConfigPath,
 		"-s3.iam.config=" + iamConfigPath,
-		"-s3.iam.readOnly=false",
 	})
 	require.NoError(t, err, "failed to start cluster with IAM config")
 	defer cluster.Stop()
@@ -685,9 +735,9 @@ func (c *TestCluster) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	// Give services time to shut down aggressively
+	// Give services time to shut down gracefully
 	if c.isRunning {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 	// Wait for the mini goroutine to finish
 	done := make(chan struct{})
@@ -695,12 +745,11 @@ func (c *TestCluster) Stop() {
 		c.wg.Wait()
 		close(done)
 	}()
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(2 * time.Second)
 	defer timer.Stop()
 	select {
 	case <-done:
 		// Goroutine finished
-		time.Sleep(200 * time.Millisecond) // Extra buffer for port release
 	case <-timer.C:
 		// Timeout - goroutine doesn't respond to context cancel
 		// This may indicate the mini cluster didn't shut down cleanly
@@ -750,72 +799,4 @@ func randomString(length int) string {
 		b[i] = charset[int(b[i])%len(charset)]
 	}
 	return string(b)
-}
-
-func writeIAMConfig(t *testing.T, dir, allowedBucket string) string {
-	t.Helper()
-	config := map[string]any{
-		"sts": map[string]string{
-			"tokenDuration":    "1h",
-			"maxSessionLength": "12h",
-			"issuer":           "seaweedfs-sts",
-			"signingKey":       testIAMSigningKey,
-		},
-		"accounts": []map[string]string{{"id": testAccountID, "displayName": "tables-integration"}},
-		"identities": []map[string]any{
-			{
-				"name":        "admin",
-				"credentials": []map[string]string{{"accessKey": testAccessKey, "secretKey": testSecretKey}},
-				"account":     map[string]string{"id": testAccountID, "displayName": "tables-integration"},
-				"policyNames": []string{"S3TablesBucketPolicy"},
-			},
-		},
-		"policy": map[string]string{
-			"defaultEffect": "Deny",
-			"storeType":     "memory",
-		},
-		"policies": []map[string]any{
-			{
-				"name": "S3TablesBucketPolicy",
-				"document": map[string]any{
-					"Version": "2012-10-17",
-					"Statement": []map[string]any{
-						{
-							"Effect": "Allow",
-							"Action": []string{"s3tables:CreateTableBucket"},
-							"Resource": []string{
-								fmt.Sprintf("arn:aws:s3tables:%s:%s:bucket/%s", testRegion, testAccountID, allowedBucket),
-								fmt.Sprintf("arn:aws:s3:::%s", allowedBucket),
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	data, err := json.MarshalIndent(config, "", "  ")
-	require.NoError(t, err)
-	path := filepath.Join(dir, "iam_config.json")
-	require.NoError(t, os.WriteFile(path, data, 0644))
-	return path
-}
-
-func writeS3APIConfig(t *testing.T, dir string) string {
-	t.Helper()
-	config := map[string]any{
-		"identities": []map[string]any{
-			{
-				"name":        "admin",
-				"credentials": []map[string]string{{"accessKey": testAccessKey, "secretKey": testSecretKey}},
-				"actions":     []string{"Admin", "Read", "List", "Tagging", "Write"},
-				"account":     map[string]string{"id": testAccountID, "displayName": "tables-integration"},
-			},
-		},
-		"accounts": []map[string]string{{"id": testAccountID, "displayName": "tables-integration"}},
-	}
-	data, err := json.MarshalIndent(config, "", "  ")
-	require.NoError(t, err)
-	path := filepath.Join(dir, "s3_config.json")
-	require.NoError(t, os.WriteFile(path, data, 0644))
-	return path
 }

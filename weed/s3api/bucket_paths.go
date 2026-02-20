@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(bucket string) (st
 	conflict := false
 
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 			Directory: mappingDir,
 			Limit:     4294967295, // math.MaxUint32
 		})

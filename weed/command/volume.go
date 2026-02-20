@@ -1,7 +1,6 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -268,11 +267,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// Determine volume server ID: if not specified, use ip:port
 	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
 
-	vctx := MiniClusterCtx
-	if vctx == nil {
-		vctx = context.Background()
-	}
-	volumeServer := weed_server.NewVolumeServer(vctx, volumeMux, publicVolumeMux,
+	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
 		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
 		*v.idxFolder,
@@ -354,8 +349,8 @@ func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server,
 		glog.Warningf("stop the cluster http server failed, %v", err)
 	}
 
-	glog.V(0).Infof("stop gRPC ...")
-	grpcS.Stop()
+	glog.V(0).Infof("graceful stop gRPC ...")
+	grpcS.GracefulStop()
 
 	volumeServer.Shutdown()
 
