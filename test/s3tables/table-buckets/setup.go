@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// sharedCluster is the single default TestCluster shared across all tests
+// that do not require a specialised cluster configuration.
+// It is initialised by TestMain and must not be modified by individual tests.
+var sharedCluster *TestCluster
+
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
 	t          *testing.T

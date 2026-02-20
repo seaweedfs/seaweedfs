@@ -18,6 +18,36 @@ import (
 	"time"
 )
 
+// sharedEnv is the single TestEnvironment shared across all tests in this package.
+var sharedEnv *TestEnvironment
+
+// TestMain starts one weed mini instance for the whole package and tears it down
+// after all tests have run.
+func TestMain(m *testing.M) {
+	if os.Getenv("SHORT") != "" || testing.Short() {
+		// Let tests self-skip when run with -short.
+		os.Exit(m.Run())
+	}
+
+	env, err := newTestEnvironmentForMain()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: setup failed: %v\n", err)
+		os.Exit(0) // Skip all tests rather than fail
+	}
+	sharedEnv = env
+
+	if startErr := sharedEnv.startSeaweedFSForMain(); startErr != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: weed mini failed to start: %v\n", startErr)
+		sharedEnv.cleanupForMain()
+		os.Exit(0)
+	}
+
+	code := m.Run()
+
+	sharedEnv.cleanupForMain()
+	os.Exit(code)
+}
+
 // TestEnvironment contains the test environment configuration
 type TestEnvironment struct {
 	seaweedDir      string
@@ -54,17 +84,15 @@ func getFreePort() (int, net.Listener, error) {
 	return addr.Port, listener, nil
 }
 
-// NewTestEnvironment creates a new test environment
-func NewTestEnvironment(t *testing.T) *TestEnvironment {
-	t.Helper()
-
+// newTestEnvironmentForMain creates a TestEnvironment without calling t.Fatalf so it
+// can be used from TestMain (which has no *testing.T).
+func newTestEnvironmentForMain() (*TestEnvironment, error) {
 	// Find the SeaweedFS root directory
 	wd, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
+		return nil, fmt.Errorf("get working directory: %w", err)
 	}
 
-	// Navigate up to find the SeaweedFS root (contains go.mod)
 	seaweedDir := wd
 	for i := 0; i < 5; i++ {
 		if _, err := os.Stat(filepath.Join(seaweedDir, "go.mod")); err == nil {
@@ -76,81 +104,92 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	// Check for weed binary
 	weedBinary := filepath.Join(seaweedDir, "weed", "weed")
 	if _, err := os.Stat(weedBinary); os.IsNotExist(err) {
-		// Try system PATH
 		weedBinary = "weed"
 		if _, err := exec.LookPath(weedBinary); err != nil {
-			t.Skip("weed binary not found, skipping integration test")
+			return nil, fmt.Errorf("weed binary not found")
 		}
 	}
 
 	// Create temporary data directory
 	dataDir, err := os.MkdirTemp("", "seaweed-iceberg-test-*")
 	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
 	// Allocate free ephemeral ports for each service
 	var listeners []net.Listener
-	defer func() {
+	closeListeners := func() {
 		for _, l := range listeners {
 			l.Close()
 		}
-	}()
+	}
 
 	var l net.Listener
 	s3Port, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for S3: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for S3: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	icebergPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Iceberg: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Iceberg: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	s3GrpcPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for S3 gRPC: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for S3 gRPC: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	masterPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Master: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Master: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	masterGrpcPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Master gRPC: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Master gRPC: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	filerPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Filer: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Filer: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	filerGrpcPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Filer gRPC: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Filer gRPC: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	volumePort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Volume: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Volume: %w", err)
 	}
 	listeners = append(listeners, l)
 
 	volumeGrpcPort, l, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for Volume gRPC: %v", err)
+		closeListeners()
+		return nil, fmt.Errorf("get free port for Volume gRPC: %w", err)
 	}
 	listeners = append(listeners, l)
+
+	// Release the port reservations so weed mini can bind to them
+	closeListeners()
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
@@ -166,13 +205,11 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		volumePort:      volumePort,
 		volumeGrpcPort:  volumeGrpcPort,
 		dockerAvailable: hasDocker(),
-	}
+	}, nil
 }
 
-// StartSeaweedFS starts a SeaweedFS mini cluster
-func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
-	t.Helper()
-
+// startSeaweedFSForMain starts weed mini without a *testing.T (for use in TestMain).
+func (env *TestEnvironment) startSeaweedFSForMain() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
 
@@ -182,7 +219,8 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	for _, dir := range []string{masterDir, filerDir, volumeDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			t.Fatalf("Failed to create directory %s: %v", dir, err)
+			cancel()
+			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
 	}
 
@@ -203,13 +241,30 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start SeaweedFS: %v", err)
+		cancel()
+		return fmt.Errorf("start SeaweedFS: %w", err)
 	}
 	env.weedProcess = cmd
 
-	// Wait for services to be ready
 	if !env.waitForService(fmt.Sprintf("http://127.0.0.1:%d/v1/config", env.icebergPort), 30*time.Second) {
-		t.Fatalf("Iceberg REST API did not become ready")
+		cancel()
+		cmd.Wait()
+		return fmt.Errorf("Iceberg REST API did not become ready")
+	}
+	return nil
+}
+
+// cleanupForMain stops SeaweedFS and cleans up resources (no *testing.T needed).
+func (env *TestEnvironment) cleanupForMain() {
+	if env.weedCancel != nil {
+		env.weedCancel()
+	}
+	if env.weedProcess != nil {
+		time.Sleep(2 * time.Second)
+		env.weedProcess.Wait()
+	}
+	if env.dataDir != "" {
+		os.RemoveAll(env.dataDir)
 	}
 }
 
@@ -230,25 +285,6 @@ func (env *TestEnvironment) waitForService(url string, timeout time.Duration) bo
 	return false
 }
 
-// Cleanup stops SeaweedFS and cleans up resources
-func (env *TestEnvironment) Cleanup(t *testing.T) {
-	t.Helper()
-
-	if env.weedCancel != nil {
-		env.weedCancel()
-	}
-
-	if env.weedProcess != nil {
-		// Give process time to shut down gracefully
-		time.Sleep(2 * time.Second)
-		env.weedProcess.Wait()
-	}
-
-	if env.dataDir != "" {
-		os.RemoveAll(env.dataDir)
-	}
-}
-
 // IcebergURL returns the Iceberg REST Catalog URL
 func (env *TestEnvironment) IcebergURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", env.icebergPort)
@@ -260,10 +296,7 @@ func TestIcebergConfig(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
-
-	env.StartSeaweedFS(t)
+	env := sharedEnv
 
 	// Test GET /v1/config
 	resp, err := http.Get(env.IcebergURL() + "/v1/config")
@@ -294,13 +327,10 @@ func TestIcebergNamespaces(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
-
-	env.StartSeaweedFS(t)
+	env := sharedEnv
 
 	// Create the default table bucket first via S3
-	createTableBucket(t, env, "warehouse")
+	createTableBucket(t, env, "warehouse-ns-"+randomSuffix())
 
 	// Test GET /v1/namespaces (should return empty list initially)
 	resp, err := http.Get(env.IcebergURL() + "/v1/namespaces")
@@ -321,13 +351,10 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
+	createTableBucket(t, env, "warehouse-stage-"+randomSuffix())
 
-	env.StartSeaweedFS(t)
-	createTableBucket(t, env, "warehouse")
-
-	namespace := "stage_ns"
+	namespace := "stage_ns_" + randomSuffix()
 	tableName := "orders"
 
 	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
@@ -417,13 +444,10 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
+	createTableBucket(t, env, "warehouse-missing-"+randomSuffix())
 
-	env.StartSeaweedFS(t)
-	createTableBucket(t, env, "warehouse")
-
-	namespace := "stage_missing_assert_ns"
+	namespace := "stage_missing_assert_ns_" + randomSuffix()
 	tableName := "missing_table"
 
 	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
@@ -520,6 +544,11 @@ func createTableBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 	t.Logf("Created table bucket %s", bucketName)
 }
 
+// randomSuffix returns a short random hex suffix for unique resource naming.
+func randomSuffix() string {
+	return fmt.Sprintf("%x", time.Now().UnixNano()&0xffffffff)
+}
+
 // TestDuckDBIntegration tests Iceberg catalog operations using DuckDB
 // This test requires Docker to be available
 func TestDuckDBIntegration(t *testing.T) {
@@ -527,14 +556,11 @@ func TestDuckDBIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping DuckDB integration test")
 	}
-
-	env.StartSeaweedFS(t)
 
 	// Create a temporary SQL file for DuckDB to execute
 	sqlFile := filepath.Join(env.dataDir, "test.sql")
