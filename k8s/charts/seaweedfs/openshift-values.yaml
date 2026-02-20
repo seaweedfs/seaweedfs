@@ -56,10 +56,13 @@ volume:
       storageClass: ""      # leave empty to use the cluster default StorageClass
       maxVolumes: 0
 
-  logs: {}                  # emptyDir by default (no logs section means no log volume)
+  logs:
+    type: "emptyDir"
 
   podSecurityContext:
     enabled: true
+    # On OpenShift, we omit runAsUser/runAsGroup/fsGroup to let the admission
+    # controller assign them automatically based on the namespace's SCC.
     runAsNonRoot: true
 
   containerSecurityContext:
@@ -82,6 +85,8 @@ filer:
 
   podSecurityContext:
     enabled: true
+    # On OpenShift, we omit runAsUser/runAsGroup/fsGroup to let the admission
+    # controller assign them automatically based on the namespace's SCC.
     runAsNonRoot: true
 
   containerSecurityContext:
@@ -97,6 +102,8 @@ filer:
 s3:
   podSecurityContext:
     enabled: true
+    # On OpenShift, we omit runAsUser/runAsGroup/fsGroup to let the admission
+    # controller assign them automatically based on the namespace's SCC.
     runAsNonRoot: true
 
   containerSecurityContext:
