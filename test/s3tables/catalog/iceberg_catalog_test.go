@@ -332,10 +332,11 @@ func TestIcebergNamespaces(t *testing.T) {
 	env := sharedEnv
 
 	// Create the default table bucket first via S3
-	createTableBucket(t, env, "warehouse-ns-"+randomSuffix())
+	bucketName := "warehouse-ns-" + randomSuffix()
+	createTableBucket(t, env, bucketName)
 
 	// Test GET /v1/namespaces (should return empty list initially)
-	resp, err := http.Get(env.IcebergURL() + "/v1/namespaces")
+	resp, err := http.Get(env.IcebergURL() + icebergPath(bucketName, "/v1/namespaces"))
 	if err != nil {
 		t.Fatalf("Failed to list namespaces: %v", err)
 	}
@@ -354,12 +355,13 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 	}
 
 	env := sharedEnv
-	createTableBucket(t, env, "warehouse-stage-"+randomSuffix())
+	bucketName := "warehouse-stage-" + randomSuffix()
+	createTableBucket(t, env, bucketName)
 
 	namespace := "stage_ns_" + randomSuffix()
 	tableName := "orders"
 
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
+	status, _, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, "/v1/namespaces"), map[string]any{
 		"namespace": []string{namespace},
 	})
 	if err != nil {
@@ -369,7 +371,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
 	}
 
-	status, badReqResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
+	status, badReqResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)), map[string]any{
 		"stage-create": true,
 	})
 	if err != nil {
@@ -387,7 +389,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("error.message = %v, want it to include %q", errorObj["message"], "table name is required")
 	}
 
-	status, stageResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables", namespace), map[string]any{
+	status, stageResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)), map[string]any{
 		"name":         tableName,
 		"stage-create": true,
 	})
@@ -402,7 +404,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("stage metadata-location = %q, want suffix /metadata/v1.metadata.json", stageLocation)
 	}
 
-	status, _, err = doIcebergJSONRequest(env, http.MethodGet, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), nil)
+	status, _, err = doIcebergJSONRequest(env, http.MethodGet, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), nil)
 	if err != nil {
 		t.Fatalf("Load staged table request failed: %v", err)
 	}
@@ -410,7 +412,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("Load staged table status = %d, want 404", status)
 	}
 
-	status, commitResp, err := doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), map[string]any{
+	status, commitResp, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), map[string]any{
 		"requirements": []map[string]any{
 			{"type": "assert-create"},
 		},
@@ -427,7 +429,7 @@ func TestStageCreateAndFinalizeFlow(t *testing.T) {
 		t.Fatalf("final metadata-location = %q, want suffix /metadata/v1.metadata.json", commitLocation)
 	}
 
-	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), nil)
+	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), nil)
 	if err != nil {
 		t.Fatalf("Load finalized table request failed: %v", err)
 	}
@@ -447,12 +449,13 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 	}
 
 	env := sharedEnv
-	createTableBucket(t, env, "warehouse-missing-"+randomSuffix())
+	bucketName := "warehouse-missing-" + randomSuffix()
+	createTableBucket(t, env, bucketName)
 
 	namespace := "stage_missing_assert_ns_" + randomSuffix()
 	tableName := "missing_table"
 
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost, "/v1/namespaces", map[string]any{
+	status, _, err := doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, "/v1/namespaces"), map[string]any{
 		"namespace": []string{namespace},
 	})
 	if err != nil {
@@ -462,7 +465,7 @@ func TestCommitMissingTableWithoutAssertCreate(t *testing.T) {
 		t.Fatalf("Create namespace status = %d, want 200 or 409", status)
 	}
 
-	status, _, err = doIcebergJSONRequest(env, http.MethodPost, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName), map[string]any{
+	status, _, err = doIcebergJSONRequest(env, http.MethodPost, icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), map[string]any{
 		"requirements": []any{},
 		"updates":      []any{},
 	})
@@ -515,6 +518,21 @@ func doIcebergJSONRequest(env *TestEnvironment, method, path string, payload any
 		return resp.StatusCode, nil, fmt.Errorf("failed to decode %s %s response: %w body=%s", method, path, err, string(data))
 	}
 	return resp.StatusCode, decoded, nil
+}
+
+// icebergPath inserts the table bucket prefix into Iceberg REST API paths.
+// For example, "/v1/namespaces" with prefix "my-bucket" becomes
+// "/v1/my-bucket/namespaces".
+func icebergPath(prefix, path string) string {
+	if prefix == "" {
+		return path
+	}
+	const base = "/v1/"
+	if !strings.HasPrefix(path, base) {
+		return path
+	}
+	withPrefix := base + prefix + "/" + strings.TrimPrefix(path, base)
+	return withPrefix
 }
 
 // createTableBucket creates a table bucket via the S3Tables REST API
