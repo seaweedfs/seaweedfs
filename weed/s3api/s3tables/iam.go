@@ -29,6 +29,11 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 	if s3_constants.GetIdentityFromContext(r) == nil {
 		return false
 	}
+	// When default-allow is enabled, keep anonymous requests on the legacy path
+	// to preserve zero-config behavior (IAM policies are not available for anonymous).
+	if h.defaultAllow && isAnonymousIdentity(r) {
+		return false
+	}
 	// An empty inline `identityActions` slice doesn't mean the identity has no
 	// permissions—it just means authorization lives in IAM policies or session
 	// tokens instead of static action lists. We therefore prefer the IAM path
@@ -41,6 +46,32 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 		return true
 	}
 	return len(identityPolicyNames) > 0
+}
+
+func isAnonymousIdentity(r *http.Request) bool {
+	val, ok := getIdentityStructValue(r)
+	if !ok {
+		return false
+	}
+	if nameField := val.FieldByName("Name"); nameField.IsValid() && nameField.Kind() == reflect.String {
+		if nameField.String() == s3_constants.AccountAnonymousId {
+			return true
+		}
+	}
+	accountField := val.FieldByName("Account")
+	if accountField.IsValid() && !accountField.IsNil() {
+		if accountField.Kind() == reflect.Ptr {
+			accountField = accountField.Elem()
+		}
+		if accountField.Kind() == reflect.Struct {
+			if idField := accountField.FieldByName("Id"); idField.IsValid() && idField.Kind() == reflect.String {
+				if idField.String() == s3_constants.AccountAnonymousId {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func hasSessionToken(r *http.Request) bool {
