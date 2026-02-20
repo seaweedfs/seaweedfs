@@ -106,7 +106,7 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	metadata := &tableBucketMetadata{
 		Name:           req.Name,
 		CreatedAt:      now,
-		OwnerAccountID: h.getAccountID(r),
+		OwnerAccountID: principal,
 	}
 
 	metadataBytes, err := json.Marshal(metadata)

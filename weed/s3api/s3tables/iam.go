@@ -26,6 +26,11 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 	if h.iamAuthorizer == nil || r == nil {
 		return false
 	}
+	// An empty inline `identityActions` slice doesn't mean the identity has no
+	// permissions—it just means authorization lives in IAM policies or session
+	// tokens instead of static action lists. We therefore prefer the IAM path
+	// whenever inline actions are absent and fall back to default policy names
+	// or session tokens.
 	if hasSessionToken(r) {
 		return true
 	}
@@ -51,7 +56,9 @@ func extractSessionToken(r *http.Request) string {
 
 func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyNames []string, action string, resources ...string) (bool, error) {
 	if h.iamAuthorizer == nil {
-		return false, nil
+		err := fmt.Errorf("nil iamAuthorizer in authorizeIAMAction")
+		glog.V(2).Infof("S3Tables: %v", err)
+		return false, err
 	}
 	principal := r.Header.Get("X-SeaweedFS-Principal")
 	if principal == "" {
@@ -73,7 +80,9 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 		policyNames = getIdentityPolicyNames(r)
 	}
 
-	var lastErr error
+	if len(resources) == 0 {
+		return false, fmt.Errorf("no resources provided to authorizeIAMAction")
+	}
 	for _, resource := range resources {
 		if resource == "" {
 			continue
@@ -87,15 +96,15 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 			PolicyNames:    policyNames,
 		})
 		if err != nil {
-			lastErr = err
 			glog.V(2).Infof("S3Tables: IAM authorization error action=%s resource=%s principal=%s: %v", action, resource, principal, err)
-			continue
+			return false, err
 		}
-		if allowed {
-			return true, nil
+		if !allowed {
+			err := fmt.Errorf("access denied by IAM for resource %s", resource)
+			return false, err
 		}
 	}
-	return false, lastErr
+	return true, nil
 }
 
 func getIdentityPrincipalArn(r *http.Request) string {
@@ -202,3 +211,8 @@ func getIdentityStructValue(r *http.Request) (reflect.Value, bool) {
 	}
 	return val, true
 }
+
+// The identity structure is expected to be a pointer to a struct with the
+// reflection fields used below (PrincipalArn string, PolicyNames []string,
+// Claims map[string]interface{}). This helper centralizes the nil-check / ptr-deref
+// logic so the callers can focus on reading the proper field.
