@@ -2,16 +2,13 @@ package s3tables
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
-	"text/template"
 	"time"
 
 	cryptorand "crypto/rand"
