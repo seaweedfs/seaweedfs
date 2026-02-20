@@ -16,10 +16,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"flag"
+
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+	fla9 "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 // TestMain starts a single default weed mini cluster for the whole package and
@@ -27,6 +29,7 @@ import (
 // cluster configuration (e.g. TestS3TablesCreateBucketIAMPolicy) start their
 // own cluster independently.
 func TestMain(m *testing.M) {
+	flag.Parse()
 	if testing.Short() {
 		// Tests self-skip with t.Skip when -short is set; no cluster needed.
 		os.Exit(m.Run())
@@ -794,7 +797,7 @@ func (c *TestCluster) Stop() {
 	for _, cmd := range command.Commands {
 		if cmd.Name() == "mini" {
 			// Reset flags to defaults
-			cmd.Flag.VisitAll(func(f *flag.Flag) {
+			cmd.Flag.VisitAll(func(f *fla9.Flag) {
 				// Reset to default value
 				f.Value.Set(f.DefValue)
 			})

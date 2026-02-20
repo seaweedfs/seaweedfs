@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,7 @@ var sharedEnv *TestEnvironment
 // TestMain starts one weed mini instance for the whole package and tears it down
 // after all tests have run.
 func TestMain(m *testing.M) {
+	flag.Parse()
 	if os.Getenv("SHORT") != "" || testing.Short() {
 		// Let tests self-skip when run with -short.
 		os.Exit(m.Run())
