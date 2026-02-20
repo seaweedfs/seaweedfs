@@ -890,6 +890,10 @@ filer:
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
+    # To provide explicit credentials for the S3 gateway, set them under
+    # the top-level s3.credentials key (not filer.s3.credentials).
+    # The s3-secret.yaml template only reads from .Values.s3.credentials.
+    # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
     auditLogConfig: {}
     # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
@@ -918,6 +922,16 @@ s3:
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
+  # Optionally provide explicit credentials for the S3 gateway.
+  # When set, these are used in the generated s3 secret instead of
+  # auto-generating random credentials.
+  # credentials:
+  #   admin:
+  #     accessKey: ""
+  #     secretKey: ""
+  #   read:
+  #     accessKey: ""
+  #     secretKey: ""
   auditLogConfig: {}
   # You may specify buckets to be created during the install or upgrade process.
   # Buckets may be exposed publicly by setting `anonymousRead` to `true`
@@ -1421,6 +1435,10 @@ allInOne:
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config
     existingConfigSecret: null
+    # To provide explicit credentials for the S3 gateway, set them under
+    # the top-level s3.credentials key (not allInOne.s3.credentials).
+    # The s3-secret.yaml template only reads from .Values.s3.credentials.
+    # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
     auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
