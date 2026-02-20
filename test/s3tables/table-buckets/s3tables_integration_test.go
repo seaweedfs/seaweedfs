@@ -12,33 +12,57 @@ import (
 	"time"
 
 	cryptorand "crypto/rand"
-	"sync"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"flag"
+
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
-var (
-	miniClusterMutex sync.Mutex
-)
+// TestMain starts a single default weed mini cluster for the whole package and
+// tears it down after all tests have completed. Tests that require a different
+// cluster configuration (e.g. TestS3TablesCreateBucketIAMPolicy) start their
+// own cluster independently.
+func TestMain(m *testing.M) {
+	flag.Parse()
+	if testing.Short() {
+		// Tests self-skip with t.Skip when -short is set; no cluster needed.
+		os.Exit(m.Run())
+	}
+
+	// Create a temporary T-less context so we can use t.TempDir-equivalent.
+	testDir, err := os.MkdirTemp("", "seaweed-s3tables-shared-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: failed to create shared temp dir: %v\n", err)
+		os.Exit(0)
+	}
+
+	cluster, err := startMiniClusterInDir(testDir, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SKIP: failed to start shared weed mini cluster: %v\n", err)
+		os.RemoveAll(testDir)
+		os.Exit(0)
+	}
+	sharedCluster = cluster
+
+	code := m.Run()
+
+	sharedCluster.Stop()
+	os.RemoveAll(testDir)
+	os.Exit(code)
+}
 
 func TestS3TablesIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// Create and start test cluster
-	cluster, err := startMiniCluster(t)
-	require.NoError(t, err)
-	defer cluster.Stop()
-
-	// Create S3 Tables client
-	client := NewS3TablesClient(cluster.s3Endpoint, testRegion, testAccessKey, testSecretKey)
+	// Re-use the shared cluster started by TestMain.
+	client := NewS3TablesClient(sharedCluster.s3Endpoint, testRegion, testAccessKey, testSecretKey)
 
 	// Run test suite
 	t.Run("TableBucketLifecycle", func(t *testing.T) {
@@ -68,6 +92,92 @@ func TestS3TablesIntegration(t *testing.T) {
 	t.Run("TargetOperations", func(t *testing.T) {
 		testTargetOperations(t, client)
 	})
+}
+
+func TestS3TablesCreateBucketIAMPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping IAM integration test in short mode")
+	}
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-admin")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	allowedBucket := "tables-allowed"
+	deniedBucket := "tables-denied"
+	iamConfigDir := t.TempDir()
+	iamConfigPath := filepath.Join(iamConfigDir, "iam_config.json")
+	iamConfig := fmt.Sprintf(`{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "%s"
+  },
+  "accounts": [
+    {
+      "id": "%s",
+      "displayName": "tables-integration"
+    }
+  ],
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "%s",
+          "secretKey": "%s"
+        }
+      ],
+      "account": {
+        "id": "%s",
+        "displayName": "tables-integration"
+      },
+      "policyNames": ["S3TablesBucketPolicy"]
+    }
+  ],
+  "policy": {
+    "defaultEffect": "Deny",
+    "storeType": "memory"
+  },
+  "policies": [
+    {
+      "name": "S3TablesBucketPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3tables:CreateTableBucket"],
+            "Resource": [
+              "arn:aws:s3tables:*:*:bucket/%s",
+              "arn:aws:s3:::%s"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}`, testIAMSigningKey, testAccountID, testAccessKey, testSecretKey, testAccountID, allowedBucket, allowedBucket)
+	require.NoError(t, os.WriteFile(iamConfigPath, []byte(iamConfig), 0644))
+
+	cluster, err := startMiniClusterWithExtraArgs(t, []string{
+		"-s3.config=" + iamConfigPath,
+		"-s3.iam.config=" + iamConfigPath,
+	})
+	require.NoError(t, err, "failed to start cluster with IAM config")
+	defer cluster.Stop()
+
+	client := NewS3TablesClient(cluster.s3Endpoint, testRegion, testAccessKey, testSecretKey)
+
+	_, err = client.CreateTableBucket(deniedBucket, nil)
+	require.Error(t, err, "denied bucket creation should fail")
+	assert.Contains(t, err.Error(), "AccessDenied")
+
+	allowedResp, err := client.CreateTableBucket(allowedBucket, nil)
+	require.NoError(t, err, "allowed bucket creation should succeed")
+	defer func() {
+		_ = client.DeleteTableBucket(allowedResp.ARN)
+	}()
 }
 
 func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
@@ -508,11 +618,12 @@ func findAvailablePorts(n int) ([]int, error) {
 	return ports, nil
 }
 
-// startMiniCluster starts a weed mini instance directly without exec
-func startMiniCluster(t *testing.T) (*TestCluster, error) {
-	// Find available ports
-	// We need 8 unique ports: Master(2), Volume(2), Filer(2), S3(2)
-	ports, err := findAvailablePorts(8)
+// startMiniClusterInDir starts a weed mini instance using testDir as the data
+// directory. It does not require a *testing.T so it can be called from TestMain.
+// extraArgs are appended to the default mini command flags.
+func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, error) {
+	// We need 10 unique ports: Master(2), Volume(2), Filer(2), S3(2), Admin(2)
+	ports, err := findAvailablePorts(10)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available ports: %v", err)
 	}
@@ -525,8 +636,8 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	filerGrpcPort := ports[5]
 	s3Port := ports[6]
 	s3GrpcPort := ports[7]
-	// Create temporary directory for test data
-	testDir := t.TempDir()
+	adminPort := ports[8]
+	adminGrpcPort := ports[9]
 
 	// Ensure no configuration file from previous runs
 	configFile := filepath.Join(testDir, "mini.options")
@@ -537,7 +648,6 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	s3Endpoint := fmt.Sprintf("http://127.0.0.1:%d", s3Port)
 	cluster := &TestCluster{
-		t:          t,
 		dataDir:    testDir,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -550,18 +660,17 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	// Create empty security.toml to disable JWT authentication in tests
 	securityToml := filepath.Join(testDir, "security.toml")
-	err = os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644)
-	if err != nil {
+	if err = os.WriteFile(securityToml, []byte("# Empty security config for testing\n"), 0644); err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create security.toml: %v", err)
 	}
 
-	// Set environment variables for admin credentials safely for this test
+	// Ensure AWS credentials are set (don't use t.Setenv here — we are in TestMain).
 	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
-		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+		os.Setenv("AWS_ACCESS_KEY_ID", "admin")
 	}
 	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
-		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+		os.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
 	}
 
 	// Start weed mini in a goroutine by calling the command directly
@@ -569,11 +678,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	go func() {
 		defer cluster.wg.Done()
 
-		// Protect global state mutation with a mutex
-		miniClusterMutex.Lock()
-		defer miniClusterMutex.Unlock()
-
-		// Save current directory and args
+		// Save current directory and args, restore on exit.
 		oldDir, _ := os.Getwd()
 		oldArgs := os.Args
 		defer func() {
@@ -581,21 +686,24 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			os.Args = oldArgs
 		}()
 
-		// Change to test directory so mini picks up security.toml
+		// Change to test directory so mini picks up security.toml.
 		os.Chdir(testDir)
 
-		// Configure args for mini command
-		os.Args = []string{
-			"weed",
+		baseArgs := []string{
 			"-dir=" + testDir,
+			"-master.dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
 			"-master.port.grpc=" + strconv.Itoa(masterGrpcPort),
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-volume.port.grpc=" + strconv.Itoa(volumeGrpcPort),
+			"-volume.port.public=" + strconv.Itoa(volumePort),
+			"-volume.publicUrl=127.0.0.1:" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
 			"-s3.port.grpc=" + strconv.Itoa(s3GrpcPort),
+			"-admin.port=" + strconv.Itoa(adminPort),
+			"-admin.port.grpc=" + strconv.Itoa(adminGrpcPort),
 			"-webdav.port=0",               // Disable WebDAV
 			"-admin.ui=false",              // Disable admin UI
 			"-master.volumeSizeLimitMB=32", // Small volumes for testing
@@ -603,6 +711,10 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
 		}
+		if len(extraArgs) > 0 {
+			baseArgs = append(baseArgs, extraArgs...)
+		}
+		os.Args = append([]string{"weed"}, baseArgs...)
 
 		// Suppress most logging during tests
 		glog.MaxSize = 1024 * 1024
@@ -621,14 +733,34 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	}()
 
 	// Wait for S3 service to be ready
-	err = waitForS3Ready(cluster.s3Endpoint, 30*time.Second)
-	if err != nil {
+	if err = waitForS3Ready(cluster.s3Endpoint, 30*time.Second); err != nil {
 		cancel()
 		return nil, fmt.Errorf("S3 service failed to start: %v", err)
 	}
 
 	cluster.isRunning = true
+	return cluster, nil
+}
 
+// startMiniClusterWithExtraArgs starts a weed mini instance for a single test.
+// It uses t.TempDir() for data isolation and t.Setenv for credential scoping.
+func startMiniClusterWithExtraArgs(t *testing.T, extraArgs []string) (*TestCluster, error) {
+	t.Helper()
+	testDir := t.TempDir()
+
+	// Scope credentials to the test so they are restored after test completion.
+	if os.Getenv("AWS_ACCESS_KEY_ID") == "" {
+		t.Setenv("AWS_ACCESS_KEY_ID", "admin")
+	}
+	if os.Getenv("AWS_SECRET_ACCESS_KEY") == "" {
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "admin")
+	}
+
+	cluster, err := startMiniClusterInDir(testDir, extraArgs)
+	if err != nil {
+		return nil, err
+	}
+	cluster.t = t
 	t.Logf("Test cluster started successfully at %s", cluster.s3Endpoint)
 	return cluster, nil
 }
@@ -654,22 +786,15 @@ func (c *TestCluster) Stop() {
 	case <-done:
 		// Goroutine finished
 	case <-timer.C:
-		// Timeout - goroutine doesn't respond to context cancel
-		// This may indicate the mini cluster didn't shut down cleanly
-		c.t.Log("Warning: Test cluster shutdown timed out after 2 seconds")
-	}
-
-	// Reset the global cmdMini flags to prevent state leakage to other tests
-	for _, cmd := range command.Commands {
-		if cmd.Name() == "mini" {
-			// Reset flags to defaults
-			cmd.Flag.VisitAll(func(f *flag.Flag) {
-				// Reset to default value
-				f.Value.Set(f.DefValue)
-			})
-			break
+		// Timeout - goroutine doesn't respond to context cancel.
+		// This may indicate the mini cluster didn't shut down cleanly.
+		if c.t != nil {
+			c.t.Log("Warning: Test cluster shutdown timed out after 2 seconds")
+		} else {
+			fmt.Println("Warning: Test cluster shutdown timed out after 2 seconds")
 		}
 	}
+
 }
 
 // waitForS3Ready waits for the S3 service to be ready
