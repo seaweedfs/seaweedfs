@@ -81,6 +81,26 @@ type GetPolicyResponse struct {
 	} `xml:"GetPolicyResult"`
 }
 
+// ListPolicyVersionsResponse is the response for ListPolicyVersions action.
+type ListPolicyVersionsResponse struct {
+	CommonResponse
+	XMLName                  xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListPolicyVersionsResponse"`
+	ListPolicyVersionsResult struct {
+		Versions    []*iam.PolicyVersion `xml:"Versions>member"`
+		IsTruncated bool                 `xml:"IsTruncated"`
+		Marker      string               `xml:"Marker,omitempty"`
+	} `xml:"ListPolicyVersionsResult"`
+}
+
+// GetPolicyVersionResponse is the response for GetPolicyVersion action.
+type GetPolicyVersionResponse struct {
+	CommonResponse
+	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetPolicyVersionResponse"`
+	GetPolicyVersionResult struct {
+		PolicyVersion iam.PolicyVersion `xml:"PolicyVersion"`
+	} `xml:"GetPolicyVersionResult"`
+}
+
 // CreateUserResponse is the response for CreateUser action.
 type CreateUserResponse struct {
 	CommonResponse
