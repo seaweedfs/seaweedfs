@@ -21,7 +21,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	fla9 "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 // TestMain starts a single default weed mini cluster for the whole package and
@@ -692,10 +691,13 @@ func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, er
 
 		baseArgs := []string{
 			"-dir=" + testDir,
+			"-master.dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
 			"-master.port.grpc=" + strconv.Itoa(masterGrpcPort),
 			"-volume.port=" + strconv.Itoa(volumePort),
 			"-volume.port.grpc=" + strconv.Itoa(volumeGrpcPort),
+			"-volume.port.public=" + strconv.Itoa(volumePort),
+			"-volume.publicUrl=127.0.0.1:" + strconv.Itoa(volumePort),
 			"-filer.port=" + strconv.Itoa(filerPort),
 			"-filer.port.grpc=" + strconv.Itoa(filerGrpcPort),
 			"-s3.port=" + strconv.Itoa(s3Port),
@@ -793,17 +795,6 @@ func (c *TestCluster) Stop() {
 		}
 	}
 
-	// Reset the global cmdMini flags to prevent state leakage to other tests
-	for _, cmd := range command.Commands {
-		if cmd.Name() == "mini" {
-			// Reset flags to defaults
-			cmd.Flag.VisitAll(func(f *fla9.Flag) {
-				// Reset to default value
-				f.Value.Set(f.DefValue)
-			})
-			break
-		}
-	}
 }
 
 // waitForS3Ready waits for the S3 service to be ready
