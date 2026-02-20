@@ -890,11 +890,14 @@ filer:
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
-    # Optionally provide explicit admin credentials for the S3 gateway.
-    # When set, these are used as the admin identity in the generated s3 secret
-    # instead of auto-generating random credentials.
+    # Optionally provide explicit credentials for the S3 gateway.
+    # When set, these are used in the generated s3 secret instead of
+    # auto-generating random credentials.
     # credentials:
     #   admin:
+    #     accessKey: ""
+    #     secretKey: ""
+    #   read:
     #     accessKey: ""
     #     secretKey: ""
     auditLogConfig: {}
@@ -925,11 +928,14 @@ s3:
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
-  # Optionally provide explicit admin credentials for the S3 gateway.
-  # When set, these are used as the admin identity in the generated s3 secret
-  # instead of auto-generating random credentials.
+  # Optionally provide explicit credentials for the S3 gateway.
+  # When set, these are used in the generated s3 secret instead of
+  # auto-generating random credentials.
   # credentials:
   #   admin:
+  #     accessKey: ""
+  #     secretKey: ""
+  #   read:
   #     accessKey: ""
   #     secretKey: ""
   auditLogConfig: {}
@@ -1435,11 +1441,14 @@ allInOne:
     # Set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json config
     existingConfigSecret: null
-    # Optionally provide explicit admin credentials for the S3 gateway.
-    # When set, these are used as the admin identity in the generated s3 secret
-    # instead of auto-generating random credentials.
+    # Optionally provide explicit credentials for the S3 gateway.
+    # When set, these are used in the generated s3 secret instead of
+    # auto-generating random credentials.
     # credentials:
     #   admin:
+    #     accessKey: ""
+    #     secretKey: ""
+    #   read:
     #     accessKey: ""
     #     secretKey: ""
     auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
