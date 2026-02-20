@@ -164,6 +164,10 @@ func TestConditionalHeaderPrecedenceAndInvalidIfModifiedSince(t *testing.T) {
 	if lastModified == "" {
 		t.Fatalf("baseline read expected Last-Modified header")
 	}
+	etag := baselineResp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatalf("baseline read expected ETag header")
+	}
 
 	precedenceReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
 	precedenceReq.Header.Set("If-Modified-Since", lastModified)
@@ -187,5 +191,29 @@ func TestConditionalHeaderPrecedenceAndInvalidIfModifiedSince(t *testing.T) {
 	}
 	if string(invalidIMSBody) != string(payload) {
 		t.Fatalf("invalid If-Modified-Since fallback body mismatch: got %q want %q", string(invalidIMSBody), string(payload))
+	}
+
+	headIMSPrecedenceReq := mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+fid)
+	headIMSPrecedenceReq.Header.Set("If-Modified-Since", lastModified)
+	headIMSPrecedenceReq.Header.Set("If-None-Match", "\"definitely-different-etag\"")
+	headIMSPrecedenceResp := framework.DoRequest(t, client, headIMSPrecedenceReq)
+	headIMSPrecedenceBody := framework.ReadAllAndClose(t, headIMSPrecedenceResp)
+	if headIMSPrecedenceResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("HEAD conditional precedence expected 304 when If-Modified-Since matches, got %d", headIMSPrecedenceResp.StatusCode)
+	}
+	if len(headIMSPrecedenceBody) != 0 {
+		t.Fatalf("HEAD conditional precedence expected empty body, got %d bytes", len(headIMSPrecedenceBody))
+	}
+
+	headETagPrecedenceReq := mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+fid)
+	headETagPrecedenceReq.Header.Set("If-Modified-Since", "Thu, 01 Jan 1970 00:00:00 GMT")
+	headETagPrecedenceReq.Header.Set("If-None-Match", etag)
+	headETagPrecedenceResp := framework.DoRequest(t, client, headETagPrecedenceReq)
+	headETagPrecedenceBody := framework.ReadAllAndClose(t, headETagPrecedenceResp)
+	if headETagPrecedenceResp.StatusCode != http.StatusNotModified {
+		t.Fatalf("HEAD conditional precedence expected 304 when If-None-Match matches, got %d", headETagPrecedenceResp.StatusCode)
+	}
+	if len(headETagPrecedenceBody) != 0 {
+		t.Fatalf("HEAD conditional etag precedence expected empty body, got %d bytes", len(headETagPrecedenceBody))
 	}
 }

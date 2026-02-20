@@ -17,11 +17,12 @@ type DualVolumeCluster struct {
 	testingTB testing.TB
 	profile   matrix.Profile
 
-	weedBinary string
-	baseDir    string
-	configDir  string
-	logsDir    string
-	keepLogs   bool
+	weedBinary   string
+	volumeBinary string
+	baseDir      string
+	configDir    string
+	logsDir      string
+	keepLogs     bool
 
 	masterPort     int
 	masterGrpcPort int
@@ -33,7 +34,7 @@ type DualVolumeCluster struct {
 	volumeGrpcPort1 int
 	volumePubPort1  int
 
-	masterCmd *exec.Cmd
+	masterCmd  *exec.Cmd
 	volumeCmd0 *exec.Cmd
 	volumeCmd1 *exec.Cmd
 
@@ -43,9 +44,9 @@ type DualVolumeCluster struct {
 func StartDualVolumeCluster(t testing.TB, profile matrix.Profile) *DualVolumeCluster {
 	t.Helper()
 
-	weedBinary, err := FindOrBuildWeedBinary()
+	weedBinary, volumeBinary, err := FindOrBuildServerBinaries()
 	if err != nil {
-		t.Fatalf("resolve weed binary: %v", err)
+		t.Fatalf("resolve server binaries: %v", err)
 	}
 
 	baseDir, keepLogs, err := newWorkDir()
@@ -79,21 +80,22 @@ func StartDualVolumeCluster(t testing.TB, profile matrix.Profile) *DualVolumeClu
 	}
 
 	c := &DualVolumeCluster{
-		testingTB:      t,
-		profile:        profile,
-		weedBinary:     weedBinary,
-		baseDir:        baseDir,
-		configDir:      configDir,
-		logsDir:        logsDir,
-		keepLogs:       keepLogs,
-		masterPort:     masterPort,
-		masterGrpcPort: masterGrpcPort,
-		volumePort0:    ports[0],
+		testingTB:       t,
+		profile:         profile,
+		weedBinary:      weedBinary,
+		volumeBinary:    volumeBinary,
+		baseDir:         baseDir,
+		configDir:       configDir,
+		logsDir:         logsDir,
+		keepLogs:        keepLogs,
+		masterPort:      masterPort,
+		masterGrpcPort:  masterGrpcPort,
+		volumePort0:     ports[0],
 		volumeGrpcPort0: ports[1],
-		volumePubPort0: ports[0],
-		volumePort1:    ports[2],
+		volumePubPort0:  ports[0],
+		volumePort1:     ports[2],
 		volumeGrpcPort1: ports[3],
-		volumePubPort1: ports[2],
+		volumePubPort1:  ports[2],
 	}
 	if profile.SplitPublicPort {
 		c.volumePubPort0 = ports[4]
@@ -227,7 +229,7 @@ func (c *DualVolumeCluster) startVolume(index int, dataDir string) error {
 		args = append(args, "-inflightDownloadDataTimeout="+c.profile.InflightDownloadTimeout.String())
 	}
 
-	cmd := exec.Command(c.weedBinary, args...)
+	cmd := exec.Command(c.volumeBinary, args...)
 	cmd.Dir = c.baseDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

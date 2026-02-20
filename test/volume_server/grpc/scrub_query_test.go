@@ -280,6 +280,54 @@ func TestQueryJsonSuccessAndCsvNoOutput(t *testing.T) {
 	}
 }
 
+func TestQueryCsvInputWithCsvPayloadStillReturnsNoRows(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(67)
+	const needleID = uint64(777004)
+	const cookie = uint32(0xDCDCADAD)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	csvPayload := []byte("name,score\nalice,12\nbob,3\n")
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, csvPayload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != 201 {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	csvStream, err := grpcClient.Query(ctx, &volume_server_pb.QueryRequest{
+		FromFileIds: []string{fid},
+		Selections:  []string{"score"},
+		Filter: &volume_server_pb.QueryRequest_Filter{
+			Field:   "score",
+			Operand: ">",
+			Value:   "10",
+		},
+		InputSerialization: &volume_server_pb.QueryRequest_InputSerialization{
+			CsvInput: &volume_server_pb.QueryRequest_InputSerialization_CSVInput{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Query csv start failed: %v", err)
+	}
+
+	_, err = csvStream.Recv()
+	if err != io.EOF {
+		t.Fatalf("Query csv with csv payload expected EOF with no rows, got: %v", err)
+	}
+}
+
 func TestQueryJsonNoMatchReturnsEmptyStripe(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")

@@ -14,18 +14,26 @@ import (
 
 func AllocateVolume(t testing.TB, client volume_server_pb.VolumeServerClient, volumeID uint32, collection string) {
 	t.Helper()
+	AllocateVolumeWithReplication(t, client, volumeID, collection, "000")
+}
+
+func AllocateVolumeWithReplication(t testing.TB, client volume_server_pb.VolumeServerClient, volumeID uint32, collection, replication string) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if replication == "" {
+		replication = "000"
+	}
 
 	_, err := client.AllocateVolume(ctx, &volume_server_pb.AllocateVolumeRequest{
 		VolumeId:    volumeID,
 		Collection:  collection,
-		Replication: "000",
+		Replication: replication,
 		Version:     uint32(needle.GetCurrentVersion()),
 	})
 	if err != nil {
-		t.Fatalf("allocate volume %d: %v", volumeID, err)
+		t.Fatalf("allocate volume %d (replication=%s): %v", volumeID, replication, err)
 	}
 }
 

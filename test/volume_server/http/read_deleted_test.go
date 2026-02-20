@@ -2,6 +2,7 @@ package volume_server_http_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
@@ -50,5 +51,18 @@ func TestReadDeletedQueryReturnsDeletedNeedleData(t *testing.T) {
 	}
 	if string(readDeletedBody) != string(payload) {
 		t.Fatalf("readDeleted body mismatch: got %q want %q", string(readDeletedBody), string(payload))
+	}
+
+	headReadDeletedReq := mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+fid+"?readDeleted=true")
+	headReadDeletedResp := framework.DoRequest(t, client, headReadDeletedReq)
+	headReadDeletedBody := framework.ReadAllAndClose(t, headReadDeletedResp)
+	if headReadDeletedResp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD with readDeleted=true expected 200, got %d", headReadDeletedResp.StatusCode)
+	}
+	if len(headReadDeletedBody) != 0 {
+		t.Fatalf("HEAD with readDeleted=true expected empty body, got %d bytes", len(headReadDeletedBody))
+	}
+	if got := headReadDeletedResp.Header.Get("Content-Length"); got != strconv.Itoa(len(payload)) {
+		t.Fatalf("HEAD with readDeleted=true content-length mismatch: got %q want %d", got, len(payload))
 	}
 }

@@ -1,0 +1,6 @@
+[package]
+name = "weed-volume-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

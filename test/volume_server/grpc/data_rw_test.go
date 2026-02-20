@@ -2,6 +2,7 @@ package volume_server_grpc_test
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -142,5 +143,68 @@ func TestReadNeedleBlobAndMetaInvalidOffsets(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("ReadNeedleMeta should fail for invalid offset")
+	}
+}
+
+func TestReadNeedleMetaUnsupportedForEcMountedVolume(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(93)
+	const needleID = uint64(880002)
+	const cookie = uint32(0x11AA22BB)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-meta-unsupported"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount failed: %v", err)
+	}
+
+	_, err = grpcClient.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("VolumeUnmount failed: %v", err)
+	}
+
+	_, err = grpcClient.ReadNeedleMeta(ctx, &volume_server_pb.ReadNeedleMetaRequest{
+		VolumeId: volumeID,
+		NeedleId: needleID,
+		Offset:   0,
+		Size:     128,
+	})
+	if err == nil {
+		t.Fatalf("ReadNeedleMeta should fail when only EC shards are mounted")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "ec shards is not supported") {
+		t.Fatalf("ReadNeedleMeta EC-only error mismatch: %v", err)
 	}
 }

@@ -12,12 +12,14 @@ type Profile struct {
 	EnableJWT      bool
 	JWTSigningKey  string
 	JWTReadKey     string
+	AccessUI       bool
 	EnableMaintain bool
 
 	ConcurrentUploadLimitMB   int
 	ConcurrentDownloadLimitMB int
 	InflightUploadTimeout     time.Duration
 	InflightDownloadTimeout   time.Duration
+	FileSizeLimitMB           int
 
 	ReplicatedLayout bool
 	HasErasureCoding bool

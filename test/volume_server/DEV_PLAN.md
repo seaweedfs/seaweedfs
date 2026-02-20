@@ -3,6 +3,12 @@
 ## Goal
 Create a Go integration test suite under `test/volume_server` that validates **drop-in behavior parity** for the Volume Server HTTP and gRPC APIs, so a Rust rewrite can be verified against the current Go behavior.
 
+## Current Program Focus (2026-02-16)
+- Primary execution focus has shifted to implementing native Rust volume-server parity.
+- This integration suite is now the parity gate for Rust implementation work.
+- New tests should be added only when native Rust implementation reveals uncovered Go behavior that is not yet captured.
+- Rust implementation roadmap lives in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`.
+
 ## Hard Requirements
 - Tests live under `test/volume_server`.
 - Tests are written in Go.
@@ -1127,3 +1133,202 @@ Update this section during implementation:
 - Profiles covered: P1.
 - Gaps introduced/remaining: `499` cancellation and transport-interruption branches remain pending.
 - Commit: `d1e5f390a`
+
+- Date: 2026-02-15
+- Change: Added Rust volume-server migration bootstrap wiring.
+- APIs covered: Harness now supports Go master + selectable volume binary (`VOLUME_SERVER_IMPL=rust` or `VOLUME_SERVER_BINARY`), with Rust-mode smoke coverage for representative HTTP/gRPC integration tests.
+- Profiles covered: P1 smoke and default Go matrix unchanged.
+- Gaps introduced/remaining: native Rust handler implementations are tracked in `/Users/chris/dev/seaweedfs2/rust/volume_server/DEV_PLAN.md`; current Rust mode is a compatibility launcher phase.
+- Commit: `7beab85c2`, `880c2e1da`, `63d08e8a9`, `d402573ea`
+
+- Date: 2026-02-15
+- Change: Validated Rust-mode compatibility path with full integration suites.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` suites executed successfully with `VOLUME_SERVER_IMPL=rust`.
+- Profiles covered: existing integration matrix in Rust launcher mode.
+- Gaps introduced/remaining: native Rust endpoint and storage/RPC implementation remains pending; current mode delegates execution to Go volume server.
+- Commit: `6ce4d7ede`
+
+- Date: 2026-02-15
+- Change: Added Rust proxy-supervision launcher mode and validated all volume-server integration suites in proxy mode.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` suites executed successfully with `VOLUME_SERVER_IMPL=rust` and `VOLUME_SERVER_RUST_MODE=proxy`.
+- Profiles covered: existing integration matrix in Rust proxy launcher mode.
+- Gaps introduced/remaining: native Rust endpoint/storage/RPC logic remains pending; current proxy mode still delegates backend handlers to Go.
+- Commit: `a7f50d23b`
+
+- Date: 2026-02-15
+- Change: Expanded GitHub CI Rust smoke job to run both launcher modes (`exec` and `proxy`).
+- APIs covered: representative HTTP/gRPC smoke flows now validated in CI for both Rust launcher execution paths.
+- Profiles covered: CI smoke profile for P1 representative calls.
+- Gaps introduced/remaining: CI still runs Rust mode as smoke scope; full-suite Rust-mode CI remains optional due runtime cost.
+- Commit: `548b3d9a3`
+
+- Date: 2026-02-15
+- Change: Added JWT UI override integration coverage with explicit `access.ui=true` profile support.
+- APIs covered: `/ui/index.html` behavior under JWT profile now verifies both default auth-gated path (`401`) and explicit UI-enable override path (`200` with rendered UI).
+- Profiles covered: P3 and P3+`access.ui=true`.
+- Gaps introduced/remaining: UI exposure behavior under JWT profiles is now covered for both secured and override branches.
+- Commit: `de974c05d`
+
+- Date: 2026-02-15
+- Change: Added oversized upload integration coverage using explicit `-fileSizeLimitMB` profile configuration.
+- APIs covered: HTTP write path now verifies payloads larger than configured file-size limit are rejected (`400`) with limit-related error context.
+- Profiles covered: P1-derived profile with `FileSizeLimitMB=1`.
+- Gaps introduced/remaining: file-size limit rejection branch is now covered; replicate-write failure and cancellation (`499`) branches remain pending.
+- Commit: `4d61cbdee`
+
+- Date: 2026-02-15
+- Change: Added gRPC EC-only metadata-read unsupported-path coverage.
+- APIs covered: `ReadNeedleMeta` now verifies the explicit unsupported branch when a volume is unmounted and only EC shards are mounted.
+- Profiles covered: P1 with EC shard generation/mount lifecycle setup.
+- Gaps introduced/remaining: low-level read metadata fault-injection and transport interruption branches remain pending.
+- Commit: `37bf9b5eb`
+
+- Date: 2026-02-15
+- Change: Added deterministic replicated-write failure coverage for unmet replication requirements.
+- APIs covered: HTTP write path now verifies replication error handling (`500`) and no-local-commit outcome (`404` on follow-up read) when volume replication is configured (`001`) but replica set cannot be satisfied.
+- Profiles covered: P1-derived single-node profile with per-volume replication override.
+- Gaps introduced/remaining: replicated-write failure branch is now covered; cancellation (`499`) and deeper transport fault-injection branches remain pending.
+- Commit: `4835d3443`
+
+- Date: 2026-02-15
+- Change: Added EC-backed `BatchDelete` positive-path integration coverage.
+- APIs covered: `BatchDelete` now validates successful EC-needle deletion (`202`) with post-delete `VolumeEcShardRead` deleted-marker verification (`IsDeleted=true`).
+- Profiles covered: P1 with EC shard generate/mount lifecycle; includes test-local gRPC offset proxy for EC internal dial-path parity.
+- Gaps introduced/remaining: EC `BatchDelete` success branch is now covered; deeper distributed failure-injection permutations remain pending.
+- Commit: `1bb40b6bc`
+
+- Date: 2026-02-15
+- Change: Expanded HTTP conditional-header matrix for `HEAD` requests with combined header scenarios.
+- APIs covered: `HEAD` now verifies `If-Modified-Since` precedence over mismatched `If-None-Match`, and `If-None-Match` precedence when IMS is stale but ETag matches.
+- Profiles covered: P1.
+- Gaps introduced/remaining: combined conditional-header precedence paths for `HEAD`/`GET` are now explicitly covered.
+- Commit: `ed23e290f`
+
+- Date: 2026-02-15
+- Change: Added multi-volume success-stream coverage for `ReadAllNeedles`.
+- APIs covered: `ReadAllNeedles` now verifies happy-path streaming across two existing volumes in one request, with per-volume payload validation.
+- Profiles covered: P1.
+- Gaps introduced/remaining: multi-volume stream boundary coverage is now present for successful reads; transport interruption branches remain pending.
+- Commit: `ab95a6ef1`
+
+- Date: 2026-02-15
+- Change: Expanded split-port unsupported HTTP method matrix with `MKCOL` coverage.
+- APIs covered: admin/public parity for `MKCOL` (`400` on admin, passthrough `200` on public) with post-call data-integrity verification.
+- Profiles covered: P2.
+- Gaps introduced/remaining: unsupported-method sampling now covers `PATCH`, `TRACE`, `PROPFIND`, `CONNECT`, and `MKCOL`; cancellation/transport fault paths remain the main unaddressed area.
+- Commit: `2ab30900d`
+
+- Date: 2026-02-15
+- Change: Hardened framework port allocation to keep volume ports within `10000..55535`.
+- APIs covered: test harness now guarantees valid `admin+10000` gRPC offset ranges, eliminating EC batch-delete flake scenarios that rely on offset dialing.
+- Profiles covered: all profiles using shared framework port allocation.
+- Gaps introduced/remaining: no new API gaps; transport cancellation/fault-injection branches remain the primary uncovered area.
+- Commit: `90e82b15c`
+
+- Date: 2026-02-15
+- Change: Re-validated full Rust proxy-mode integration suite after latest HTTP/gRPC coverage additions and framework hardening.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` packages.
+- Profiles covered: existing matrix in Rust proxy launcher mode.
+- Gaps introduced/remaining: native Rust endpoint/storage/RPC implementation remains pending (current Rust mode still delegates to Go backend handlers).
+- Commit: `6bb9d8bac`
+
+- Date: 2026-02-15
+- Change: Added tail sender stream-cancellation interruption coverage.
+- APIs covered: `VolumeTailSender` now verifies client-side context cancellation behavior (`codes.Canceled`) after stream start/heartbeat.
+- Profiles covered: P1.
+- Gaps introduced/remaining: tail transport interruption coverage is now partially closed; receiver-side interruption and deeper network fault injection remain pending.
+- Commit: `27a80f760`
+
+- Date: 2026-02-15
+- Change: Added receiver-side tail stream interruption coverage for unavailable source node.
+- APIs covered: `VolumeTailReceiver` now verifies source connect/dial failure branch when `SourceVolumeServer` is unreachable.
+- Profiles covered: P1.
+- Gaps introduced/remaining: both sender and receiver transport interruption branches are now covered at integration level; deeper injected network faults remain pending.
+- Commit: `a5864c3eb`
+
+- Date: 2026-02-15
+- Change: Expanded query CSV matrix with explicit CSV-payload parity coverage.
+- APIs covered: `Query` now verifies current CSV-input behavior (no streamed rows / immediate EOF) even when source needle content is valid CSV text.
+- Profiles covered: P1.
+- Gaps introduced/remaining: CSV parsing/selection implementation still absent in current server behavior; integration parity now locks the current no-output semantics for both JSON and CSV payload shapes.
+- Commit: `a12dd5f8d`
+
+- Date: 2026-02-15
+- Change: Expanded ping unreachable-target matrix with volume-server target coverage.
+- APIs covered: `Ping` now explicitly verifies unreachable-target error wrapping for `target_type=volumeServer`, alongside existing master/filer variants.
+- Profiles covered: P1.
+- Gaps introduced/remaining: ping target-type matrix is covered for success and unreachable branches across master/filer/volume-server.
+- Commit: `b9fbb85af`
+
+- Date: 2026-02-15
+- Change: Expanded deleted-read HTTP matrix with `HEAD` parity coverage.
+- APIs covered: `HEAD` with `readDeleted=true` now validates current behavior (`200`, empty body, payload-size `Content-Length`) after delete.
+- Profiles covered: P1.
+- Gaps introduced/remaining: deleted-read parity now covers both `GET` and `HEAD` semantics on local-volume path.
+- Commit: `cc80ad364`
+
+- Date: 2026-02-16
+- Change: Shifted planning priority to native Rust implementation parity.
+- APIs covered: no new API additions in this plan entry; integration suite remains the validation gate.
+- Profiles covered: unchanged.
+- Gaps introduced/remaining: primary remaining gap is native Rust handler/storage/RPC implementation replacing Go backend delegation.
+- Commit: `14c863dbf`
+
+- Date: 2026-02-16
+- Change: Added Rust launcher `native` mode bootstrap, made it the default Rust launcher mode, and expanded CI Rust smoke matrix coverage to include `native`.
+- APIs covered: full `/test/volume_server/http` and `/test/volume_server/grpc` packages re-validated in `VOLUME_SERVER_RUST_MODE=native`; default Rust launcher path (`VOLUME_SERVER_IMPL=rust`) smoke-validated for HTTP and gRPC control tests.
+- Profiles covered: existing HTTP/gRPC matrix in native launcher mode; default-mode smoke checks on P1 control flows.
+- Gaps introduced/remaining: native Rust API/storage/RPC handlers still pending; current `native` mode remains a delegation bootstrap while parity replacement proceeds.
+- Commit: `70ddbee37`, `61befd10f`, `2e65966c0`
+
+- Date: 2026-02-16
+- Change: Implemented first native Rust HTTP control handlers in `native` mode for `/status` and `/healthz` (admin listener path), with proxy fallback retained for remaining endpoints.
+- APIs covered: `/status` and `/healthz` now served by Rust-native code path in `VOLUME_SERVER_RUST_MODE=native`; full HTTP and gRPC integration suites re-validated.
+- Profiles covered: full existing HTTP/gRPC matrix under native mode.
+- Gaps introduced/remaining: gRPC control/data APIs and most HTTP data/static/auth paths remain delegated and require incremental native replacement.
+- Commit: `7e6e0261a`
+
+- Date: 2026-02-16
+- Change: Implemented native Rust HTTP `OPTIONS` handling for admin/public listeners in `VOLUME_SERVER_RUST_MODE=native`.
+- APIs covered: admin/public `OPTIONS` method allow-list and CORS origin handling now served from Rust-native path; full HTTP and gRPC packages re-validated.
+- Profiles covered: P2 split-port CORS/OPTIONS profiles plus full existing matrix in native mode.
+- Gaps introduced/remaining: static/UI/auth and data-path HTTP handlers, plus gRPC control/data/stream handlers, remain delegated and pending native replacement.
+- Commit: `fbff2cb39`
+
+- Date: 2026-02-16
+- Change: Implemented broader native Rust HTTP surface in `native` mode:
+  - `/ui/index.html` auth-gating parity (JWT + access.ui handling)
+  - static asset paths (`/favicon.ico`, `/seaweedfsstatic/*`)
+  - public non-read method no-op parity (`200`) and admin unsupported-method rejection parity (`400`)
+- APIs covered: UI/static/admin/public control-surface behavior now served by Rust-native path; full `/test/volume_server/http` and `/test/volume_server/grpc` packages re-validated.
+- Profiles covered: P1/P2/P3 variants touched by UI/static/CORS/method behavior, plus full matrix in native mode.
+- Gaps introduced/remaining: HTTP data-path handlers and all gRPC handlers remain delegated and still require native replacement.
+- Commit: `23e4497b2`
+
+- Date: 2026-02-16
+- Change: Improved native Rust control-path parity for health/status and request-target parsing.
+- APIs covered: native `/healthz` now mirrors backend service health transitions (`200`/`503`) and native route matching now handles absolute-form HTTP request targets before path dispatch.
+- Profiles covered: full existing HTTP/gRPC integration matrix in native mode (`VOLUME_SERVER_IMPL=rust`, `VOLUME_SERVER_RUST_MODE=native`).
+- Gaps introduced/remaining: core HTTP data handlers and all gRPC RPC handlers are still delegated and remain the primary native implementation gap.
+- Commit: `d6ff6ed6d`
+
+- Date: 2026-02-16
+- Change: Added Rust-native malformed fid-route validation ahead of delegated data handlers.
+- APIs covered: GET/HEAD/POST/PUT fid-shaped paths now return native `400` for invalid vid/fid tokens (including invalid-read and invalid-write path variants) while valid routes continue through delegated storage handlers.
+- Profiles covered: full existing HTTP/gRPC integration matrix in native mode, plus targeted invalid-path parity runs.
+- Gaps introduced/remaining: data-path success branches and all gRPC handler bodies remain delegated; native replacement work continues on those core execution paths.
+- Commit: `1ce0174b2`
+
+- Date: 2026-02-16
+- Change: Added Rust-native write error prevalidation for delegated fid routes.
+- APIs covered: native path now rejects malformed multipart boundary requests, `Content-MD5` writes, and over-limit `Content-Length` writes (using `-fileSizeLimitMB`) with `400` parity behavior before delegation.
+- Profiles covered: P1 default and P1 with explicit file-size limit profile, plus full existing HTTP/gRPC native-mode matrix revalidation.
+- Gaps introduced/remaining: positive write/read/delete data handlers and all gRPC handler bodies are still delegated; native implementation continues incrementally.
+- Commit: `94cefd6f4`
+
+- Date: 2026-02-16
+- Change: Broadened Rust-native malformed-fid handling to slash-form read/write URL shapes with reserved-route exclusions.
+- APIs covered: `/{vid}/{fid}` and `/{vid}/{fid}/{filename}` malformed cases now hit native `400` validation path, while `/status`, `/healthz`, `/ui/index.html`, `/stats/*`, and static asset routes remain excluded from fid parsing.
+- Profiles covered: full existing HTTP/gRPC native-mode matrix, plus targeted admin/read-path malformed-slash validation run.
+- Gaps introduced/remaining: successful data-path read/write/delete handlers and all gRPC method bodies remain delegated and are still the primary native implementation gap.
+- Commit: `e66983e9b`
