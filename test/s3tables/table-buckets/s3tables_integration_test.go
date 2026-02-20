@@ -685,9 +685,9 @@ func (c *TestCluster) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	// Give services time to shut down gracefully
+	// Give services time to shut down aggressively
 	if c.isRunning {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	// Wait for the mini goroutine to finish
 	done := make(chan struct{})
@@ -695,11 +695,12 @@ func (c *TestCluster) Stop() {
 		c.wg.Wait()
 		close(done)
 	}()
-	timer := time.NewTimer(2 * time.Second)
+	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	select {
 	case <-done:
 		// Goroutine finished
+		time.Sleep(200 * time.Millisecond) // Extra buffer for port release
 	case <-timer.C:
 		// Timeout - goroutine doesn't respond to context cancel
 		// This may indicate the mini cluster didn't shut down cleanly

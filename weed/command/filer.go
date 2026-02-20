@@ -341,7 +341,12 @@ func (fo *FilerOptions) startFiler() {
 		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
 	}
 
-	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{
+	// ... some code omitted for simplicity ...
+	fctx := MiniClusterCtx
+	if fctx == nil {
+		fctx = context.Background()
+	}
+	fs, nfs_err := weed_server.NewFilerServer(fctx, defaultMux, publicVolumeMux, &weed_server.FilerOption{
 		Masters:                   fo.masters,
 		FilerGroup:                *fo.filerGroup,
 		Collection:                *fo.collection,

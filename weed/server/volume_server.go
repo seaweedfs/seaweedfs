@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sync"
@@ -56,7 +57,7 @@ type VolumeServer struct {
 	stopChan                 chan bool
 }
 
-func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
+func NewVolumeServer(ctx context.Context, adminMux, publicMux *http.ServeMux, ip string,
 	port int, grpcPort int, publicUrl string, id string,
 	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
 	idxFolder string,
@@ -116,7 +117,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	whiteList = append(whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...)
 	vs.SeedMasterNodes = masterNodes
 
-	vs.checkWithMaster()
+	vs.checkWithMaster(ctx)
 
 	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, ldbTimeout)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
@@ -143,7 +144,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	stats.VolumeServerConcurrentDownloadLimit.Set(float64(vs.concurrentDownloadLimit))
 	stats.VolumeServerConcurrentUploadLimit.Set(float64(vs.concurrentUploadLimit))
 
-	go vs.heartbeat()
+	go vs.heartbeat(ctx)
 	go stats.LoopPushingMetric("volumeServer", util.JoinHostPort(ip, port), vs.metricsAddress, vs.metricsIntervalSec)
 
 	return vs

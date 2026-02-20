@@ -268,7 +268,11 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		}()
 	}
 
-	go ms.MasterClient.KeepConnectedToMaster(context.Background())
+	masterCtx := MiniClusterCtx
+	if masterCtx == nil {
+		masterCtx = context.Background()
+	}
+	go ms.MasterClient.KeepConnectedToMaster(masterCtx)
 
 	// start http server
 	var (

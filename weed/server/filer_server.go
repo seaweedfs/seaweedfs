@@ -119,7 +119,7 @@ type FilerServer struct {
 	CredentialManager *credential.CredentialManager
 }
 
-func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
+func NewFilerServer(ctx context.Context, defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
 
 	v := util.GetViper()
 	signingKey := v.GetString("jwt.filer_signing.key")
@@ -194,7 +194,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(ctx)
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")

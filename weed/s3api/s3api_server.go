@@ -82,11 +82,11 @@ type S3ApiServer struct {
 	cipher                bool            // encrypt data on volume servers
 }
 
-func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
-	return NewS3ApiServerWithStore(router, option, "")
+func NewS3ApiServer(ctx context.Context, router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
+	return NewS3ApiServerWithStore(ctx, router, option, "")
 }
 
-func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {
+func NewS3ApiServerWithStore(ctx context.Context, router *mux.Router, option *S3ApiServerOption, explicitStore string) (s3ApiServer *S3ApiServer, err error) {
 	if len(option.Filers) == 0 {
 		return nil, fmt.Errorf("at least one filer address is required")
 	}
@@ -132,7 +132,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 		masterClient := wdclient.NewMasterClient(option.GrpcDialOption, option.FilerGroup, cluster.S3Type, pb.ServerAddress(util.JoinHostPort(clientHost, option.GrpcPort)), "", "", *pb.NewServiceDiscoveryFromMap(masterMap))
 		// Start the master client connection loop - required for GetMaster() to work
-		go masterClient.KeepConnectedToMaster(context.Background())
+		go masterClient.KeepConnectedToMaster(ctx)
 
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
 			MasterClient:      masterClient,
@@ -277,7 +277,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	})
 
 	// Start bucket size metrics collection in background
-	go s3ApiServer.startBucketSizeMetricsLoop(context.Background())
+	go s3ApiServer.startBucketSizeMetricsLoop(ctx)
 
 	return s3ApiServer, nil
 }

@@ -288,7 +288,11 @@ func (s3opt *S3Options) startS3Server() bool {
 		*s3opt.bindIp = "0.0.0.0"
 	}
 
-	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
+	s3ctx := MiniClusterCtx
+	if s3ctx == nil {
+		s3ctx = context.Background()
+	}
+	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(s3ctx, router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
 		Port:                      *s3opt.port,

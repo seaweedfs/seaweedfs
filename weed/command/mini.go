@@ -1107,6 +1107,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
 	waitForWorkerReady(workerGrpcAddr)
+
+	if ctx != nil {
+		go func() {
+			<-ctx.Done()
+			glog.V(0).Infof("Cluster context cancelled, initiating aggressive shutdown of mini services...")
+		}()
+	}
 }
 
 // waitForAdminServerReady pings the admin server HTTP endpoint to check if it's ready
