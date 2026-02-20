@@ -35,6 +35,12 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
       annotations:
+      {{- if .Values.s3.existingConfigSecret }}
+        {{- $configSecret := (lookup "v1" "Secret" .Release.Namespace .Values.s3.existingConfigSecret) | default dict }}
+        checksum/s3config: {{ $configSecret | toYaml | sha256sum }}
+      {{- else }}
+        checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
+      {{- end }}
       {{ with .Values.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
