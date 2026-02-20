@@ -75,6 +75,8 @@ type (
 	iamDeletePolicyResponse             = iamlib.DeletePolicyResponse
 	iamListPoliciesResponse             = iamlib.ListPoliciesResponse
 	iamGetPolicyResponse                = iamlib.GetPolicyResponse
+	iamListPolicyVersionsResponse       = iamlib.ListPolicyVersionsResponse
+	iamGetPolicyVersionResponse         = iamlib.GetPolicyVersionResponse
 	iamCreateUserResponse               = iamlib.CreateUserResponse
 	iamDeleteUserResponse               = iamlib.DeleteUserResponse
 	iamGetUserResponse                  = iamlib.GetUserResponse
@@ -573,6 +575,82 @@ func (e *EmbeddedIamApi) GetPolicy(ctx context.Context, values url.Values) (iamG
 		Path:             &path,
 		DefaultVersionId: &defaultVersionId,
 		IsAttachable:     &isAttachable,
+	}
+	return resp, nil
+}
+
+// ListPolicyVersions lists versions for a managed policy.
+// Current SeaweedFS implementation stores one version per policy (v1).
+func (e *EmbeddedIamApi) ListPolicyVersions(ctx context.Context, values url.Values) (iamListPolicyVersionsResponse, *iamError) {
+	var resp iamListPolicyVersionsResponse
+	policyArn := values.Get("PolicyArn")
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	versionID := "v1"
+	isDefaultVersion := true
+	createDate := time.Now().UTC()
+	resp.ListPolicyVersionsResult.Versions = []*iam.PolicyVersion{{
+		VersionId:        &versionID,
+		IsDefaultVersion: &isDefaultVersion,
+		CreateDate:       &createDate,
+	}}
+	resp.ListPolicyVersionsResult.IsTruncated = false
+	return resp, nil
+}
+
+// GetPolicyVersion returns the document for a specific policy version.
+// Current SeaweedFS implementation stores one version per policy (v1).
+func (e *EmbeddedIamApi) GetPolicyVersion(ctx context.Context, values url.Values) (iamGetPolicyVersionResponse, *iamError) {
+	var resp iamGetPolicyVersionResponse
+	policyArn := values.Get("PolicyArn")
+	versionID := values.Get("VersionId")
+	if versionID == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("VersionId is required")}
+	}
+
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not configured")}
+	}
+	policy, err := e.credentialManager.GetPolicy(ctx, policyName)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	if versionID != "v1" {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy version %s not found", versionID)}
+	}
+	policyDocumentJSON, err := json.Marshal(policy)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	isDefaultVersion := true
+	createDate := time.Now().UTC()
+	document := string(policyDocumentJSON)
+	resp.GetPolicyVersionResult.PolicyVersion = iam.PolicyVersion{
+		VersionId:        &versionID,
+		IsDefaultVersion: &isDefaultVersion,
+		CreateDate:       &createDate,
+		Document:         &document,
 	}
 	return resp, nil
 }
@@ -1453,7 +1531,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	action := values.Get("Action")
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount":
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -1566,6 +1644,18 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		changed = false
 	case "GetPolicy":
 		response, iamErr = e.GetPolicy(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "ListPolicyVersions":
+		response, iamErr = e.ListPolicyVersions(ctx, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "GetPolicyVersion":
+		response, iamErr = e.GetPolicyVersion(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}

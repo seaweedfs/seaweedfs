@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -200,6 +201,116 @@ func TestIAMPolicyManagement(t *testing.T) {
 				PolicyArn: createResp.Policy.Arn,
 			})
 		})
+	})
+
+	t.Run("managed_policy_crud_lifecycle", func(t *testing.T) {
+		policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`
+
+		policyNames := []string{"test-managed-policy-lifecycle-a", "test-managed-policy-lifecycle-b"}
+		policyArns := make([]*string, 0, len(policyNames))
+		for _, policyName := range policyNames {
+			createResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
+				PolicyName:     aws.String(policyName),
+				PolicyDocument: aws.String(policyDoc),
+			})
+			require.NoError(t, err)
+			policyArns = append(policyArns, createResp.Policy.Arn)
+		}
+
+		t.Cleanup(func() {
+			for _, policyArn := range policyArns {
+				_, _ = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+			}
+		})
+
+		listResp, err := iamClient.ListPolicies(&iam.ListPoliciesInput{})
+		require.NoError(t, err)
+
+		foundByName := map[string]bool{}
+		for _, policy := range listResp.Policies {
+			if policy.PolicyName != nil {
+				foundByName[*policy.PolicyName] = true
+			}
+		}
+		for _, policyName := range policyNames {
+			assert.True(t, foundByName[policyName], "policy %s should be listed", policyName)
+		}
+
+		getResp, err := iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: policyArns[0]})
+		require.NoError(t, err)
+		require.NotNil(t, getResp.Policy)
+		assert.Equal(t, policyNames[0], aws.StringValue(getResp.Policy.PolicyName))
+		assert.Equal(t, aws.StringValue(policyArns[0]), aws.StringValue(getResp.Policy.Arn))
+
+		_, err = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArns[0]})
+		require.NoError(t, err)
+
+		_, err = iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: policyArns[0]})
+		require.Error(t, err)
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok)
+		assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+
+		listAfterDeleteResp, err := iamClient.ListPolicies(&iam.ListPoliciesInput{})
+		require.NoError(t, err)
+		deletedPolicyFound := false
+		remainingPolicyFound := false
+		for _, policy := range listAfterDeleteResp.Policies {
+			if policy.PolicyName == nil {
+				continue
+			}
+			if *policy.PolicyName == policyNames[0] {
+				deletedPolicyFound = true
+			}
+			if *policy.PolicyName == policyNames[1] {
+				remainingPolicyFound = true
+			}
+		}
+		assert.False(t, deletedPolicyFound, "deleted policy should no longer be listed")
+		assert.True(t, remainingPolicyFound, "remaining policy should still be listed")
+
+		policyArns[0] = nil
+	})
+
+	t.Run("managed_policy_versions", func(t *testing.T) {
+		policyName := "test-managed-policy-version"
+		policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"*"}]}`
+
+		createResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(policyDoc),
+		})
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			_, _ = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createResp.Policy.Arn})
+		})
+
+		listVersionsResp, err := iamClient.ListPolicyVersions(&iam.ListPolicyVersionsInput{
+			PolicyArn: createResp.Policy.Arn,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, listVersionsResp.Versions)
+		assert.Equal(t, "v1", aws.StringValue(listVersionsResp.Versions[0].VersionId))
+		assert.Equal(t, true, aws.BoolValue(listVersionsResp.Versions[0].IsDefaultVersion))
+
+		getVersionResp, err := iamClient.GetPolicyVersion(&iam.GetPolicyVersionInput{
+			PolicyArn:  createResp.Policy.Arn,
+			VersionId:  aws.String("v1"),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, getVersionResp.PolicyVersion)
+		assert.Equal(t, "v1", aws.StringValue(getVersionResp.PolicyVersion.VersionId))
+		assert.Contains(t, aws.StringValue(getVersionResp.PolicyVersion.Document), "s3:ListBucket")
+
+		_, err = iamClient.GetPolicyVersion(&iam.GetPolicyVersionInput{
+			PolicyArn: createResp.Policy.Arn,
+			VersionId: aws.String("v2"),
+		})
+		require.Error(t, err)
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok)
+		assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
 	})
 
 	t.Run("user_inline_policy", func(t *testing.T) {
