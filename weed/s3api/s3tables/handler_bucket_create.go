@@ -29,8 +29,8 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
-	if h.shouldUseIAM(r, identityActions, identityPolicyNames) && !h.defaultAllow {
-		ownerAccountID := h.getAccountID(r)
+	if h.shouldUseIAM(r, identityActions, identityPolicyNames) {
+		ownerAccountID := principal
 		tableBucketARN := h.generateTableBucketARN(ownerAccountID, req.Name)
 		s3BucketARN := fmt.Sprintf("arn:aws:s3:::%s", req.Name)
 		allowed, err := h.authorizeIAMAction(r, identityPolicyNames, "s3tables:CreateTableBucket", tableBucketARN, s3BucketARN)

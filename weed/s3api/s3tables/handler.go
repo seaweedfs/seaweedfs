@@ -260,20 +260,10 @@ func normalizePrincipalID(id string) string {
 // getIdentityActions extracts the action list from the identity object in the request context.
 // Uses reflection to avoid import cycles with s3api package.
 func getIdentityActions(r *http.Request) []string {
-	identityRaw := s3_constants.GetIdentityFromContext(r)
-	if identityRaw == nil {
+	val, ok := getIdentityStructValue(r)
+	if !ok {
 		return nil
 	}
-
-	// Use reflection to access the Actions field to avoid import cycle
-	val := reflect.ValueOf(identityRaw)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	if val.Kind() != reflect.Struct {
-		return nil
-	}
-
 	actionsField := val.FieldByName("Actions")
 	if !actionsField.IsValid() || actionsField.Kind() != reflect.Slice {
 		return nil
