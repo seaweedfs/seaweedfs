@@ -655,6 +655,7 @@ message ScrubVolumeRequest {
     VolumeScrubMode mode = 1;
     // optional list of volume IDs to scrub. if empty, all volumes for the server are scrubbed.
     repeated uint32 volume_ids = 2;
+    bool mark_broken_volumes_readonly = 3;
 }
 message ScrubVolumeResponse {
     uint64 total_volumes = 1;
