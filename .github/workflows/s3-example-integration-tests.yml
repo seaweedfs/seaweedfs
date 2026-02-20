@@ -39,6 +39,14 @@ jobs:
           echo "=== Running S3 Integration Tests ==="
           go test -v -timeout=60s -run TestS3Integration ./...
 
+      - name: Run S3 DeleteBucketNotEmpty Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running S3 DeleteBucketNotEmpty Tests ==="
+          go test -v -timeout=60s -run TestS3DeleteBucketNotEmpty ./...
+
       - name: Run IAM Integration Tests
         timeout-minutes: 15
         working-directory: test/s3/normal
