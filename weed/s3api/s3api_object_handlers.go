@@ -777,9 +777,12 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 				return
 			}
 			if objectEntryForSSE == nil {
-				// Not found, return error early to avoid another lookup in proxyToFiler
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
+				var errCode s3err.ErrorCode
+				objectEntryForSSE, errCode = s3a.resolveEntryWithLazyFetch(r.Context(), bucket, object)
+				if errCode != s3err.ErrNone {
+					s3err.WriteErrorResponse(w, r, errCode)
+					return
+				}
 			}
 		}
 	}
@@ -2259,9 +2262,12 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 				return
 			}
 			if objectEntryForSSE == nil {
-				// Not found, return error early to avoid another lookup in proxyToFiler
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
+				var errCode s3err.ErrorCode
+				objectEntryForSSE, errCode = s3a.resolveEntryWithLazyFetch(r.Context(), bucket, object)
+				if errCode != s3err.ErrNone {
+					s3err.WriteErrorResponse(w, r, errCode)
+					return
+				}
 			}
 		}
 	}
@@ -2440,6 +2446,21 @@ func writeFinalResponse(w http.ResponseWriter, proxyResponse *http.Response, bod
 
 // fetchObjectEntry fetches the filer entry for an object
 // Returns nil if not found (not an error), or propagates other errors
+func (s3a *S3ApiServer) resolveEntryWithLazyFetch(ctx context.Context, bucket, object string) (*filer_pb.Entry, s3err.ErrorCode) {
+	entry, err := s3a.lazyFetchFromRemote(ctx, bucket, object)
+	if err != nil {
+		if errors.Is(err, ErrObjectNotFound) || errors.Is(err, ErrNoRemoteMount) {
+			return nil, s3err.ErrNoSuchKey
+		}
+		glog.Warningf("resolveEntryWithLazyFetch: remote stat failed for %s/%s: %v", bucket, object, err)
+		return nil, s3err.ErrInternalError
+	}
+	if entry == nil {
+		return nil, s3err.ErrNoSuchKey
+	}
+	return entry, s3err.ErrNone
+}
+
 func (s3a *S3ApiServer) fetchObjectEntry(bucket, object string) (*filer_pb.Entry, error) {
 	objectPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 	fetchedEntry, fetchErr := s3a.getEntry("", objectPath)

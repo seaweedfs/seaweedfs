@@ -69,8 +69,14 @@ type Bucket struct {
 	CreatedAt time.Time
 }
 
+// ErrRemoteObjectNotFound is returned by StatFile when the object does not
+// exist in the remote storage backend. Other errors indicate transient or
+// infrastructure failures and should be treated as 5xx.
+var ErrRemoteObjectNotFound = fmt.Errorf("remote object not found")
+
 type RemoteStorageClient interface {
 	Traverse(loc *remote_pb.RemoteStorageLocation, visitFn VisitFunc) error
+	StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error)
 	ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error)
 	WriteDirectory(loc *remote_pb.RemoteStorageLocation, entry *filer_pb.Entry) (err error)
 	RemoveDirectory(loc *remote_pb.RemoteStorageLocation) (err error)
