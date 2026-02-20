@@ -86,10 +86,12 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 	if len(resources) == 0 {
 		return false, fmt.Errorf("no resources provided to authorizeIAMAction")
 	}
+	checkedResource := false
 	for _, resource := range resources {
 		if resource == "" {
 			continue
 		}
+		checkedResource = true
 		allowed, err := h.iamAuthorizer.IsActionAllowed(r.Context(), &integration.ActionRequest{
 			Principal:      principal,
 			Action:         action,
@@ -106,6 +108,9 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 			err := fmt.Errorf("access denied by IAM for resource %s", resource)
 			return false, err
 		}
+	}
+	if !checkedResource {
+		return false, fmt.Errorf("no non-empty resources provided to authorizeIAMAction")
 	}
 	return true, nil
 }
@@ -184,14 +189,22 @@ func buildIAMRequestContext(r *http.Request, claims map[string]interface{}) map[
 		ctx["referer"] = referer
 	}
 	for k, v := range claims {
+		if strings.HasPrefix(k, "jwt:") {
+			if _, exists := ctx[k]; !exists {
+				ctx[k] = v
+			}
+		}
+	}
+	for k, v := range claims {
+		if strings.HasPrefix(k, "jwt:") {
+			continue
+		}
 		if _, exists := ctx[k]; !exists {
 			ctx[k] = v
 		}
-		if !strings.Contains(k, ":") {
-			jwtKey := "jwt:" + k
-			if _, exists := ctx[jwtKey]; !exists {
-				ctx[jwtKey] = v
-			}
+		jwtKey := "jwt:" + k
+		if _, exists := ctx[jwtKey]; !exists {
+			ctx[jwtKey] = v
 		}
 	}
 	if len(ctx) == 0 {
