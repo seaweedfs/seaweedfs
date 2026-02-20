@@ -213,6 +213,12 @@ func buildIAMRequestContext(r *http.Request, claims map[string]interface{}) map[
 	return ctx
 }
 
+// getIdentityStructValue fetches the identity struct held in the request context.
+// The identity is expected to be a pointer to a struct with the fields used by
+// the reflection helpers (PrincipalArn string, PolicyNames []string,
+// Claims map[string]interface{}).
+// This helper centralizes the nil-check and ptr-deref logic so callers focus on
+// reading the specific fields they need.
 func getIdentityStructValue(r *http.Request) (reflect.Value, bool) {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw == nil {
@@ -227,8 +233,3 @@ func getIdentityStructValue(r *http.Request) (reflect.Value, bool) {
 	}
 	return val, true
 }
-
-// The identity structure is expected to be a pointer to a struct with the
-// reflection fields used below (PrincipalArn string, PolicyNames []string,
-// Claims map[string]interface{}). This helper centralizes the nil-check / ptr-deref
-// logic so the callers can focus on reading the proper field.
