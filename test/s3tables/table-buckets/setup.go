@@ -46,8 +46,9 @@ func NewS3TablesClient(endpoint, region, accessKey, secretKey string) *S3TablesC
 
 // Test configuration constants
 const (
-	testRegion    = "us-west-2"
-	testAccessKey = "admin"
-	testSecretKey = "admin"
-	testAccountID = "111122223333"
+	testRegion        = "us-west-2"
+	testAccessKey     = "admin"
+	testSecretKey     = "admin"
+	testAccountID     = "111122223333"
+	testIAMSigningKey = "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz"
 )

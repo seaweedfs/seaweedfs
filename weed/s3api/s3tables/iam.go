@@ -22,14 +22,17 @@ func (h *S3TablesHandler) SetIAMAuthorizer(authorizer IAMAuthorizer) {
 	h.iamAuthorizer = authorizer
 }
 
-func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions []string) bool {
+func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identityPolicyNames []string) bool {
 	if h.iamAuthorizer == nil || r == nil {
 		return false
 	}
 	if hasSessionToken(r) {
 		return true
 	}
-	return len(identityActions) == 0
+	if len(identityActions) == 0 {
+		return true
+	}
+	return len(identityPolicyNames) > 0
 }
 
 func hasSessionToken(r *http.Request) bool {
@@ -42,7 +45,7 @@ func hasSessionToken(r *http.Request) bool {
 	return r.URL.Query().Get("X-Amz-Security-Token") != ""
 }
 
-func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, action string, resources ...string) (bool, error) {
+func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyNames []string, action string, resources ...string) (bool, error) {
 	if h.iamAuthorizer == nil {
 		return false, nil
 	}
@@ -67,7 +70,10 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, action string, res
 	}
 
 	requestContext := buildIAMRequestContext(r, getIdentityClaims(r))
-	policyNames := getIdentityPolicyNames(r)
+	policyNames := identityPolicyNames
+	if len(policyNames) == 0 {
+		policyNames = getIdentityPolicyNames(r)
+	}
 
 	var lastErr error
 	for _, resource := range resources {

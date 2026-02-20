@@ -70,6 +70,92 @@ func TestS3TablesIntegration(t *testing.T) {
 	})
 }
 
+func TestS3TablesCreateBucketIAMPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping IAM integration test in short mode")
+	}
+
+	t.Setenv("AWS_ACCESS_KEY_ID", "env-admin")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
+
+	allowedBucket := "tables-allowed"
+	deniedBucket := "tables-denied"
+	iamConfigDir := t.TempDir()
+	iamConfigPath := filepath.Join(iamConfigDir, "iam_config.json")
+	iamConfig := fmt.Sprintf(`{
+  "sts": {
+    "tokenDuration": "1h",
+    "maxSessionLength": "12h",
+    "issuer": "seaweedfs-sts",
+    "signingKey": "%s"
+  },
+  "accounts": [
+    {
+      "id": "%s",
+      "displayName": "tables-integration"
+    }
+  ],
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "%s",
+          "secretKey": "%s"
+        }
+      ],
+      "account": {
+        "id": "%s",
+        "displayName": "tables-integration"
+      },
+      "policyNames": ["S3TablesBucketPolicy"]
+    }
+  ],
+  "policy": {
+    "defaultEffect": "Deny",
+    "storeType": "memory"
+  },
+  "policies": [
+    {
+      "name": "S3TablesBucketPolicy",
+      "document": {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3tables:CreateTableBucket"],
+            "Resource": [
+              "arn:aws:s3tables:%s:%s:bucket/%s",
+              "arn:aws:s3:::%s"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}`, testIAMSigningKey, testAccountID, testAccessKey, testSecretKey, testAccountID, testRegion, testAccountID, allowedBucket, allowedBucket)
+	require.NoError(t, os.WriteFile(iamConfigPath, []byte(iamConfig), 0644))
+
+	cluster, err := startMiniClusterWithExtraArgs(t, []string{
+		"-s3.config=" + iamConfigPath,
+		"-s3.iam.config=" + iamConfigPath,
+	})
+	require.NoError(t, err, "failed to start cluster with IAM config")
+	defer cluster.Stop()
+
+	client := NewS3TablesClient(cluster.s3Endpoint, testRegion, testAccessKey, testSecretKey)
+
+	_, err = client.CreateTableBucket(deniedBucket, nil)
+	require.Error(t, err, "denied bucket creation should fail")
+	assert.Contains(t, err.Error(), "AccessDenied")
+
+	allowedResp, err := client.CreateTableBucket(allowedBucket, nil)
+	require.NoError(t, err, "allowed bucket creation should succeed")
+	defer func() {
+		_ = client.DeleteTableBucket(allowedResp.ARN)
+	}()
+}
+
 func testTableBucketLifecycle(t *testing.T, client *S3TablesClient) {
 	bucketName := "test-bucket-" + randomString(8)
 
@@ -509,7 +595,7 @@ func findAvailablePorts(n int) ([]int, error) {
 }
 
 // startMiniCluster starts a weed mini instance directly without exec
-func startMiniCluster(t *testing.T) (*TestCluster, error) {
+func startMiniClusterWithExtraArgs(t *testing.T, extraArgs []string) (*TestCluster, error) {
 	// Find available ports
 	// We need 8 unique ports: Master(2), Volume(2), Filer(2), S3(2)
 	ports, err := findAvailablePorts(8)
@@ -585,8 +671,7 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 		os.Chdir(testDir)
 
 		// Configure args for mini command
-		os.Args = []string{
-			"weed",
+		baseArgs := []string{
 			"-dir=" + testDir,
 			"-master.port=" + strconv.Itoa(masterPort),
 			"-master.port.grpc=" + strconv.Itoa(masterGrpcPort),
@@ -603,6 +688,10 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 			"-master.peers=none",     // Faster startup
 			"-s3.iam.readOnly=false", // Enable IAM write operations for tests
 		}
+		if len(extraArgs) > 0 {
+			baseArgs = append(baseArgs, extraArgs...)
+		}
+		os.Args = append([]string{"weed"}, baseArgs...)
 
 		// Suppress most logging during tests
 		glog.MaxSize = 1024 * 1024
@@ -631,6 +720,10 @@ func startMiniCluster(t *testing.T) (*TestCluster, error) {
 
 	t.Logf("Test cluster started successfully at %s", cluster.s3Endpoint)
 	return cluster, nil
+}
+
+func startMiniCluster(t *testing.T) (*TestCluster, error) {
+	return startMiniClusterWithExtraArgs(t, nil)
 }
 
 // Stop stops the test cluster
