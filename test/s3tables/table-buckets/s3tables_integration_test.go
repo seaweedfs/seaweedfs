@@ -149,7 +149,7 @@ func TestS3TablesCreateBucketIAMPolicy(t *testing.T) {
             "Effect": "Allow",
             "Action": ["s3tables:CreateTableBucket"],
             "Resource": [
-              "arn:aws:s3tables:%s:%s:bucket/%s",
+              "arn:aws:s3tables:*:*:bucket/%s",
               "arn:aws:s3:::%s"
             ]
           }
@@ -157,7 +157,7 @@ func TestS3TablesCreateBucketIAMPolicy(t *testing.T) {
       }
     }
   ]
-}`, testIAMSigningKey, testAccountID, testAccessKey, testSecretKey, testAccountID, testRegion, testAccountID, allowedBucket, allowedBucket)
+}`, testIAMSigningKey, testAccountID, testAccessKey, testSecretKey, testAccountID, allowedBucket, allowedBucket)
 	require.NoError(t, os.WriteFile(iamConfigPath, []byte(iamConfig), 0644))
 
 	cluster, err := startMiniClusterWithExtraArgs(t, []string{
