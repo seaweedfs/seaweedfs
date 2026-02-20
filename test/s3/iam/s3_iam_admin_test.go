@@ -272,6 +272,47 @@ func TestIAMPolicyManagement(t *testing.T) {
 		policyArns[0] = nil
 	})
 
+	t.Run("managed_policy_versions", func(t *testing.T) {
+		policyName := "test-managed-policy-version"
+		policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"*"}]}`
+
+		createResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(policyDoc),
+		})
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			_, _ = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createResp.Policy.Arn})
+		})
+
+		listVersionsResp, err := iamClient.ListPolicyVersions(&iam.ListPolicyVersionsInput{
+			PolicyArn: createResp.Policy.Arn,
+		})
+		require.NoError(t, err)
+		require.NotEmpty(t, listVersionsResp.Versions)
+		assert.Equal(t, "v1", aws.StringValue(listVersionsResp.Versions[0].VersionId))
+		assert.Equal(t, true, aws.BoolValue(listVersionsResp.Versions[0].IsDefaultVersion))
+
+		getVersionResp, err := iamClient.GetPolicyVersion(&iam.GetPolicyVersionInput{
+			PolicyArn:  createResp.Policy.Arn,
+			VersionId:  aws.String("v1"),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, getVersionResp.PolicyVersion)
+		assert.Equal(t, "v1", aws.StringValue(getVersionResp.PolicyVersion.VersionId))
+		assert.Contains(t, aws.StringValue(getVersionResp.PolicyVersion.Document), "s3:ListBucket")
+
+		_, err = iamClient.GetPolicyVersion(&iam.GetPolicyVersionInput{
+			PolicyArn: createResp.Policy.Arn,
+			VersionId: aws.String("v2"),
+		})
+		require.Error(t, err)
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok)
+		assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
 	t.Run("user_inline_policy", func(t *testing.T) {
 		userName := "test-user-policy"
 		_, err := iamClient.CreateUser(&iam.CreateUserInput{
