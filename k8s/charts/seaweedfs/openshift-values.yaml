@@ -1,0 +1,131 @@
+# openshift-values.yaml
+#
+# Example overrides for deploying SeaweedFS on OpenShift (or any cluster
+# enforcing the Kubernetes "restricted" Pod Security Standard).
+#
+# OpenShift's default "restricted" SCC blocks containers that:
+#   - Run as UID 0 (root)
+#   - Request privilege escalation
+#   - Use hostPath volumes
+#   - Omit a seccompProfile
+#
+# These overrides satisfy all four requirements by:
+#   1. Replacing hostPath volumes with PersistentVolumeClaims (or emptyDir for logs)
+#   2. Setting runAsUser: 1000 (the "seaweed" user baked into the image)
+#   3. Setting fsGroup: 1000 so Kubernetes pre-sets PVC ownership before the
+#      container starts — the entrypoint's chown -R is then skipped entirely
+#   4. Dropping all Linux capabilities and setting allowPrivilegeEscalation: false
+#   5. Enabling RuntimeDefault seccompProfile
+#
+# Usage:
+#   helm install seaweedfs seaweedfs/seaweedfs \
+#     -n seaweedfs --create-namespace \
+#     -f openshift-values.yaml
+#
+# Adjust storageClass and sizes to match your cluster's available StorageClasses.
+# On OpenShift you can discover them with: oc get storageclass
+
+# ── Shared security context helpers ──────────────────────────────────────────
+# These are referenced in the per-component sections below.
+# If your OpenShift cluster assigns an arbitrary UID (as most do with the
+# "restricted" SCC), replace 1000 with the numeric UID in the range shown by:
+#   oc get project <namespace> -o jsonpath='{.metadata.annotations.openshift\.io/sa\.scc\.uid-range}'
+# and set the same value for runAsUser across all components.
+
+master:
+  data:
+    type: "persistentVolumeClaim"
+    size: "10Gi"
+    storageClass: ""        # leave empty to use the cluster default StorageClass
+
+  logs:
+    type: "emptyDir"        # avoids hostPath; use persistentVolumeClaim if you need log persistence
+
+  podSecurityContext:
+    enabled: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000           # Kubernetes sets PVC ownership to this GID before container start
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+
+volume:
+  dataDirs:
+    - name: data1
+      type: "persistentVolumeClaim"
+      size: "100Gi"
+      storageClass: ""      # leave empty to use the cluster default StorageClass
+      maxVolumes: 0
+
+  logs: {}                  # emptyDir by default (no logs section means no log volume)
+
+  podSecurityContext:
+    enabled: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+
+filer:
+  data:
+    type: "persistentVolumeClaim"
+    size: "25Gi"
+    storageClass: ""        # leave empty to use the cluster default StorageClass
+
+  logs:
+    type: "emptyDir"
+
+  podSecurityContext:
+    enabled: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+
+# S3 gateway (if enabled)
+s3:
+  podSecurityContext:
+    enabled: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
