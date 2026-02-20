@@ -26,6 +26,9 @@ func (h *S3TablesHandler) shouldUseIAM(r *http.Request, identityActions, identit
 	if h.iamAuthorizer == nil || r == nil {
 		return false
 	}
+	if s3_constants.GetIdentityFromContext(r) == nil {
+		return false
+	}
 	// An empty inline `identityActions` slice doesn't mean the identity has no
 	// permissions—it just means authorization lives in IAM policies or session
 	// tokens instead of static action lists. We therefore prefer the IAM path
