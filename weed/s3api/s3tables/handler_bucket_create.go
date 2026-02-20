@@ -29,13 +29,24 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	principal := h.getAccountID(r)
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
-	if h.shouldUseIAM(r, identityActions, identityPolicyNames) {
+	useIAM := h.shouldUseIAM(r, identityActions, identityPolicyNames)
+	useLegacy := !useIAM
+	if useIAM {
 		allowed, err := h.authorizeIAMAction(r, identityPolicyNames, "CreateTableBucket", h.generateTableBucketARN(principal, req.Name), fmt.Sprintf("arn:aws:s3:::%s", req.Name))
-		if err != nil || !allowed {
+		if err != nil {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
 		}
-	} else {
+		if !allowed {
+			if h.defaultAllow && len(identityActions) == 0 && len(identityPolicyNames) == 0 {
+				useLegacy = true
+			} else {
+				h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
+				return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
+			}
+		}
+	}
+	if useLegacy {
 		owner := h.accountID
 		if owner == "" {
 			owner = DefaultAccountID
