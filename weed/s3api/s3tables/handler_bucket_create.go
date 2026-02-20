@@ -14,15 +14,6 @@ import (
 
 // handleCreateTableBucket creates a new table bucket
 func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
-	// Check permission
-	principal := h.getAccountID(r)
-	if !CheckPermissionWithContext("CreateTableBucket", principal, principal, "", "", &PolicyContext{
-		DefaultAllow: h.defaultAllow,
-	}) {
-		h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
-		return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
-	}
-
 	var req CreateTableBucketRequest
 	if err := h.readRequestBody(r, &req); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
@@ -33,6 +24,31 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	if err := validateBucketName(req.Name); err != nil {
 		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, err.Error())
 		return err
+	}
+
+	principal := h.getAccountID(r)
+	identityActions := getIdentityActions(r)
+	if h.shouldUseIAM(r, identityActions) && !h.defaultAllow {
+		ownerAccountID := h.getAccountID(r)
+		tableBucketARN := h.generateTableBucketARN(ownerAccountID, req.Name)
+		s3BucketARN := fmt.Sprintf("arn:aws:s3:::%s", req.Name)
+		allowed, err := h.authorizeIAMAction(r, "s3tables:CreateTableBucket", tableBucketARN, s3BucketARN)
+		if err != nil || !allowed {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
+			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
+		}
+	} else {
+		owner := h.accountID
+		if owner == "" {
+			owner = DefaultAccountID
+		}
+		if !CheckPermissionWithContext("CreateTableBucket", principal, owner, "", "", &PolicyContext{
+			IdentityActions: identityActions,
+			DefaultAllow:    h.defaultAllow,
+		}) {
+			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
+			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
+		}
 	}
 
 	bucketPath := GetTableBucketPath(req.Name)

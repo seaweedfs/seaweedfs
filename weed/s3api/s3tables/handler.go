@@ -44,9 +44,10 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region       string
-	accountID    string
-	defaultAllow bool // Whether to allow access by default (for zero-config IAM)
+	region        string
+	accountID     string
+	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
+	iamAuthorizer IAMAuthorizer
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
