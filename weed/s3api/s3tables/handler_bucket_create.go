@@ -30,8 +30,8 @@ func (h *S3TablesHandler) handleCreateTableBucket(w http.ResponseWriter, r *http
 	identityActions := getIdentityActions(r)
 	identityPolicyNames := getIdentityPolicyNames(r)
 	if h.shouldUseIAM(r, identityActions, identityPolicyNames) {
-		sessionToken := extractSessionToken(r)
-		if !h.authorizeIAMAction(r, identityPolicyNames, "CreateTableBucket", h.generateTableBucketARN(principal, req.Name), fmt.Sprintf("arn:aws:s3:::%s", req.Name)) {
+		allowed, err := h.authorizeIAMAction(r, identityPolicyNames, "CreateTableBucket", h.generateTableBucketARN(principal, req.Name), fmt.Sprintf("arn:aws:s3:::%s", req.Name))
+		if err != nil || !allowed {
 			h.writeError(w, http.StatusForbidden, ErrCodeAccessDenied, "not authorized to create table buckets")
 			return NewAuthError("CreateTableBucket", principal, "not authorized to create table buckets")
 		}
