@@ -751,7 +751,7 @@ func writeIAMConfig(t *testing.T, dir, allowedBucket string) string {
 	t.Helper()
 	config := map[string]any{
 		"sts": map[string]string{
-			"tokenDuration":   "1h",
+			"tokenDuration":    "1h",
 			"maxSessionLength": "12h",
 			"issuer":           "seaweedfs-sts",
 			"signingKey":       testIAMSigningKey,
@@ -759,9 +759,9 @@ func writeIAMConfig(t *testing.T, dir, allowedBucket string) string {
 		"accounts": []map[string]string{{"id": testAccountID, "displayName": "tables-integration"}},
 		"identities": []map[string]any{
 			{
-				"name": "admin",
+				"name":        "admin",
 				"credentials": []map[string]string{{"accessKey": testAccessKey, "secretKey": testSecretKey}},
-				"account": map[string]string{"id": testAccountID, "displayName": "tables-integration"},
+				"account":     map[string]string{"id": testAccountID, "displayName": "tables-integration"},
 				"policyNames": []string{"S3TablesBucketPolicy"},
 			},
 		},
@@ -800,10 +800,10 @@ func writeS3APIConfig(t *testing.T, dir string) string {
 	config := map[string]any{
 		"identities": []map[string]any{
 			{
-				"name": "admin",
+				"name":        "admin",
 				"credentials": []map[string]string{{"accessKey": testAccessKey, "secretKey": testSecretKey}},
-				"actions": []string{"Admin", "Read", "List", "Tagging", "Write"},
-				"account": map[string]string{"id": testAccountID, "displayName": "tables-integration"},
+				"actions":     []string{"Admin", "Read", "List", "Tagging", "Write"},
+				"account":     map[string]string{"id": testAccountID, "displayName": "tables-integration"},
 			},
 		},
 		"accounts": []map[string]string{{"id": testAccountID, "displayName": "tables-integration"}},
