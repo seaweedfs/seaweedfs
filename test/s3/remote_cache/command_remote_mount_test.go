@@ -1,11 +1,15 @@
 package remote_cache
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +34,49 @@ func TestRemoteMountBasic(t *testing.T) {
 
 	// Clean up - unmount
 	t.Logf("Unmounting %s...", testDir)
+	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
+	_, err = runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to unmount")
+}
+
+// TestRemoteMountNoSync tests mounting with -noSync flag (lazy-cache gateway mode).
+// With -noSync, no metadata is pulled; objects are fetched on demand via StatFile + ReadFile.
+func TestRemoteMountNoSync(t *testing.T) {
+	checkServersRunning(t)
+
+	testDir := fmt.Sprintf("/buckets/nosync%d", time.Now().UnixNano()%1000000)
+	testKey := fmt.Sprintf("lazy-fetch-%d.txt", time.Now().UnixNano())
+	testData := []byte("noSync lazy fetch test data")
+
+	remoteClient := createS3Client(remoteEndpoint)
+	_, err := remoteClient.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String("remotesourcebucket"),
+		Key:    aws.String(testKey),
+		Body:   bytes.NewReader(testData),
+	})
+	require.NoError(t, err, "failed to put object in remote bucket")
+
+	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -noSync=true", testDir)
+	output, err := runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to mount with -noSync")
+	t.Logf("Mount output: %s", output)
+
+	output, err = runWeedShellWithOutput(t, "remote.mount")
+	require.NoError(t, err, "failed to list mounts")
+	assert.Contains(t, output, testDir, "noSync mount not found in list")
+
+	bucket := strings.TrimPrefix(testDir, "/buckets/")
+	resp, err := getPrimaryClient().GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(testKey),
+	})
+	require.NoError(t, err, "GET through noSync mount should succeed (lazy fetch)")
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, testData, data, "lazy-fetched content mismatch")
+
 	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
 	_, err = runWeedShellWithOutput(t, cmd)
 	require.NoError(t, err, "failed to unmount")
