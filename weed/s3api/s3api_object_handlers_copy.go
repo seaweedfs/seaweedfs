@@ -96,7 +96,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		writeSuccessResponseXML(w, r, CopyObjectResult{
 			ETag:         filer.ETag(entry),
-			LastModified: time.Now().UTC(),
+			LastModified: time.Now().UTC().Truncate(time.Millisecond),
 		})
 		return
 	}
@@ -402,7 +402,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	response := CopyObjectResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: time.Now().UTC().Truncate(time.Millisecond),
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -648,7 +648,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	response := CopyPartResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: time.Now().UTC().Truncate(time.Millisecond),
 	}
 
 	writeSuccessResponseXML(w, r, response)
