@@ -601,11 +601,9 @@ func (e *EmbeddedIamApi) ListPolicyVersions(ctx context.Context, values url.Valu
 
 	versionID := "v1"
 	isDefaultVersion := true
-	createDate := time.Now().UTC()
 	resp.ListPolicyVersionsResult.Versions = []*iam.PolicyVersion{{
 		VersionId:        &versionID,
 		IsDefaultVersion: &isDefaultVersion,
-		CreateDate:       &createDate,
 	}}
 	resp.ListPolicyVersionsResult.IsTruncated = false
 	return resp, nil
@@ -644,12 +642,10 @@ func (e *EmbeddedIamApi) GetPolicyVersion(ctx context.Context, values url.Values
 	}
 
 	isDefaultVersion := true
-	createDate := time.Now().UTC()
 	document := string(policyDocumentJSON)
 	resp.GetPolicyVersionResult.PolicyVersion = iam.PolicyVersion{
 		VersionId:        &versionID,
 		IsDefaultVersion: &isDefaultVersion,
-		CreateDate:       &createDate,
 		Document:         &document,
 	}
 	return resp, nil
