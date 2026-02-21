@@ -1,5 +1,4 @@
 //go:build foundationdb
-// +build foundationdb
 
 package foundationdb
 
