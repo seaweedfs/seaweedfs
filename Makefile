@@ -40,7 +40,7 @@ test: admin-generate
 # Admin component targets
 admin-generate:
 	@echo "Generating admin component templates..."
-	@templ generate
+	@cd $(ADMIN_DIR) && templ generate ./view
 
 admin-build: admin-generate
 	@echo "Building admin component..."
