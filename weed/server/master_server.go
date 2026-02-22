@@ -227,6 +227,11 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infof("%s I am the leader!", raftServerName)
+		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
+			go ms.ensureTopologyId()
+		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
+			go ms.ensureTopologyId()
+		}
 	} else {
 		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
