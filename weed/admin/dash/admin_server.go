@@ -631,7 +631,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 	// Add masters from topology
 	for _, master := range topology.Masters {
 		masterInfo := &MasterInfo{
-			Address:  master.Address,
+			Address:  pb.ServerAddress(master.Address).ToHttpAddress(),
 			IsLeader: master.IsLeader,
 			Suffrage: "",
 		}
@@ -653,6 +653,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
 			address := server.Address
+			httpAddress := pb.ServerAddress(address).ToHttpAddress()
 
 			// Update existing master info or create new one
 			if masterInfo, exists := masterMap[address]; exists {
@@ -662,7 +663,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			} else {
 				// Create new master info from raft data
 				masterInfo := &MasterInfo{
-					Address:  address,
+					Address:  httpAddress,
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
@@ -699,7 +700,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			masters = append(masters, MasterInfo{
-				Address:  string(currentMaster),
+				Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 				IsLeader: true,
 				Suffrage: "Voter",
 			})
@@ -733,7 +734,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			filerInfo := FilerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -780,7 +781,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			brokerInfo := MessageBrokerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
