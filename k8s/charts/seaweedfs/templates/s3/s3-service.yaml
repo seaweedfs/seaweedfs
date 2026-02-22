@@ -15,6 +15,7 @@ metadata:
     {{- toYaml .Values.s3.annotations | nindent 4 }}
 {{- end }}
 spec:
+  type: {{ .Values.s3.service.type }}
   internalTrafficPolicy: {{ .Values.s3.internalTrafficPolicy | default "Cluster" }}
   {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) (or .Values.s3.trafficDistribution .Values.filer.s3.trafficDistribution) }}
   trafficDistribution: {{ include "seaweedfs.trafficDistribution" . }}
