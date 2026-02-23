@@ -119,6 +119,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.volumeIds = make(map[uint32]bool)
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
+			volumeIdStr = strings.TrimSpace(volumeIdStr)
 			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				c.volumeIds[uint32(volumeIdInt)] = true
 			} else {
@@ -655,6 +656,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 					return nil
 				})
 		} else {
+			if vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
+				if *c.verbose {
+					fmt.Fprintf(c.writer, "skipping time-based filtering for EC volume %d (cutoffFrom=%d, modifyFrom=%d)\n", volumeId, cutoffFrom, modifyFrom)
+				}
+			}
 			orphanFileIds = append(orphanFileIds, n.Key.FileId(volumeId))
 			orphanFileCount++
 			orphanDataSize += uint64(n.Size)

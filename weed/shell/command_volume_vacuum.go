@@ -39,7 +39,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
 	collection := volumeVacuumCommand.String("collection", "", "vacuum this collection")
-	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma separated the volume id")
+	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma-separated list of volume IDs")
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -51,6 +51,7 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 	var volumeIdInts []uint32
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
+			volumeIdStr = strings.TrimSpace(volumeIdStr)
 			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				volumeIdInts = append(volumeIdInts, uint32(volumeIdInt))
 			} else {
