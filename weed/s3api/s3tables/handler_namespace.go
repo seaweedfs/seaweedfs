@@ -557,8 +557,14 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 				return err
 			}
 			if entry.Entry != nil && !strings.HasPrefix(entry.Entry.Name, ".") {
-				hasChildren = true
-				break
+				// Only consider it a child if it's a table (has metadata) or a file.
+				// Empty directories left by dropped tables or S3 clients should not
+				// prevent the namespace from being deleted.
+				_, hasMetadata := entry.Entry.Extended[ExtendedKeyMetadata]
+				if hasMetadata || !entry.Entry.IsDirectory {
+					hasChildren = true
+					break
+				}
 			}
 		}
 
