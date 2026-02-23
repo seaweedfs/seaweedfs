@@ -119,7 +119,7 @@ jobs:
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.13.0
+        uses: helm/kind-action@v1.14.0
 
       - name: Run chart-testing (install)
         run: ct install --target-branch ${{ github.event.repository.default_branch }} --all --chart-dirs k8s/charts
