@@ -204,7 +204,6 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 	if encodingTypeUrl {
 		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
 		markerCandidates[escapedMarker] = struct{}{}
-		markerCandidates[strings.TrimPrefix(escapedMarker, "/")] = struct{}{}
 	}
 	matchesMarker := func(v string) bool {
 		if _, ok := markerCandidates[v]; ok {

@@ -82,7 +82,6 @@ func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.Li
 			// Emulate buggy backend behavior: return marker again even when exclusive.
 			if c.returnFollowing {
 				echoAndFollowing := entries[i:]
-				ensureEntryAttributes(echoAndFollowing)
 				return &testListEntriesStream{entries: echoAndFollowing}, nil
 			}
 			return &testListEntriesStream{entries: []*filer_pb.Entry{e}}, nil
@@ -443,6 +442,21 @@ func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
 	assert.Empty(t, response.Contents)
 	assert.Equal(t, "", response.NextMarker)
 	assert.False(t, response.IsTruncated)
+
+	response2 := ListBucketResult{
+		Marker:      "test file.txt",
+		NextMarker:  "test%20file.txt",
+		IsTruncated: true,
+		Contents: []ListEntry{
+			{Key: "test%20file.txt"},
+		},
+	}
+
+	sanitizeV1MarkerEcho(&response2, "test file.txt", true)
+
+	assert.Empty(t, response2.Contents)
+	assert.Equal(t, "", response2.NextMarker)
+	assert.False(t, response2.IsTruncated)
 }
 
 // TestMaxKeysParameterValidation tests the validation of max-keys parameter
