@@ -1,0 +1,35 @@
+FROM golang:1.24-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the producer
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o producer ./test/postgres/producer.go
+
+# Final stage
+FROM alpine:latest
+
+# Install ca-certificates for HTTPS calls
+RUN apk --no-cache add ca-certificates curl
+
+WORKDIR /root/
+
+# Copy the binary from builder stage
+COPY --from=builder /app/producer .
+
+# Make it executable
+RUN chmod +x ./producer
+
+# Set environment variables with defaults
+ENV SEAWEEDFS_MASTER=localhost:9333
+ENV SEAWEEDFS_FILER=localhost:8888
+
+# Run the producer
+CMD ["./producer"]
