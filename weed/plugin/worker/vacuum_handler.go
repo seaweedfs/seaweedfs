@@ -575,7 +575,7 @@ func buildVolumeMetrics(
 						metric := &workertypes.VolumeHealthMetrics{
 							VolumeID:         volume.Id,
 							Server:           node.Id,
-							ServerAddress:    node.Address,
+							ServerAddress:    string(pb.NewServerAddressFromDataNode(node)),
 							DiskType:         diskType,
 							DiskId:           volume.DiskId,
 							DataCenter:       dc.Id,
