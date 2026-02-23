@@ -51,6 +51,7 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {
 	m := make(map[string]interface{})
 	m["Version"] = version.Version()
+	m["TopologyId"] = ms.Topo.GetTopologyId()
 	m["Topology"] = ms.Topo.ToInfo()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
