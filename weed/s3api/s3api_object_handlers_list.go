@@ -47,6 +47,37 @@ type ListBucketResultV2 struct {
 	StartAfter            string         `xml:"StartAfter,omitempty"`
 }
 
+type ListBucketResultV1 struct {
+	XMLName        xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
+	Metadata       []MetadataEntry `xml:"Metadata,omitempty"`
+	Name           string          `xml:"Name"`
+	Prefix         string          `xml:"Prefix"`
+	Marker         string          `xml:"Marker"`
+	NextMarker     string          `xml:"NextMarker,omitempty"`
+	MaxKeys        int             `xml:"MaxKeys"`
+	Delimiter      string          `xml:"Delimiter,omitempty"`
+	IsTruncated    bool            `xml:"IsTruncated"`
+	Contents       []ListEntry     `xml:"Contents,omitempty"`
+	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
+	EncodingType   string          `xml:"EncodingType"`
+}
+
+func toListBucketResultV1(in ListBucketResult) ListBucketResultV1 {
+	return ListBucketResultV1{
+		Metadata:       in.Metadata,
+		Name:           in.Name,
+		Prefix:         in.Prefix,
+		Marker:         in.Marker,
+		NextMarker:     in.NextMarker,
+		MaxKeys:        in.MaxKeys,
+		Delimiter:      in.Delimiter,
+		IsTruncated:    in.IsTruncated,
+		Contents:       in.Contents,
+		CommonPrefixes: in.CommonPrefixes,
+		EncodingType:   in.EncodingType,
+	}
+}
+
 func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Request) {
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
@@ -148,6 +179,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+	sanitizeV1MarkerEcho(&response, marker, encodingTypeUrl)
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
@@ -157,7 +189,47 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	glog.V(3).Infof("ListObjectsV1Handler response: %+v", response)
-	writeSuccessResponseXML(w, r, response)
+	writeSuccessResponseXML(w, r, toListBucketResultV1(response))
+}
+
+func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTypeUrl bool) {
+	if response == nil || marker == "" {
+		return
+	}
+
+	markerCandidates := map[string]struct{}{
+		marker:                          {},
+		strings.TrimPrefix(marker, "/"): {},
+	}
+	if encodingTypeUrl {
+		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
+		markerCandidates[escapedMarker] = struct{}{}
+		markerCandidates[strings.TrimPrefix(escapedMarker, "/")] = struct{}{}
+	}
+	matchesMarker := func(v string) bool {
+		if _, ok := markerCandidates[v]; ok {
+			return true
+		}
+		_, ok := markerCandidates[strings.TrimPrefix(v, "/")]
+		return ok
+	}
+
+	if len(response.Contents) > 0 {
+		filtered := response.Contents[:0]
+		for _, content := range response.Contents {
+			if matchesMarker(content.Key) {
+				continue
+			}
+			filtered = append(filtered, content)
+		}
+		response.Contents = filtered
+	}
+
+	// If listing made no progress (same marker repeated with no payload), force page end.
+	if matchesMarker(response.NextMarker) && len(response.Contents) == 0 && len(response.CommonPrefixes) == 0 {
+		response.NextMarker = ""
+		response.IsTruncated = false
+	}
 }
 
 func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
@@ -543,6 +615,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		entry := resp.Entry
+		if !inclusiveStartFrom && marker != "" && entry.Name == marker {
+			continue
+		}
 
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true

@@ -64,6 +64,27 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 	return &testListEntriesStream{entries: entries}, nil
 }
 
+type markerEchoFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	entriesByDir map[string][]*filer_pb.Entry
+}
+
+func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	entries := c.entriesByDir[in.Directory]
+	if in.StartFromFileName == "" {
+		return &testListEntriesStream{entries: entries}, nil
+	}
+
+	for _, e := range entries {
+		if e.Name == in.StartFromFileName {
+			// Emulate buggy backend behavior: return marker again even when exclusive.
+			return &testListEntriesStream{entries: []*filer_pb.Entry{e}}, nil
+		}
+	}
+
+	return &testListEntriesStream{entries: nil}, nil
+}
+
 func TestListObjectsHandler(t *testing.T) {
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
@@ -94,6 +115,20 @@ func TestListObjectsHandler(t *testing.T) {
 	if encoded != expected {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}
+}
+
+func TestListObjectsV1NamespaceResponse(t *testing.T) {
+	response := ListBucketResult{
+		Name:        "test_container",
+		Prefix:      "",
+		Marker:      "",
+		NextMarker:  "",
+		MaxKeys:     1000,
+		IsTruncated: false,
+	}
+
+	encoded := string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
+	assert.Contains(t, encoded, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
 }
 
 func Test_normalizePrefixMarker(t *testing.T) {
@@ -253,6 +288,28 @@ func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories
 	assert.Contains(t, seen, "Veeam")
 }
 
+func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEcho(t *testing.T) {
+	s3a := &S3ApiServer{}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "file.txt"},
+				{Name: "test.txt"},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Empty(t, seen, "marker entry should not be returned in exclusive mode")
+	assert.Equal(t, "", nextMarker, "next marker should be empty when only marker echo is returned")
+}
+
 func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 	t.Run("should return error when allow-unordered=true and delimiter are both present", func(t *testing.T) {
 		// Create a request with both allow-unordered=true and delimiter
@@ -327,6 +384,23 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 			assert.True(t, true, "Valid combination correctly allowed")
 		}
 	})
+}
+
+func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
+	response := ListBucketResult{
+		Marker:      "test.txt",
+		NextMarker:  "test.txt",
+		IsTruncated: true,
+		Contents: []ListEntry{
+			{Key: "test.txt"},
+		},
+	}
+
+	sanitizeV1MarkerEcho(&response, "test.txt", false)
+
+	assert.Empty(t, response.Contents)
+	assert.Equal(t, "", response.NextMarker)
+	assert.False(t, response.IsTruncated)
 }
 
 // TestMaxKeysParameterValidation tests the validation of max-keys parameter
