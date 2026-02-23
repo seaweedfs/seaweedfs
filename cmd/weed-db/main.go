@@ -1,11 +1,7 @@
 package main
 
-import (
-	"os"
-
-	"github.com/seaweedfs/seaweedfs/weed/dbcmd"
-)
+import "os"
 
 func main() {
-	os.Exit(dbcmd.Run(os.Args[1:]))
+	os.Exit(Run(os.Args[1:]))
 }

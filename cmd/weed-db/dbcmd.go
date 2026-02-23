@@ -1,4 +1,4 @@
-package dbcmd
+package main
 
 import (
 	"context"
