@@ -59,7 +59,7 @@ type ListBucketResultV1 struct {
 	IsTruncated    bool            `xml:"IsTruncated"`
 	Contents       []ListEntry     `xml:"Contents,omitempty"`
 	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
-	EncodingType   string          `xml:"EncodingType"`
+	EncodingType   string          `xml:"EncodingType,omitempty"`
 }
 
 func toListBucketResultV1(in ListBucketResult) ListBucketResultV1 {
@@ -225,7 +225,8 @@ func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTyp
 		response.Contents = filtered
 	}
 
-	// If listing made no progress (same marker repeated with no payload), force page end.
+	// doListFilerEntries advances nextMarker to the last emitted entry and skips
+	// the marker in exclusive mode. So NextMarker==marker indicates no progress.
 	if matchesMarker(response.NextMarker) && len(response.Contents) == 0 && len(response.CommonPrefixes) == 0 {
 		response.NextMarker = ""
 		response.IsTruncated = false
@@ -615,6 +616,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		entry := resp.Entry
+		// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
+		// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
+		// behavior if inclusive callers are introduced in the future.
 		if !inclusiveStartFrom && marker != "" && entry.Name == marker {
 			continue
 		}

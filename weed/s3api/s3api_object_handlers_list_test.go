@@ -66,23 +66,41 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 
 type markerEchoFilerClient struct {
 	filer_pb.SeaweedFilerClient
-	entriesByDir map[string][]*filer_pb.Entry
+	entriesByDir    map[string][]*filer_pb.Entry
+	returnFollowing bool
 }
 
 func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	entries := c.entriesByDir[in.Directory]
+	ensureEntryAttributes(entries)
 	if in.StartFromFileName == "" {
 		return &testListEntriesStream{entries: entries}, nil
 	}
 
-	for _, e := range entries {
+	for i, e := range entries {
 		if e.Name == in.StartFromFileName {
 			// Emulate buggy backend behavior: return marker again even when exclusive.
+			if c.returnFollowing {
+				echoAndFollowing := entries[i:]
+				ensureEntryAttributes(echoAndFollowing)
+				return &testListEntriesStream{entries: echoAndFollowing}, nil
+			}
 			return &testListEntriesStream{entries: []*filer_pb.Entry{e}}, nil
 		}
 	}
 
 	return &testListEntriesStream{entries: nil}, nil
+}
+
+func ensureEntryAttributes(entries []*filer_pb.Entry) {
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+	}
 }
 
 func TestListObjectsHandler(t *testing.T) {
@@ -293,8 +311,8 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEcho(t *testing.T) {
 	client := &markerEchoFilerClient{
 		entriesByDir: map[string][]*filer_pb.Entry{
 			"/buckets/test-bucket": {
-				{Name: "file.txt"},
-				{Name: "test.txt"},
+				{Name: "file.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "test.txt", Attributes: &filer_pb.FuseAttributes{}},
 			},
 		},
 	}
@@ -308,6 +326,30 @@ func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEcho(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, seen, "marker entry should not be returned in exclusive mode")
 	assert.Equal(t, "", nextMarker, "next marker should be empty when only marker echo is returned")
+}
+
+func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEchoWithSubsequentEntries(t *testing.T) {
+	s3a := &S3ApiServer{}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "file.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "test.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "zebra.txt", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+		returnFollowing: true,
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"zebra.txt"}, seen, "marker should be skipped while subsequent entries are returned")
+	assert.Equal(t, "zebra.txt", nextMarker)
 }
 
 func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
