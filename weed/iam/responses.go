@@ -95,7 +95,7 @@ type ListPolicyVersionsResponse struct {
 // GetPolicyVersionResponse is the response for GetPolicyVersion action.
 type GetPolicyVersionResponse struct {
 	CommonResponse
-	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetPolicyVersionResponse"`
+	XMLName                xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetPolicyVersionResponse"`
 	GetPolicyVersionResult struct {
 		PolicyVersion iam.PolicyVersion `xml:"PolicyVersion"`
 	} `xml:"GetPolicyVersionResult"`

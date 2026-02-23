@@ -1,5 +1,4 @@
 //go:build !windows && !openbsd && !netbsd && !plan9 && !solaris
-// +build !windows,!openbsd,!netbsd,!plan9,!solaris
 
 package main
 

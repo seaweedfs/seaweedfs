@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -233,7 +234,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	currentMaster := s.masterClient.GetMaster(context.Background())
 	if currentMaster != "" {
 		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(currentMaster),
+			Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 			IsLeader: isLeader,
 		})
 	}

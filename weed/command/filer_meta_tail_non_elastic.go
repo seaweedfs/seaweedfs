@@ -1,5 +1,4 @@
 //go:build !elastic
-// +build !elastic
 
 package command
 
