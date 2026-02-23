@@ -41,6 +41,7 @@ import (
 const (
 	SequencerType        = "master.sequencer.type"
 	SequencerSnowflakeId = "master.sequencer.sequencer_snowflake_id"
+	raftApplyTimeout     = 1 * time.Second
 )
 
 type MasterOption struct {
@@ -228,11 +229,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 
 	if ms.Topo.IsLeader() {
 		glog.V(0).Infof("%s I am the leader!", raftServerName)
-		if ms.Topo.RaftServer != nil && ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
-			go ms.ensureTopologyId()
-		} else if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
-			go ms.ensureTopologyId()
-		}
+		go ms.ensureTopologyId()
 	} else {
 		var raftServerLeader string
 		ms.Topo.RaftServerAccessLock.RLock()
@@ -260,7 +257,7 @@ func (ms *MasterServer) syncRaftForTopologyId(topologyId string) error {
 		if err != nil {
 			return fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %v", err)
 		}
-		if future := ms.Topo.HashicorpRaft.Apply(b, time.Second); future.Error() != nil {
+		if future := ms.Topo.HashicorpRaft.Apply(b, raftApplyTimeout); future.Error() != nil {
 			return future.Error()
 		}
 		return nil
