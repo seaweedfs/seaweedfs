@@ -47,7 +47,7 @@ type ListBucketResultV2 struct {
 	StartAfter            string         `xml:"StartAfter,omitempty"`
 }
 
-type ListBucketResultV1 struct {
+type listBucketResultV1 struct {
 	XMLName        xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
 	Metadata       []MetadataEntry `xml:"Metadata,omitempty"`
 	Name           string          `xml:"Name"`
@@ -62,8 +62,8 @@ type ListBucketResultV1 struct {
 	EncodingType   string          `xml:"EncodingType,omitempty"`
 }
 
-func toListBucketResultV1(in ListBucketResult) ListBucketResultV1 {
-	return ListBucketResultV1{
+func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
+	return listBucketResultV1{
 		Metadata:       in.Metadata,
 		Name:           in.Name,
 		Prefix:         in.Prefix,
@@ -193,7 +193,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 }
 
 func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTypeUrl bool) {
-	if response == nil || marker == "" {
+	if marker == "" {
 		return
 	}
 

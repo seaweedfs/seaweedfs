@@ -70,6 +70,10 @@ type markerEchoFilerClient struct {
 	returnFollowing bool
 }
 
+// markerEchoFilerClient intentionally ignores request Limit/InclusiveStartFrom
+// and simulates a backend that may echo StartFromFileName. entriesByDir controls
+// returned entries; returnFollowing controls whether ListEntries returns only the
+// echoed marker or the echoed marker plus following entries.
 func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	entries := c.entriesByDir[in.Directory]
 	ensureEntryAttributes(entries)
