@@ -53,6 +53,7 @@ type commandVolumeFsck struct {
 	tempFolder               string
 	verbose                  *bool
 	forcePurging             *bool
+	skipEcVolumes            *bool
 	findMissingChunksInFiler *bool
 	verifyNeedle             *bool
 	filerSigningKey          string
@@ -96,6 +97,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
+	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
 	c.collection = fsckCommand.String("collection", "", "the collection name")
 	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
@@ -117,6 +119,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.volumeIds = make(map[uint32]bool)
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
+			volumeIdStr = strings.TrimSpace(volumeIdStr)
 			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				c.volumeIds[uint32(volumeIdInt)] = true
 			} else {
@@ -168,6 +171,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
 		eg.Go(func() error {
 			for volumeId, vinfo := range volumeIdToVInfo {
+				if *c.skipEcVolumes && vinfo.isEcVolume {
+					delete(volumeIdToVInfo, volumeId)
+					continue
+				}
 				if len(c.volumeIds) > 0 {
 					if _, ok := c.volumeIds[volumeId]; !ok {
 						delete(volumeIdToVInfo, volumeId)
@@ -601,7 +608,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 
 	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
 		inUseCount++
-		if *c.verifyNeedle {
+		if *c.verifyNeedle && !vinfo.isEcVolume {
 			if needleValue, ok := volumeFileIdDb.Get(filerNeedleId); ok && !needleValue.Size.IsDeleted() {
 				if _, err := readNeedleStatus(c.env.option.GrpcDialOption, vinfo.server, volumeId, *needleValue); err != nil {
 					// files may be deleted during copying filesIds
@@ -629,7 +636,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		if n.Size.IsDeleted() {
 			return nil
 		}
-		if cutoffFrom > 0 || modifyFrom > 0 {
+		if !vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
 			return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption,
 				func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 					resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -649,6 +656,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 					return nil
 				})
 		} else {
+			if vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
+				if *c.verbose {
+					fmt.Fprintf(c.writer, "skipping time-based filtering for EC volume %d (cutoffFrom=%d, modifyFrom=%d)\n", volumeId, cutoffFrom, modifyFrom)
+				}
+			}
 			orphanFileIds = append(orphanFileIds, n.Key.FileId(volumeId))
 			orphanFileCount++
 			orphanDataSize += uint64(n.Size)
