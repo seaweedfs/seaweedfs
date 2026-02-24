@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
+	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -75,7 +78,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 			}
 		}
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(fallbackRoleArn, "test-session", nil, "", modifyClaims)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "test-session", nil, "", modifyClaims)
 		require.NoError(t, err)
 
 		// Assertions
@@ -107,7 +110,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 
 		fallbackRoleArn := callerIdentity.PrincipalArn
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(fallbackRoleArn, "nested-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), fallbackRoleArn, "nested-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// The role name should be extracted from the assumed role ARN ("admin")
@@ -124,7 +127,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 	t.Run("Explicit RoleArn Provided", func(t *testing.T) {
 		explicitRoleArn := "arn:aws:iam::111122223333:role/TargetRole"
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(explicitRoleArn, "explicit-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), explicitRoleArn, "explicit-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// Role name should be "TargetRole"
@@ -140,7 +143,7 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 	t.Run("Malformed ARN", func(t *testing.T) {
 		malformedArn := "invalid-arn"
 
-		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(malformedArn, "bad-session", nil, "", nil)
+		stsCreds, assumedUser, err := stsHandlers.prepareSTSCredentials(context.Background(), malformedArn, "bad-session", nil, "", nil)
 		require.NoError(t, err)
 
 		// Fallback behavior: use full string as role name if extraction fails
@@ -150,4 +153,61 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, malformedArn, sessionInfo.RoleArn)
 	})
+}
+
+func TestAssumeRole_EmbedsRolePolicies(t *testing.T) {
+	ctx := context.Background()
+
+	manager := integration.NewIAMManager()
+	config := &integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-issuer",
+			SigningKey:       []byte("test-signing-key-at-least-32-bytes-long-for-security"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{
+			StoreType: "memory",
+		},
+	}
+	require.NoError(t, manager.Initialize(config, func() string { return "" }))
+
+	writePolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Effect: "Allow",
+				Action: []string{"s3:*"},
+				Resource: []string{
+					"arn:aws:s3:::*",
+					"arn:aws:s3:::*/*",
+				},
+			},
+		},
+	}
+	require.NoError(t, manager.CreatePolicy(ctx, "", "S3WritePolicy", writePolicy))
+
+	roleName := "LakekeeperVendedRole"
+	require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{
+		RoleName:         roleName,
+		AttachedPolicies: []string{"S3WritePolicy"},
+	}))
+
+	iam := &IdentityAccessManagement{
+		iamIntegration: NewS3IAMIntegration(manager, ""),
+	}
+	stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
+
+	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
+	stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
+	require.NoError(t, err)
+
+	sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
+	require.NoError(t, err)
+	require.NotNil(t, sessionInfo)
+	assert.Equal(t, []string{"S3WritePolicy"}, sessionInfo.Policies)
 }

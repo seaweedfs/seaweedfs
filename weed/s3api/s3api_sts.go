@@ -5,6 +5,7 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -339,7 +340,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -480,7 +481,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -499,7 +500,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
+func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration
@@ -545,6 +546,24 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
 		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+
+	// If IAM integration is available, embed the role's attached policies into the session token.
+	// This makes the token self-sufficient for authorization even when role lookup is unavailable.
+	if h.iam != nil && h.iam.iamIntegration != nil {
+		if s3iam, ok := h.iam.iamIntegration.(*S3IAMIntegration); ok && s3iam.iamManager != nil {
+			roleNameForPolicies := utils.ExtractRoleNameFromArn(roleArn)
+			if roleNameForPolicies == "" {
+				roleNameForPolicies = utils.ExtractRoleNameFromPrincipal(roleArn)
+			}
+			if roleNameForPolicies != "" && len(claims.Policies) == 0 {
+				if roleDef, err := s3iam.iamManager.GetRole(ctx, roleNameForPolicies); err == nil && len(roleDef.AttachedPolicies) > 0 {
+					policyNames := make([]string, len(roleDef.AttachedPolicies))
+					copy(policyNames, roleDef.AttachedPolicies)
+					claims.WithPolicies(policyNames)
+				}
+			}
+		}
+	}
 
 	if sessionPolicy != "" {
 		claims.WithSessionPolicy(sessionPolicy)
