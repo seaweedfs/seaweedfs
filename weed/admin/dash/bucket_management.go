@@ -29,7 +29,7 @@ type S3BucketsData struct {
 }
 
 type CreateBucketRequest struct {
-	Name                string `json:"name" binding:"required"`
+	Name                string `json:"name"` // validated manually in CreateBucket
 	Region              string `json:"region"`
 	QuotaSize           int64  `json:"quota_size"`            // Quota size in bytes
 	QuotaUnit           string `json:"quota_unit"`            // Unit: MB, GB, TB
@@ -80,6 +80,10 @@ func (s *AdminServer) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateBucketRequest
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		writeJSONError(w, http.StatusBadRequest, "Bucket name is required")
 		return
 	}
 

@@ -434,7 +434,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		if status == http.StatusOK {
+		if status >= 200 && status < 300 {
 			return
 		}
 
@@ -572,6 +572,4 @@ func expandHomeDir(path string) (string, error) {
 		return targetUser.HomeDir, nil
 	}
 	return filepath.Join(targetUser.HomeDir, parts[1]), nil
-
-	return path, nil
 }

@@ -876,6 +876,9 @@ func (s *AdminServer) GetS3TablesBucketPolicy(w http.ResponseWriter, r *http.Req
 }
 
 func (s *AdminServer) DeleteS3TablesBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
 		writeJSONError(w, http.StatusBadRequest, "bucket query parameter is required")
@@ -941,6 +944,9 @@ func (s *AdminServer) GetS3TablesTablePolicy(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *AdminServer) DeleteS3TablesTablePolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	bucketArn := r.URL.Query().Get("bucket")
 	namespace := r.URL.Query().Get("namespace")
 	name := r.URL.Query().Get("name")

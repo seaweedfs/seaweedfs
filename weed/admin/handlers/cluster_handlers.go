@@ -63,14 +63,8 @@ func (h *ClusterHandlers) ShowClusterVolumes(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	sortBy := r.URL.Query().Get("sortBy")
-	if sortBy == "" {
-		sortBy = "id"
-	}
-	sortOrder := r.URL.Query().Get("sortOrder")
-	if sortOrder == "" {
-		sortOrder = "asc"
-	}
+	sortBy := defaultQuery(r.URL.Query().Get("sortBy"), "id")
+	sortOrder := defaultQuery(r.URL.Query().Get("sortOrder"), "asc")
 	collection := r.URL.Query().Get("collection") // Optional collection filter
 
 	// Get cluster volumes data

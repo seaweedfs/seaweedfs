@@ -146,6 +146,7 @@ func runCopy(cmd *Command, args []string) bool {
 		fmt.Fprintf(os.Stderr, "Invalid concurrency %d; using at least 1 worker\n", concurrentFiles)
 		concurrentFiles = 1
 	}
+	*copyOptions.concurrentFiles = concurrentFiles
 
 	fileCopyTaskChan := make(chan FileCopyTask, concurrentFiles)
 
@@ -486,6 +487,9 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		var fileIds []string
 		for _, chunk := range chunks {
 			fileIds = append(fileIds, chunk.FileId)
+		}
+		if len(worker.options.masters) == 0 {
+			return fmt.Errorf("upload data %v: %w (cleanup skipped: no masters configured)", fileName, uploadError)
 		}
 		operation.DeleteFileIds(func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress(worker.options.masters[0])

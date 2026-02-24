@@ -112,6 +112,11 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if strings.TrimSpace(request.Path) == "" {
+		writeJSONError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
 	// Delete file via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
@@ -145,6 +150,13 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 	if len(request.Paths) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "No paths provided")
 		return
+	}
+
+	for _, path := range request.Paths {
+		if strings.TrimSpace(path) == "" {
+			writeJSONError(w, http.StatusBadRequest, "path is required")
+			return
+		}
 	}
 
 	var deletedCount int
@@ -205,6 +217,11 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 
 	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(request.Path) == "" {
+		writeJSONError(w, http.StatusBadRequest, "path is required")
 		return
 	}
 
