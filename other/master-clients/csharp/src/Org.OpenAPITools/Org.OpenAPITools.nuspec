@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+    <metadata>
+        <!-- The identifier that must be unique within the hosting gallery -->
+        <id>$id$</id>
+        <title>OpenAPI Library</title>
+
+        <!-- The package version number that is used when resolving dependencies -->
+        <version>$version$</version>
+
+        <!-- Authors contain text that appears directly on the gallery -->
+        <authors>$author$</authors>
+
+        <!-- Owners are typically nuget.org identities that allow gallery
+             users to easily find other packages by the same owners.  -->
+        <owners>$author$</owners>
+        <requireLicenseAcceptance>false</requireLicenseAcceptance>
+        <developmentDependency>false</developmentDependency>
+
+        <!-- The description can be used in package manager UI. Note that the
+             nuget.org gallery uses information you add in the portal. -->
+        <description>A library generated from a OpenAPI doc</description>
+        <licenseUrl>http://localhost</licenseUrl>
+
+        <!-- Dependencies are automatically installed when the package is installed -->
+        <dependencies>
+
+            <dependency id="NewtonSoft.Json" version="12.0.3" />
+            <dependency id="JsonSubTypes" version="1.6.0" />
+            <dependency id="RestSharp" version="105.1.0" />
+
+        </dependencies>
+    </metadata>
+    <files>
+
+        <!-- A readme.txt will be displayed when the package is installed -->
+        <file src="..\..\README.md" target="" />
+        <file src="..\..\docs\**\*.*" target="docs" />
+
+    </files>
+</package>
