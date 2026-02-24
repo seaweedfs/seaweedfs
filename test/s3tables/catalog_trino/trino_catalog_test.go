@@ -40,6 +40,7 @@ type TestEnvironment struct {
 	dockerAvailable bool
 	accessKey       string
 	secretKey       string
+	closers         []io.Closer
 }
 
 func TestTrinoIcebergCatalog(t *testing.T) {
@@ -118,30 +119,66 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 	bindIP := testutil.FindBindIP()
 
-	masterPort, masterGrpcPort := mustFreePortPair(t, "Master")
-	volumePort, volumeGrpcPort := mustFreePortPair(t, "Volume")
-	filerPort, filerGrpcPort := mustFreePortPair(t, "Filer")
-	s3Port, s3GrpcPort := mustFreePortPair(t, "S3")
-	icebergPort := mustFreePort(t, "Iceberg")
-
-	return &TestEnvironment{
-		seaweedDir:      seaweedDir,
-		weedBinary:      weedBinary,
-		dataDir:         dataDir,
-		bindIP:          bindIP,
-		s3Port:          s3Port,
-		s3GrpcPort:      s3GrpcPort,
-		icebergPort:     icebergPort,
-		masterPort:      masterPort,
-		masterGrpcPort:  masterGrpcPort,
-		filerPort:       filerPort,
-		filerGrpcPort:   filerGrpcPort,
-		volumePort:      volumePort,
-		volumeGrpcPort:  volumeGrpcPort,
-		dockerAvailable: hasDocker(),
-		accessKey:       "AKIAIOSFODNN7EXAMPLE",
-		secretKey:       "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	env := &TestEnvironment{
+		seaweedDir: seaweedDir,
+		weedBinary: weedBinary,
+		dataDir:    dataDir,
+		bindIP:     bindIP,
+		closers:    []io.Closer{},
 	}
+
+	env.masterPort, env.masterGrpcPort = env.mustFreePortPair("Master")
+	env.volumePort, env.volumeGrpcPort = env.mustFreePortPair("Volume")
+	env.filerPort, env.filerGrpcPort = env.mustFreePortPair("Filer")
+	env.s3Port, env.s3GrpcPort = env.mustFreePortPair("S3")
+	env.icebergPort = env.mustFreePort("Iceberg")
+
+	env.dockerAvailable = hasDocker()
+	env.accessKey = "AKIAIOSFODNN7EXAMPLE"
+	env.secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+	return env
+}
+
+func (env *TestEnvironment) mustFreePort(name string) int {
+	port, closer, err := getFreePort()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get free port for %s: %v", name, err))
+	}
+	env.closers = append(env.closers, closer)
+	return port
+}
+
+func (env *TestEnvironment) mustFreePortPair(name string) (int, int) {
+	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get free port pair for %s: %v", name, err))
+	}
+	env.closers = append(env.closers, httpCloser, grpcCloser)
+	return httpPort, grpcPort
+}
+
+func mustFreePort(t *testing.T, name string) int {
+	t.Helper()
+
+	port, closer, err := getFreePort()
+	if err != nil {
+		t.Fatalf("Failed to get free port for %s: %v", name, err)
+	}
+	closer.Close()
+	return port
+}
+
+func mustFreePortPair(t *testing.T, name string) (int, int) {
+	t.Helper()
+
+	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
+	if err != nil {
+		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
+	}
+	httpCloser.Close()
+	grpcCloser.Close()
+	return httpPort, grpcPort
 }
 
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
@@ -160,6 +197,12 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
+
+	// Close all port listeners right before starting the weed process
+	for _, closer := range env.closers {
+		closer.Close()
+	}
+	env.closers = nil
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -471,47 +514,27 @@ func hasDocker() bool {
 	return cmd.Run() == nil
 }
 
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	port, err := getFreePort()
+func findAvailablePortPair() (int, io.Closer, int, io.Closer, error) {
+	httpPort, httpCloser, err := getFreePort()
 	if err != nil {
-		t.Fatalf("Failed to get free port for %s: %v", name, err)
+		return 0, nil, 0, nil, err
 	}
-	return port
+	grpcPort, grpcCloser, err := getFreePort()
+	if err != nil {
+		httpCloser.Close()
+		return 0, nil, 0, nil, err
+	}
+	return httpPort, httpCloser, grpcPort, grpcCloser, nil
 }
 
-func mustFreePortPair(t *testing.T, name string) (int, int) {
-	t.Helper()
-
-	httpPort, grpcPort, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	return httpPort, grpcPort
-}
-
-func findAvailablePortPair() (int, int, error) {
-	httpPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	grpcPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	return httpPort, grpcPort, nil
-}
-
-func getFreePort() (int, error) {
+func getFreePort() (int, io.Closer, error) {
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	defer listener.Close()
 
 	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
+	return addr.Port, listener, nil
 }
 
 func randomString(length int) string {
