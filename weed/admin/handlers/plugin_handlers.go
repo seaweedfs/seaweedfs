@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
@@ -23,45 +22,48 @@ func NewPluginHandlers(adminServer *dash.AdminServer) *PluginHandlers {
 }
 
 // ShowPlugin displays plugin overview page.
-func (h *PluginHandlers) ShowPlugin(c *gin.Context) {
-	h.renderPluginPage(c, "overview")
+func (h *PluginHandlers) ShowPlugin(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPage(w, r, "overview")
 }
 
 // ShowPluginConfiguration displays plugin configuration page.
-func (h *PluginHandlers) ShowPluginConfiguration(c *gin.Context) {
-	h.renderPluginPage(c, "configuration")
+func (h *PluginHandlers) ShowPluginConfiguration(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPage(w, r, "configuration")
 }
 
 // ShowPluginDetection displays plugin detection jobs page.
-func (h *PluginHandlers) ShowPluginDetection(c *gin.Context) {
-	h.renderPluginPage(c, "detection")
+func (h *PluginHandlers) ShowPluginDetection(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPage(w, r, "detection")
 }
 
 // ShowPluginQueue displays plugin job queue page.
-func (h *PluginHandlers) ShowPluginQueue(c *gin.Context) {
-	h.renderPluginPage(c, "queue")
+func (h *PluginHandlers) ShowPluginQueue(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPage(w, r, "queue")
 }
 
 // ShowPluginExecution displays plugin execution jobs page.
-func (h *PluginHandlers) ShowPluginExecution(c *gin.Context) {
-	h.renderPluginPage(c, "execution")
+func (h *PluginHandlers) ShowPluginExecution(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPage(w, r, "execution")
 }
 
 // ShowPluginMonitoring displays plugin monitoring page.
-func (h *PluginHandlers) ShowPluginMonitoring(c *gin.Context) {
+func (h *PluginHandlers) ShowPluginMonitoring(w http.ResponseWriter, r *http.Request) {
 	// Backward-compatible alias for the old monitoring URL.
-	h.renderPluginPage(c, "detection")
+	h.renderPluginPage(w, r, "detection")
 }
 
-func (h *PluginHandlers) renderPluginPage(c *gin.Context, page string) {
+func (h *PluginHandlers) renderPluginPage(w http.ResponseWriter, r *http.Request, page string) {
 	component := app.Plugin(page)
-	layoutComponent := layout.Layout(c, component)
+	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
 
 	var buf bytes.Buffer
-	if err := layoutComponent.Render(c.Request.Context(), &buf); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	if err := layoutComponent.Render(r.Context(), &buf); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
 	}
 
-	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
 }

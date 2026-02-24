@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -817,18 +815,18 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 // VacuumVolume method moved to volume_management.go
 
 // TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
-func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(w http.ResponseWriter, r *http.Request) {
 	err := as.TriggerTopicRetentionPurge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Topic retention purge triggered successfully"})
 }
 
 // GetConfigInfo returns information about the admin configuration
-func (as *AdminServer) GetConfigInfo(c *gin.Context) {
+func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo := as.configPersistence.GetConfigInfo()
 
 	// Add additional admin server info
@@ -846,7 +844,7 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 		configInfo["maintenance_running"] = false
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config_info": configInfo,
 		"title":       "Configuration Information",
 	})

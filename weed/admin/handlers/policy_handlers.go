@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
@@ -26,53 +26,53 @@ func NewPolicyHandlers(adminServer *dash.AdminServer) *PolicyHandlers {
 }
 
 // ShowPolicies renders the policies management page
-func (h *PolicyHandlers) ShowPolicies(c *gin.Context) {
+func (h *PolicyHandlers) ShowPolicies(w http.ResponseWriter, r *http.Request) {
 	// Get policies data from the server
-	policiesData := h.getPoliciesData(c)
+	policiesData := h.getPoliciesData(r)
 
 	// Render HTML template
-	c.Header("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html")
 	policiesComponent := app.Policies(policiesData)
-	layoutComponent := layout.Layout(c, policiesComponent)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, policiesComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
 	}
 }
 
 // GetPolicies returns the list of policies as JSON
-func (h *PolicyHandlers) GetPolicies(c *gin.Context) {
+func (h *PolicyHandlers) GetPolicies(w http.ResponseWriter, r *http.Request) {
 	policies, err := h.adminServer.GetPolicies()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get policies: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get policies: "+err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"policies": policies})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
 }
 
 // CreatePolicy handles policy creation
-func (h *PolicyHandlers) CreatePolicy(c *gin.Context) {
+func (h *PolicyHandlers) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var req dash.CreatePolicyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 
 	// Validate policy name
 	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy name is required"})
+		writeJSONError(w, http.StatusBadRequest, "Policy name is required")
 		return
 	}
 
 	// Check if policy already exists
 	existingPolicy, err := h.adminServer.GetPolicy(req.Name)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to check existing policy: "+err.Error())
 		return
 	}
 	if existingPolicy != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "Policy with this name already exists"})
+		writeJSONError(w, http.StatusConflict, "Policy with this name already exists")
 		return
 	}
 
@@ -80,11 +80,11 @@ func (h *PolicyHandlers) CreatePolicy(c *gin.Context) {
 	err = h.adminServer.CreatePolicy(req.Name, req.Document)
 	if err != nil {
 		glog.Errorf("Failed to create policy %s: %v", req.Name, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to create policy: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"success": true,
 		"message": "Policy created successfully",
 		"policy":  req.Name,
@@ -92,49 +92,49 @@ func (h *PolicyHandlers) CreatePolicy(c *gin.Context) {
 }
 
 // GetPolicy returns a specific policy
-func (h *PolicyHandlers) GetPolicy(c *gin.Context) {
-	policyName := c.Param("name")
+func (h *PolicyHandlers) GetPolicy(w http.ResponseWriter, r *http.Request) {
+	policyName := mux.Vars(r)["name"]
 	if policyName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy name is required"})
+		writeJSONError(w, http.StatusBadRequest, "Policy name is required")
 		return
 	}
 
 	policy, err := h.adminServer.GetPolicy(policyName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get policy: "+err.Error())
 		return
 	}
 
 	if policy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
+		writeJSONError(w, http.StatusNotFound, "Policy not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, policy)
+	writeJSON(w, http.StatusOK, policy)
 }
 
 // UpdatePolicy handles policy updates
-func (h *PolicyHandlers) UpdatePolicy(c *gin.Context) {
-	policyName := c.Param("name")
+func (h *PolicyHandlers) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	policyName := mux.Vars(r)["name"]
 	if policyName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy name is required"})
+		writeJSONError(w, http.StatusBadRequest, "Policy name is required")
 		return
 	}
 
 	var req dash.UpdatePolicyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 
 	// Check if policy exists
 	existingPolicy, err := h.adminServer.GetPolicy(policyName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to check existing policy: "+err.Error())
 		return
 	}
 	if existingPolicy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
+		writeJSONError(w, http.StatusNotFound, "Policy not found")
 		return
 	}
 
@@ -142,11 +142,11 @@ func (h *PolicyHandlers) UpdatePolicy(c *gin.Context) {
 	err = h.adminServer.UpdatePolicy(policyName, req.Document)
 	if err != nil {
 		glog.Errorf("Failed to update policy %s: %v", policyName, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to update policy: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "Policy updated successfully",
 		"policy":  policyName,
@@ -154,21 +154,21 @@ func (h *PolicyHandlers) UpdatePolicy(c *gin.Context) {
 }
 
 // DeletePolicy handles policy deletion
-func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
-	policyName := c.Param("name")
+func (h *PolicyHandlers) DeletePolicy(w http.ResponseWriter, r *http.Request) {
+	policyName := mux.Vars(r)["name"]
 	if policyName == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy name is required"})
+		writeJSONError(w, http.StatusBadRequest, "Policy name is required")
 		return
 	}
 
 	// Check if policy exists
 	existingPolicy, err := h.adminServer.GetPolicy(policyName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to check existing policy: "+err.Error())
 		return
 	}
 	if existingPolicy == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Policy not found"})
+		writeJSONError(w, http.StatusNotFound, "Policy not found")
 		return
 	}
 
@@ -176,11 +176,11 @@ func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
 	err = h.adminServer.DeletePolicy(policyName)
 	if err != nil {
 		glog.Errorf("Failed to delete policy %s: %v", policyName, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete policy: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to delete policy: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "Policy deleted successfully",
 		"policy":  policyName,
@@ -188,60 +188,54 @@ func (h *PolicyHandlers) DeletePolicy(c *gin.Context) {
 }
 
 // ValidatePolicy validates a policy document without saving it
-func (h *PolicyHandlers) ValidatePolicy(c *gin.Context) {
+func (h *PolicyHandlers) ValidatePolicy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Document policy_engine.PolicyDocument `json:"document" binding:"required"`
+		Document policy_engine.PolicyDocument `json:"document"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 
 	// Basic validation
 	if req.Document.Version == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy version is required"})
+		writeJSONError(w, http.StatusBadRequest, "Policy version is required")
 		return
 	}
 
 	if len(req.Document.Statement) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Policy must have at least one statement"})
+		writeJSONError(w, http.StatusBadRequest, "Policy must have at least one statement")
 		return
 	}
 
 	// Validate each statement
 	for i, statement := range req.Document.Statement {
 		if statement.Effect != "Allow" && statement.Effect != "Deny" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Statement %d: Effect must be 'Allow' or 'Deny'", i+1),
-			})
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Effect must be 'Allow' or 'Deny'", i+1))
 			return
 		}
 
 		if len(statement.Action.Strings()) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Statement %d: Action is required", i+1),
-			})
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Action is required", i+1))
 			return
 		}
 
 		if len(statement.Resource.Strings()) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("Statement %d: Resource is required", i+1),
-			})
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Statement %d: Resource is required", i+1))
 			return
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"valid":   true,
 		"message": "Policy document is valid",
 	})
 }
 
 // getPoliciesData retrieves policies data from the server
-func (h *PolicyHandlers) getPoliciesData(c *gin.Context) dash.PoliciesData {
-	username := c.GetString("username")
+func (h *PolicyHandlers) getPoliciesData(r *http.Request) dash.PoliciesData {
+	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
 	}

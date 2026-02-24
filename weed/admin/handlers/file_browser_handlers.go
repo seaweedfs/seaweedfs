@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
@@ -59,16 +58,16 @@ func (h *FileBrowserHandlers) newClientWithTimeout(timeout time.Duration) http.C
 }
 
 // ShowFileBrowser renders the file browser page
-func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
+func (h *FileBrowserHandlers) ShowFileBrowser(w http.ResponseWriter, r *http.Request) {
 	// Get path from query parameter, default to root
-	path := c.DefaultQuery("path", "/")
+	path := defaultQuery(r.URL.Query().Get("path"), "/")
 	// Normalize Windows-style paths for consistency
 	path = util.CleanWindowsPath(path)
 
 	// Get pagination parameters
-	lastFileName := c.DefaultQuery("lastFileName", "")
+	lastFileName := r.URL.Query().Get("lastFileName")
 
-	pageSize, err := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	pageSize, err := strconv.Atoi(defaultQuery(r.URL.Query().Get("limit"), "20"))
 	if err != nil || pageSize < 1 {
 		pageSize = 20
 	}
@@ -79,36 +78,42 @@ func (h *FileBrowserHandlers) ShowFileBrowser(c *gin.Context) {
 	// Get file browser data with cursor-based pagination
 	browserData, err := h.adminServer.GetFileBrowser(path, lastFileName, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file browser data: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get file browser data: "+err.Error())
 		return
 	}
 
 	// Set username
-	username := c.GetString("username")
+	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
 	}
 	browserData.Username = username
 
 	// Render HTML template
-	c.Header("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html")
 	browserComponent := app.FileBrowser(*browserData)
-	layoutComponent := layout.Layout(c, browserComponent)
-	err = layoutComponent.Render(c.Request.Context(), c.Writer)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, browserComponent)
+	err = layoutComponent.Render(r.Context(), w)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
 	}
 }
 
 // DeleteFile handles file deletion API requests
-func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
+func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Path string `json:"path" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(request.Path) == "" {
+		writeJSONError(w, http.StatusBadRequest, "path is required")
 		return
 	}
 
@@ -124,27 +129,34 @@ func (h *FileBrowserHandlers) DeleteFile(c *gin.Context) {
 		return err
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete file: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to delete file: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "File deleted successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "File deleted successfully"})
 }
 
 // DeleteMultipleFiles handles multiple file deletion API requests
-func (h *FileBrowserHandlers) DeleteMultipleFiles(c *gin.Context) {
+func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Paths []string `json:"paths" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 
 	if len(request.Paths) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No paths provided"})
+		writeJSONError(w, http.StatusBadRequest, "No paths provided")
 		return
+	}
+
+	for _, path := range request.Paths {
+		if strings.TrimSpace(path) == "" {
+			writeJSONError(w, http.StatusBadRequest, "path is required")
+			return
+		}
 	}
 
 	var deletedCount int
@@ -189,37 +201,40 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(c *gin.Context) {
 		} else {
 			response["message"] = fmt.Sprintf("Deleted %d item(s), failed to delete %d item(s)", deletedCount, failedCount)
 		}
-		c.JSON(http.StatusOK, response)
+		writeJSON(w, http.StatusOK, response)
 	} else {
 		response["message"] = "Failed to delete all selected items"
-		c.JSON(http.StatusInternalServerError, response)
+		writeJSON(w, http.StatusInternalServerError, response)
 	}
 }
 
 // CreateFolder handles folder creation requests
-func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
+func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		Path       string `json:"path" binding:"required"`
 		FolderName string `json:"folder_name" binding:"required"`
 	}
 
-	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
+	}
+
+	if strings.TrimSpace(request.Path) == "" {
+		writeJSONError(w, http.StatusBadRequest, "path is required")
 		return
 	}
 
 	// Clean and validate folder name
 	folderName := strings.TrimSpace(request.FolderName)
 	if folderName == "" || strings.Contains(folderName, "/") || strings.Contains(folderName, "\\") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid folder name"})
+		writeJSONError(w, http.StatusBadRequest, "Invalid folder name")
 		return
 	}
 
 	// Create full path for new folder
-	fullPath := filepath.Join(request.Path, folderName)
-	if !strings.HasPrefix(fullPath, "/") {
-		fullPath = "/" + fullPath
-	}
+	base := "/" + strings.TrimPrefix(request.Path, "/")
+	fullPath := path.Join(base, folderName)
 
 	// Create folder via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -241,32 +256,32 @@ func (h *FileBrowserHandlers) CreateFolder(c *gin.Context) {
 		return err
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create folder: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to create folder: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Folder created successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Folder created successfully"})
 }
 
 // UploadFile handles file upload requests
-func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
+func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request) {
 	// Get the current path
-	currentPath := c.PostForm("path")
+	currentPath := r.FormValue("path")
 	if currentPath == "" {
 		currentPath = "/"
 	}
 
 	// Parse multipart form
-	err := c.Request.ParseMultipartForm(1 << 30) // 1GB max memory for large file uploads
+	err := r.ParseMultipartForm(1 << 30) // 1GB max memory for large file uploads
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse multipart form: " + err.Error()})
+		writeJSONError(w, http.StatusBadRequest, "Failed to parse multipart form: "+err.Error())
 		return
 	}
 
 	// Get uploaded files (supports multiple files)
-	files := c.Request.MultipartForm.File["files"]
+	files := r.MultipartForm.File["files"]
 	if len(files) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No files uploaded"})
+		writeJSONError(w, http.StatusBadRequest, "No files uploaded")
 		return
 	}
 
@@ -292,16 +307,8 @@ func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
 			fullPath = "/" + fullPath
 		}
 
-		// Open the file
-		file, err := fileHeader.Open()
-		if err != nil {
-			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
-			continue
-		}
-
 		// Upload file to filer
 		err = h.uploadFileToFiler(fullPath, fileHeader)
-		file.Close()
 
 		if err != nil {
 			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
@@ -331,10 +338,10 @@ func (h *FileBrowserHandlers) UploadFile(c *gin.Context) {
 		} else {
 			response["message"] = fmt.Sprintf("Uploaded %d file(s), %d failed", len(uploadResults), len(failedUploads))
 		}
-		c.JSON(http.StatusOK, response)
+		writeJSON(w, http.StatusOK, response)
 	} else {
 		response["message"] = "All file uploads failed"
-		c.JSON(http.StatusInternalServerError, response)
+		writeJSON(w, http.StatusInternalServerError, response)
 	}
 }
 
@@ -561,23 +568,23 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 
 // DownloadFile handles file download requests by proxying through the Admin UI server
 // This ensures mTLS works correctly since the Admin UI server has the client certificates
-func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
-	filePath := c.Query("path")
+func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
 	if filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
 
 	// Get filer address
 	filerAddress := h.adminServer.GetFilerAddress()
 	if filerAddress == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Filer address not configured"})
+		writeJSONError(w, http.StatusInternalServerError, "Filer address not configured")
 		return
 	}
 
 	// Validate filer address to prevent SSRF
 	if err := h.validateFilerAddress(filerAddress); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid filer address configuration"})
+		writeJSONError(w, http.StatusInternalServerError, "Invalid filer address configuration")
 		return
 	}
 	filerHttpAddress := pb.ServerAddress(filerAddress).ToHttpAddress()
@@ -585,7 +592,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	// Validate and sanitize the file path
 	cleanFilePath, err := h.validateAndCleanFilePath(filePath)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file path: " + err.Error()})
+		writeJSONError(w, http.StatusBadRequest, "Invalid file path: "+err.Error())
 		return
 	}
 
@@ -593,7 +600,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	downloadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
 	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to construct download URL: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to construct download URL: "+err.Error())
 		return
 	}
 
@@ -602,9 +609,9 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	// Safe: filerAddress validated by validateFilerAddress() to match configured filer
 	// Safe: cleanFilePath validated and cleaned by validateAndCleanFilePath() to prevent path traversal
 	// Use request context so download is cancelled when client disconnects
-	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", downloadURL, nil)
+	req, err := http.NewRequestWithContext(r.Context(), "GET", downloadURL, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to create request: "+err.Error())
 		return
 	}
 	client := h.newClientWithTimeout(5 * time.Minute) // Longer timeout for large file downloads
@@ -613,7 +620,7 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to fetch file from filer: " + err.Error()})
+		writeJSONError(w, http.StatusBadGateway, "Failed to fetch file from filer: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -621,10 +628,10 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d but failed to read response body: %v", resp.StatusCode, err)})
+			writeJSONError(w, resp.StatusCode, fmt.Sprintf("Filer returned status %d but failed to read response body: %v", resp.StatusCode, err))
 			return
 		}
-		c.JSON(resp.StatusCode, gin.H{"error": fmt.Sprintf("Filer returned status %d: %s", resp.StatusCode, string(body))})
+		writeJSONError(w, resp.StatusCode, fmt.Sprintf("Filer returned status %d: %s", resp.StatusCode, string(body)))
 		return
 	}
 
@@ -632,33 +639,33 @@ func (h *FileBrowserHandlers) DownloadFile(c *gin.Context) {
 	fileName := filepath.Base(cleanFilePath)
 	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
 	// properly handling non-ASCII characters and special characters
-	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 
 	// Use content type from filer response, or default to octet-stream
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	c.Header("Content-Type", contentType)
+	w.Header().Set("Content-Type", contentType)
 
 	// Set content length if available
 	if resp.ContentLength > 0 {
-		c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
 	}
 
 	// Stream the response body to the client
-	c.Status(http.StatusOK)
-	_, err = io.Copy(c.Writer, resp.Body)
+	w.WriteHeader(http.StatusOK)
+	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		glog.Errorf("Error streaming file download: %v", err)
 	}
 }
 
 // ViewFile handles file viewing requests (for text files, images, etc.)
-func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
-	filePath := c.Query("path")
+func (h *FileBrowserHandlers) ViewFile(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
 	if filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
 
@@ -704,7 +711,7 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file metadata: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get file metadata: "+err.Error())
 		return
 	}
 
@@ -752,7 +759,7 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"file":     fileEntry,
 		"content":  content,
 		"viewable": viewable,
@@ -761,10 +768,10 @@ func (h *FileBrowserHandlers) ViewFile(c *gin.Context) {
 }
 
 // GetFileProperties handles file properties requests
-func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
-	filePath := c.Query("path")
+func (h *FileBrowserHandlers) GetFileProperties(w http.ResponseWriter, r *http.Request) {
+	filePath := r.URL.Query().Get("path")
 	if filePath == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File path is required"})
+		writeJSONError(w, http.StatusBadRequest, "File path is required")
 		return
 	}
 
@@ -853,11 +860,11 @@ func (h *FileBrowserHandlers) GetFileProperties(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get file properties: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get file properties: "+err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, properties)
+	writeJSON(w, http.StatusOK, properties)
 }
 
 // Helper function to format bytes
