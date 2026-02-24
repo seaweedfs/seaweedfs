@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -87,6 +88,11 @@ func isValidTaskID(taskID string) bool {
 // ConfigPersistence handles saving and loading configuration files
 type ConfigPersistence struct {
 	dataDir string
+	// tasksMu serializes all filesystem operations on the tasks/ directory.
+	// SaveTaskState, LoadTaskState, LoadAllTaskStates, DeleteTaskState, and
+	// CleanupCompletedTasks are called from multiple goroutines concurrently
+	// after saveTaskState was moved outside mq.mutex in the maintenance queue.
+	tasksMu sync.Mutex
 }
 
 // NewConfigPersistence creates a new configuration persistence manager
@@ -937,6 +943,8 @@ func (cp *ConfigPersistence) ListTaskDetails() ([]string, error) {
 
 // CleanupCompletedTasks removes old completed tasks beyond the retention limit
 func (cp *ConfigPersistence) CleanupCompletedTasks() error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot cleanup completed tasks")
 	}
@@ -946,8 +954,8 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 		return nil // No tasks directory, nothing to cleanup
 	}
 
-	// Load all tasks and find completed/failed ones
-	allTasks, err := cp.LoadAllTaskStates()
+	// Use unlocked helpers to avoid deadlock (tasksMu is already held)
+	allTasks, err := cp.loadAllTaskStatesLocked()
 	if err != nil {
 		return fmt.Errorf("failed to load tasks for cleanup: %w", err)
 	}
@@ -998,7 +1006,7 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 	if len(completedTasks) > MaxCompletedTasks {
 		tasksToDelete := completedTasks[MaxCompletedTasks:]
 		for _, task := range tasksToDelete {
-			if err := cp.DeleteTaskState(task.ID); err != nil {
+			if err := cp.deleteTaskStateLocked(task.ID); err != nil {
 				glog.Warningf("Failed to delete old completed task %s: %v", task.ID, err)
 			} else {
 				glog.V(2).Infof("Cleaned up old completed task %s (completed: %v)", task.ID, task.CompletedAt)
@@ -1012,6 +1020,8 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 
 // SaveTaskState saves a task state to protobuf file
 func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot save task state")
 	}
@@ -1051,6 +1061,13 @@ func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) er
 
 // LoadTaskState loads a task state from protobuf file
 func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.MaintenanceTask, error) {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.loadTaskStateLocked(taskID)
+}
+
+// loadTaskStateLocked loads a single task state. Must be called with tasksMu held.
+func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.MaintenanceTask, error) {
 	if cp.dataDir == "" {
 		return nil, fmt.Errorf("no data directory specified, cannot load task state")
 	}
@@ -1084,6 +1101,13 @@ func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.Maintena
 
 // LoadAllTaskStates loads all task states from disk
 func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask, error) {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.loadAllTaskStatesLocked()
+}
+
+// loadAllTaskStatesLocked loads all task states from disk. Must be called with tasksMu held.
+func (cp *ConfigPersistence) loadAllTaskStatesLocked() ([]*maintenance.MaintenanceTask, error) {
 	if cp.dataDir == "" {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
@@ -1102,7 +1126,7 @@ func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".pb" {
 			taskID := entry.Name()[:len(entry.Name())-3] // Remove .pb extension
-			task, err := cp.LoadTaskState(taskID)
+			task, err := cp.loadTaskStateLocked(taskID)
 			if err != nil {
 				glog.Warningf("Failed to load task state for %s: %v", taskID, err)
 				continue
@@ -1117,6 +1141,13 @@ func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask
 
 // DeleteTaskState removes a task state file from disk
 func (cp *ConfigPersistence) DeleteTaskState(taskID string) error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.deleteTaskStateLocked(taskID)
+}
+
+// deleteTaskStateLocked removes a task state file. Must be called with tasksMu held.
+func (cp *ConfigPersistence) deleteTaskStateLocked(taskID string) error {
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot delete task state")
 	}
