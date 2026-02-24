@@ -47,6 +47,11 @@ type IAMIntegration interface {
 	DefaultAllow() bool
 }
 
+// IAMManagerProvider exposes the IAMManager backing an IAM integration.
+type IAMManagerProvider interface {
+	GetIAMManager() *integration.IAMManager
+}
+
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
 	iamManager   *integration.IAMManager
@@ -68,6 +73,11 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 		filerAddress: filerAddress,
 		enabled:      iamManager != nil,
 	}
+}
+
+// GetIAMManager returns the IAMManager backing this integration.
+func (s3iam *S3IAMIntegration) GetIAMManager() *integration.IAMManager {
+	return s3iam.iamManager
 }
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
