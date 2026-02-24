@@ -552,8 +552,8 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 	// This makes the token self-sufficient for authorization even when role lookup is unavailable.
 	var policyManager *integration.IAMManager
 	if h.iam != nil && h.iam.iamIntegration != nil {
-		if s3iam, ok := h.iam.iamIntegration.(*S3IAMIntegration); ok {
-			policyManager = s3iam.iamManager
+		if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+			policyManager = provider.GetIAMManager()
 		}
 	}
 
@@ -568,9 +568,7 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 			if err != nil {
 				glog.V(2).Infof("Failed to load role %q for policy embedding: %v", roleNameForPolicies, err)
 			} else if len(roleDef.AttachedPolicies) > 0 {
-				policyNames := make([]string, len(roleDef.AttachedPolicies))
-				copy(policyNames, roleDef.AttachedPolicies)
-				claims.WithPolicies(policyNames)
+				claims.WithPolicies(roleDef.AttachedPolicies)
 			}
 		}
 	}
