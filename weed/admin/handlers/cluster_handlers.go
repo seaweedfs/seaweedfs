@@ -32,17 +32,13 @@ func (h *ClusterHandlers) ShowClusterVolumeServers(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	volumeServersData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	volumeServersComponent := app.ClusterVolumeServers(*volumeServersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, volumeServersComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -84,17 +80,13 @@ func (h *ClusterHandlers) ShowClusterVolumes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	volumesData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	volumesComponent := app.ClusterVolumes(*volumesData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, volumesComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -131,10 +123,11 @@ func (h *ClusterHandlers) ShowVolumeDetails(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	username := usernameOrDefault(r)
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	volumeDetailsComponent := app.VolumeDetails(*volumeDetails)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, volumeDetailsComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -151,17 +144,13 @@ func (h *ClusterHandlers) ShowClusterCollections(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	collectionsData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	collectionsComponent := app.ClusterCollections(*collectionsData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, collectionsComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -191,17 +180,13 @@ func (h *ClusterHandlers) ShowCollectionDetails(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	collectionDetailsData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	collectionDetailsComponent := app.CollectionDetails(*collectionDetailsData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, collectionDetailsComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -226,17 +211,13 @@ func (h *ClusterHandlers) ShowClusterEcShards(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	data.Username = username
 
 	// Render template
 	w.Header().Set("Content-Type", "text/html")
 	ecVolumesComponent := app.ClusterEcVolumes(*data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, ecVolumesComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -277,17 +258,13 @@ func (h *ClusterHandlers) ShowEcVolumeDetails(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	ecVolumeDetails.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	ecVolumeDetailsComponent := app.EcVolumeDetails(*ecVolumeDetails)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, ecVolumeDetailsComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -304,17 +281,13 @@ func (h *ClusterHandlers) ShowClusterMasters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	mastersData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	mastersComponent := app.ClusterMasters(*mastersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, mastersComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -331,17 +304,13 @@ func (h *ClusterHandlers) ShowClusterFilers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	filersData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	filersComponent := app.ClusterFilers(*filersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, filersComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -358,17 +327,13 @@ func (h *ClusterHandlers) ShowClusterBrokers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
+	username := usernameOrDefault(r)
 	brokersData.Username = username
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	brokersComponent := app.ClusterBrokers(*brokersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, brokersComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -388,10 +353,12 @@ func (h *ClusterHandlers) GetClusterTopology(w http.ResponseWriter, r *http.Requ
 
 // GetMasters returns master node information
 func (h *ClusterHandlers) GetMasters(w http.ResponseWriter, r *http.Request) {
-	// Simple master info
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"masters": []map[string]string{{"address": "localhost:9333"}},
-	})
+	mastersData, err := h.adminServer.GetClusterMasters()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get cluster masters: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, mastersData)
 }
 
 // GetVolumeServers returns volume server information
@@ -429,9 +396,7 @@ func (h *ClusterHandlers) VacuumVolume(w http.ResponseWriter, r *http.Request) {
 	// Perform vacuum operation
 	err = h.adminServer.VacuumVolume(volumeID, server)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "Failed to vacuum volume: " + err.Error(),
-		})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to vacuum volume: "+err.Error())
 		return
 	}
 
@@ -440,4 +405,12 @@ func (h *ClusterHandlers) VacuumVolume(w http.ResponseWriter, r *http.Request) {
 		"volume_id": volumeID,
 		"server":    server,
 	})
+}
+
+func usernameOrDefault(r *http.Request) string {
+	username := dash.UsernameFromContext(r.Context())
+	if username == "" {
+		return "admin"
+	}
+	return username
 }

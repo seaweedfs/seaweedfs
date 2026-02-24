@@ -578,6 +578,9 @@ func (s *AdminServer) ListS3TablesBucketsAPI(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		Name  string            `json:"name"`
 		Tags  map[string]string `json:"tags"`
@@ -663,6 +666,9 @@ func (s *AdminServer) SetTableBucketOwner(ctx context.Context, bucketName, owner
 }
 
 func (s *AdminServer) DeleteS3TablesBucket(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	bucketArn := r.URL.Query().Get("bucket")
 	if bucketArn == "" {
 		writeJSONError(w, http.StatusBadRequest, "Bucket ARN is required")
@@ -757,6 +763,9 @@ func (s *AdminServer) ListS3TablesTablesAPI(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *AdminServer) CreateS3TablesTable(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string                  `json:"bucket_arn"`
 		Namespace string                  `json:"namespace"`
@@ -804,6 +813,9 @@ func (s *AdminServer) CreateS3TablesTable(w http.ResponseWriter, r *http.Request
 }
 
 func (s *AdminServer) DeleteS3TablesTable(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	bucketArn := r.URL.Query().Get("bucket")
 	namespace := r.URL.Query().Get("namespace")
 	name := r.URL.Query().Get("name")
@@ -825,6 +837,9 @@ func (s *AdminServer) DeleteS3TablesTable(w http.ResponseWriter, r *http.Request
 }
 
 func (s *AdminServer) PutS3TablesBucketPolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Policy    string `json:"policy"`
@@ -875,6 +890,9 @@ func (s *AdminServer) DeleteS3TablesBucketPolicy(w http.ResponseWriter, r *http.
 }
 
 func (s *AdminServer) PutS3TablesTablePolicy(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		BucketARN string `json:"bucket_arn"`
 		Namespace string `json:"namespace"`
@@ -943,6 +961,9 @@ func (s *AdminServer) DeleteS3TablesTablePolicy(w http.ResponseWriter, r *http.R
 }
 
 func (s *AdminServer) TagS3TablesResource(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		ResourceARN string            `json:"resource_arn"`
 		Tags        map[string]string `json:"tags"`
@@ -983,6 +1004,9 @@ func (s *AdminServer) ListS3TablesTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *AdminServer) UntagS3TablesResource(w http.ResponseWriter, r *http.Request) {
+	if !requireSessionCSRFToken(w, r) {
+		return
+	}
 	var req struct {
 		ResourceARN string   `json:"resource_arn"`
 		TagKeys     []string `json:"tag_keys"`

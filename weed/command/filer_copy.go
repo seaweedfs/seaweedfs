@@ -50,7 +50,7 @@ type CopyOptions struct {
 func init() {
 	cmdFilerCopy.Run = runCopy // break init cycle
 	cmdFilerCopy.IsDebug = cmdFilerCopy.Flag.Bool("debug", false, "verbose debug information")
-	copyOptions.include = cmdFilerCopy.Flag.String("include", "", "pattens of files to copy, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
+	copyOptions.include = cmdFilerCopy.Flag.String("include", "", "patterns of files to copy, e.g., *.pdf, *.html, ab?d.txt, works together with -dir")
 	copyOptions.replication = cmdFilerCopy.Flag.String("replication", "", "replication type")
 	copyOptions.collection = cmdFilerCopy.Flag.String("collection", "", "optional collection name")
 	copyOptions.ttl = cmdFilerCopy.Flag.String("ttl", "", "time to live, e.g.: 1m, 1h, 1d, 1M, 1y")
@@ -141,7 +141,13 @@ func runCopy(cmd *Command, args []string) bool {
 		grace.SetupProfiling("filer.copyOptions.cpu.pprof", "filer.copyOptions.mem.pprof")
 	}
 
-	fileCopyTaskChan := make(chan FileCopyTask, *copyOptions.concurrentFiles)
+	concurrentFiles := *copyOptions.concurrentFiles
+	if concurrentFiles <= 0 {
+		fmt.Fprintf(os.Stderr, "Invalid concurrency %d; using at least 1 worker\n", concurrentFiles)
+		concurrentFiles = 1
+	}
+
+	fileCopyTaskChan := make(chan FileCopyTask, concurrentFiles)
 
 	go func() {
 		defer close(fileCopyTaskChan)
@@ -152,7 +158,7 @@ func runCopy(cmd *Command, args []string) bool {
 			}
 		}
 	}()
-	for i := 0; i < *copyOptions.concurrentFiles; i++ {
+	for i := 0; i < concurrentFiles; i++ {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
@@ -482,7 +488,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 			fileIds = append(fileIds, chunk.FileId)
 		}
 		operation.DeleteFileIds(func(_ context.Context) pb.ServerAddress {
-			return pb.ServerAddress(copyOptions.masters[0])
+			return pb.ServerAddress(worker.options.masters[0])
 		}, false, worker.options.grpcDialOption, fileIds)
 		return uploadError
 	}

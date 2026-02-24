@@ -109,8 +109,13 @@ func (s *AdminServer) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Convert quota to bytes
-	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
+	normalizedUnit, err := normalizeQuotaUnit(req.QuotaUnit)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.QuotaUnit = normalizedUnit
+	quotaBytes := convertQuotaToBytes(req.QuotaSize, normalizedUnit)
 
 	// Validate quota: if enabled, size must be greater than 0
 	if req.QuotaEnabled && quotaBytes <= 0 {
@@ -125,7 +130,7 @@ func (s *AdminServer) CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, owner)
+	err = s.CreateS3BucketWithObjectLock(req.Name, quotaBytes, req.QuotaEnabled, req.VersioningEnabled, req.ObjectLockEnabled, req.ObjectLockMode, req.SetDefaultRetention, req.ObjectLockDuration, owner)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to create bucket: "+err.Error())
 		return
@@ -163,15 +168,21 @@ func (s *AdminServer) UpdateBucketQuota(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Convert quota to bytes
-	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
-
 	if req.QuotaEnabled && req.QuotaSize <= 0 {
 		writeJSONError(w, http.StatusBadRequest, "quota_size must be > 0 when quota_enabled is true")
 		return
 	}
 
-	err := s.SetBucketQuota(bucketName, quotaBytes, req.QuotaEnabled)
+	normalizedUnit, err := normalizeQuotaUnit(req.QuotaUnit)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.QuotaUnit = normalizedUnit
+	// Convert quota to bytes
+	quotaBytes := convertQuotaToBytes(req.QuotaSize, normalizedUnit)
+
+	err = s.SetBucketQuota(bucketName, quotaBytes, req.QuotaEnabled)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to update bucket quota: "+err.Error())
 		return
@@ -308,16 +319,32 @@ func convertQuotaToBytes(size int64, unit string) int64 {
 		return 0
 	}
 
-	switch strings.ToUpper(unit) {
+	switch unit {
 	case "TB":
 		return size * 1024 * 1024 * 1024 * 1024
 	case "GB":
 		return size * 1024 * 1024 * 1024
 	case "MB":
 		return size * 1024 * 1024
+	case "KB":
+		return size * 1024
+	case "B":
+		return size
 	default:
-		// Default to MB if unit is not recognized
-		return size * 1024 * 1024
+		return 0
+	}
+}
+
+func normalizeQuotaUnit(unit string) (string, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(unit))
+	if normalized == "" {
+		return "MB", nil
+	}
+	switch normalized {
+	case "B", "KB", "MB", "GB", "TB":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported quota unit: %s", unit)
 	}
 }
 

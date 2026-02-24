@@ -216,10 +216,8 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create full path for new folder
-	fullPath := filepath.Join(request.Path, folderName)
-	if !strings.HasPrefix(fullPath, "/") {
-		fullPath = "/" + fullPath
-	}
+	base := "/" + strings.TrimPrefix(request.Path, "/")
+	fullPath := path.Join(base, folderName)
 
 	// Create folder via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -292,16 +290,8 @@ func (h *FileBrowserHandlers) UploadFile(w http.ResponseWriter, r *http.Request)
 			fullPath = "/" + fullPath
 		}
 
-		// Open the file
-		file, err := fileHeader.Open()
-		if err != nil {
-			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))
-			continue
-		}
-
 		// Upload file to filer
 		err = h.uploadFileToFiler(fullPath, fileHeader)
-		file.Close()
 
 		if err != nil {
 			failedUploads = append(failedUploads, fmt.Sprintf("%s: %v", fileName, err))

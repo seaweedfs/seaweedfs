@@ -419,6 +419,10 @@ func (r *statusRecorder) Push(target string, opts *http.PushOptions) error {
 	return http.ErrNotSupported
 }
 
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -493,6 +497,7 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 			if _, err := rand.Read(encKey); err != nil {
 				return nil, nil, err
 			}
+			log.Printf("Warning: Upgrading session key at %s by adding an encryption key; existing cookies will be invalidated", sessionKeyPath)
 
 			combined := append(authKey, encKey...)
 			if err := os.WriteFile(sessionKeyPath, combined, 0600); err != nil {
@@ -555,20 +560,18 @@ func expandHomeDir(path string) (string, error) {
 	}
 
 	// Handle ~username/ patterns
-	if strings.HasPrefix(path, "~") {
-		parts := strings.SplitN(path[1:], "/", 2)
-		username := parts[0]
+	parts := strings.SplitN(path[1:], "/", 2)
+	username := parts[0]
 
-		targetUser, err := user.Lookup(username)
-		if err != nil {
-			return "", fmt.Errorf("user %s not found: %v", username, err)
-		}
-
-		if len(parts) == 1 {
-			return targetUser.HomeDir, nil
-		}
-		return filepath.Join(targetUser.HomeDir, parts[1]), nil
+	targetUser, err := user.Lookup(username)
+	if err != nil {
+		return "", fmt.Errorf("user %s not found: %v", username, err)
 	}
+
+	if len(parts) == 1 {
+		return targetUser.HomeDir, nil
+	}
+	return filepath.Join(targetUser.HomeDir, parts[1]), nil
 
 	return path, nil
 }
