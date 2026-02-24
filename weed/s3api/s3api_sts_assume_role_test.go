@@ -156,8 +156,72 @@ func TestAssumeRole_CallerIdentityFallback(t *testing.T) {
 }
 
 func TestAssumeRole_EmbedsRolePolicies(t *testing.T) {
-	ctx := context.Background()
+	t.Run("RoleWithAttachedPolicies", func(t *testing.T) {
+		ctx := context.Background()
+		manager := newTestSTSIntegrationManager(t)
 
+		writePolicy := &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Action: []string{"s3:*"},
+					Resource: []string{
+						"arn:aws:s3:::*",
+						"arn:aws:s3:::*/*",
+					},
+				},
+			},
+		}
+		require.NoError(t, manager.CreatePolicy(ctx, "", "S3WritePolicy", writePolicy))
+
+		roleName := "LakekeeperVendedRole"
+		require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{
+			RoleName:         roleName,
+			AttachedPolicies: []string{"S3WritePolicy"},
+		}))
+
+		iam := &IdentityAccessManagement{
+			iamIntegration: NewS3IAMIntegration(manager, ""),
+		}
+		stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
+
+		roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
+		require.NoError(t, err)
+
+		sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
+		require.NoError(t, err)
+		require.NotNil(t, sessionInfo)
+		assert.Equal(t, []string{"S3WritePolicy"}, sessionInfo.Policies)
+	})
+
+	t.Run("RoleWithoutAttachedPolicies", func(t *testing.T) {
+		ctx := context.Background()
+		manager := newTestSTSIntegrationManager(t)
+
+		roleName := "LakekeeperEmptyRole"
+		require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{
+			RoleName: roleName,
+		}))
+
+		iam := &IdentityAccessManagement{
+			iamIntegration: NewS3IAMIntegration(manager, ""),
+		}
+		stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
+
+		roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
+		stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
+		require.NoError(t, err)
+
+		sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
+		require.NoError(t, err)
+		assert.Empty(t, sessionInfo.Policies)
+	})
+}
+
+func newTestSTSIntegrationManager(t *testing.T) *integration.IAMManager {
+	t.Helper()
 	manager := integration.NewIAMManager()
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
@@ -175,39 +239,5 @@ func TestAssumeRole_EmbedsRolePolicies(t *testing.T) {
 		},
 	}
 	require.NoError(t, manager.Initialize(config, func() string { return "" }))
-
-	writePolicy := &policy.PolicyDocument{
-		Version: "2012-10-17",
-		Statement: []policy.Statement{
-			{
-				Effect: "Allow",
-				Action: []string{"s3:*"},
-				Resource: []string{
-					"arn:aws:s3:::*",
-					"arn:aws:s3:::*/*",
-				},
-			},
-		},
-	}
-	require.NoError(t, manager.CreatePolicy(ctx, "", "S3WritePolicy", writePolicy))
-
-	roleName := "LakekeeperVendedRole"
-	require.NoError(t, manager.CreateRole(ctx, "", roleName, &integration.RoleDefinition{
-		RoleName:         roleName,
-		AttachedPolicies: []string{"S3WritePolicy"},
-	}))
-
-	iam := &IdentityAccessManagement{
-		iamIntegration: NewS3IAMIntegration(manager, ""),
-	}
-	stsHandlers := NewSTSHandlers(manager.GetSTSService(), iam)
-
-	roleArn := fmt.Sprintf("arn:aws:iam::%s:role/%s", defaultAccountID, roleName)
-	stsCreds, _, err := stsHandlers.prepareSTSCredentials(ctx, roleArn, "test-session", nil, "", nil)
-	require.NoError(t, err)
-
-	sessionInfo, err := manager.GetSTSService().ValidateSessionToken(ctx, stsCreds.SessionToken)
-	require.NoError(t, err)
-	require.NotNil(t, sessionInfo)
-	assert.Equal(t, []string{"S3WritePolicy"}, sessionInfo.Policies)
+	return manager
 }

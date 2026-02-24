@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
@@ -549,18 +550,27 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 
 	// If IAM integration is available, embed the role's attached policies into the session token.
 	// This makes the token self-sufficient for authorization even when role lookup is unavailable.
+	var policyManager *integration.IAMManager
 	if h.iam != nil && h.iam.iamIntegration != nil {
-		if s3iam, ok := h.iam.iamIntegration.(*S3IAMIntegration); ok && s3iam.iamManager != nil {
-			roleNameForPolicies := utils.ExtractRoleNameFromArn(roleArn)
-			if roleNameForPolicies == "" {
-				roleNameForPolicies = utils.ExtractRoleNameFromPrincipal(roleArn)
-			}
-			if roleNameForPolicies != "" && len(claims.Policies) == 0 {
-				if roleDef, err := s3iam.iamManager.GetRole(ctx, roleNameForPolicies); err == nil && len(roleDef.AttachedPolicies) > 0 {
-					policyNames := make([]string, len(roleDef.AttachedPolicies))
-					copy(policyNames, roleDef.AttachedPolicies)
-					claims.WithPolicies(policyNames)
-				}
+		if s3iam, ok := h.iam.iamIntegration.(*S3IAMIntegration); ok {
+			policyManager = s3iam.iamManager
+		}
+	}
+
+	if policyManager != nil {
+		roleNameForPolicies := utils.ExtractRoleNameFromArn(roleArn)
+		if roleNameForPolicies == "" {
+			roleNameForPolicies = utils.ExtractRoleNameFromPrincipal(roleArn)
+		}
+
+		if roleNameForPolicies != "" && len(claims.Policies) == 0 {
+			roleDef, err := policyManager.GetRole(ctx, roleNameForPolicies)
+			if err != nil {
+				glog.V(2).Infof("Failed to load role %q for policy embedding: %v", roleNameForPolicies, err)
+			} else if len(roleDef.AttachedPolicies) > 0 {
+				policyNames := make([]string, len(roleDef.AttachedPolicies))
+				copy(policyNames, roleDef.AttachedPolicies)
+				claims.WithPolicies(policyNames)
 			}
 		}
 	}
