@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // AuthHandlers contains authentication-related HTTP handlers
@@ -30,6 +31,8 @@ func (a *AuthHandlers) ShowLogin(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
 		}
+	} else {
+		glog.V(1).Infof("Failed to load session for login page: %v", err)
 	}
 
 	errorMessage := r.URL.Query().Get("error")

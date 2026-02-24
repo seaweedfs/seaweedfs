@@ -583,7 +583,7 @@ func (s *AdminServer) CreateS3TablesBucket(w http.ResponseWriter, r *http.Reques
 		Tags  map[string]string `json:"tags"`
 		Owner string            `json:"owner"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -698,7 +698,7 @@ func (s *AdminServer) CreateS3TablesNamespace(w http.ResponseWriter, r *http.Req
 		BucketARN string `json:"bucket_arn"`
 		Name      string `json:"name"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -765,7 +765,7 @@ func (s *AdminServer) CreateS3TablesTable(w http.ResponseWriter, r *http.Request
 		Tags      map[string]string       `json:"tags"`
 		Metadata  *s3tables.TableMetadata `json:"metadata"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -829,7 +829,7 @@ func (s *AdminServer) PutS3TablesBucketPolicy(w http.ResponseWriter, r *http.Req
 		BucketARN string `json:"bucket_arn"`
 		Policy    string `json:"policy"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -881,7 +881,7 @@ func (s *AdminServer) PutS3TablesTablePolicy(w http.ResponseWriter, r *http.Requ
 		Name      string `json:"name"`
 		Policy    string `json:"policy"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -947,7 +947,7 @@ func (s *AdminServer) TagS3TablesResource(w http.ResponseWriter, r *http.Request
 		ResourceARN string            `json:"resource_arn"`
 		Tags        map[string]string `json:"tags"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -987,7 +987,7 @@ func (s *AdminServer) UntagS3TablesResource(w http.ResponseWriter, r *http.Reque
 		ResourceARN string   `json:"resource_arn"`
 		TagKeys     []string `json:"tag_keys"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

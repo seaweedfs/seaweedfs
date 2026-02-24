@@ -41,7 +41,7 @@ func (h *MessageQueueHandlers) ShowBrokers(w http.ResponseWriter, r *http.Reques
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	brokersComponent := app.ClusterBrokers(*brokersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, brokersComponent)
 	err = layoutComponent.Render(r.Context(), w)
 	if err != nil {
@@ -69,7 +69,7 @@ func (h *MessageQueueHandlers) ShowTopics(w http.ResponseWriter, r *http.Request
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	topicsComponent := app.Topics(*topicsData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, topicsComponent)
 	err = layoutComponent.Render(r.Context(), w)
 	if err != nil {
@@ -97,7 +97,7 @@ func (h *MessageQueueHandlers) ShowSubscribers(w http.ResponseWriter, r *http.Re
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	subscribersComponent := app.Subscribers(*subscribersData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, subscribersComponent)
 	err = layoutComponent.Render(r.Context(), w)
 	if err != nil {
@@ -135,7 +135,7 @@ func (h *MessageQueueHandlers) ShowTopicDetails(w http.ResponseWriter, r *http.R
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	topicDetailsComponent := app.TopicDetails(*topicDetailsData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, topicDetailsComponent)
 	err = layoutComponent.Render(r.Context(), w)
 	if err != nil {
@@ -179,7 +179,7 @@ func (h *MessageQueueHandlers) CreateTopicAPI(w http.ResponseWriter, r *http.Req
 		} `json:"retention"`
 	}
 
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -219,7 +219,7 @@ type UpdateTopicRetentionRequest struct {
 
 func (h *MessageQueueHandlers) UpdateTopicRetentionAPI(w http.ResponseWriter, r *http.Request) {
 	var request UpdateTopicRetentionRequest
-	if err := decodeJSONBody(r, &request); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}

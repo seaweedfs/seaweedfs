@@ -107,7 +107,7 @@ func (h *FileBrowserHandlers) DeleteFile(w http.ResponseWriter, r *http.Request)
 		Path string `json:"path" binding:"required"`
 	}
 
-	if err := decodeJSONBody(r, &request); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -137,7 +137,7 @@ func (h *FileBrowserHandlers) DeleteMultipleFiles(w http.ResponseWriter, r *http
 		Paths []string `json:"paths" binding:"required"`
 	}
 
-	if err := decodeJSONBody(r, &request); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -203,7 +203,7 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 		FolderName string `json:"folder_name" binding:"required"`
 	}
 
-	if err := decodeJSONBody(r, &request); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &request); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

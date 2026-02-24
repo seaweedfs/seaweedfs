@@ -78,7 +78,7 @@ func (s *AdminServer) ShowBucketDetails(w http.ResponseWriter, r *http.Request) 
 // CreateBucket creates a new S3 bucket
 func (s *AdminServer) CreateBucket(w http.ResponseWriter, r *http.Request) {
 	var req CreateBucketRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -158,13 +158,18 @@ func (s *AdminServer) UpdateBucketQuota(w http.ResponseWriter, r *http.Request) 
 		QuotaUnit    string `json:"quota_unit"`
 		QuotaEnabled bool   `json:"quota_enabled"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
 
 	// Convert quota to bytes
 	quotaBytes := convertQuotaToBytes(req.QuotaSize, req.QuotaUnit)
+
+	if req.QuotaEnabled && req.QuotaSize <= 0 {
+		writeJSONError(w, http.StatusBadRequest, "quota_size must be > 0 when quota_enabled is true")
+		return
+	}
 
 	err := s.SetBucketQuota(bucketName, quotaBytes, req.QuotaEnabled)
 	if err != nil {
@@ -213,7 +218,7 @@ func (s *AdminServer) UpdateBucketOwner(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Owner *string `json:"owner"`
 	}
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

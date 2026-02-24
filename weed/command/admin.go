@@ -1,10 +1,12 @@
 package command
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -261,12 +263,12 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Detect TLS configuration to set Secure cookie flag
 	cookieSecure := viper.GetString("https.admin.key") != ""
 
-	// Session store - load or generate session key
-	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
+	// Session store - load or generate session keys
+	authKey, encKey, err := loadOrGenerateSessionKeys(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to get session key: %w", err)
 	}
-	store := sessions.NewCookieStore(sessionKeyBytes)
+	store := sessions.NewCookieStore(authKey, encKey)
 
 	// Configure session options to ensure cookies are properly saved
 	store.Options = &sessions.Options{
@@ -397,6 +399,26 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+func (r *statusRecorder) Push(target string, opts *http.PushOptions) error {
+	if p, ok := r.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -441,44 +463,70 @@ func GetAdminOptions() *AdminOptions {
 	return &AdminOptions{}
 }
 
-// loadOrGenerateSessionKey loads an existing session key from dataDir or generates a new one
-func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
-	const sessionKeyLength = 32
+// loadOrGenerateSessionKeys loads or creates authentication/encryption keys for session cookies.
+func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
+	const keyLen = 32
+
 	if dataDir == "" {
-		// No persistence, generate random key
-		log.Println("No dataDir specified, generating ephemeral session key")
-		key := make([]byte, sessionKeyLength)
-		_, err := rand.Read(key)
-		return key, err
+		// No persistence, generate ephemeral keys
+		log.Println("No dataDir specified, generating ephemeral session keys")
+		authKey := make([]byte, keyLen)
+		encKey := make([]byte, keyLen)
+		if _, err := rand.Read(authKey); err != nil {
+			return nil, nil, err
+		}
+		if _, err := rand.Read(encKey); err != nil {
+			return nil, nil, err
+		}
+		return authKey, encKey, nil
 	}
 
 	sessionKeyPath := filepath.Join(dataDir, ".session_key")
 
-	// Try to load existing key
 	if data, err := os.ReadFile(sessionKeyPath); err == nil {
-		if len(data) == sessionKeyLength {
+		switch len(data) {
+		case keyLen:
+			authKey := make([]byte, keyLen)
+			copy(authKey, data)
+
+			encKey := make([]byte, keyLen)
+			if _, err := rand.Read(encKey); err != nil {
+				return nil, nil, err
+			}
+
+			combined := append(authKey, encKey...)
+			if err := os.WriteFile(sessionKeyPath, combined, 0600); err != nil {
+				log.Printf("Warning: Failed to persist upgraded session key: %v", err)
+			} else {
+				log.Printf("Upgraded session key file to include encryption key: %s", sessionKeyPath)
+			}
+			return authKey, encKey, nil
+		case 2 * keyLen:
+			authKey := make([]byte, keyLen)
+			encKey := make([]byte, keyLen)
+			copy(authKey, data[:keyLen])
+			copy(encKey, data[keyLen:])
 			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
-			return data, nil
+			return authKey, encKey, nil
+		default:
+			log.Printf("Warning: Invalid session key file (expected %d or %d bytes, got %d), generating new key", keyLen, 2*keyLen, len(data))
 		}
-		log.Printf("Warning: Invalid session key file (expected %d bytes, got %d), generating new key", sessionKeyLength, len(data))
 	} else if !os.IsNotExist(err) {
 		log.Printf("Warning: Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
 	}
 
-	// Generate new key
-	key := make([]byte, sessionKeyLength)
+	key := make([]byte, 2*keyLen)
 	if _, err := rand.Read(key); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Save key for future use
 	if err := os.WriteFile(sessionKeyPath, key, 0600); err != nil {
 		log.Printf("Warning: Failed to persist session key: %v", err)
 	} else {
 		log.Printf("Generated and persisted new session key to %s", sessionKeyPath)
 	}
 
-	return key, nil
+	return key[:keyLen], key[keyLen:], nil
 }
 
 // expandHomeDir expands the tilde (~) in a path to the user's home directory

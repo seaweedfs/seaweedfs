@@ -259,11 +259,12 @@ func (h *AdminHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandlers) ShowDashboard(w http.ResponseWriter, r *http.Request) {
 	// Get admin data from the server
 	adminData := h.getAdminData(r)
+	username := h.getUsername(r)
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	adminComponent := app.Admin(adminData)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, adminComponent)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -275,11 +276,12 @@ func (h *AdminHandlers) ShowDashboard(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandlers) ShowS3Buckets(w http.ResponseWriter, r *http.Request) {
 	// Get Object Store buckets data from the server
 	s3Data := h.getS3BucketsData(r)
+	username := h.getUsername(r)
 
 	// Render HTML template
 	w.Header().Set("Content-Type", "text/html")
 	s3Component := app.S3Buckets(s3Data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, s3Component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -300,7 +302,7 @@ func (h *AdminHandlers) ShowS3TablesBuckets(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "text/html")
 	component := app.S3TablesBuckets(data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -327,7 +329,7 @@ func (h *AdminHandlers) ShowS3TablesNamespaces(w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "text/html")
 	component := app.S3TablesNamespaces(data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -355,7 +357,7 @@ func (h *AdminHandlers) ShowS3TablesTables(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "text/html")
 	component := app.S3TablesTables(data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
@@ -373,16 +375,17 @@ func (h *AdminHandlers) ShowS3TablesTableDetails(w http.ResponseWriter, r *http.
 		return
 	}
 
+	username := h.getUsername(r)
 	data, err := h.adminServer.GetIcebergTableDetailsData(r.Context(), bucketName, arn, namespace, tableName)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to get table details: "+err.Error())
 		return
 	}
-	data.Username = h.getUsername(r)
+	data.Username = username
 
 	w.Header().Set("Content-Type", "text/html")
 	component := app.IcebergTableDetails(data)
-	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 	if err := layoutComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())

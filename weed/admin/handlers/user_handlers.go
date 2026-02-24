@@ -59,7 +59,7 @@ func (h *UserHandlers) GetUsers(w http.ResponseWriter, r *http.Request) {
 // CreateUser handles user creation
 func (h *UserHandlers) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req dash.CreateUserRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -92,7 +92,7 @@ func (h *UserHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dash.UpdateUserRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -203,7 +203,7 @@ func (h *UserHandlers) UpdateAccessKeyStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	var req dash.UpdateAccessKeyStatusRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -252,7 +252,7 @@ func (h *UserHandlers) UpdateUserPolicies(w http.ResponseWriter, r *http.Request
 	}
 
 	var req dash.UpdateUserPoliciesRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

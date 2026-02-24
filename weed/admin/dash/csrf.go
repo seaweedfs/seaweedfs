@@ -48,7 +48,10 @@ func requireSessionCSRFToken(w http.ResponseWriter, r *http.Request) bool {
 
 	providedToken := r.Header.Get("X-CSRF-Token")
 	if providedToken == "" {
-		_ = r.ParseForm()
+		if err := r.ParseForm(); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Failed to parse form: "+err.Error())
+			return false
+		}
 		providedToken = r.FormValue("csrf_token")
 	}
 	if providedToken == "" || subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {

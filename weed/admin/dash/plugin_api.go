@@ -321,7 +321,7 @@ func (s *AdminServer) TriggerPluginDetectionAPI(w http.ResponseWriter, r *http.R
 		TimeoutSeconds int             `json:"timeout_seconds"`
 	}
 
-	if err := decodeJSONBody(r, &req); err != nil && err != io.EOF {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil && err != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -421,7 +421,7 @@ func (s *AdminServer) RunPluginJobTypeAPI(w http.ResponseWriter, r *http.Request
 		Attempt        int32           `json:"attempt"`
 	}
 
-	if err := decodeJSONBody(r, &req); err != nil && err != io.EOF {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil && err != io.EOF {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
@@ -509,7 +509,7 @@ func (s *AdminServer) ExecutePluginJobAPI(w http.ResponseWriter, r *http.Request
 		TimeoutSeconds int             `json:"timeout_seconds"`
 	}
 
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}

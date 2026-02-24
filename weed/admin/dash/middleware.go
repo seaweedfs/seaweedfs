@@ -91,9 +91,6 @@ func RequireWriteAccess() mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			role := RoleFromContext(r.Context())
-			if role == "" {
-				role = "admin" // Default for backward compatibility
-			}
 
 			if role != "admin" {
 				// Check if this is an API request (path starts with /api) or HTML request.

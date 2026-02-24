@@ -62,7 +62,7 @@ func (h *ServiceAccountHandlers) GetServiceAccounts(w http.ResponseWriter, r *ht
 // CreateServiceAccount handles service account creation
 func (h *ServiceAccountHandlers) CreateServiceAccount(w http.ResponseWriter, r *http.Request) {
 	var req dash.CreateServiceAccountRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -117,7 +117,7 @@ func (h *ServiceAccountHandlers) UpdateServiceAccount(w http.ResponseWriter, r *
 	}
 
 	var req dash.UpdateServiceAccountRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

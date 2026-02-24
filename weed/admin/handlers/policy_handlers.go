@@ -54,7 +54,7 @@ func (h *PolicyHandlers) GetPolicies(w http.ResponseWriter, r *http.Request) {
 // CreatePolicy handles policy creation
 func (h *PolicyHandlers) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var req dash.CreatePolicyRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -122,7 +122,7 @@ func (h *PolicyHandlers) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dash.UpdatePolicyRequest
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}
@@ -193,7 +193,7 @@ func (h *PolicyHandlers) ValidatePolicy(w http.ResponseWriter, r *http.Request) 
 		Document policy_engine.PolicyDocument `json:"document"`
 	}
 
-	if err := decodeJSONBody(r, &req); err != nil {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
 		return
 	}

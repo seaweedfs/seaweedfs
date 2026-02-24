@@ -421,6 +421,11 @@ func (h *ClusterHandlers) VacuumVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if server == "" {
+		writeJSONError(w, http.StatusBadRequest, "Server is required")
+		return
+	}
+
 	// Perform vacuum operation
 	err = h.adminServer.VacuumVolume(volumeID, server)
 	if err != nil {
