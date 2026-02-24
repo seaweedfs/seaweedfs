@@ -158,8 +158,11 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 }
 
 // buildPluginWorkerHandler constructs the JobHandler for the given job type.
-// maxExecute is forwarded to handlers that use it to report MaxExecutionConcurrency
-// in their Capability, so the scheduler sees the correct per-worker limit.
+// maxExecute is forwarded to handlers that use it to report their own
+// MaxExecutionConcurrency in Capability for consistency and future-proofing.
+// The scheduler's effective per-worker MaxExecutionConcurrency is derived from
+// the worker-level configuration (e.g. WorkerOptions.MaxExecutionConcurrency),
+// not directly from the handler's Capability.
 func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExecute int) (pluginworker.JobHandler, error) {
 	canonicalJobType, err := canonicalPluginWorkerJobType(jobType)
 	if err != nil {
