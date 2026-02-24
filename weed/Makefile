@@ -9,6 +9,14 @@ all: install
 install:
 	go install -ldflags="-s -w"
 
+.PHONY: weed-db weed-sql
+
+weed-db:
+	go build -ldflags="-s -w" -o weed-db ./cmd/weed-db
+
+weed-sql:
+	go build -ldflags="-s -w" -o weed-sql ./cmd/weed-sql
+
 build_docker:
 	CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w"
 

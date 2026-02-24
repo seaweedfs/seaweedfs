@@ -13,8 +13,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the weed binary without CGO
+# Build the weed binaries without CGO
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o weed ./weed/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o weed-db ./cmd/weed-db
 
 # Final stage - minimal runtime image
 FROM alpine:latest
@@ -24,11 +25,12 @@ RUN apk --no-cache add ca-certificates netcat-openbsd curl
 
 WORKDIR /root/
 
-# Copy the weed binary from builder stage
+# Copy the binaries from builder stage
 COPY --from=builder /app/weed .
+COPY --from=builder /app/weed-db .
 
 # Make it executable
-RUN chmod +x ./weed
+RUN chmod +x ./weed ./weed-db
 
 # Expose ports
 EXPOSE 9333 8888 8333 8085 9533 5432

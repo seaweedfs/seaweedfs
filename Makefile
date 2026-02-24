@@ -1,4 +1,4 @@
-.PHONY: test admin-generate admin-build admin-clean admin-dev admin-run admin-test admin-fmt admin-help
+.PHONY: test admin-generate admin-build admin-clean admin-dev admin-run admin-test admin-fmt admin-help weed-commands
 
 BINARY = weed
 ADMIN_DIR = weed/admin
@@ -10,6 +10,9 @@ all: install
 
 install: admin-generate
 	cd weed; go install
+
+weed-commands:
+	cd weed && $(MAKE) weed-db weed-sql
 
 warp_install:
 	go install github.com/minio/warp@v0.7.6

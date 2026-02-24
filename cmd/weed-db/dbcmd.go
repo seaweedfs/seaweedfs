@@ -1,10 +1,11 @@
-package command
+package main
 
 import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -13,43 +14,12 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/server/postgres"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
-var (
-	dbOptions DBOptions
-)
+const usageLine = "weed-db -port=5432 -master=<master_server>"
 
-type DBOptions struct {
-	host        *string
-	port        *int
-	masterAddr  *string
-	authMethod  *string
-	users       *string
-	database    *string
-	maxConns    *int
-	idleTimeout *string
-	tlsCert     *string
-	tlsKey      *string
-}
-
-func init() {
-	cmdDB.Run = runDB // break init cycle
-	dbOptions.host = cmdDB.Flag.String("host", "localhost", "Database server host")
-	dbOptions.port = cmdDB.Flag.Int("port", 5432, "Database server port")
-	dbOptions.masterAddr = cmdDB.Flag.String("master", "localhost:9333", "SeaweedFS master server address")
-	dbOptions.authMethod = cmdDB.Flag.String("auth", "trust", "Authentication method: trust, password, md5")
-	dbOptions.users = cmdDB.Flag.String("users", "", "User credentials for auth (JSON format '{\"user1\":\"pass1\",\"user2\":\"pass2\"}' or file '@/path/to/users.json')")
-	dbOptions.database = cmdDB.Flag.String("database", "default", "Default database name")
-	dbOptions.maxConns = cmdDB.Flag.Int("max-connections", 100, "Maximum concurrent connections per server")
-	dbOptions.idleTimeout = cmdDB.Flag.String("idle-timeout", "1h", "Connection idle timeout")
-	dbOptions.tlsCert = cmdDB.Flag.String("tls-cert", "", "TLS certificate file path")
-	dbOptions.tlsKey = cmdDB.Flag.String("tls-key", "", "TLS private key file path")
-}
-
-var cmdDB = &Command{
-	UsageLine: "db -port=5432 -master=<master_server>",
-	Short:     "start a PostgreSQL-compatible database server for SQL queries",
-	Long: `Start a PostgreSQL wire protocol compatible database server that provides SQL query access to SeaweedFS.
+const longHelp = `Start a PostgreSQL wire protocol compatible database server that provides SQL query access to SeaweedFS.
 
 This database server enables any PostgreSQL client, tool, or application to connect to SeaweedFS
 and execute SQL queries against MQ topics. It implements the PostgreSQL wire protocol for maximum
@@ -58,25 +28,25 @@ compatibility with the existing PostgreSQL ecosystem.
 Examples:
 
 	# Start database server on default port 5432
-	weed db
+	weed-db
 	
 	# Start with MD5 authentication using JSON format (recommended)
-	weed db -auth=md5 -users='{"admin":"secret","readonly":"view123"}'
+	weed-db -auth=md5 -users='{"admin":"secret","readonly":"view123"}'
 	
 	# Start with complex passwords using JSON format
-	weed db -auth=md5 -users='{"admin":"pass;with;semicolons","user":"password:with:colons"}'
+	weed-db -auth=md5 -users='{"admin":"pass;with;semicolons","user":"password:with:colons"}'
 	
 	# Start with credentials from JSON file (most secure)
-	weed db -auth=md5 -users="@/etc/seaweedfs/users.json"
+	weed-db -auth=md5 -users="@/etc/seaweedfs/users.json"
 	
 	# Start with custom port and master
-	weed db -port=5433 -master=master1:9333
+	weed-db -port=5433 -master=master1:9333
 	
 	# Allow connections from any host
-	weed db -host=0.0.0.0 -port=5432
+	weed-db -host=0.0.0.0 -port=5432
 	
 	# Start with TLS encryption
-	weed db -tls-cert=server.crt -tls-key=server.key
+	weed-db -tls-cert=server.crt -tls-key=server.key
 
 Client Connection Examples:
 
@@ -95,7 +65,7 @@ Programming Language Examples:
 	# Python (psycopg2)
 	import psycopg2
 	conn = psycopg2.connect(
-		host="localhost", port=5432, 
+		host="localhost", port=5432,
 		user="seaweedfs", database="default"
 	)
 	
@@ -116,7 +86,7 @@ Supported SQL Operations:
 	- SELECT queries on MQ topics
 	- DESCRIBE/DESC table_name commands
 	- EXPLAIN query execution plans
-	- SHOW DATABASES/TABLES commands  
+	- SHOW DATABASES/TABLES commands
 	- Aggregation functions (COUNT, SUM, AVG, MIN, MAX)
 	- WHERE clauses with filtering
 	- System columns (_timestamp_ns, _key, _source)
@@ -149,50 +119,95 @@ Performance Features:
 	- PostgreSQL wire protocol
 	- Query result streaming
 
-`,
+`
+
+type Options struct {
+	Host        string
+	Port        int
+	MasterAddr  string
+	AuthMethod  string
+	Users       string
+	Database    string
+	MaxConns    int
+	IdleTimeout string
+	TLSCert     string
+	TLSKey      string
 }
 
-func runDB(cmd *Command, args []string) bool {
+// Run executes the weed-db CLI.
+func Run(args []string) int {
+	fs := flag.NewFlagSet("weed-db", flag.ContinueOnError)
+	usageWriter := io.Writer(os.Stderr)
+	fs.SetOutput(usageWriter)
 
+	var opts Options
+	fs.StringVar(&opts.Host, "host", "localhost", "Database server host")
+	fs.IntVar(&opts.Port, "port", 5432, "Database server port")
+	fs.StringVar(&opts.MasterAddr, "master", "localhost:9333", "SeaweedFS master server address")
+	fs.StringVar(&opts.AuthMethod, "auth", "trust", "Authentication method: trust, password, md5")
+	fs.StringVar(&opts.Users, "users", "", "User credentials for auth (JSON format '{\"user1\":\"pass1\",\"user2\":\"pass2\"}' or file '@/path/to/users.json')")
+	fs.StringVar(&opts.Database, "database", "default", "Default database name")
+	fs.IntVar(&opts.MaxConns, "max-connections", 100, "Maximum concurrent connections per server")
+	fs.StringVar(&opts.IdleTimeout, "idle-timeout", "1h", "Connection idle timeout")
+	fs.StringVar(&opts.TLSCert, "tls-cert", "", "TLS certificate file path")
+	fs.StringVar(&opts.TLSKey, "tls-key", "", "TLS private key file path")
+
+	fs.Usage = func() {
+		fmt.Fprintf(usageWriter, "Usage: %s\n\n%s\n", usageLine, longHelp)
+		fmt.Fprintln(usageWriter, "Default Parameters:")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	if !runWithOptions(&opts) {
+		return 1
+	}
+	return 0
+}
+
+func runWithOptions(opts *Options) bool {
 	util.LoadConfiguration("security", false)
 
-	// Validate options
-	if *dbOptions.masterAddr == "" {
+	// Validate options.
+	if opts.MasterAddr == "" {
 		fmt.Fprintf(os.Stderr, "Error: master address is required\n")
 		return false
 	}
 
-	// Parse authentication method
-	authMethod, err := parseAuthMethod(*dbOptions.authMethod)
+	// Parse authentication method.
+	authMethod, err := parseAuthMethod(opts.AuthMethod)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
-	// Parse user credentials
-	users, err := parseUsers(*dbOptions.users, authMethod)
+	// Parse user credentials.
+	users, err := parseUsers(opts.Users, authMethod)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
-	// Parse idle timeout
-	idleTimeout, err := time.ParseDuration(*dbOptions.idleTimeout)
+	// Parse idle timeout.
+	idleTimeout, err := time.ParseDuration(opts.IdleTimeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing idle timeout: %v\n", err)
 		return false
 	}
 
-	// Validate port number
-	if err := validatePortNumber(*dbOptions.port); err != nil {
+	// Validate port number.
+	if err := validatePortNumber(opts.Port); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return false
 	}
 
-	// Setup TLS if requested
+	// Setup TLS if requested.
 	var tlsConfig *tls.Config
-	if *dbOptions.tlsCert != "" && *dbOptions.tlsKey != "" {
-		cert, err := tls.LoadX509KeyPair(*dbOptions.tlsCert, *dbOptions.tlsKey)
+	if opts.TLSCert != "" && opts.TLSKey != "" {
+		cert, err := tls.LoadX509KeyPair(opts.TLSCert, opts.TLSKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading TLS certificates: %v\n", err)
 			return false
@@ -202,34 +217,34 @@ func runDB(cmd *Command, args []string) bool {
 		}
 	}
 
-	// Create server configuration
+	// Create server configuration.
 	config := &postgres.PostgreSQLServerConfig{
-		Host:        *dbOptions.host,
-		Port:        *dbOptions.port,
+		Host:        opts.Host,
+		Port:        opts.Port,
 		AuthMethod:  authMethod,
 		Users:       users,
-		Database:    *dbOptions.database,
-		MaxConns:    *dbOptions.maxConns,
+		Database:    opts.Database,
+		MaxConns:    opts.MaxConns,
 		IdleTimeout: idleTimeout,
 		TLSConfig:   tlsConfig,
 	}
 
-	// Create database server
-	dbServer, err := postgres.NewPostgreSQLServer(config, *dbOptions.masterAddr)
+	// Create database server.
+	dbServer, err := postgres.NewPostgreSQLServer(config, opts.MasterAddr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating database server: %v\n", err)
 		return false
 	}
 
-	// Print startup information
+	// Print startup information.
 	fmt.Printf("Starting SeaweedFS Database Server...\n")
-	fmt.Printf("Host: %s\n", *dbOptions.host)
-	fmt.Printf("Port: %d\n", *dbOptions.port)
-	fmt.Printf("Master: %s\n", *dbOptions.masterAddr)
-	fmt.Printf("Database: %s\n", *dbOptions.database)
-	fmt.Printf("Auth Method: %s\n", *dbOptions.authMethod)
-	fmt.Printf("Max Connections: %d\n", *dbOptions.maxConns)
-	fmt.Printf("Idle Timeout: %s\n", *dbOptions.idleTimeout)
+	fmt.Printf("Host: %s\n", opts.Host)
+	fmt.Printf("Port: %d\n", opts.Port)
+	fmt.Printf("Master: %s\n", opts.MasterAddr)
+	fmt.Printf("Database: %s\n", opts.Database)
+	fmt.Printf("Auth Method: %s\n", opts.AuthMethod)
+	fmt.Printf("Max Connections: %d\n", opts.MaxConns)
+	fmt.Printf("Idle Timeout: %s\n", opts.IdleTimeout)
 	if tlsConfig != nil {
 		fmt.Printf("TLS: Enabled\n")
 	} else {
@@ -240,15 +255,15 @@ func runDB(cmd *Command, args []string) bool {
 	}
 
 	fmt.Printf("\nDatabase Connection Examples:\n")
-	fmt.Printf("  psql -h %s -p %d -U seaweedfs -d %s\n", *dbOptions.host, *dbOptions.port, *dbOptions.database)
+	fmt.Printf("  psql -h %s -p %d -U seaweedfs -d %s\n", opts.Host, opts.Port, opts.Database)
 	if len(users) > 0 {
-		// Show first user as example
+		// Show first user as example.
 		for username := range users {
-			fmt.Printf("  psql -h %s -p %d -U %s -d %s\n", *dbOptions.host, *dbOptions.port, username, *dbOptions.database)
+			fmt.Printf("  psql -h %s -p %d -U %s -d %s\n", opts.Host, opts.Port, username, opts.Database)
 			break
 		}
 	}
-	fmt.Printf("  postgresql://%s:%d/%s\n", *dbOptions.host, *dbOptions.port, *dbOptions.database)
+	fmt.Printf("  postgresql://%s:%d/%s\n", opts.Host, opts.Port, opts.Database)
 
 	fmt.Printf("\nSupported Operations:\n")
 	fmt.Printf("  - SELECT queries on MQ topics\n")
@@ -261,26 +276,26 @@ func runDB(cmd *Command, args []string) bool {
 
 	fmt.Printf("\nReady for database connections!\n\n")
 
-	// Start the server
+	// Start the server.
 	err = dbServer.Start()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting database server: %v\n", err)
 		return false
 	}
 
-	// Set up signal handling for graceful shutdown
+	// Set up signal handling for graceful shutdown.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Wait for shutdown signal
+	// Wait for shutdown signal.
 	<-sigChan
 	fmt.Printf("\nReceived shutdown signal, stopping database server...\n")
 
-	// Create context with timeout for graceful shutdown
+	// Create context with timeout for graceful shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Stop the server with timeout
+	// Stop the server with timeout.
 	done := make(chan error, 1)
 	go func() {
 		done <- dbServer.Stop()
@@ -301,7 +316,7 @@ func runDB(cmd *Command, args []string) bool {
 	return true
 }
 
-// parseAuthMethod parses the authentication method string
+// parseAuthMethod parses the authentication method string.
 func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 	switch strings.ToLower(method) {
 	case "trust":
@@ -315,7 +330,7 @@ func parseAuthMethod(method string) (postgres.AuthMethod, error) {
 	}
 }
 
-// parseUsers parses the user credentials string with support for secure formats only
+// parseUsers parses the user credentials string with support for secure formats only.
 // Supported formats:
 // 1. JSON format: {"username":"password","username2":"password2"}
 // 2. File format: /path/to/users.json or @/path/to/users.json
@@ -323,41 +338,41 @@ func parseUsers(usersStr string, authMethod postgres.AuthMethod) (map[string]str
 	users := make(map[string]string)
 
 	if usersStr == "" {
-		// No users specified
+		// No users specified.
 		if authMethod != postgres.AuthTrust {
 			return nil, fmt.Errorf("users must be specified when auth method is not 'trust'")
 		}
 		return users, nil
 	}
 
-	// Trim whitespace
+	// Trim whitespace.
 	usersStr = strings.TrimSpace(usersStr)
 
-	// Determine format and parse accordingly
+	// Determine format and parse accordingly.
 	if strings.HasPrefix(usersStr, "{") && strings.HasSuffix(usersStr, "}") {
-		// JSON format
+		// JSON format.
 		return parseUsersJSON(usersStr, authMethod)
 	}
 
-	// Check if it's a file path (with or without @ prefix) before declaring invalid format
+	// Check if it's a file path (with or without @ prefix) before declaring invalid format.
 	filePath := strings.TrimPrefix(usersStr, "@")
 	if _, err := os.Stat(filePath); err == nil {
-		// File format
-		return parseUsersFile(usersStr, authMethod) // Pass original string to preserve @ handling
+		// File format.
+		return parseUsersFile(usersStr, authMethod) // Pass original string to preserve @ handling.
 	}
 
-	// Invalid format
+	// Invalid format.
 	return nil, fmt.Errorf("invalid user credentials format. Use JSON format '{\"user\":\"pass\"}' or file format '@/path/to/users.json' or 'path/to/users.json'. Legacy semicolon-separated format is no longer supported")
 }
 
-// parseUsersJSON parses user credentials from JSON format
+// parseUsersJSON parses user credentials from JSON format.
 func parseUsersJSON(jsonStr string, authMethod postgres.AuthMethod) (map[string]string, error) {
 	var users map[string]string
 	if err := json.Unmarshal([]byte(jsonStr), &users); err != nil {
 		return nil, fmt.Errorf("invalid JSON format for users: %v", err)
 	}
 
-	// Validate users
+	// Validate users.
 	for username, password := range users {
 		if username == "" {
 			return nil, fmt.Errorf("empty username in JSON user specification")
@@ -370,12 +385,12 @@ func parseUsersJSON(jsonStr string, authMethod postgres.AuthMethod) (map[string]
 	return users, nil
 }
 
-// parseUsersFile parses user credentials from a JSON file
+// parseUsersFile parses user credentials from a JSON file.
 func parseUsersFile(filePath string, authMethod postgres.AuthMethod) (map[string]string, error) {
-	// Remove @ prefix if present
+	// Remove @ prefix if present.
 	filePath = strings.TrimPrefix(filePath, "@")
 
-	// Read file content
+	// Read file content.
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read users file '%s': %v", filePath, err)
@@ -383,16 +398,16 @@ func parseUsersFile(filePath string, authMethod postgres.AuthMethod) (map[string
 
 	contentStr := strings.TrimSpace(string(content))
 
-	// File must contain JSON format
+	// File must contain JSON format.
 	if !strings.HasPrefix(contentStr, "{") || !strings.HasSuffix(contentStr, "}") {
 		return nil, fmt.Errorf("users file '%s' must contain JSON format: {\"user\":\"pass\"}. Legacy formats are no longer supported", filePath)
 	}
 
-	// Parse as JSON
+	// Parse as JSON.
 	return parseUsersJSON(contentStr, authMethod)
 }
 
-// validatePortNumber validates that the port number is reasonable
+// validatePortNumber validates that the port number is reasonable.
 func validatePortNumber(port int) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("port number must be between 1 and 65535, got %d", port)

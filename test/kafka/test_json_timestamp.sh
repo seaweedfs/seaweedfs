@@ -14,8 +14,7 @@ sleep 2
 
 echo "Querying messages..."
 cd /Users/chrislu/go/src/github.com/seaweedfs/seaweedfs/test/kafka/kafka-client-loadtest
-docker compose exec kafka-gateway /usr/local/bin/weed sql \
+docker compose exec kafka-gateway /usr/bin/weed-sql \
   -master=seaweedfs-master:9333 \
   -database=kafka \
   -query="SELECT id, timestamp, producer_id, counter, user_id, event_type FROM \"test-json-topic\" LIMIT 5;"
-

@@ -16,8 +16,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the weed binary with Kafka gateway support
+# Build the weed binaries with Kafka gateway support
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o weed ./weed
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o weed-sql ./cmd/weed-sql
 
 # Final stage
 FROM alpine:latest
@@ -32,8 +33,9 @@ RUN addgroup -g 1000 seaweedfs && \
 # Set working directory
 WORKDIR /usr/bin
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder /app/weed .
+COPY --from=builder /app/weed-sql .
 
 # Create data directory
 RUN mkdir -p /data && chown seaweedfs:seaweedfs /data
