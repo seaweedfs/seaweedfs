@@ -130,10 +130,10 @@ func (mq *MaintenanceQueue) cleanupCompletedTasks() {
 // AddTask adds a new maintenance task to the queue with deduplication
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
 
 	// Check for duplicate tasks (same type + volume + not completed)
 	if mq.hasDuplicateTask(task) {
+		mq.mutex.Unlock()
 		glog.V(1).Infof("Task skipped (duplicate): %s for volume %d on %s (already queued or running)",
 			task.Type, task.VolumeID, task.Server)
 		return
@@ -169,13 +169,16 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
 	})
 
-	// Save task state to persistence
-	mq.saveTaskState(task)
-
 	scheduleInfo := ""
 	if !task.ScheduledAt.IsZero() && time.Until(task.ScheduledAt) > time.Minute {
 		scheduleInfo = fmt.Sprintf(", scheduled for %v", task.ScheduledAt.Format("15:04:05"))
 	}
+
+	mq.mutex.Unlock()
+
+	// Save task state to persistence outside the lock to avoid blocking
+	// RegisterWorker and HTTP handlers (GetTasks) during disk I/O
+	mq.saveTaskState(task)
 
 	glog.Infof("Task queued: %s (%s) volume %d on %s, priority %d%s, reason: %s",
 		task.ID, task.Type, task.VolumeID, task.Server, task.Priority, scheduleInfo, task.Reason)
@@ -286,7 +289,6 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 
 	// Now acquire write lock to actually assign the task
 	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
 
 	// Re-check that the task is still available (it might have been assigned to another worker)
 	if selectedIndex >= len(mq.pendingTasks) || mq.pendingTasks[selectedIndex].ID != selectedTask.ID {
@@ -348,7 +350,9 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	// Track pending operation
 	mq.trackPendingOperation(selectedTask)
 
-	// Save task state after assignment
+	mq.mutex.Unlock()
+
+	// Save task state to persistence outside the lock
 	mq.saveTaskState(selectedTask)
 
 	glog.Infof("Task assigned: %s (%s) → worker %s (volume %d, server %s)",
@@ -360,10 +364,10 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 // CompleteTask marks a task as completed
 func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
 
 	task, exists := mq.tasks[taskID]
 	if !exists {
+		mq.mutex.Unlock()
 		glog.Warningf("Attempted to complete non-existent task: %s", taskID)
 		return
 	}
@@ -387,6 +391,12 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	if task.StartedAt != nil {
 		duration = completedTime.Sub(*task.StartedAt)
 	}
+
+	// Capture workerID before it may be cleared during retry
+	originalWorkerID := task.WorkerID
+
+	var taskToSave *MaintenanceTask
+	var logFn func()
 
 	if error != "" {
 		task.Status = TaskStatusFailed
@@ -420,10 +430,12 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 				mq.integration.SyncTask(task)
 			}
 
-			// Save task state after retry setup
-			mq.saveTaskState(task)
-			glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
-				taskID, task.Type, task.RetryCount, task.MaxRetries, task.WorkerID, duration, error)
+			taskToSave = task
+			retryCount, maxRetries := task.RetryCount, task.MaxRetries
+			logFn = func() {
+				glog.Warningf("Task failed, scheduling retry: %s (%s) attempt %d/%d, worker %s, duration %v, error: %s",
+					taskID, task.Type, retryCount, maxRetries, originalWorkerID, duration, error)
+			}
 		} else {
 			// Record unassignment due to permanent failure
 			if task.WorkerID != "" && len(task.AssignmentHistory) > 0 {
@@ -435,23 +447,27 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 				}
 			}
 
-			// Save task state after permanent failure
-			mq.saveTaskState(task)
-			glog.Errorf("Task failed permanently: %s (%s) worker %s, duration %v, after %d retries: %s",
-				taskID, task.Type, task.WorkerID, duration, task.MaxRetries, error)
+			taskToSave = task
+			maxRetries := task.MaxRetries
+			logFn = func() {
+				glog.Errorf("Task failed permanently: %s (%s) worker %s, duration %v, after %d retries: %s",
+					taskID, task.Type, originalWorkerID, duration, maxRetries, error)
+			}
 		}
 	} else {
 		task.Status = TaskStatusCompleted
 		task.Progress = 100
-		// Save task state after successful completion
-		mq.saveTaskState(task)
-		glog.Infof("Task completed: %s (%s) worker %s, duration %v, volume %d",
-			taskID, task.Type, task.WorkerID, duration, task.VolumeID)
+		taskToSave = task
+		volumeID := task.VolumeID
+		logFn = func() {
+			glog.Infof("Task completed: %s (%s) worker %s, duration %v, volume %d",
+				taskID, task.Type, originalWorkerID, duration, volumeID)
+		}
 	}
 
-	// Update worker
-	if task.WorkerID != "" {
-		if worker, exists := mq.workers[task.WorkerID]; exists {
+	// Update worker load and capture state before releasing lock
+	if originalWorkerID != "" {
+		if worker, exists := mq.workers[originalWorkerID]; exists {
 			worker.CurrentTask = nil
 			worker.CurrentLoad--
 			if worker.CurrentLoad == 0 {
@@ -459,16 +475,27 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			}
 		}
 	}
+	taskStatus := task.Status
+	taskCount := len(mq.tasks)
+	mq.mutex.Unlock()
+
+	// Save task state to persistence outside the lock
+	if taskToSave != nil {
+		mq.saveTaskState(taskToSave)
+	}
+
+	if logFn != nil {
+		logFn()
+	}
 
 	// Remove pending operation (unless it's being retried)
-	if task.Status != TaskStatusPending {
+	if taskStatus != TaskStatusPending {
 		mq.removePendingOperation(taskID)
 	}
 
-	// Periodically cleanup old completed tasks (every 10th completion)
-	if task.Status == TaskStatusCompleted {
-		// Simple counter-based trigger for cleanup
-		if len(mq.tasks)%10 == 0 {
+	// Periodically cleanup old completed tasks (when total task count is a multiple of 10)
+	if taskStatus == TaskStatusCompleted {
+		if taskCount%10 == 0 {
 			go mq.cleanupCompletedTasks()
 		}
 	}
