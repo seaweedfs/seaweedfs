@@ -13,9 +13,9 @@ import (
 
 	"github.com/peterh/liner"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/sqlutil"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 const usageLine = "weed-sql [-master=localhost:9333] [-interactive] [-file=query.sql] [-output=table|json|csv] [-database=dbname] [-query=\"SQL\"]"
@@ -78,7 +78,8 @@ type SQLContext struct {
 // Run executes the weed-sql CLI.
 func Run(args []string) int {
 	fs := flag.NewFlagSet("weed-sql", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	usageWriter := io.Writer(os.Stderr)
+	fs.SetOutput(usageWriter)
 
 	var opts Options
 	fs.StringVar(&opts.Master, "master", "localhost:9333", "SeaweedFS master server HTTP address")
@@ -89,8 +90,8 @@ func Run(args []string) int {
 	fs.StringVar(&opts.Query, "query", "", "execute single SQL query")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: %s\n\n%s\n", usageLine, longHelp)
-		fmt.Fprintln(fs.Output(), "Default Parameters:")
+		fmt.Fprintf(usageWriter, "Usage: %s\n\n%s\n", usageLine, longHelp)
+		fmt.Fprintln(usageWriter, "Default Parameters:")
 		fs.PrintDefaults()
 	}
 

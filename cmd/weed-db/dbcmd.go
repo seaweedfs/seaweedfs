@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -136,7 +137,8 @@ type Options struct {
 // Run executes the weed-db CLI.
 func Run(args []string) int {
 	fs := flag.NewFlagSet("weed-db", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	usageWriter := io.Writer(os.Stderr)
+	fs.SetOutput(usageWriter)
 
 	var opts Options
 	fs.StringVar(&opts.Host, "host", "localhost", "Database server host")
@@ -151,8 +153,8 @@ func Run(args []string) int {
 	fs.StringVar(&opts.TLSKey, "tls-key", "", "TLS private key file path")
 
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: %s\n\n%s\n", usageLine, longHelp)
-		fmt.Fprintln(fs.Output(), "Default Parameters:")
+		fmt.Fprintf(usageWriter, "Usage: %s\n\n%s\n", usageLine, longHelp)
+		fmt.Fprintln(usageWriter, "Default Parameters:")
 		fs.PrintDefaults()
 	}
 
