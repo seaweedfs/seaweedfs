@@ -257,7 +257,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		// Process each filer node
 		for _, node := range resp.ClusterNodes {
 			filerNodes = append(filerNodes, FilerNode{
-				Address:     node.Address,
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
 				LastUpdated: time.Now(),
