@@ -567,6 +567,8 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 			roleDef, err := policyManager.GetRole(ctx, roleNameForPolicies)
 			if err != nil {
 				glog.V(2).Infof("Failed to load role %q for policy embedding: %v", roleNameForPolicies, err)
+			} else if roleDef == nil {
+				glog.V(2).Infof("Role definition %q was missing for policy embedding", roleNameForPolicies)
 			} else if len(roleDef.AttachedPolicies) > 0 {
 				claims.WithPolicies(roleDef.AttachedPolicies)
 			}
