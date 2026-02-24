@@ -571,7 +571,6 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 	var collection string
 	dataCenters := make(map[string]bool)
 	servers := make(map[string]bool)
-	hasShardSizesFromMaster := false
 
 	// Get detailed EC shard information for the specific volume via gRPC
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
@@ -591,9 +590,6 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 									collection = ecShardInfo.Collection
 									dataCenters[dc.Id] = true
 									servers[node.Id] = true
-									if len(ecShardInfo.ShardSizes) > 0 {
-										hasShardSizesFromMaster = true
-									}
 
 									// Create individual shard entries for each shard this server has
 									shardBits := ecShardInfo.EcIndexBits
@@ -642,48 +638,6 @@ func (s *AdminServer) GetEcVolumeDetails(volumeID uint32, sortBy string, sortOrd
 
 	if len(shards) == 0 {
 		return nil, fmt.Errorf("EC volume %d not found", volumeID)
-	}
-
-	if !hasShardSizesFromMaster {
-		// Collect shard size information from volume servers
-		shardSizeMap := make(map[string]map[uint32]uint64) // server -> shardId -> size
-		for _, shard := range shards {
-			server := shard.Server
-			if _, exists := shardSizeMap[server]; !exists {
-				// Query this server for shard sizes
-				err := s.WithVolumeServerClient(pb.ServerAddress(server), func(client volume_server_pb.VolumeServerClient) error {
-					resp, err := client.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{
-						VolumeId: volumeID,
-					})
-					if err != nil {
-						glog.V(1).Infof("Failed to get EC shard info from %s for volume %d: %v", server, volumeID, err)
-						return nil // Continue with other servers, don't fail the entire request
-					}
-
-					// Store shard sizes for this server
-					shardSizeMap[server] = make(map[uint32]uint64)
-					for _, shardInfo := range resp.EcShardInfos {
-						shardSizeMap[server][shardInfo.ShardId] = uint64(shardInfo.Size)
-					}
-
-					return nil
-				})
-				if err != nil {
-					glog.V(1).Infof("Failed to connect to volume server %s: %v", server, err)
-				}
-			}
-		}
-
-		// Update shard sizes in the shards array
-		for i := range shards {
-			server := shards[i].Server
-			shardId := shards[i].ShardID
-			if serverSizes, exists := shardSizeMap[server]; exists {
-				if size, exists := serverSizes[shardId]; exists {
-					shards[i].Size = size
-				}
-			}
-		}
 	}
 
 	// Calculate completeness based on unique shard IDs
