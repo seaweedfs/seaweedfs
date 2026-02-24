@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -16,7 +17,9 @@ import (
 func TestBuildPluginWorkerHandler(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 
-	handler, err := buildPluginWorkerHandler("vacuum", dialOption)
+	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+
+	handler, err := buildPluginWorkerHandler("vacuum", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(vacuum) err = %v", err)
 	}
@@ -24,7 +27,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("", dialOption)
+	handler, err = buildPluginWorkerHandler("", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(default) err = %v", err)
 	}
@@ -32,7 +35,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil default handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("volume_balance", dialOption)
+	handler, err = buildPluginWorkerHandler("volume_balance", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(volume_balance) err = %v", err)
 	}
@@ -40,7 +43,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil volume_balance handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("balance", dialOption)
+	handler, err = buildPluginWorkerHandler("balance", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(balance alias) err = %v", err)
 	}
@@ -48,7 +51,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil balance alias handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("erasure_coding", dialOption)
+	handler, err = buildPluginWorkerHandler("erasure_coding", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(erasure_coding) err = %v", err)
 	}
@@ -56,7 +59,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil erasure_coding handler")
 	}
 
-	handler, err = buildPluginWorkerHandler("ec", dialOption)
+	handler, err = buildPluginWorkerHandler("ec", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandler(ec alias) err = %v", err)
 	}
@@ -64,7 +67,7 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 		t.Fatalf("expected non-nil ec alias handler")
 	}
 
-	_, err = buildPluginWorkerHandler("unknown", dialOption)
+	_, err = buildPluginWorkerHandler("unknown", dialOption, testMaxConcurrency)
 	if err == nil {
 		t.Fatalf("expected unsupported job type error")
 	}
@@ -73,7 +76,9 @@ func TestBuildPluginWorkerHandler(t *testing.T) {
 func TestBuildPluginWorkerHandlers(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 
-	handlers, err := buildPluginWorkerHandlers("vacuum,volume_balance,erasure_coding", dialOption)
+	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+
+	handlers, err := buildPluginWorkerHandlers("vacuum,volume_balance,erasure_coding", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandlers(list) err = %v", err)
 	}
@@ -81,7 +86,7 @@ func TestBuildPluginWorkerHandlers(t *testing.T) {
 		t.Fatalf("expected 3 handlers, got %d", len(handlers))
 	}
 
-	handlers, err = buildPluginWorkerHandlers("balance,ec,vacuum,balance", dialOption)
+	handlers, err = buildPluginWorkerHandlers("balance,ec,vacuum,balance", dialOption, testMaxConcurrency)
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandlers(aliases) err = %v", err)
 	}
@@ -89,7 +94,7 @@ func TestBuildPluginWorkerHandlers(t *testing.T) {
 		t.Fatalf("expected deduped 3 handlers, got %d", len(handlers))
 	}
 
-	_, err = buildPluginWorkerHandlers("unknown,vacuum", dialOption)
+	_, err = buildPluginWorkerHandlers("unknown,vacuum", dialOption, testMaxConcurrency)
 	if err == nil {
 		t.Fatalf("expected unsupported job type error")
 	}

@@ -22,25 +22,37 @@ import (
 )
 
 const (
-	defaultVacuumTaskBatchSize = int32(1000)
+	defaultVacuumTaskBatchSize     = int32(1000)
+	DefaultMaxExecutionConcurrency = int32(2)
 )
 
 // VacuumHandler is the plugin job handler for vacuum job type.
 type VacuumHandler struct {
-	grpcDialOption grpc.DialOption
+	grpcDialOption          grpc.DialOption
+	maxExecutionConcurrency int32
 }
 
-func NewVacuumHandler(grpcDialOption grpc.DialOption) *VacuumHandler {
-	return &VacuumHandler{grpcDialOption: grpcDialOption}
+// NewVacuumHandler creates a VacuumHandler with the given gRPC dial option and
+// maximum execution concurrency. When maxExecutionConcurrency is zero or
+// negative, DefaultMaxExecutionConcurrency is used as the fallback.
+func NewVacuumHandler(grpcDialOption grpc.DialOption, maxExecutionConcurrency int32) *VacuumHandler {
+	return &VacuumHandler{grpcDialOption: grpcDialOption, maxExecutionConcurrency: maxExecutionConcurrency}
 }
 
+// Capability returns the job type capability for the vacuum handler.
+// MaxExecutionConcurrency reflects the value passed at construction time,
+// falling back to DefaultMaxExecutionConcurrency when unset.
 func (h *VacuumHandler) Capability() *plugin_pb.JobTypeCapability {
+	maxExec := h.maxExecutionConcurrency
+	if maxExec <= 0 {
+		maxExec = DefaultMaxExecutionConcurrency
+	}
 	return &plugin_pb.JobTypeCapability{
 		JobType:                 "vacuum",
 		CanDetect:               true,
 		CanExecute:              true,
 		MaxDetectionConcurrency: 1,
-		MaxExecutionConcurrency: 2,
+		MaxExecutionConcurrency: maxExec,
 		DisplayName:             "Volume Vacuum",
 		Description:             "Reclaims disk space by removing deleted files from volumes",
 	}
