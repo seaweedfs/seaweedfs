@@ -44,6 +44,10 @@ var (
 	policyLock      = sync.RWMutex{}
 )
 
+func userPolicyKey(userName string, policyName string) string {
+	return fmt.Sprintf("%s:%s", userName, policyName)
+}
+
 // Helper function wrappers using shared package
 func MapToStatementAction(action string) string {
 	return iamlib.MapToStatementAction(action)
@@ -197,7 +201,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyDocuments[policyName] = &policyDocument
+	policyDocuments[userPolicyKey(userName, policyName)] = &policyDocument
 	actions, err := GetActions(&policyDocument)
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
@@ -224,6 +228,14 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 		resp.GetUserPolicyResult.UserName = userName
 		resp.GetUserPolicyResult.PolicyName = policyName
+		if policyDocument, exists := policyDocuments[userPolicyKey(userName, policyName)]; exists {
+			policyDocumentJSON, err := json.Marshal(policyDocument)
+			if err != nil {
+				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+			}
+			resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
+			return resp, nil
+		}
 		if len(ident.Actions) == 0 {
 			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
 		}
@@ -276,9 +288,11 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 // DeleteUserPolicy removes the inline policy from a user (clears their actions).
 func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteUserPolicyResponse, err *IamError) {
 	userName := values.Get("UserName")
+	policyName := values.Get("PolicyName")
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
 			ident.Actions = nil
+			delete(policyDocuments, userPolicyKey(userName, policyName))
 			return resp, nil
 		}
 	}

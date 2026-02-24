@@ -1,8 +1,11 @@
 package iamapi
 
 import (
+	"encoding/json"
+	"net/url"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
@@ -71,4 +74,36 @@ func TestGetActionsInvalidAction(t *testing.T) {
 	_, err := GetActions(&policyDocument)
 	assert.NotNil(t, err)
 	assert.Equal(t, "not a valid action: 'InvalidAction'", err.Error())
+}
+
+func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
+	policyDocuments = map[string]*policy_engine.PolicyDocument{}
+
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	policyJSON := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]},{"Effect":"Allow","Action":["s3:PutObject"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]},{"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]}]}`
+
+	iama := &IamApiServer{}
+	putValues := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"inline-policy"},
+		"PolicyDocument": []string{policyJSON},
+	}
+	_, iamErr := iama.PutUserPolicy(s3cfg, putValues)
+	assert.Nil(t, iamErr)
+
+	getValues := url.Values{
+		"UserName":   []string{"alice"},
+		"PolicyName": []string{"inline-policy"},
+	}
+	resp, iamErr := iama.GetUserPolicy(s3cfg, getValues)
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	var want policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(policyJSON), &want))
+	assert.Equal(t, want, got)
 }
