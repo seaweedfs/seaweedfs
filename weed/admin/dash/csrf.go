@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/sessions"
@@ -46,17 +47,50 @@ func requireSessionCSRFToken(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	providedToken := r.Header.Get("X-CSRF-Token")
-	if providedToken == "" {
-		if err := r.ParseForm(); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "Failed to parse form: "+err.Error())
-			return false
-		}
-		providedToken = r.FormValue("csrf_token")
+	providedToken, err := getProvidedCSRFToken(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Failed to parse form: "+err.Error())
+		return false
 	}
 	if providedToken == "" || subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
 		writeJSONError(w, http.StatusForbidden, "invalid CSRF token")
 		return false
 	}
 	return true
+}
+
+func getProvidedCSRFToken(r *http.Request) (string, error) {
+	providedToken := r.Header.Get("X-CSRF-Token")
+	if providedToken != "" {
+		return providedToken, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return "", err
+	}
+	return r.FormValue("csrf_token"), nil
+}
+
+func EnsureSessionCSRFToken(session *sessions.Session, r *http.Request, w http.ResponseWriter) (string, error) {
+	if session == nil {
+		return "", fmt.Errorf("session is nil")
+	}
+	return getOrCreateSessionCSRFToken(session, r, w)
+}
+
+func ValidateSessionCSRFToken(session *sessions.Session, r *http.Request) error {
+	if session == nil {
+		return fmt.Errorf("session is nil")
+	}
+	expectedToken, _ := session.Values[sessionCSRFTokenKey].(string)
+	providedToken, err := getProvidedCSRFToken(r)
+	if err != nil {
+		return fmt.Errorf("failed to read CSRF token: %w", err)
+	}
+	if expectedToken == "" {
+		return fmt.Errorf("missing session CSRF token")
+	}
+	if providedToken == "" || subtle.ConstantTimeCompare([]byte(expectedToken), []byte(providedToken)) != 1 {
+		return fmt.Errorf("invalid CSRF token")
+	}
+	return nil
 }

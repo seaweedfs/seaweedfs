@@ -11,7 +11,7 @@ templ Layout(view ViewContext, content templ.Component) {
 {{
   username := view.Username
   if username == "" {
-    username = "admin"
+    username = "unknown"
   }
   csrfToken := view.CSRFToken
   
@@ -359,7 +359,7 @@ templ Layout(view ViewContext, content templ.Component) {
 </html>
 }
 
-templ LoginForm(title string, errorMessage string) {
+templ LoginForm(title string, errorMessage string, csrfToken string) {
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -390,6 +390,7 @@ templ LoginForm(title string, errorMessage string) {
                         }
                         
                         <form method="POST" action="/login">
+                            <input type="hidden" name="csrf_token" value={ csrfToken }>
                             <div class="mb-3">
                                 <label for="username" class="form-label">Username</label>
                                 <div class="input-group">

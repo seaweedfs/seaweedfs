@@ -20,6 +20,17 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 			http.Redirect(w, r, "/login?error=Invalid form submission", http.StatusSeeOther)
 			return
 		}
+		session, err := store.Get(r, sessionName)
+		if err != nil {
+			http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
+			return
+		}
+
+		if err := ValidateSessionCSRFToken(session, r); err != nil {
+			http.Redirect(w, r, "/login?error=Invalid CSRF token", http.StatusSeeOther)
+			return
+		}
+
 		loginUsername := r.FormValue("username")
 		loginPassword := r.FormValue("password")
 
@@ -37,11 +48,6 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 		}
 
 		if authenticated {
-			session, err := store.Get(r, sessionName)
-			if err != nil {
-				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
-				return
-			}
 			for key := range session.Values {
 				delete(session.Values, key)
 			}

@@ -26,6 +26,7 @@ func NewAuthHandlers(adminServer *dash.AdminServer, store sessions.Store) *AuthH
 // ShowLogin displays the login page
 func (a *AuthHandlers) ShowLogin(w http.ResponseWriter, r *http.Request) {
 	session, err := a.sessionStore.Get(r, dash.SessionName())
+	var csrfToken string
 	if err == nil {
 		if authenticated, _ := session.Values["authenticated"].(bool); authenticated {
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
@@ -35,11 +36,20 @@ func (a *AuthHandlers) ShowLogin(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Failed to load session for login page: %v", err)
 	}
 
+	if session != nil {
+		token, tokenErr := dash.EnsureSessionCSRFToken(session, r, w)
+		if tokenErr != nil {
+			glog.V(1).Infof("Failed to ensure CSRF token for login page: %v", tokenErr)
+		} else {
+			csrfToken = token
+		}
+	}
+
 	errorMessage := r.URL.Query().Get("error")
 
 	// Render login template
 	w.Header().Set("Content-Type", "text/html")
-	loginComponent := layout.LoginForm("SeaweedFS Admin", errorMessage)
+	loginComponent := layout.LoginForm("SeaweedFS Admin", errorMessage, csrfToken)
 	if err := loginComponent.Render(r.Context(), w); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to render login template: "+err.Error())
 		return
