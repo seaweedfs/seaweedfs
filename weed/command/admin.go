@@ -10,13 +10,13 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
 	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin"
@@ -232,25 +232,10 @@ func runAdmin(cmd *Command, args []string) bool {
 
 // startAdminServer starts the actual admin server
 func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
-	// Set Gin mode
-	gin.SetMode(gin.ReleaseMode)
-
 	// Create router
-	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		if param.StatusCode == 200 {
-			return ""
-		}
-		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
-			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
-			param.StatusCode,
-			param.Latency,
-			param.ClientIP,
-			param.Method,
-			param.Path,
-			param.ErrorMessage,
-		)
-	}), gin.Recovery())
+	r := mux.NewRouter()
+	r.Use(loggingMiddleware)
+	r.Use(recoveryMiddleware)
 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
@@ -281,25 +266,25 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	if err != nil {
 		return fmt.Errorf("failed to get session key: %w", err)
 	}
-	store := cookie.NewStore(sessionKeyBytes)
+	store := sessions.NewCookieStore(sessionKeyBytes)
 
 	// Configure session options to ensure cookies are properly saved
-	store.Options(sessions.Options{
+	store.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   3600 * 24,    // 24 hours
 		HttpOnly: true,         // Prevent JavaScript access
 		Secure:   cookieSecure, // Set based on actual TLS configuration
 		SameSite: http.SameSiteLaxMode,
-	})
-
-	r.Use(sessions.Sessions("admin-session", store))
+	}
 
 	// Static files - serve from embedded filesystem
 	staticFS, err := admin.GetStaticFS()
 	if err != nil {
 		log.Printf("Warning: Failed to load embedded static files: %v", err)
 	} else {
-		r.StaticFS("/static", http.FS(staticFS))
+		staticHandler := http.FileServer(http.FS(staticFS))
+		r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
+		r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", staticHandler))
 	}
 
 	// Create admin server (plugin is always enabled)
@@ -328,7 +313,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Create handlers and setup routes
 	authRequired := *options.adminPassword != ""
-	adminHandlers := handlers.NewAdminHandlers(adminServer)
+	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
 
 	// Server configuration
@@ -393,6 +378,62 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	adminServer.Shutdown()
 
 	return nil
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w}
+
+		next.ServeHTTP(recorder, r)
+
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status == http.StatusOK {
+			return
+		}
+
+		log.Printf("[HTTP] %v | %3d | %13v | %15s | %-7s %s",
+			time.Now().Format("2006/01/02 - 15:04:05"),
+			status,
+			time.Since(start),
+			r.RemoteAddr,
+			r.Method,
+			r.URL.Path,
+		)
+	})
+}
+
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("panic: %v\n%s", err, debug.Stack())
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // GetAdminOptions returns the admin command options for testing

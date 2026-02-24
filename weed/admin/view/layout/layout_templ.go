@@ -10,13 +10,12 @@ import templruntime "github.com/a-h/templ/runtime"
 
 import (
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"strings"
 	"time"
 )
 
-func Layout(c *gin.Context, content templ.Component) templ.Component {
+func Layout(view ViewContext, content templ.Component) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -37,13 +36,16 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 			templ_7745c5c3_Var1 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		username := c.GetString("username")
+		username := view.Username
 		if username == "" {
 			username = "admin"
 		}
-		csrfToken := c.GetString("csrf_token")
+		csrfToken := view.CSRFToken
 
-		currentPath := c.Request.URL.Path
+		currentPath := ""
+		if view.Request != nil {
+			currentPath = view.Request.URL.Path
+		}
 
 		// Detect if we're on a message queue page to keep submenu expanded
 		isMQPage := strings.HasPrefix(currentPath, "/mq/")
@@ -379,7 +381,7 @@ func Layout(c *gin.Context, content templ.Component) templ.Component {
 	})
 }
 
-func LoginForm(c *gin.Context, title string, errorMessage string) templ.Component {
+func LoginForm(title string, errorMessage string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {

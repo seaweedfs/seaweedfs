@@ -4,19 +4,21 @@ import (
     "fmt"
     "strings"
     "time"
-    "github.com/gin-gonic/gin"
     "github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
-templ Layout(c *gin.Context, content templ.Component) {
+templ Layout(view ViewContext, content templ.Component) {
 {{
-  username := c.GetString("username")
+  username := view.Username
   if username == "" {
     username = "admin"
   }
-  csrfToken := c.GetString("csrf_token")
+  csrfToken := view.CSRFToken
   
-  currentPath := c.Request.URL.Path
+  currentPath := ""
+  if view.Request != nil {
+    currentPath = view.Request.URL.Path
+  }
   
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
@@ -357,7 +359,7 @@ templ Layout(c *gin.Context, content templ.Component) {
 </html>
 }
 
-templ LoginForm(c *gin.Context, title string, errorMessage string) {
+templ LoginForm(title string, errorMessage string) {
 <!DOCTYPE html>
 <html lang="en">
 <head>

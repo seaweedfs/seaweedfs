@@ -4,81 +4,85 @@ import (
 	"crypto/subtle"
 	"net/http"
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/sessions"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-// ShowLogin displays the login page
-func (s *AdminServer) ShowLogin(c *gin.Context) {
-	// If authentication is not required, redirect to admin
-	session := sessions.Default(c)
-	if session.Get("authenticated") == true {
-		c.Redirect(http.StatusSeeOther, "/admin")
-		return
-	}
-
-	// For now, return a simple login form as JSON
-	c.HTML(http.StatusOK, "login.html", gin.H{
-		"title": "SeaweedFS Admin Login",
-		"error": c.Query("error"),
-	})
+// ShowLogin displays the login page.
+func (s *AdminServer) ShowLogin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-// HandleLogin handles login form submission
-func (s *AdminServer) HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		loginUsername := c.PostForm("username")
-		loginPassword := c.PostForm("password")
+// HandleLogin handles login form submission.
+func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword, readOnlyUser, readOnlyPassword string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Redirect(w, r, "/login?error=Invalid form submission", http.StatusSeeOther)
+			return
+		}
+		loginUsername := r.FormValue("username")
+		loginPassword := r.FormValue("password")
 
 		var role string
 		var authenticated bool
 
-		// Check admin credentials
+		// Check admin credentials.
 		if adminPassword != "" && loginUsername == adminUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(adminPassword)) == 1 {
 			role = "admin"
 			authenticated = true
 		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(readOnlyPassword)) == 1 {
-			// Check read-only credentials
+			// Check read-only credentials.
 			role = "readonly"
 			authenticated = true
 		}
 
 		if authenticated {
-			session := sessions.Default(c)
-			// Clear any existing invalid session data before setting new values
-			session.Clear()
-			session.Set("authenticated", true)
-			session.Set("username", loginUsername)
-			session.Set("role", role)
-			csrfToken, err := generateCSRFToken()
+			session, err := store.Get(r, sessionName)
 			if err != nil {
-				c.Redirect(http.StatusSeeOther, "/login?error=Unable to create session. Please try again or contact administrator.")
+				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
 				return
 			}
-			session.Set(sessionCSRFTokenKey, csrfToken)
-			if err := session.Save(); err != nil {
-				// Log the detailed error server-side for diagnostics
+			for key := range session.Values {
+				delete(session.Values, key)
+			}
+			session.Values["authenticated"] = true
+			session.Values["username"] = loginUsername
+			session.Values["role"] = role
+			csrfToken, err := generateCSRFToken()
+			if err != nil {
+				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
+				return
+			}
+			session.Values[sessionCSRFTokenKey] = csrfToken
+			if err := session.Save(r, w); err != nil {
+				// Log the detailed error server-side for diagnostics.
 				glog.Errorf("Failed to save session for user %s: %v", loginUsername, err)
-				c.Redirect(http.StatusSeeOther, "/login?error=Unable to create session. Please try again or contact administrator.")
+				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
 				return
 			}
 
-			c.Redirect(http.StatusSeeOther, "/admin")
+			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
 		}
 
-		// Authentication failed
-		c.Redirect(http.StatusSeeOther, "/login?error=Invalid credentials")
+		// Authentication failed.
+		http.Redirect(w, r, "/login?error=Invalid credentials", http.StatusSeeOther)
 	}
 }
 
-// HandleLogout handles user logout
-func (s *AdminServer) HandleLogout(c *gin.Context) {
-	session := sessions.Default(c)
-	session.Clear()
-	if err := session.Save(); err != nil {
+// HandleLogout handles user logout.
+func (s *AdminServer) HandleLogout(store sessions.Store, w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, sessionName)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	for key := range session.Values {
+		delete(session.Values, key)
+	}
+	session.Options.MaxAge = -1
+	if err := session.Save(r, w); err != nil {
 		glog.Warningf("Failed to save session during logout: %v", err)
 	}
-	c.Redirect(http.StatusSeeOther, "/login")
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
