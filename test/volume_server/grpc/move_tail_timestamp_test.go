@@ -1,12 +1,15 @@
 package volume_server_grpc_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -146,4 +149,131 @@ func readLastAppendAtNs(t testing.TB, volumeDir string, volumeID uint32) uint64 
 	}
 
 	return util.BytesToUint64(tail[needle.NeedleChecksumSize : needle.NeedleChecksumSize+types.TimestampSize])
+}
+
+func TestVolumeMoveHandlesInFlightWrites(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartDualVolumeCluster(t, matrix.P1())
+	sourceConn, sourceClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(0))
+	defer sourceConn.Close()
+	destConn, destClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(1))
+	defer destConn.Close()
+
+	const volumeID = uint32(988)
+	framework.AllocateVolume(t, sourceClient, volumeID, "")
+
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 7, 0xABCDEF01)
+	payload := []byte("volume-move-live-payload")
+	uploadResp := framework.UploadBytes(t, httpClient, cluster.VolumeAdminURL(0), fid, payload)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("initial upload failed: %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sourceDataNode := cluster.VolumeAdminAddress(0) + "." + strings.Split(cluster.VolumeGRPCAddress(0), ":")[1]
+	copyStream, err := destClient.VolumeCopy(ctx, &volume_server_pb.VolumeCopyRequest{
+		VolumeId:       volumeID,
+		SourceDataNode: sourceDataNode,
+	})
+	if err != nil {
+		t.Fatalf("VolumeCopy start failed: %v", err)
+	}
+
+	var lastAppendAtNs uint64
+	for {
+		resp, recvErr := copyStream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("VolumeCopy recv failed: %v", recvErr)
+		}
+		if ts := resp.GetLastAppendAtNs(); ts > 0 {
+			lastAppendAtNs = ts
+		}
+	}
+	if lastAppendAtNs == 0 {
+		t.Fatalf("volume copy did not return a last append timestamp")
+	}
+
+	type written struct {
+		fid  string
+		data []byte
+	}
+
+	var writesMu sync.Mutex
+	var writes []written
+	writeCtx, writeCancel := context.WithCancel(context.Background())
+	var writerWG sync.WaitGroup
+	writerWG.Add(1)
+	go func() {
+		defer writerWG.Done()
+		client := framework.NewHTTPClient()
+		for i := 0; i < 12; i++ {
+			select {
+			case <-writeCtx.Done():
+				return
+			default:
+			}
+			livePayload := []byte("live-data-" + fmt.Sprintf("%02d", i))
+			liveFid := framework.NewFileID(volumeID, uint64(2000+i), 0xAAAA1111+uint32(i))
+			resp := framework.UploadBytes(t, client, cluster.VolumeAdminURL(0), liveFid, livePayload)
+			_ = framework.ReadAllAndClose(t, resp)
+			if resp.StatusCode != http.StatusCreated {
+				t.Fatalf("live upload failed: %d", resp.StatusCode)
+			}
+			writesMu.Lock()
+			writes = append(writes, written{fid: liveFid, data: livePayload})
+			writesMu.Unlock()
+			time.Sleep(250 * time.Millisecond)
+		}
+	}()
+
+	tailCtx, tailCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer tailCancel()
+	_, err = destClient.VolumeTailReceiver(tailCtx, &volume_server_pb.VolumeTailReceiverRequest{
+		VolumeId:           volumeID,
+		SourceVolumeServer: sourceDataNode,
+		SinceNs:            lastAppendAtNs,
+		IdleTimeoutSeconds: 3,
+	})
+	if err != nil {
+		writeCancel()
+		writerWG.Wait()
+		t.Fatalf("VolumeTailReceiver failed: %v", err)
+	}
+
+	writeCancel()
+	writerWG.Wait()
+
+	writesMu.Lock()
+	sampleCount := len(writes)
+	if sampleCount == 0 {
+		writesMu.Unlock()
+		t.Fatal("no live writes captured")
+	}
+	sample := writes
+	if sampleCount > 3 {
+		sample = writes[sampleCount-3:]
+	}
+	writesMu.Unlock()
+
+	httpCheckClient := framework.NewHTTPClient()
+	for _, w := range sample {
+		resp := framework.ReadBytes(t, httpCheckClient, cluster.VolumeAdminURL(1), w.fid)
+		body := framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("dest read %s status %d", w.fid, resp.StatusCode)
+		}
+		if !bytes.Equal(body, w.data) {
+			t.Fatalf("dest read body mismatch for %s: %q vs %q", w.fid, string(body), string(w.data))
+		}
+	}
 }
