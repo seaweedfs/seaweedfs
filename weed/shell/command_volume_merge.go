@@ -21,6 +21,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+// mergeIdleTimeoutSeconds is the timeout for idle streams during needle tailing.
+// This ensures that slow or stalled streams don't block the merge indefinitely.
 const mergeIdleTimeoutSeconds = 1
 
 func init() {
@@ -112,20 +114,28 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		_ = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, false)
 	}()
 
-	shouldRestoreWritable, err := ensureVolumeReadonly(commandEnv, replicas)
+	writableReplicaIndices, err := ensureVolumeReadonly(commandEnv, replicas)
 	if err != nil {
 		return err
 	}
-	if shouldRestoreWritable {
+	if len(writableReplicaIndices) > 0 {
 		defer func() {
-			_ = markReplicasWritable(commandEnv.option.GrpcDialOption, replicas, true, false)
+			// Only restore writable state for replicas that were originally writable
+			writableReplicas := make([]*VolumeReplica, 0, len(writableReplicaIndices))
+			for _, idx := range writableReplicaIndices {
+				writableReplicas = append(writableReplicas, replicas[idx])
+			}
+			_ = markReplicasWritable(commandEnv.option.GrpcDialOption, writableReplicas, true, false)
 		}()
 	}
+
+	done := make(chan struct{})
+	defer close(done)
 
 	sources := make([]needleStream, 0, len(replicas))
 	for _, replica := range replicas {
 		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		sources = append(sources, startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server))
+		sources = append(sources, startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server, done))
 	}
 
 	mergeErr := operation.WithVolumeServerClient(false, targetServer, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
@@ -133,13 +143,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		if version == 0 {
 			version = needle.GetCurrentVersion()
 		}
-		seen := make(map[types.NeedleId]needleSeen)
 		return mergeNeedleStreams(sources, func(streamIndex int, n *needle.Needle) error {
-			ts := needleTimestamp(n)
-			if prev, ok := seen[n.Id]; ok && prev.timestamp == ts && prev.streamIndex != streamIndex {
-				return nil
-			}
-			seen[n.Id] = needleSeen{timestamp: ts, streamIndex: streamIndex}
 			blob, size, err := needleBlobFromNeedle(n, version)
 			if err != nil {
 				return err
@@ -201,12 +205,16 @@ func (s *tailNeedleStream) setErr(err error) {
 	s.errMu.Unlock()
 }
 
-func startTailNeedleStream(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, server pb.ServerAddress) *tailNeedleStream {
+func startTailNeedleStream(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, server pb.ServerAddress, done <-chan struct{}) *tailNeedleStream {
 	ch := make(chan *needle.Needle, 32)
 	stream := &tailNeedleStream{ch: ch}
 	go func() {
 		err := operation.TailVolumeFromSource(server, grpcDialOption, volumeId, 0, mergeIdleTimeoutSeconds, func(n *needle.Needle) error {
-			ch <- n
+			select {
+			case ch <- n:
+			case <-done:
+				return fmt.Errorf("merge cancelled")
+			}
 			return nil
 		})
 		close(ch)
@@ -252,13 +260,30 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 		}
 	}
 
+	// Track seen (ID, timestamp) pairs to skip cross-stream duplicates
+	seen := make(map[types.NeedleId]uint64)
+
 	for h.Len() > 0 {
 		item := heap.Pop(h).(needleMergeItem)
-		if err := consume(item.streamIndex, item.needle); err != nil {
+		ts := item.timestamp
+		n := item.needle
+
+		// Skip cross-stream duplicates: if we've already seen this needle ID with the same timestamp,
+		// skip it. Newer timestamps (overwrites of the same ID) will still be processed.
+		if prev, ok := seen[n.Id]; ok && prev == ts {
+			// Get next needle from the same stream and continue
+			if nextN, ok := streams[item.streamIndex].Next(); ok {
+				heap.Push(h, needleMergeItem{streamIndex: item.streamIndex, needle: nextN, timestamp: needleTimestamp(nextN)})
+			}
+			continue
+		}
+
+		seen[n.Id] = ts
+		if err := consume(item.streamIndex, n); err != nil {
 			return err
 		}
-		if n, ok := streams[item.streamIndex].Next(); ok {
-			heap.Push(h, needleMergeItem{streamIndex: item.streamIndex, needle: n, timestamp: needleTimestamp(n)})
+		if nextN, ok := streams[item.streamIndex].Next(); ok {
+			heap.Push(h, needleMergeItem{streamIndex: item.streamIndex, needle: nextN, timestamp: needleTimestamp(nextN)})
 		}
 	}
 
@@ -280,12 +305,9 @@ func needleTimestamp(n *needle.Needle) uint64 {
 	return 0
 }
 
-type needleSeen struct {
-	timestamp   uint64
-	streamIndex int
-}
-
 func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, types.Size, error) {
+	// Use temporary file for serialization (inefficient for large merges, but necessary for the API)
+	// Consider future optimization with streaming WriteNeedleBlob API
 	file, err := os.CreateTemp("", "weed-needle-*.dat")
 	if err != nil {
 		return nil, 0, err
@@ -326,6 +348,7 @@ func allocateMergeVolumeOnThirdLocation(grpcDialOption grpc.DialOption, allLocat
 		}
 		server := pb.NewServerAddressFromDataNode(loc.dataNode)
 		if err := allocateMergeVolume(grpcDialOption, server, info, replicaPlacement); err != nil {
+			fmt.Printf("[debug] failed to allocate merge volume on %s with replication %s: %v\n", server, replicaPlacement.String(), err)
 			continue
 		}
 		return server, nil
@@ -349,9 +372,10 @@ func allocateMergeVolume(grpcDialOption grpc.DialOption, server pb.ServerAddress
 	})
 }
 
-func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) (bool, error) {
-	shouldRestoreWritable := false
-	for _, replica := range replicas {
+// ensureVolumeReadonly marks all replicas as readonly and returns the indices of replicas that were writable
+func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]int, error) {
+	var writableReplicaIndices []int
+	for i, replica := range replicas {
 		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
 		err := operation.WithVolumeServerClient(false, server, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			resp, err := client.VolumeStatus(context.Background(), &volume_server_pb.VolumeStatusRequest{VolumeId: replica.info.Id})
@@ -359,20 +383,20 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) (bo
 				return err
 			}
 			if !resp.IsReadOnly {
-				shouldRestoreWritable = true
+				writableReplicaIndices = append(writableReplicaIndices, i)
 			}
 			return nil
 		})
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 	}
-	if shouldRestoreWritable {
+	if len(writableReplicaIndices) > 0 {
 		if err := markReplicasWritable(commandEnv.option.GrpcDialOption, replicas, false, false); err != nil {
-			return false, err
+			return nil, err
 		}
 	}
-	return shouldRestoreWritable, nil
+	return writableReplicaIndices, nil
 }
 
 func isReplicaServer(target pb.ServerAddress, replicas []*VolumeReplica) bool {
