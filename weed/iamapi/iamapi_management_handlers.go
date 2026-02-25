@@ -331,6 +331,9 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 				}
 				resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
 				return resp, nil
+			} else {
+				// User's inline policies exist but this specific policy does not
+				return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("policy not found")}
 			}
 		}
 
