@@ -159,7 +159,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 
 	for _, replica := range replicas {
 		sourceServer := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		if _, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, targetServer, sourceServer, "", 0); err != nil {
+		if _, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, sourceServer, targetServer, "", 0, false); err != nil {
 			return err
 		}
 	}
