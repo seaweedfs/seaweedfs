@@ -38,13 +38,10 @@ func (c *commandVolumeMove) Help() string {
 
 	This command move a live volume from one volume server to another volume server. Here are the steps:
 
-	1. This command asks the target volume server to copy the source volume from source volume server, remember the last entry's timestamp.
-	2. This command asks the target volume server to mount the new volume
-		Now the master will mark this volume id as readonly.
-	3. This command asks the target volume server to tail the source volume for updates after the timestamp, for 1 minutes to drain the requests.
-	4. This command asks the source volume server to unmount the source volume
-		Now the master will mark this volume id as writable.
-	5. This command asks the source volume server to delete the source volume
+	1. This command marks the source volume as read-only, copies it to the target volume server, and records the last entry timestamp.
+	2. This command asks the target volume server to mount the new volume.
+	3. This command asks the target volume server to tail the source volume for updates after the timestamp, for 1 minutes to drain any in-flight requests.
+	4. This command asks the source volume server to delete the source volume.
 
 	The option "-disk [hdd|ssd|<tag>]" can be used to change the volume disk type.
 
@@ -92,7 +89,7 @@ func (c *commandVolumeMove) Do(args []string, commandEnv *CommandEnv, writer io.
 func LiveMoveVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, idleTimeout time.Duration, diskType string, ioBytePerSecond int64, skipTailError bool) (err error) {
 
 	log.Printf("copying volume %d from %s to %s", volumeId, sourceVolumeServer, targetVolumeServer)
-	lastAppendAtNs, err := copyVolume(grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond)
+	lastAppendAtNs, err := copyVolume(grpcDialOption, writer, volumeId, sourceVolumeServer, targetVolumeServer, diskType, ioBytePerSecond, false)
 	if err != nil {
 		return fmt.Errorf("copy volume %d from %s to %s: %v", volumeId, sourceVolumeServer, targetVolumeServer, err)
 	}
@@ -115,7 +112,7 @@ func LiveMoveVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId n
 	return nil
 }
 
-func copyVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64) (lastAppendAtNs uint64, err error) {
+func copyVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceVolumeServer, targetVolumeServer pb.ServerAddress, diskType string, ioBytePerSecond int64, restoreWritable bool) (lastAppendAtNs uint64, err error) {
 
 	// check to see if the volume is already read-only and if its not then we need
 	// to mark it as read-only and then before we return we need to undo what we
@@ -123,6 +120,9 @@ func copyVolume(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needl
 	var shouldMarkWritable bool
 	defer func() {
 		if !shouldMarkWritable {
+			return
+		}
+		if !restoreWritable && err == nil {
 			return
 		}
 

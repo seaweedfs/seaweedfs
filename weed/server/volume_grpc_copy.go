@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -187,6 +188,15 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 		return err
 	}
 
+	var lastAppendAtNs = volFileInfoResp.DatFileTimestampSeconds * uint64(time.Second)
+	if !hasRemoteDatFile {
+		if appendAtNs, appendErr := findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName, needle.Version(volFileInfoResp.Version)); appendErr == nil && appendAtNs > 0 {
+			lastAppendAtNs = appendAtNs
+		} else if appendErr != nil {
+			glog.V(1).Infof("failed to find last append timestamp for volume %d: %v", req.VolumeId, appendErr)
+		}
+	}
+
 	// mount the volume
 	err = vs.store.MountVolume(needle.VolumeId(req.VolumeId))
 	if err != nil {
@@ -194,7 +204,7 @@ func (vs *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stre
 	}
 
 	if err = stream.Send(&volume_server_pb.VolumeCopyResponse{
-		LastAppendAtNs: volFileInfoResp.DatFileTimestampSeconds * uint64(time.Second),
+		LastAppendAtNs: lastAppendAtNs,
 	}); err != nil {
 		glog.Errorf("send response: %v", err)
 	}
@@ -262,6 +272,62 @@ func checkCopyFiles(originFileInf *volume_server_pb.ReadVolumeFileStatusResponse
 			stat.Size(), originFileInf.DatFileSize)
 	}
 	return nil
+}
+
+func findLastAppendAtNsFromCopiedFiles(idxFileName, datFileName string, version needle.Version) (uint64, error) {
+	if version < needle.Version3 {
+		return 0, nil
+	}
+
+	idxFile, err := os.Open(idxFileName)
+	if err != nil {
+		return 0, fmt.Errorf("open idx file %s: %w", idxFileName, err)
+	}
+	defer idxFile.Close()
+
+	fi, err := idxFile.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("stat idx file %s: %w", idxFileName, err)
+	}
+	if fi.Size() == 0 {
+		return 0, nil
+	}
+	if fi.Size()%int64(types.NeedleMapEntrySize) != 0 {
+		return 0, fmt.Errorf("unexpected idx file %s size: %d", idxFileName, fi.Size())
+	}
+
+	buf := make([]byte, types.NeedleMapEntrySize)
+	if _, err := idxFile.ReadAt(buf, fi.Size()-int64(types.NeedleMapEntrySize)); err != nil {
+		return 0, fmt.Errorf("read idx file %s: %w", idxFileName, err)
+	}
+	_, offset, _ := idx.IdxFileEntry(buf)
+	if offset.IsZero() {
+		return 0, nil
+	}
+
+	datFile, err := os.Open(datFileName)
+	if err != nil {
+		return 0, fmt.Errorf("open dat file %s: %w", datFileName, err)
+	}
+	defer datFile.Close()
+
+	datBackend := backend.NewDiskFile(datFile)
+	n, _, _, err := needle.ReadNeedleHeader(datBackend, version, offset.ToActualOffset())
+	if err != nil {
+		return 0, fmt.Errorf("read needle header %s offset %d: %w", datFileName, offset.ToActualOffset(), err)
+	}
+
+	tailOffset := offset.ToActualOffset() + int64(types.NeedleHeaderSize) + int64(n.Size)
+	tail := make([]byte, needle.NeedleChecksumSize+types.TimestampSize)
+	readCount, readErr := datBackend.ReadAt(tail, tailOffset)
+	if readErr == io.EOF && readCount == len(tail) {
+		readErr = nil
+	}
+	if readErr != nil {
+		return 0, fmt.Errorf("read needle tail %s offset %d: %w", datFileName, tailOffset, readErr)
+	}
+
+	return util.BytesToUint64(tail[needle.NeedleChecksumSize : needle.NeedleChecksumSize+types.TimestampSize]), nil
 }
 
 func writeToFile(client volume_server_pb.VolumeServer_CopyFileClient, fileName string, wt *util.WriteThrottler, isAppend bool, progressFn storage.ProgressFunc) (modifiedTsNs int64, err error) {
