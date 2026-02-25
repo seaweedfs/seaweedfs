@@ -110,13 +110,13 @@ func TestMergeNeedleStreamsSameStreamDuplicates(t *testing.T) {
 	// Deduplication should only skip cross-stream duplicates, not same-stream overwrites
 	const (
 		baseLine  = uint64(0)
-		twoSecs   = uint64(2_000_000_000)  // 2 seconds
+		twoSecs   = uint64(2_000_000_000) // 2 seconds
 		threeSecs = uint64(3_000_000_000) // 3 seconds
 	)
 
 	// Stream A has multiple writes of the same needle ID (overwrites within same stream)
 	streamA := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 10, AppendAtNs: baseLine},              // First write at t=0
+		{Id: 10, AppendAtNs: baseLine},             // First write at t=0
 		{Id: 10, AppendAtNs: baseLine + twoSecs},   // Second write (overwrite) at t=2s - same stream!
 		{Id: 10, AppendAtNs: baseLine + threeSecs}, // Third write (overwrite) at t=3s - same stream!
 	}}
@@ -141,7 +141,7 @@ func TestMergeNeedleStreamsSameStreamDuplicates(t *testing.T) {
 	// (it occurs between t=0 and t=5s window, and data from streamA takes precedence since seen first in window)
 	// Timeline: t=0: A@10, t=1s: B@10 (skip - cross-stream dup), t=2s: A@10, t=3s: A@10
 	want := []seenNeedle{
-		{id: 10, ts: baseLine},              // From streamA at t=0
+		{id: 10, ts: baseLine},             // From streamA at t=0
 		{id: 10, ts: baseLine + twoSecs},   // From streamA at t=2s (same-stream overwrite, kept)
 		{id: 10, ts: baseLine + threeSecs}, // From streamA at t=3s (same-stream overwrite, kept)
 	}
