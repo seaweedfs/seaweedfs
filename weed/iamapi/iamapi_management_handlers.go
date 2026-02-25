@@ -42,18 +42,24 @@ const (
 var policyLock = sync.RWMutex{}
 
 // userPolicyKey returns a namespaced key for inline user policies to prevent collision with managed policies.
-func userPolicyKey(userName string, policyName string) string {
-	return fmt.Sprintf("inline:%s:%s", userName, policyName)
-}
-
-// userInlinePolicyPrefix returns the prefix for all inline policies of a user, useful for scanning.
-func userInlinePolicyPrefix(userName string) string {
-	return fmt.Sprintf("inline:%s:", userName)
+// getOrCreateUserPolicies returns the policy map for a user, creating it if needed.
+// Returns a pointer to the user's policy map from Policies.InlinePolicies.
+func (p *Policies) getOrCreateUserPolicies(userName string) map[string]policy_engine.PolicyDocument {
+	if p.InlinePolicies == nil {
+		p.InlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+	if p.InlinePolicies[userName] == nil {
+		p.InlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	return p.InlinePolicies[userName]
 }
 
 // computeAggregatedActionsForUser computes the union of actions across all inline policies for a user.
+// Directly accesses user's policies from Policies.InlinePolicies[userName] for O(1) lookup.
 // If policies is non-nil, it uses that instead of fetching from storage (for I/O optimization).
 // When policies is nil, it fetches from storage using GetPolicies.
+//
+// Performance: O(user_policies) instead of O(all_policies) with per-user index.
 //
 // Best-effort aggregation: If GetActions fails for a policy document, that policy is logged at Warning level
 // but is NOT removed from persistent storage. This intentional choice ensures:
@@ -76,19 +82,17 @@ func computeAggregatedActionsForUser(iama *IamApiServer, userName string, polici
 		}
 	}
 
-	if policiesToUse.Policies == nil {
+	// Direct O(1) access to user's policies using per-user index
+	userPolicies := policiesToUse.InlinePolicies[userName]
+	if len(userPolicies) == 0 {
 		return aggregatedActions, nil
 	}
 
-	prefix := userInlinePolicyPrefix(userName)
-	for key, policyDocument := range policiesToUse.Policies {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
+	for policyName, policyDocument := range userPolicies {
 		actions, err := GetActions(&policyDocument)
 		if err != nil {
 			// Best-effort: policy stored successfully but failed to parse; log and skip from aggregation
-			glog.Warningf("Failed to get actions from stored policy %s for user %s (policy retained in storage): %v", key, userName, err)
+			glog.Warningf("Failed to get actions from stored policy '%s' for user %s (policy retained in storage): %v", policyName, userName, err)
 			continue
 		}
 		for _, action := range actions {
@@ -112,7 +116,13 @@ func MapToIdentitiesAction(action string) string {
 }
 
 type Policies struct {
+	// Policies: managed policies (flat map, unchanged for backward compatibility)
 	Policies map[string]policy_engine.PolicyDocument `json:"policies"`
+
+	// InlinePolicies: user-indexed inline policies for O(1) lookup
+	// Structure: [userName][policyName] -> PolicyDocument
+	// Enables fast access without iterating all policies
+	InlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
 }
 
 func Hash(s *string) string {
@@ -260,15 +270,17 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
 
-	// Persist inline policy to storage
+	// Persist inline policy to storage using per-user indexed structure
 	policies := Policies{}
 	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
-	if policies.Policies == nil {
-		policies.Policies = make(map[string]policy_engine.PolicyDocument)
-	}
-	policies.Policies[userPolicyKey(userName, policyName)] = policyDocument
+
+	// Get or create user's policy map
+	userPolicies := policies.getOrCreateUserPolicies(userName)
+	userPolicies[policyName] = policyDocument
+	// policies.InlinePolicies[userName] now contains the updated map
+
 	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
@@ -303,14 +315,16 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		resp.GetUserPolicyResult.UserName = userName
 		resp.GetUserPolicyResult.PolicyName = policyName
 
-		// Try to retrieve stored inline policy from persistent storage
+		// Try to retrieve stored inline policy from persistent storage using per-user index
 		policies := Policies{}
 		if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 			// Propagate storage errors
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 		}
-		if policies.Policies != nil {
-			if policyDocument, exists := policies.Policies[userPolicyKey(userName, policyName)]; exists {
+
+		// Direct O(1) access to user's policy using per-user index
+		if userPolicies := policies.InlinePolicies[userName]; userPolicies != nil {
+			if policyDocument, exists := userPolicies[policyName]; exists {
 				policyDocumentJSON, err := json.Marshal(policyDocument)
 				if err != nil {
 					return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -374,14 +388,17 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
 
-	// Remove stored inline policy from persistent storage
+	// Remove stored inline policy from persistent storage using per-user index
 	policies := Policies{}
 	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		// Propagate storage errors immediately; don't proceed with in-memory updates
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
-	if policies.Policies != nil {
-		delete(policies.Policies, userPolicyKey(userName, policyName))
+
+	// Direct O(1) access to user's policy map using per-user index
+	if userPolicies := policies.InlinePolicies[userName]; userPolicies != nil {
+		delete(userPolicies, policyName)
+		// Note: userPolicies is a map, so the delete modifies the map in policies.InlinePolicies[userName]
 		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 		}
