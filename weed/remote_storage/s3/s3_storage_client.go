@@ -3,9 +3,11 @@ package s3
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -119,6 +121,33 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 	}
 	return
 }
+
+func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
+	})
+	if err != nil {
+		if reqErr, ok := err.(awserr.RequestFailure); ok && reqErr.StatusCode() == http.StatusNotFound {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	remoteEntry := &filer_pb.RemoteEntry{
+		StorageName: s.conf.Name,
+	}
+	if resp.ContentLength != nil {
+		remoteEntry.RemoteSize = *resp.ContentLength
+	}
+	if resp.LastModified != nil {
+		remoteEntry.RemoteMtime = resp.LastModified.Unix()
+	}
+	if resp.ETag != nil {
+		remoteEntry.RemoteETag = *resp.ETag
+	}
+	return remoteEntry, nil
+}
+
 func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)

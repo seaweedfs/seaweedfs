@@ -2,11 +2,13 @@ package gcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -126,6 +128,28 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 	}
 	return
 }
+
+const defaultGCSOpTimeout = 30 * time.Second
+
+func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat gcs %s/%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return &filer_pb.RemoteEntry{
+		StorageName: gcs.conf.Name,
+		RemoteMtime: attr.Updated.Unix(),
+		RemoteSize:  attr.Size,
+		RemoteETag:  attr.Etag,
+	}, nil
+}
+
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]

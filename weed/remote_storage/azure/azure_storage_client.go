@@ -130,6 +130,32 @@ type azureRemoteStorageClient struct {
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
 
+func (az *azureRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultAzureOpTimeout)
+	defer cancel()
+	resp, err := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key).GetProperties(ctx, nil)
+	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat azure %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	remoteEntry := &filer_pb.RemoteEntry{
+		StorageName: az.conf.Name,
+	}
+	if resp.ContentLength != nil {
+		remoteEntry.RemoteSize = *resp.ContentLength
+	}
+	if resp.LastModified != nil {
+		remoteEntry.RemoteMtime = resp.LastModified.Unix()
+	}
+	if resp.ETag != nil {
+		remoteEntry.RemoteETag = string(*resp.ETag)
+	}
+	return remoteEntry, nil
+}
+
 func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
 	pathKey := loc.Path[1:]
