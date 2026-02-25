@@ -3,6 +3,7 @@ package iamapi
 import (
 	"encoding/json"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -183,4 +184,73 @@ func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
 		}
 	}
 	assert.True(t, deleteObjectFound, "s3:DeleteObject action was lost")
+}
+
+func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+
+	policy1JSON := `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::bucket-a/*"]
+    }
+  ]
+}`
+
+	policy2JSON := `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": ["arn:aws:s3:::bucket-b/*"]
+    }
+  ]
+}`
+
+	iama := &IamApiServer{
+		s3ApiConfig: &mockIamS3ApiConfig{},
+	}
+
+	// Put first inline policy
+	putValues1 := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"policy-read"},
+		"PolicyDocument": []string{policy1JSON},
+	}
+	_, iamErr := iama.PutUserPolicy(s3cfg, putValues1)
+	assert.Nil(t, iamErr)
+
+	// Check that alice's actions include read operations
+	aliceIdent := s3cfg.Identities[0]
+	assert.Greater(t, len(aliceIdent.Actions), 0, "Actions should not be empty after first policy")
+
+	// Put second inline policy
+	putValues2 := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"policy-write"},
+		"PolicyDocument": []string{policy2JSON},
+	}
+	_, iamErr = iama.PutUserPolicy(s3cfg, putValues2)
+	assert.Nil(t, iamErr)
+
+	// Check that alice now has aggregated actions from both policies
+	// Should include Read (from policy1) and Write (from policy2)
+	readFound := false
+	writeFound := false
+	for _, action := range aliceIdent.Actions {
+		if strings.Contains(action, "Read") || strings.Contains(action, "Get") || strings.Contains(action, "List") {
+			readFound = true
+		}
+		if strings.Contains(action, "Write") || strings.Contains(action, "Put") {
+			writeFound = true
+		}
+	}
+	assert.True(t, readFound, "Read actions should be preserved from policy-read")
+	assert.True(t, writeFound, "Write actions should be added from policy-write")
 }

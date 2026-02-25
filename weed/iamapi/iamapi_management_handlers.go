@@ -41,8 +41,49 @@ const (
 
 var policyLock = sync.RWMutex{}
 
+// userPolicyKey returns a namespaced key for inline user policies to prevent collision with managed policies.
 func userPolicyKey(userName string, policyName string) string {
-	return fmt.Sprintf("%s:%s", userName, policyName)
+	return fmt.Sprintf("inline:%s:%s", userName, policyName)
+}
+
+// userInlinePolicyPrefix returns the prefix for all inline policies of a user, useful for scanning.
+func userInlinePolicyPrefix(userName string) string {
+	return fmt.Sprintf("inline:%s:", userName)
+}
+
+// computeAggregatedActionsForUser computes the union of actions across all inline policies for a user.
+func computeAggregatedActionsForUser(iama *IamApiServer, userName string) ([]string, error) {
+	var aggregatedActions []string
+	actionSet := make(map[string]bool)
+
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+
+	if policies.Policies == nil {
+		return aggregatedActions, nil
+	}
+
+	prefix := userInlinePolicyPrefix(userName)
+	for key, policyDocument := range policies.Policies {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		actions, err := GetActions(&policyDocument)
+		if err != nil {
+			glog.Warningf("Failed to get actions from policy %s: %v", key, err)
+			continue
+		}
+		for _, action := range actions {
+			if !actionSet[action] {
+				actionSet[action] = true
+				aggregatedActions = append(aggregatedActions, action)
+			}
+		}
+	}
+
+	return aggregatedActions, nil
 }
 
 // Helper function wrappers using shared package
@@ -216,13 +257,19 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Log the actions
-	glog.V(3).Infof("PutUserPolicy: actions=%v", actions)
+	// Compute aggregated actions from all user's inline policies
+	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName)
+	if computeErr != nil {
+		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
+		aggregatedActions = actions // Fall back to current policy's actions
+	}
+
+	glog.V(3).Infof("PutUserPolicy: aggregated actions=%v", aggregatedActions)
 	for _, ident := range s3cfg.Identities {
 		if userName != ident.Name {
 			continue
 		}
-		ident.Actions = actions
+		ident.Actions = aggregatedActions
 		return resp, nil
 	}
 	return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
@@ -315,9 +362,15 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		}
 	}
 
+	// Recompute aggregated actions from remaining inline policies
+	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName)
+	if computeErr != nil {
+		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
+	}
+
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			ident.Actions = nil
+			ident.Actions = aggregatedActions
 			return resp, nil
 		}
 	}
