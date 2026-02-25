@@ -53,7 +53,7 @@ func TestMergeNeedleStreamsOrdersByTimestamp(t *testing.T) {
 	}
 }
 
-func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
+func TestMergeNeedleStreamsDoesNotDeduplicateAcrossWindows(t *testing.T) {
 	// Timestamps are in nanoseconds. The deduplication window is 5 seconds = 5_000_000_000 ns.
 	// Use timestamps far enough apart (> 5 sec) so that same ID with timestamps in different
 	// windows are not deduplicated - they represent separate updates of the same file.
@@ -68,7 +68,7 @@ func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
 		{Id: 10, AppendAtNs: baseLine + thirtySecs}, // Second write of ID 10 at t=30s (well outside window)
 	}}
 	streamB := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 10, AppendAtNs: baseLine + 3*fiveSecs}, // Duplicate of first ID 10, within window [0, 5s]
+		{Id: 10, AppendAtNs: baseLine + 3*fiveSecs}, // ID 10 at t=15s (outside the [0, 5s] window, separate write)
 		{Id: 11, AppendAtNs: baseLine + 4*fiveSecs}, // Different ID at t=20s
 	}}
 

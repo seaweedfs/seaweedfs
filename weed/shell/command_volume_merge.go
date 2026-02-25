@@ -354,6 +354,8 @@ func (m *memoryBackendFile) WriteAt(p []byte, off int64) (n int, err error) {
 	if off > int64(len(data)) {
 		// Pad with zeros
 		m.buf.Write(make([]byte, off-int64(len(data))))
+		// Refresh data snapshot after padding to see the padded length
+		data = m.buf.Bytes()
 	}
 	if off == int64(len(data)) {
 		return m.buf.Write(p)

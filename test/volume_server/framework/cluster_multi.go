@@ -113,11 +113,13 @@ func StartMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCount i
 		baseIdx := i * portsPerServer
 		c.volumePorts[i] = ports[baseIdx]
 		c.volumeGrpcPorts[i] = ports[baseIdx+1]
-		c.volumePubPorts[i] = ports[baseIdx+2]
-
+		
+		// Assign public port, using baseIdx+3 if SplitPublicPort, else baseIdx+2
+		pubPortIdx := baseIdx + 2
 		if profile.SplitPublicPort {
-			c.volumePubPorts[i] = ports[baseIdx+3]
+			pubPortIdx = baseIdx + 3
 		}
+		c.volumePubPorts[i] = ports[pubPortIdx]
 	}
 
 	// Start master
@@ -135,13 +137,10 @@ func StartMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCount i
 	for i := 0; i < serverCount; i++ {
 		volumeDataDir := filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
 		if err = c.startVolume(i, volumeDataDir); err != nil {
-			prevIdx := i - 1
-			prevLog := fmt.Sprintf("volume%d.log", prevIdx)
-			if prevIdx < 0 {
-				prevLog = "master.log"
-			}
+			// Log current server's log for debugging startup failures
+			volumeLog := fmt.Sprintf("volume%d.log", i)
 			c.Stop()
-			t.Fatalf("start volume server %d: %v\nprevious log tail:\n%s", i, err, c.tailLog(prevLog))
+			t.Fatalf("start volume server %d: %v\nvolume log tail:\n%s", i, err, c.tailLog(volumeLog))
 		}
 		if err = c.waitForHTTP(c.VolumeAdminURL(i) + "/status"); err != nil {
 			volumeLog := fmt.Sprintf("volume%d.log", i)

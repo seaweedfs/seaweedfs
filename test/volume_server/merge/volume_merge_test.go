@@ -14,16 +14,24 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
-// runWeedShell executes a weed shell command by providing commands via stdin with lock/unlock
+// runWeedShell executes a weed shell command by providing commands via stdin with lock/unlock.
+// It uses a timeout to prevent hanging if the weed shell process becomes unresponsive.
 func runWeedShell(t *testing.T, weedBinary, masterAddr, shellCommand string) (output string, err error) {
-	cmd := exec.Command(weedBinary, "shell", "-master="+masterAddr)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, weedBinary, "shell", "-master="+masterAddr)
 	// Wrap command in lock/unlock for cluster-wide operations
 	shellCommands := "lock\n" + shellCommand + "\nunlock\nexit\n"
 	cmd.Stdin = strings.NewReader(shellCommands)
 	outputBytes, err := cmd.CombinedOutput()
 	output = string(outputBytes)
 	if err != nil {
-		t.Logf("weed shell command '%s' output: %s, error: %v", shellCommand, output, err)
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Logf("weed shell command '%s' timed out after 30s", shellCommand)
+		} else {
+			t.Logf("weed shell command '%s' output: %s, error: %v", shellCommand, output, err)
+		}
 	}
 	return output, err
 }
@@ -113,7 +121,10 @@ func TestVolumeMergeReadonly(t *testing.T) {
 
 	// Test 1: Try merge while writable (should fail)
 	output, err := runWeedShell(t, weedBinary, cluster.MasterAddress(), fmt.Sprintf("volume.merge -volumeId %d", volumeID))
-	t.Logf("merge while writable - output: %s, error: %v", output, err)
+	if err == nil {
+		t.Fatalf("expected merge to fail while writable, got success: output=%s", output)
+	}
+	t.Logf("Correctly rejected merge while writable: %v", err)
 
 	// Test 2: Mark volumes as readonly, then try merge
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -146,6 +157,18 @@ func TestVolumeMergeReadonly(t *testing.T) {
 
 	if !statusResp.GetIsReadOnly() {
 		t.Fatalf("expected volume to be marked readonly, but it's not")
+	}
+
+	// Also verify server 1's readonly status
+	statusResp1, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("failed to get volume status from server 1: %v", err)
+	}
+
+	if !statusResp1.GetIsReadOnly() {
+		t.Fatalf("expected volume %d to be readonly on server 1", volumeID)
 	}
 
 	// Now try merge with readonly volumes
@@ -230,23 +253,50 @@ func TestVolumeMergeRestore(t *testing.T) {
 	// (The merge command should restore writable state for replicas that were writable before readonly)
 	// Actually both were writable initially, then marked readonly, so both should be restored
 
-	// Wait a moment for state update
-	time.Sleep(1 * time.Second)
+	// Poll for writable state restoration instead of fixed sleep
+	maxRetries := 50 // ~5s total with 100ms sleeps
+	for retries := 0; retries < maxRetries; retries++ {
+		status0, err := volumeClient0.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+			VolumeId: volumeID,
+		})
+		if err == nil && !status0.GetIsReadOnly() {
+			// Server 0 is writable, check server 1
+			status1, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+				VolumeId: volumeID,
+			})
+			if err == nil && !status1.GetIsReadOnly() {
+				// Both are writable, break out
+				break
+			}
+		}
+		if retries < maxRetries-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 
-	status0, err := volumeClient0.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+	status0Final, err := volumeClient0.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
 		VolumeId: volumeID,
 	})
 	if err != nil {
-		t.Fatalf("failed to get status for server 0: %v", err)
+		t.Fatalf("failed to get final status for server 0: %v", err)
 	}
 
-	t.Logf("After merge - volume %d on server 0: readonly=%v", volumeID, status0.GetIsReadOnly())
-
-	// The merge command should have either restored writable state or at least completed successfully
-	// Check that the merge completed successfully in the logs
-	if !strings.Contains(output, fmt.Sprintf("merged volume %d", volumeID)) {
-		t.Fatalf("expected merge to complete successfully, got output: %s", output)
+	status1Final, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("failed to get final status for server 1: %v", err)
 	}
+
+	if status0Final.GetIsReadOnly() {
+		t.Fatalf("expected volume %d to be writable on server 0 after merge, but it's still readonly", volumeID)
+	}
+
+	if status1Final.GetIsReadOnly() {
+		t.Fatalf("expected volume %d to be writable on server 1 after merge, but it's still readonly", volumeID)
+	}
+
+	t.Logf("After merge - volume %d on server 0: readonly=%v, server 1: readonly=%v", volumeID, status0Final.GetIsReadOnly(), status1Final.GetIsReadOnly())
 
 	t.Logf("Successfully tested merge and restore workflow for volume %d", volumeID)
 }
@@ -388,6 +438,18 @@ func TestVolumeMergeDivergentReplicas(t *testing.T) {
 
 	if !status0Again.GetIsReadOnly() {
 		t.Fatalf("expected volume %d to be readonly", volumeID)
+	}
+
+	// Also verify server 1 is readonly
+	status1Again, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("failed to get status on server 1 after readonly: %v", err)
+	}
+
+	if !status1Again.GetIsReadOnly() {
+		t.Fatalf("expected volume %d to be readonly on server 1", volumeID)
 	}
 
 	// Get weed binary
