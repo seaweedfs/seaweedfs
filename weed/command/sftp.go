@@ -104,7 +104,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	// Load JWT configuration for filer signing
 	v := util.GetViper()
 	filerSigningKey := v.GetString("jwt.filer_signing.key")
-	v.SetDefault("jwt.filer_signing.expires_after_seconds", 10)
+	v.SetDefault("jwt.filer_signing.expires_after_seconds", 600)
 	filerSigningExpiresAfter := v.GetInt("jwt.filer_signing.expires_after_seconds")
 
 	// metrics read from the filer
