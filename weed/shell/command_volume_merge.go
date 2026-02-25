@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -23,7 +24,9 @@ import (
 
 // mergeIdleTimeoutSeconds is the timeout for idle streams during needle tailing.
 // This ensures that slow or stalled streams don't block the merge indefinitely.
-const mergeIdleTimeoutSeconds = 1
+// Set to 5 seconds to handle network congestion and avoid premature stream termination.
+// Can be made configurable in the future if needed for different deployment scenarios.
+const mergeIdleTimeoutSeconds = 5
 
 func init() {
 	Commands = append(Commands, &commandVolumeMerge{})
@@ -163,7 +166,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 
 	for _, replica := range replicas {
 		sourceServer := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		if _, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, sourceServer, targetServer, "", 0, false); err != nil {
+		if _, err = copyVolume(commandEnv.option.GrpcDialOption, writer, volumeId, targetServer, sourceServer, "", 0, false); err != nil {
 			return err
 		}
 	}
@@ -322,7 +325,6 @@ func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, typ
 		return nil, 0, err
 	}
 	defer func() {
-		_ = file.Close()
 		_ = os.Remove(file.Name())
 	}()
 
@@ -357,7 +359,7 @@ func allocateMergeVolumeOnThirdLocation(grpcDialOption grpc.DialOption, allLocat
 		}
 		server := pb.NewServerAddressFromDataNode(loc.dataNode)
 		if err := allocateMergeVolume(grpcDialOption, server, info, replicaPlacement); err != nil {
-			fmt.Printf("[debug] failed to allocate merge volume on %s with replication %s: %v\n", server, replicaPlacement.String(), err)
+			glog.V(1).Infof("failed to allocate merge volume on %s with replication %s: %v", server, replicaPlacement.String(), err)
 			continue
 		}
 		return server, nil
