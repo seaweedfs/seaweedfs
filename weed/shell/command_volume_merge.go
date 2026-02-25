@@ -260,17 +260,26 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 		}
 	}
 
-	// Track seen (ID, timestamp) pairs to skip cross-stream duplicates
-	seen := make(map[types.NeedleId]uint64)
+	// Track seen needle IDs at the current timestamp level to skip cross-stream duplicates
+	// using a watermark approach to minimize memory usage (only stores IDs at current timestamp)
+	seenAtTimestamp := make(map[types.NeedleId]struct{})
+	var lastTimestamp uint64
 
 	for h.Len() > 0 {
 		item := heap.Pop(h).(needleMergeItem)
 		ts := item.timestamp
 		n := item.needle
 
-		// Skip cross-stream duplicates: if we've already seen this needle ID with the same timestamp,
+		// When moving to a new timestamp, clear the watermark to reduce memory usage
+		// This is safe because we only skip duplicates within the same timestamp
+		if ts != lastTimestamp {
+			seenAtTimestamp = make(map[types.NeedleId]struct{})
+			lastTimestamp = ts
+		}
+
+		// Skip cross-stream duplicates: if we've already seen this needle ID at this timestamp,
 		// skip it. Newer timestamps (overwrites of the same ID) will still be processed.
-		if prev, ok := seen[n.Id]; ok && prev == ts {
+		if _, exists := seenAtTimestamp[n.Id]; exists {
 			// Get next needle from the same stream and continue
 			if nextN, ok := streams[item.streamIndex].Next(); ok {
 				heap.Push(h, needleMergeItem{streamIndex: item.streamIndex, needle: nextN, timestamp: needleTimestamp(nextN)})
@@ -278,7 +287,7 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 			continue
 		}
 
-		seen[n.Id] = ts
+		seenAtTimestamp[n.Id] = struct{}{}
 		if err := consume(item.streamIndex, n); err != nil {
 			return err
 		}
