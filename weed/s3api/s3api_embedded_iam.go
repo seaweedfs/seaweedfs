@@ -51,7 +51,10 @@ func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *Ide
 	}
 }
 
-func (e *EmbeddedIamApi) refreshIAMConfiguration(ctx context.Context) error {
+func (e *EmbeddedIamApi) refreshIAMConfiguration() error {
+	if e.reloadConfigurationFunc != nil {
+		return e.reloadConfigurationFunc()
+	}
 	if e.iam == nil {
 		return nil
 	}
@@ -913,8 +916,9 @@ func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	if err := e.refreshIAMConfiguration(ctx); err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	// Best-effort refresh: log any failures but don't fail the API call since the mutation succeeded
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("Failed to refresh IAM configuration after attaching policy %s to user %s: %v", policyName, userName, err)
 	}
 
 	return resp, nil
@@ -957,8 +961,9 @@ func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	if err := e.refreshIAMConfiguration(ctx); err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	// Best-effort refresh: log any failures but don't fail the API call since the mutation succeeded
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("Failed to refresh IAM configuration after detaching policy %s from user %s: %v", policyName, userName, err)
 	}
 
 	return resp, nil
