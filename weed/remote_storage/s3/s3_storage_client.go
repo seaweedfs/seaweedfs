@@ -3,7 +3,6 @@ package s3
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -128,7 +127,7 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 		Key:    aws.String(loc.Path[1:]),
 	})
 	if err != nil {
-		if reqErr, ok := err.(awserr.RequestFailure); ok && reqErr.StatusCode() == http.StatusNotFound {
+		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == "NotFound" {
 			return nil, remote_storage.ErrRemoteObjectNotFound
 		}
 		return nil, fmt.Errorf("stat %s%s: %w", loc.Bucket, loc.Path, err)
