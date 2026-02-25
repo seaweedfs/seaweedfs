@@ -39,10 +39,7 @@ const (
 	accessKeyStatusInactive = iamlib.AccessKeyStatusInactive
 )
 
-var (
-	policyDocuments = map[string]*policy_engine.PolicyDocument{}
-	policyLock      = sync.RWMutex{}
-)
+var policyLock = sync.RWMutex{}
 
 func userPolicyKey(userName string, policyName string) string {
 	return fmt.Sprintf("%s:%s", userName, policyName)
@@ -201,11 +198,24 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyDocuments[userPolicyKey(userName, policyName)] = &policyDocument
 	actions, err := GetActions(&policyDocument)
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
+
+	// Persist inline policy to storage
+	policies := Policies{}
+	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policies.Policies == nil {
+		policies.Policies = make(map[string]policy_engine.PolicyDocument)
+	}
+	policies.Policies[userPolicyKey(userName, policyName)] = policyDocument
+	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
 	// Log the actions
 	glog.V(3).Infof("PutUserPolicy: actions=%v", actions)
 	for _, ident := range s3cfg.Identities {
@@ -228,14 +238,20 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 		resp.GetUserPolicyResult.UserName = userName
 		resp.GetUserPolicyResult.PolicyName = policyName
-		if policyDocument, exists := policyDocuments[userPolicyKey(userName, policyName)]; exists {
-			policyDocumentJSON, err := json.Marshal(policyDocument)
-			if err != nil {
-				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+
+		// Try to retrieve stored inline policy from persistent storage
+		policies := Policies{}
+		if err := iama.s3ApiConfig.GetPolicies(&policies); err == nil && policies.Policies != nil {
+			if policyDocument, exists := policies.Policies[userPolicyKey(userName, policyName)]; exists {
+				policyDocumentJSON, err := json.Marshal(policyDocument)
+				if err != nil {
+					return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+				}
+				resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
+				return resp, nil
 			}
-			resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
-			return resp, nil
 		}
+
 		if len(ident.Actions) == 0 {
 			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
 		}
@@ -289,10 +305,19 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeleteUserPolicyResponse, err *IamError) {
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
+
+	// Remove stored inline policy from persistent storage
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err == nil && policies.Policies != nil {
+		delete(policies.Policies, userPolicyKey(userName, policyName))
+		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+	}
+
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
 			ident.Actions = nil
-			delete(policyDocuments, userPolicyKey(userName, policyName))
 			return resp, nil
 		}
 	}
