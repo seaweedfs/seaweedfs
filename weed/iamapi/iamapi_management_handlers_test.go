@@ -82,7 +82,43 @@ func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{{Name: "alice"}},
 	}
-	policyJSON := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]},{"Effect":"Allow","Action":["s3:PutObject"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]},{"Effect":"Allow","Action":["s3:DeleteObject"],"Resource":["arn:aws:s3:::my-bucket/*","arn:aws:s3:::test/*"]}]}`
+	policyJSON := `{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:GetObject",
+				"s3:ListBucket",
+				"s3:GetBucketLocation"
+			],
+			"Resource": [
+				"arn:aws:s3:::my-bucket/*",
+				"arn:aws:s3:::test/*"
+			]
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:PutObject"
+			],
+			"Resource": [
+				"arn:aws:s3:::my-bucket/*",
+				"arn:aws:s3:::test/*"
+			]
+		},
+		{
+			"Effect": "Allow",
+			"Action": [
+				"s3:DeleteObject"
+			],
+			"Resource": [
+				"arn:aws:s3:::my-bucket/*",
+				"arn:aws:s3:::test/*"
+			]
+		}
+	]
+}`
 
 	iama := &IamApiServer{}
 	putValues := url.Values{
