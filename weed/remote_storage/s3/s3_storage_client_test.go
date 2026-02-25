@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,4 +55,13 @@ func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, conf.S3AccessKey, credValue.AccessKeyID)
 	require.Equal(t, conf.S3SecretKey, credValue.SecretAccessKey)
+}
+
+func TestS3StatFileImplementsRemoteStorageClientInterface(t *testing.T) {
+	var _ remote_storage.RemoteStorageClient = (*s3RemoteStorageClient)(nil)
+}
+
+func TestS3ErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
+	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
+	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
 }

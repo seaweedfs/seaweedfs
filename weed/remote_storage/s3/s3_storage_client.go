@@ -133,7 +133,7 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 		}
 		return nil, fmt.Errorf("stat %s%s: %w", loc.Bucket, loc.Path, err)
 	}
-	remoteEntry := &filer_pb.RemoteEntry{
+	remoteEntry = &filer_pb.RemoteEntry{
 		StorageName: s.conf.Name,
 	}
 	if resp.ContentLength != nil {

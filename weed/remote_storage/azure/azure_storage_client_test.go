@@ -10,7 +10,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAzureStorageClientBasic tests basic Azure storage client operations
@@ -376,5 +378,59 @@ func TestAzureStorageClientErrors(t *testing.T) {
 	_, err = azClient.ReadFile(loc, 0, 10)
 	if err == nil {
 		t.Log("Expected error with invalid credentials on ReadFile, but got none (might be cached)")
+	}
+}
+
+func TestAzureStatFileImplementsRemoteStorageClientInterface(t *testing.T) {
+	var _ remote_storage.RemoteStorageClient = (*azureRemoteStorageClient)(nil)
+}
+
+func TestAzureErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
+	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
+	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
+func TestAzureStatFileFieldPopulation(t *testing.T) {
+	conf := &remote_pb.RemoteConf{
+		Name: "test-azure",
+	}
+
+	tests := []struct {
+		name     string
+		entry    *filer_pb.RemoteEntry
+		wantSize int64
+		wantMtime int64
+		wantETag  string
+	}{
+		{
+			name:     "with all fields populated",
+			entry: &filer_pb.RemoteEntry{
+				StorageName: conf.Name,
+				RemoteSize:  2048,
+				RemoteMtime: 1677253800,
+				RemoteETag:  "test-etag",
+			},
+			wantSize:  2048,
+			wantMtime: 1677253800,
+			wantETag:  "test-etag",
+		},
+		{
+			name: "with nil fields",
+			entry: &filer_pb.RemoteEntry{
+				StorageName: conf.Name,
+			},
+			wantSize:  0,
+			wantMtime: 0,
+			wantETag:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, conf.Name, tt.entry.StorageName)
+			require.Equal(t, tt.wantSize, tt.entry.RemoteSize)
+			require.Equal(t, tt.wantMtime, tt.entry.RemoteMtime)
+			require.Equal(t, tt.wantETag, tt.entry.RemoteETag)
+		})
 	}
 }
