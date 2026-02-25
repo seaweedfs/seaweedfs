@@ -805,3 +805,85 @@ func TestStaticIdentityProtection(t *testing.T) {
 	iam.m.RUnlock()
 	assert.False(t, ok, "Dynamic identity should have been removed")
 }
+
+func TestParseExternalUrlToHost(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expected  string
+		expectErr bool
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "HTTPS with default port stripped",
+			input:    "https://api.example.com:443",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP with default port stripped",
+			input:    "http://api.example.com:80",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTPS with non-standard port preserved",
+			input:    "https://api.example.com:9000",
+			expected: "api.example.com:9000",
+		},
+		{
+			name:     "HTTP with non-standard port preserved",
+			input:    "http://api.example.com:8080",
+			expected: "api.example.com:8080",
+		},
+		{
+			name:     "HTTPS without port",
+			input:    "https://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP without port",
+			input:    "http://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "IPv6 with non-standard port",
+			input:    "https://[::1]:9000",
+			expected: "[::1]:9000",
+		},
+		{
+			name:     "IPv6 with default HTTPS port stripped",
+			input:    "https://[::1]:443",
+			expected: "::1",
+		},
+		{
+			name:     "IPv6 without port",
+			input:    "https://[::1]",
+			expected: "[::1]",
+		},
+		{
+			name:      "invalid URL",
+			input:     "://not-a-url",
+			expectErr: true,
+		},
+		{
+			name:      "missing host",
+			input:     "https://",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseExternalUrlToHost(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}

@@ -284,7 +284,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 5. Extract headers that were part of the signature
-	extractedSignedHeaders, errCode := extractSignedHeaders(authInfo.SignedHeaders, r)
+	extractedSignedHeaders, errCode := extractSignedHeaders(authInfo.SignedHeaders, r, iam.externalHost)
 	if errCode != s3err.ErrNone {
 		return nil, nil, "", nil, errCode
 	}
@@ -760,7 +760,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 }
 
 // Verify if extracted signed headers are not properly signed.
-func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header, s3err.ErrorCode) {
+func extractSignedHeaders(signedHeaders []string, r *http.Request, externalHost string) (http.Header, s3err.ErrorCode) {
 	reqHeaders := r.Header
 	// If no signed headers are provided, then return an error.
 	if len(signedHeaders) == 0 {
@@ -771,7 +771,7 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 		// `host` is not a case-sensitive header, unlike other headers such as `x-amz-date`.
 		if strings.ToLower(header) == "host" {
 			// Get host value.
-			hostHeaderValue := extractHostHeader(r)
+			hostHeaderValue := extractHostHeader(r, externalHost)
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
 			continue
 		}
@@ -784,13 +784,33 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 	return extractedSignedHeaders, s3err.ErrNone
 }
 
-// extractHostHeader returns the value of host header if available.
-func extractHostHeader(r *http.Request) string {
+// extractHostHeader returns the value of host header to use for signature verification.
+// When externalHost is set (from s3.externalUrl), it is returned directly.
+// Otherwise, the host is reconstructed from X-Forwarded-* headers or the request Host,
+// with default port stripping to match AWS SDK SanitizeHostForHeader behavior.
+func extractHostHeader(r *http.Request, externalHost string) string {
+	if externalHost != "" {
+		return externalHost
+	}
+
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
+
+	// Determine effective scheme for default port stripping.
+	// Precedence: X-Forwarded-Proto > r.TLS > r.URL.Scheme > "http"
+	scheme := "http"
+	if r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	}
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwardedProto != "" {
+		scheme = forwardedProto
+	}
 
 	var host, port string
-	explicitPort := false
 	if forwardedHost != "" {
 		// X-Forwarded-Host can be a comma-separated list of hosts when there are multiple proxies.
 		// Use only the first host in the list and trim spaces for robustness.
@@ -802,46 +822,57 @@ func extractHostHeader(r *http.Request) string {
 		// Baseline port from forwarded port if available
 		if forwardedPort != "" {
 			port = forwardedPort
-			explicitPort = true
 		}
 		// If the host itself contains a port, it should take precedence
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
-			explicitPort = true
 		}
 	} else {
 		host = r.Host
 		if host == "" {
 			host = r.URL.Host
 		}
-		if h, p, err := net.SplitHostPort(host); err == nil {
+		// Also apply X-Forwarded-Port in the fallback path
+		if forwardedPort != "" {
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			port = forwardedPort
+		} else if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
-			explicitPort = true
 		}
 	}
 
-	// If a port was explicitly provided, join it with the host.
-	// net.JoinHostPort will handle bracketing for IPv6.
-	if explicitPort && port != "" {
+	// Strip default ports based on scheme to match AWS SDK SanitizeHostForHeader behavior.
+	// The AWS SDK strips port 80 for HTTP and port 443 for HTTPS before signing.
+	if port != "" && !isDefaultPort(scheme, port) {
 		// Strip existing brackets before calling JoinHostPort, which automatically adds
 		// brackets for IPv6 addresses. This prevents double-bracketing like [[::1]]:8080.
-		// Using Trim handles both well-formed and malformed bracketed hosts.
 		host = strings.Trim(host, "[]")
 		return net.JoinHostPort(host, port)
 	}
 
-	// No explicit port was provided (or port was empty). According to AWS SDK behavior (aws-sdk-go-v2),
-	// when a default port is removed from an IPv6 address, the brackets should also be removed.
-	// This matches AWS S3 signature calculation requirements.
+	// Default port was stripped, or no port present.
+	// For IPv6 addresses, strip brackets to match AWS SDK behavior.
 	// Reference: https://github.com/aws/aws-sdk-go-v2/blob/main/aws/signer/internal/v4/host.go
-	// The stripPort function returns IPv6 without brackets when port is stripped.
 	if strings.Contains(host, ":") {
-		// This is an IPv6 address. Strip brackets to match AWS SDK behavior.
 		return strings.Trim(host, "[]")
 	}
 	return host
+}
+
+// isDefaultPort returns true if the given port is the default for the scheme.
+func isDefaultPort(scheme, port string) bool {
+	switch port {
+	case "80":
+		return strings.EqualFold(scheme, "http")
+	case "443":
+		return strings.EqualFold(scheme, "https")
+	default:
+		return false
+	}
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.

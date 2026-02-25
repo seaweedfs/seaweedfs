@@ -415,13 +415,13 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "HTTP with standard port",
 			host:         "backend:80",
 			proto:        "http",
-			expectedHost: "backend:80",
+			expectedHost: "backend",
 		},
 		{
 			name:         "HTTPS with standard port",
 			host:         "backend:443",
 			proto:        "https",
-			expectedHost: "backend:443",
+			expectedHost: "backend",
 		},
 		{
 			name:         "HTTP without port",
@@ -451,13 +451,13 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "IPv6 HTTP with standard port",
 			host:         "[::1]:80",
 			proto:        "http",
-			expectedHost: "[::1]:80",
+			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTPS with standard port",
 			host:         "[::1]:443",
 			proto:        "https",
-			expectedHost: "[::1]:443",
+			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTP without port",
@@ -493,7 +493,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			r.Header.Set("Host", tt.host)
 
 			// First, verify that extractHostHeader returns the expected value
-			extractedHost := extractHostHeader(r)
+			extractedHost := extractHostHeader(r, "")
 			if extractedHost != tt.expectedHost {
 				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
 			}
@@ -562,12 +562,12 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			expectedHost:   "example.com:8080",
 		},
 		{
-			name:           "empty proto with standard http port",
+			name:           "empty proto with port 80 (scheme defaults to https from URL, so 80 is NOT default)",
 			host:           "backend:8333",
 			forwardedHost:  "example.com",
 			forwardedPort:  "80",
 			forwardedProto: "",
-			expectedHost:   "example.com",
+			expectedHost:   "example.com:80",
 		},
 		// Test cases for issue #6649: X-Forwarded-Host already contains port
 		{
@@ -674,8 +674,16 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			r.Header.Set("X-Forwarded-Port", tt.forwardedPort)
 			r.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
 
-			// Sign the request with the expected host header
-			// We need to temporarily modify the Host header for signing
+			// Validate that extractHostHeader returns the expected host value.
+			// This is critical: the expectedHost must match what the AWS SDK would
+			// use for signing. Without this check, the test is self-referential
+			// (signing and verifying with the same function always agrees).
+			extractedHost := extractHostHeader(r, "")
+			if extractedHost != tt.expectedHost {
+				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
+			}
+
+			// Sign the request (note: signV4WithPath uses extractHostHeader internally)
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
@@ -922,7 +930,7 @@ func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessK
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
-	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req, "")}
 
 	// Get canonical request with custom path
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
@@ -961,7 +969,7 @@ func signV4WithPath(req *http.Request, accessKey, secretKey, urlPath string) {
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
-	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req, "")}
 	extractedSignedHeaders["x-amz-date"] = []string{dateStr}
 
 	// Get the payload hash
