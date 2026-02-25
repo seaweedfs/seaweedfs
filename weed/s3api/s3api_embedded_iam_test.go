@@ -83,6 +83,10 @@ func NewEmbeddedIamApiForTest() *EmbeddedIamApiForTest {
 			return err
 		}
 		e.mockConfig = config
+		// Also refresh the IAM state so lookup functions see the updated configuration
+		if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			return err
+		}
 		return nil
 	}
 	return e
