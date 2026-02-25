@@ -47,6 +47,10 @@ type SFTPServiceOptions struct {
 
 	// User Management
 	UserStoreFile string // Path to user store file
+
+	// JWT Configuration for Filer
+	FilerSigningKey          []byte // JWT signing key for filer uploads
+	FilerSigningExpiresAfter int    // JWT token expiration time in seconds
 }
 
 // NewSFTPService creates a new service instance.
@@ -201,6 +205,8 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 		s.options.DataCenter,
 		s.options.FilerGroup,
 		sftpUser,
+		s.options.FilerSigningKey,
+		s.options.FilerSigningExpiresAfter,
 	)
 
 	// Ensure home directory exists with proper permissions

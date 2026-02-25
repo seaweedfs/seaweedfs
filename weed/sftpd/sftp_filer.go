@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -332,6 +333,14 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+
+	// Add JWT authorization if filer signing key is configured
+	if len(fs.filerSigningKey) > 0 {
+		jwt := security.GenJwtForFilerServer(security.SigningKey(fs.filerSigningKey), fs.filerSigningExpiresAfter)
+		if jwt != "" {
+			req.Header.Set("Authorization", "Bearer "+string(jwt))
+		}
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
