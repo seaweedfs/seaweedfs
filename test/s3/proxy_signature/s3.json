@@ -1,0 +1,20 @@
+{
+  "identities": [
+    {
+      "name": "test_admin",
+      "credentials": [
+        {
+          "accessKey": "test_access_key",
+          "secretKey": "test_secret_key"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ]
+}
