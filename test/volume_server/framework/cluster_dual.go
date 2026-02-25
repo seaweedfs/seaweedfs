@@ -291,3 +291,7 @@ func (c *DualVolumeCluster) VolumeAdminURL(index int) string {
 func (c *DualVolumeCluster) VolumePublicURL(index int) string {
 	return "http://" + c.VolumePublicAddress(index)
 }
+
+func (c *DualVolumeCluster) BaseDir() string {
+	return c.baseDir
+}
