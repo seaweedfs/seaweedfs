@@ -17,11 +17,11 @@ type MultiVolumeCluster struct {
 	testingTB testing.TB
 	profile   matrix.Profile
 
-	weedBinary      string
-	baseDir         string
-	configDir       string
-	logsDir         string
-	keepLogs        bool
+	weedBinary        string
+	baseDir           string
+	configDir         string
+	logsDir           string
+	keepLogs          bool
 	volumeServerCount int
 
 	masterPort     int
