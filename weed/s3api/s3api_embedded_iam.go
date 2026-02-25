@@ -51,6 +51,19 @@ func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *Ide
 	}
 }
 
+func (e *EmbeddedIamApi) refreshIAMConfiguration() error {
+	if e.reloadConfigurationFunc != nil {
+		return e.reloadConfigurationFunc()
+	}
+	if e.iam == nil {
+		return nil
+	}
+	if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		return fmt.Errorf("failed to refresh IAM configuration: %w", err)
+	}
+	return nil
+}
+
 // Constants for service account identifiers
 const (
 	ServiceAccountIDLength  = 12 // Length of the service account ID
@@ -903,6 +916,11 @@ func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
+	// Best-effort refresh: log any failures but don't fail the API call since the mutation succeeded
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("Failed to refresh IAM configuration after attaching policy %s to user %s: %v", policyName, userName, err)
+	}
+
 	return resp, nil
 }
 
@@ -941,6 +959,11 @@ func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not attached to user %s", policyName, userName)}
 		}
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	// Best-effort refresh: log any failures but don't fail the API call since the mutation succeeded
+	if err := e.refreshIAMConfiguration(); err != nil {
+		glog.Warningf("Failed to refresh IAM configuration after detaching policy %s from user %s: %v", policyName, userName, err)
 	}
 
 	return resp, nil
