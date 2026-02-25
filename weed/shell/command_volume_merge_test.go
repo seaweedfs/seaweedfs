@@ -105,6 +105,51 @@ func TestMergeNeedleStreamsDoesNotDeduplicateAcrossWindows(t *testing.T) {
 	}
 }
 
+// TestMergeNeedleStreamsSameStreamDuplicates verifies same-stream overwrites are kept
+func TestMergeNeedleStreamsSameStreamDuplicates(t *testing.T) {
+	// Deduplication should only skip cross-stream duplicates, not same-stream overwrites
+	const (
+		baseLine  = uint64(0)
+		twoSecs   = uint64(2_000_000_000)  // 2 seconds
+		threeSecs = uint64(3_000_000_000) // 3 seconds
+	)
+
+	// Stream A has multiple writes of the same needle ID (overwrites within same stream)
+	streamA := &sliceNeedleStream{needles: []*needle.Needle{
+		{Id: 10, AppendAtNs: baseLine},              // First write at t=0
+		{Id: 10, AppendAtNs: baseLine + twoSecs},   // Second write (overwrite) at t=2s - same stream!
+		{Id: 10, AppendAtNs: baseLine + threeSecs}, // Third write (overwrite) at t=3s - same stream!
+	}}
+	streamB := &sliceNeedleStream{needles: []*needle.Needle{
+		{Id: 10, AppendAtNs: baseLine + 1_000_000_000}, // Write at t=1s - different stream, cross-stream duplicate
+	}}
+
+	type seenNeedle struct {
+		id uint64
+		ts uint64
+	}
+	var got []seenNeedle
+	err := mergeNeedleStreams([]needleStream{streamA, streamB}, func(_ int, n *needle.Needle) error {
+		got = append(got, seenNeedle{id: uint64(n.Id), ts: needleTimestamp(n)})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("mergeNeedleStreams error: %v", err)
+	}
+
+	// Expected: All writes from streamA kept (same-stream overwrites), cross-stream from B at t=1s skipped
+	// (it occurs between t=0 and t=5s window, and data from streamA takes precedence since seen first in window)
+	// Timeline: t=0: A@10, t=1s: B@10 (skip - cross-stream dup), t=2s: A@10, t=3s: A@10
+	want := []seenNeedle{
+		{id: 10, ts: baseLine},              // From streamA at t=0
+		{id: 10, ts: baseLine + twoSecs},   // From streamA at t=2s (same-stream overwrite, kept)
+		{id: 10, ts: baseLine + threeSecs}, // From streamA at t=3s (same-stream overwrite, kept)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected merge output for same-stream duplicates: got %v want %v", got, want)
+	}
+}
+
 // TestMergeNeedleStreamsWithEmptyStream verifies empty streams are handled gracefully
 func TestMergeNeedleStreamsWithEmptyStream(t *testing.T) {
 	streamA := &sliceNeedleStream{needles: []*needle.Needle{

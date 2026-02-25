@@ -272,10 +272,11 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 		}
 	}
 
-	// Track seen needle IDs within a time window to skip cross-stream duplicates.
-	// Needles with the same ID within mergeDeduplicationWindowNs are considered duplicates,
-	// accounting for clock skew and replication lag across servers.
-	seenAtTimestamp := make(map[types.NeedleId]struct{})
+	// Track seen needle IDs (by stream) within a time window to skip cross-stream duplicates only.
+	// Needles with the same ID from different streams within mergeDeduplicationWindowNs are considered
+	// cross-stream duplicates and skipped. Same-stream duplicates (overwrites) are kept.
+	// Map: needleId -> streamIndex that first processed it in this window
+	seenAtTimestamp := make(map[types.NeedleId]int)
 	var windowStartTimestamp uint64
 	windowInitialized := false
 
@@ -291,21 +292,23 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 		} else if ts > windowStartTimestamp+uint64(mergeDeduplicationWindowNs) {
 			// Moving to a new window: clear the watermark to reduce memory usage.
 			// This is safe because we only skip duplicates within the same time window.
-			seenAtTimestamp = make(map[types.NeedleId]struct{})
+			seenAtTimestamp = make(map[types.NeedleId]int)
 			windowStartTimestamp = ts
 		}
 
-		// Skip cross-stream duplicates: if we've already seen this needle ID within this time window,
-		// skip it. Newer timestamps (overwrites of the same ID) will still be processed in the next window.
-		if _, exists := seenAtTimestamp[n.Id]; exists {
-			// Get next needle from the same stream and continue
+		// Skip cross-stream duplicates: if we've already seen this needle ID from a DIFFERENT stream
+		// within this time window, skip it. Same-stream duplicates (overwrites) are kept.
+		if seenStreamIdx, exists := seenAtTimestamp[n.Id]; exists && seenStreamIdx != item.streamIndex {
+			// Cross-stream duplicate from different stream - skip this occurrence
 			if nextN, ok := streams[item.streamIndex].Next(); ok {
 				heap.Push(h, needleMergeItem{streamIndex: item.streamIndex, needle: nextN, timestamp: needleTimestamp(nextN)})
 			}
 			continue
 		}
 
-		seenAtTimestamp[n.Id] = struct{}{}
+		// Record this stream's occurrence of this needle ID in this window
+		// (overwrite if from same stream, since we process in timestamp order)
+		seenAtTimestamp[n.Id] = item.streamIndex
 		if err := consume(item.streamIndex, n); err != nil {
 			return err
 		}
