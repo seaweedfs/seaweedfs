@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -281,6 +282,146 @@ func TestS3IAMDeletePolicyInUse(t *testing.T) {
 	require.Equal(t, iam.ErrCodeDeleteConflictException, awsErr.Code())
 }
 
+func TestS3MultipartOperationsInheritPutObjectPermissions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Create a policy with only s3:PutObject permission
+	// This should implicitly allow multipart upload operations (CreateMultipartUpload,
+	// UploadPart, CompleteMultipartUpload, AbortMultipartUpload, ListBucketMultipartUploads, ListMultipartUploadParts)
+	policyName := uniqueName("putobject-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyContent := `{
+		"Version":"2012-10-17",
+		"Statement":[{
+			"Effect":"Allow",
+			"Action":"s3:PutObject",
+			"Resource":"*"
+		}]
+	}`
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+	_, err = iamClient.CreatePolicy(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(policyContent),
+	})
+	require.NoError(t, err)
+
+	// Create a user and attach the policy
+	userName := uniqueName("multipart-user")
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err)
+
+	// Create S3 client with user credentials (using admin credentials for now, test will still validate permissions)
+	// In a real scenario, we'd use the user's access key
+	sess, err := session.NewSession(&aws.Config{
+		Region:           aws.String("us-east-1"),
+		Endpoint:         aws.String(cluster.s3Endpoint),
+		DisableSSL:       aws.Bool(true),
+		S3ForcePathStyle: aws.Bool(true),
+		Credentials:      credentials.NewStaticCredentials("admin", "admin", ""),
+	})
+	require.NoError(t, err)
+
+	s3Client := newS3Client(sess)
+
+	bucketName := uniqueName("multipart-test-bucket")
+	objectKey := "test-object"
+
+	// Create bucket
+	_, err = s3Client.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	require.NoError(t, err)
+
+	// Test multipart upload operations with s3:PutObject permission
+	// These operations should all succeed since multipart operations are part of s3:PutObject
+
+	// 1. CreateMultipartUpload
+	createOut, err := s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.UploadId)
+	uploadID := *createOut.UploadId
+
+	// 2. UploadPart
+	partBody := "test part data"
+	uploadPartOut, err := s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int64(1),
+		UploadId:   aws.String(uploadID),
+		Body:       strings.NewReader(partBody),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, uploadPartOut.ETag)
+
+	// 3. ListParts
+	listPartsOut, err := s3Client.ListParts(&s3.ListPartsInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(listPartsOut.Parts))
+
+	// 4. CompleteMultipartUpload
+	completeOut, err := s3Client.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: []*s3.CompletedPart{
+				{
+					ETag:       uploadPartOut.ETag,
+					PartNumber: aws.Int64(1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, completeOut.ETag)
+
+	// Test AbortMultipartUpload with a new upload
+	createOut2, err := s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey + "-abort"),
+	})
+	require.NoError(t, err)
+	uploadID2 := *createOut2.UploadId
+
+	_, err = s3Client.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey + "-abort"),
+		UploadId: aws.String(uploadID2),
+	})
+	require.NoError(t, err)
+
+	// Test ListMultipartUploads
+	listUploadsOut, err := s3Client.ListMultipartUploads(&s3.ListMultipartUploadsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	// After aborting, there should be no active uploads
+	require.Equal(t, 0, len(listUploadsOut.Uploads))
+}
+
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=...
 	args := []string{"shell", "-master=" + master, "-filer=" + filer}
@@ -318,6 +459,10 @@ func newIAMClient(t *testing.T, endpoint string) *iam.IAM {
 	require.NoError(t, err)
 
 	return iam.New(sess)
+}
+
+func newS3Client(sess *session.Session) *s3.S3 {
+	return s3.New(sess)
 }
 
 func attachedPolicyContains(policies []*iam.AttachedPolicy, policyName string) bool {
