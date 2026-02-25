@@ -467,48 +467,6 @@ func IsObjectResource(resource string) bool {
 	return strings.Contains(resource, "/")
 }
 
-// S3Actions contains common S3 actions
-var S3Actions = map[string]string{
-	"GetObject":                        s3const.S3_ACTION_GET_OBJECT,
-	"PutObject":                        s3const.S3_ACTION_PUT_OBJECT,
-	"DeleteObject":                     s3const.S3_ACTION_DELETE_OBJECT,
-	"GetObjectVersion":                 s3const.S3_ACTION_GET_OBJECT_VERSION,
-	"DeleteObjectVersion":              s3const.S3_ACTION_DELETE_OBJECT_VERSION,
-	"ListBucket":                       s3const.S3_ACTION_LIST_BUCKET,
-	"ListBucketVersions":               s3const.S3_ACTION_LIST_BUCKET_VERSIONS,
-	"GetBucketLocation":                s3const.S3_ACTION_GET_BUCKET_LOCATION,
-	"GetBucketVersioning":              s3const.S3_ACTION_GET_BUCKET_VERSIONING,
-	"PutBucketVersioning":              s3const.S3_ACTION_PUT_BUCKET_VERSIONING,
-	"GetBucketAcl":                     s3const.S3_ACTION_GET_BUCKET_ACL,
-	"PutBucketAcl":                     s3const.S3_ACTION_PUT_BUCKET_ACL,
-	"GetObjectAcl":                     s3const.S3_ACTION_GET_OBJECT_ACL,
-	"PutObjectAcl":                     s3const.S3_ACTION_PUT_OBJECT_ACL,
-	"GetBucketPolicy":                  s3const.S3_ACTION_GET_BUCKET_POLICY,
-	"PutBucketPolicy":                  s3const.S3_ACTION_PUT_BUCKET_POLICY,
-	"DeleteBucketPolicy":               s3const.S3_ACTION_DELETE_BUCKET_POLICY,
-	"GetBucketCors":                    s3const.S3_ACTION_GET_BUCKET_CORS,
-	"PutBucketCors":                    s3const.S3_ACTION_PUT_BUCKET_CORS,
-	"DeleteBucketCors":                 s3const.S3_ACTION_DELETE_BUCKET_CORS,
-	"GetBucketNotification":            s3const.S3_ACTION_GET_BUCKET_NOTIFICATION,
-	"PutBucketNotification":            s3const.S3_ACTION_PUT_BUCKET_NOTIFICATION,
-	"GetBucketTagging":                 s3const.S3_ACTION_GET_BUCKET_TAGGING,
-	"PutBucketTagging":                 s3const.S3_ACTION_PUT_BUCKET_TAGGING,
-	"DeleteBucketTagging":              s3const.S3_ACTION_DELETE_BUCKET_TAGGING,
-	"GetObjectTagging":                 s3const.S3_ACTION_GET_OBJECT_TAGGING,
-	"PutObjectTagging":                 s3const.S3_ACTION_PUT_OBJECT_TAGGING,
-	"DeleteObjectTagging":              s3const.S3_ACTION_DELETE_OBJECT_TAGGING,
-	"ListMultipartUploads":             s3const.S3_ACTION_LIST_MULTIPART_UPLOADS,
-	"AbortMultipartUpload":             s3const.S3_ACTION_ABORT_MULTIPART,
-	"ListParts":                        s3const.S3_ACTION_LIST_PARTS,
-	"GetObjectRetention":               s3const.S3_ACTION_GET_OBJECT_RETENTION,
-	"PutObjectRetention":               s3const.S3_ACTION_PUT_OBJECT_RETENTION,
-	"GetObjectLegalHold":               s3const.S3_ACTION_GET_OBJECT_LEGAL_HOLD,
-	"PutObjectLegalHold":               s3const.S3_ACTION_PUT_OBJECT_LEGAL_HOLD,
-	"GetBucketObjectLockConfiguration": s3const.S3_ACTION_GET_BUCKET_OBJECT_LOCK,
-	"PutBucketObjectLockConfiguration": s3const.S3_ACTION_PUT_BUCKET_OBJECT_LOCK,
-	"BypassGovernanceRetention":        s3const.S3_ACTION_BYPASS_GOVERNANCE,
-}
-
 // MatchesAction checks if an action matches any of the compiled action matchers.
 // It also implicitly grants multipart upload actions if s3:PutObject is allowed,
 // since multipart upload is an implementation detail of putting objects.
