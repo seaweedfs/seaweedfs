@@ -38,6 +38,7 @@ const (
 	s3CompleteMultipartUpload = "s3:CompleteMultipartUpload"
 	s3AbortMultipartUpload    = "s3:AbortMultipartUpload"
 	s3ListParts               = "s3:ListParts"
+	s3ListMultipartUploads    = "s3:ListMultipartUploads"
 )
 
 var (
@@ -52,6 +53,7 @@ var (
 		s3CompleteMultipartUpload: true,
 		s3AbortMultipartUpload:    true,
 		s3ListParts:               true,
+		s3ListMultipartUploads:    true,
 	}
 )
 
