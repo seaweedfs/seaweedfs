@@ -1,11 +1,41 @@
 package iamapi
 
 import (
+	"encoding/json"
+	"net/url"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/stretchr/testify/assert"
 )
+
+// mockIamS3ApiConfig is a mock for testing
+type mockIamS3ApiConfig struct {
+	policies Policies
+}
+
+func (m *mockIamS3ApiConfig) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+	return nil
+}
+
+func (m *mockIamS3ApiConfig) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
+	return nil
+}
+
+func (m *mockIamS3ApiConfig) GetPolicies(policies *Policies) (err error) {
+	*policies = m.policies
+	if m.policies.Policies == nil {
+		return filer_pb.ErrNotFound
+	}
+	return nil
+}
+
+func (m *mockIamS3ApiConfig) PutPolicies(policies *Policies) (err error) {
+	m.policies = *policies
+	return nil
+}
 
 func TestGetActionsUserPath(t *testing.T) {
 
@@ -71,4 +101,163 @@ func TestGetActionsInvalidAction(t *testing.T) {
 	_, err := GetActions(&policyDocument)
 	assert.NotNil(t, err)
 	assert.Equal(t, "not a valid action: 'InvalidAction'", err.Error())
+}
+
+func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	policyJSON := `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-bucket/*",
+        "arn:aws:s3:::test/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-bucket/*",
+        "arn:aws:s3:::test/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::my-bucket/*",
+        "arn:aws:s3:::test/*"
+      ]
+    }
+  ]
+}`
+
+	iama := &IamApiServer{
+		s3ApiConfig: &mockIamS3ApiConfig{},
+	}
+	putValues := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"inline-policy"},
+		"PolicyDocument": []string{policyJSON},
+	}
+	_, iamErr := iama.PutUserPolicy(s3cfg, putValues)
+	assert.Nil(t, iamErr)
+
+	getValues := url.Values{
+		"UserName":   []string{"alice"},
+		"PolicyName": []string{"inline-policy"},
+	}
+	resp, iamErr := iama.GetUserPolicy(s3cfg, getValues)
+	assert.Nil(t, iamErr)
+
+	// Verify that key policy properties are preserved (not merged or lost)
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	// Assert we have exactly 3 statements (not merged into 1 or lost)
+	assert.Equal(t, 3, len(got.Statement))
+
+	// Assert that DeleteObject statement is present (was lost in the bug)
+	deleteObjectFound := false
+	for _, stmt := range got.Statement {
+		if len(stmt.Action.Strings()) > 0 {
+			for _, action := range stmt.Action.Strings() {
+				if action == "s3:DeleteObject" {
+					deleteObjectFound = true
+					break
+				}
+			}
+		}
+	}
+	assert.True(t, deleteObjectFound, "s3:DeleteObject action was lost")
+}
+
+func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+
+	policy1JSON := `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::bucket-a/*"]
+    }
+  ]
+}`
+
+	policy2JSON := `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": ["arn:aws:s3:::bucket-b/*"]
+    }
+  ]
+}`
+
+	iama := &IamApiServer{
+		s3ApiConfig: &mockIamS3ApiConfig{},
+	}
+
+	// Put first inline policy
+	putValues1 := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"policy-read"},
+		"PolicyDocument": []string{policy1JSON},
+	}
+	_, iamErr := iama.PutUserPolicy(s3cfg, putValues1)
+	assert.Nil(t, iamErr)
+
+	// Check that alice's actions include read operations
+	aliceIdent := s3cfg.Identities[0]
+	assert.Greater(t, len(aliceIdent.Actions), 0, "Actions should not be empty after first policy")
+
+	// Put second inline policy
+	putValues2 := url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"policy-write"},
+		"PolicyDocument": []string{policy2JSON},
+	}
+	_, iamErr = iama.PutUserPolicy(s3cfg, putValues2)
+	assert.Nil(t, iamErr)
+
+	// Check that alice now has aggregated actions from both policies
+	// Should include Read and List (from policy1) and Write (from policy2)
+	// with resource paths indicating which policy they came from
+	
+	// Build a set of actual action strings for exact membership checks
+	actionSet := make(map[string]bool)
+	for _, action := range aliceIdent.Actions {
+		actionSet[action] = true
+	}
+	
+	// Expected actions from both policies:
+	// - policy1: GetObject, ListBucket on bucket-a/*  → "Read:bucket-a/*", "List:bucket-a/*"
+	// - policy2: PutObject on bucket-b/*  → "Write:bucket-b/*"
+	expectedActions := []string{
+		"Read:bucket-a/*",
+		"List:bucket-a/*",
+		"Write:bucket-b/*",
+	}
+	
+	for _, expectedAction := range expectedActions {
+		assert.True(t, actionSet[expectedAction], "Expected action '%s' not found in aggregated actions. Got: %v", expectedAction, aliceIdent.Actions)
+	}
 }
