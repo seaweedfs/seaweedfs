@@ -519,21 +519,20 @@ var S3Actions = map[string]string{
 // It also implicitly grants multipart upload actions if s3:PutObject is allowed,
 // since multipart upload is an implementation detail of putting objects.
 func (cs *CompiledStatement) MatchesAction(action string) bool {
+	var hasPutObjectPermission bool
 	for _, matcher := range cs.ActionMatchers {
 		if matcher.Match(action) {
 			return true
+		}
+		if !hasPutObjectPermission && matcher.Match("s3:PutObject") {
+			hasPutObjectPermission = true
 		}
 	}
 
 	// Multipart upload operations are part of s3:PutObject permission
 	// If s3:PutObject is allowed, implicitly allow multipart operations
-	if multipartActionSet[action] {
-		// Check if s3:PutObject is explicitly allowed
-		for _, matcher := range cs.ActionMatchers {
-			if matcher.Match("s3:PutObject") {
-				return true
-			}
-		}
+	if hasPutObjectPermission && multipartActionSet[action] {
+		return true
 	}
 
 	return false
