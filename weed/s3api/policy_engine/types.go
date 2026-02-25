@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // Policy Engine Types
@@ -30,15 +31,6 @@ import (
 const (
 	// PolicyVersion2012_10_17 is the standard AWS policy version
 	PolicyVersion2012_10_17 = "2012-10-17"
-
-	// S3 multipart upload actions that are implicitly granted with s3:PutObject
-	// Multipart upload is an implementation detail of putting objects, not a separate permission
-	s3CreateMultipartUpload   = "s3:CreateMultipartUpload"
-	s3UploadPart              = "s3:UploadPart"
-	s3CompleteMultipartUpload = "s3:CompleteMultipartUpload"
-	s3AbortMultipartUpload    = "s3:AbortMultipartUpload"
-	s3ListParts               = "s3:ListParts"
-	s3ListMultipartUploads    = "s3:ListMultipartUploads"
 )
 
 var (
@@ -48,12 +40,12 @@ var (
 	// multipartActionSet contains all S3 multipart upload actions
 	// These are treated as equivalent to s3:PutObject for authorization purposes
 	multipartActionSet = map[string]bool{
-		s3CreateMultipartUpload:   true,
-		s3UploadPart:              true,
-		s3CompleteMultipartUpload: true,
-		s3AbortMultipartUpload:    true,
-		s3ListParts:               true,
-		s3ListMultipartUploads:    true,
+		s3_constants.ACTION_CREATE_MULTIPART_UPLOAD: true,
+		s3_constants.ACTION_UPLOAD_PART:             true,
+		s3_constants.ACTION_COMPLETE_MULTIPART:      true,
+		s3_constants.ACTION_ABORT_MULTIPART:         true,
+		s3_constants.ACTION_LIST_PARTS:              true,
+		s3_constants.ACTION_LIST_MULTIPART_UPLOADS:  true,
 	}
 )
 
