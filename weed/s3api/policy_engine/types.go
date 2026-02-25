@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // Policy Engine Types
@@ -40,12 +40,12 @@ var (
 	// multipartActionSet contains all S3 multipart upload actions
 	// These are treated as equivalent to s3:PutObject for authorization purposes
 	multipartActionSet = map[string]bool{
-		s3_constants.ACTION_CREATE_MULTIPART_UPLOAD: true,
-		s3_constants.ACTION_UPLOAD_PART:             true,
-		s3_constants.ACTION_COMPLETE_MULTIPART:      true,
-		s3_constants.ACTION_ABORT_MULTIPART:         true,
-		s3_constants.ACTION_LIST_PARTS:              true,
-		s3_constants.ACTION_LIST_MULTIPART_UPLOADS:  true,
+		s3const.S3_ACTION_CREATE_MULTIPART:       true,
+		s3const.S3_ACTION_UPLOAD_PART:            true,
+		s3const.S3_ACTION_COMPLETE_MULTIPART:     true,
+		s3const.S3_ACTION_ABORT_MULTIPART:        true,
+		s3const.S3_ACTION_LIST_PARTS:             true,
+		s3const.S3_ACTION_LIST_MULTIPART_UPLOADS: true,
 	}
 )
 

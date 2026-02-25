@@ -32,7 +32,7 @@ const (
 	S3_ACTION_COMPLETE_MULTIPART     = "s3:CompleteMultipartUpload"
 	S3_ACTION_ABORT_MULTIPART        = "s3:AbortMultipartUpload"
 	S3_ACTION_LIST_PARTS             = "s3:ListMultipartUploadParts"
-	S3_ACTION_LIST_MULTIPART_UPLOADS = "s3:ListMultipartUploads"
+	S3_ACTION_LIST_MULTIPART_UPLOADS = "s3:ListBucketMultipartUploads"
 
 	// Bucket operations
 	S3_ACTION_CREATE_BUCKET        = "s3:CreateBucket"
