@@ -27,6 +27,12 @@ import (
 // Can be made configurable in the future if needed for different deployment scenarios.
 const mergeIdleTimeoutSeconds = 5
 
+// mergeDeduplicationWindowNs defines the time window for deduplication across replicas.
+// Since the same needle ID can have different timestamps on different servers due to
+// clock skew and replication lag, we deduplicate needles with the same ID within this window.
+// Set to 5 seconds in nanoseconds to handle typical server clock differences.
+const mergeDeduplicationWindowNs = 5 * time.Second
+
 func init() {
 	Commands = append(Commands, &commandVolumeMerge{})
 }
@@ -262,25 +268,31 @@ func mergeNeedleStreams(streams []needleStream, consume func(int, *needle.Needle
 		}
 	}
 
-	// Track seen needle IDs at the current timestamp level to skip cross-stream duplicates
-	// using a watermark approach to minimize memory usage (only stores IDs at current timestamp)
+	// Track seen needle IDs within a time window to skip cross-stream duplicates.
+	// Needles with the same ID within mergeDeduplicationWindowNs are considered duplicates,
+	// accounting for clock skew and replication lag across servers.
 	seenAtTimestamp := make(map[types.NeedleId]struct{})
-	var lastTimestamp uint64
+	var windowStartTimestamp uint64
+	windowInitialized := false
 
 	for h.Len() > 0 {
 		item := heap.Pop(h).(needleMergeItem)
 		ts := item.timestamp
 		n := item.needle
 
-		// When moving to a new timestamp, clear the watermark to reduce memory usage
-		// This is safe because we only skip duplicates within the same timestamp
-		if ts != lastTimestamp {
+		// Initialize window on first timestamp, or move to new window when outside current window
+		if !windowInitialized {
+			windowStartTimestamp = ts
+			windowInitialized = true
+		} else if ts > windowStartTimestamp+uint64(mergeDeduplicationWindowNs) {
+			// Moving to a new window: clear the watermark to reduce memory usage.
+			// This is safe because we only skip duplicates within the same time window.
 			seenAtTimestamp = make(map[types.NeedleId]struct{})
-			lastTimestamp = ts
+			windowStartTimestamp = ts
 		}
 
-		// Skip cross-stream duplicates: if we've already seen this needle ID at this timestamp,
-		// skip it. Newer timestamps (overwrites of the same ID) will still be processed.
+		// Skip cross-stream duplicates: if we've already seen this needle ID within this time window,
+		// skip it. Newer timestamps (overwrites of the same ID) will still be processed in the next window.
 		if _, exists := seenAtTimestamp[n.Id]; exists {
 			// Get next needle from the same stream and continue
 			if nextN, ok := streams[item.streamIndex].Next(); ok {

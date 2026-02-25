@@ -54,13 +54,22 @@ func TestMergeNeedleStreamsOrdersByTimestamp(t *testing.T) {
 }
 
 func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
+	// Timestamps are in nanoseconds. The deduplication window is 5 seconds = 5_000_000_000 ns.
+	// Use timestamps far enough apart (> 5 sec) so that same ID with timestamps in different
+	// windows are not deduplicated - they represent separate updates of the same file.
+	const (
+		baseLine     = uint64(0)
+		fiveSecs     = uint64(5_000_000_000)   // 5 seconds
+		thirtySecs   = uint64(30_000_000_000)  // 30 seconds (far outside window)
+	)
+
 	streamA := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 10, AppendAtNs: 10_000_000_100},
-		{Id: 10, AppendAtNs: 10_000_000_300},
+		{Id: 10, AppendAtNs: baseLine},              // First write of ID 10 at t=0
+		{Id: 10, AppendAtNs: baseLine + thirtySecs}, // Second write of ID 10 at t=30s (well outside window)
 	}}
 	streamB := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 10, AppendAtNs: 10_000_000_100},
-		{Id: 11, AppendAtNs: 10_000_000_200},
+		{Id: 10, AppendAtNs: baseLine + 3*fiveSecs}, // Duplicate of first ID 10, within window [0, 5s]
+		{Id: 11, AppendAtNs: baseLine + 4*fiveSecs}, // Different ID at t=20s
 	}}
 
 	type seenNeedle struct {
@@ -76,10 +85,20 @@ func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
 		t.Fatalf("mergeNeedleStreams error: %v", err)
 	}
 
+	// Expected merge by timestamp:
+	// Global order by timestamp: 0, 15s, 20s, 30s
+	// Window 1 [0, 5s]: ID 10@0 (keep), ID 10@15s (NO! 15 > 5, not in this window)
+	// Actually, 3*5s = 15s, so:
+	// Global order by timestamp: 0, 15s, 20s, 30s
+	// Window 1 [0, 5s]: ID 10@0 (keep)
+	// Window 2 [15s, 20s]: ID 10@15s (keep - it's a duplicate of ID 10@0 within window? No! 15 > 5)
+	// Window 2 [15s, 20s]: ID 10@15s (keep), ID 11@20s (keep)
+	// Window 3 [30s, 35s]: ID 10@30s (keep - it's a different write, outside [15,20] window)
 	want := []seenNeedle{
-		{id: 10, ts: 10_000_000_100},
-		{id: 11, ts: 10_000_000_200},
-		{id: 10, ts: 10_000_000_300},
+		{id: 10, ts: baseLine},                      // First ID 10 at t=0
+		{id: 10, ts: baseLine + 3*fiveSecs},         // Second ID 10 at t=15s (different write, outside window)
+		{id: 11, ts: baseLine + 4*fiveSecs},         // ID 11 at t=20s
+		{id: 10, ts: baseLine + thirtySecs},         // Third ID 10 at t=30s (another different write)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected merge output: got %v want %v", got, want)
@@ -120,13 +139,13 @@ func TestMergeNeedleStreamsComplexDuplication(t *testing.T) {
 		{Id: 3, AppendAtNs: 300},
 	}}
 	streamB := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 1, AppendAtNs: 100},  // Duplicate of streamA
+		{Id: 1, AppendAtNs: 100}, // Duplicate of streamA
 		{Id: 4, AppendAtNs: 150},
-		{Id: 2, AppendAtNs: 200},  // Duplicate of streamA at same timestamp
+		{Id: 2, AppendAtNs: 200}, // Duplicate of streamA at same timestamp
 	}}
 	streamC := &sliceNeedleStream{needles: []*needle.Needle{
-		{Id: 1, AppendAtNs: 100},  // Duplicate of streamA and streamB
-		{Id: 3, AppendAtNs: 300},  // Duplicate of streamA
+		{Id: 1, AppendAtNs: 100}, // Duplicate of streamA and streamB
+		{Id: 3, AppendAtNs: 300}, // Duplicate of streamA
 	}}
 
 	type resultNeedle struct {
@@ -155,6 +174,69 @@ func TestMergeNeedleStreamsComplexDuplication(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected complex merge: got %v want %v", got, want)
+	}
+}
+
+// TestMergeNeedleStreamsTimeWindowDeduplication tests that needles with same ID
+// within a time window (5 seconds) across different servers are deduplicated.
+// This accounts for clock skew and replication lag between servers.
+func TestMergeNeedleStreamsTimeWindowDeduplication(t *testing.T) {
+	const (
+		baseTime  = uint64(1_000_000_000) // 1 second in nanoseconds
+		windowSec = 5
+		oneSec    = uint64(1_000_000_000) // 1 second in nanoseconds
+	)
+
+	// Needle ID 1 appears on three servers with timestamps within the 5-second window
+	// Server A: timestamp 1_000_000_000 (t=0)
+	// Server B: timestamp 1_000_000_000 + 2 sec (clock skew: +2 sec)
+	// Server C: timestamp 1_000_000_000 + 4 sec (clock skew: +4 sec)
+	// All within 5-second window, so only the first should be kept.
+	streamA := &sliceNeedleStream{needles: []*needle.Needle{
+		{Id: 1, AppendAtNs: baseTime},             // t=0
+		{Id: 2, AppendAtNs: baseTime + 10*oneSec}, // t=10 (outside window)
+	}}
+	streamB := &sliceNeedleStream{needles: []*needle.Needle{
+		{Id: 1, AppendAtNs: baseTime + 2*oneSec}, // t=2 (within 5-sec window of ID 1 from A)
+		{Id: 3, AppendAtNs: baseTime + 3*oneSec}, // t=3 (within 5-sec window but different ID)
+	}}
+	streamC := &sliceNeedleStream{needles: []*needle.Needle{
+		{Id: 1, AppendAtNs: baseTime + 4*oneSec}, // t=4 (within 5-sec window of ID 1 from A)
+		{Id: 2, AppendAtNs: baseTime + 6*oneSec}, // t=6 (outside 5-sec window of ID 2 from A)
+	}}
+
+	type resultNeedle struct {
+		id uint64
+		ts uint64
+	}
+	var got []resultNeedle
+	err := mergeNeedleStreams([]needleStream{streamA, streamB, streamC}, func(_ int, n *needle.Needle) error {
+		got = append(got, resultNeedle{id: uint64(n.Id), ts: needleTimestamp(n)})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("mergeNeedleStreams error: %v", err)
+	}
+
+	// Expected merge result:
+	// t=0-5 (window 1): ID 1 appears in A, B, C at timestamps 0, 2, 4 - keep only first from A
+	//                   ID 3 appears in B at timestamp 3 - keep
+	// t=5+ (window 2): ID 2 appears in A at timestamp 10, and in C at timestamp 6
+	//                  A (timestamp 10) is next in global order, then C (timestamp 6) but outside window
+	//                  Actually: ordering is by timestamp globally: 0, 2, 3, 4, 6, 10
+	//                  Window 1 (0-5): ID 1 (t=0), ID 1 dup (t=2, skip), ID 3 (t=3), ID 1 dup (t=4, skip)
+	//                  Window 2 (6+): ID 2 (t=6), ID 2 (t=10, skip because same window ends at 6+5=11)
+	//  But actually the window moves: when we see t=6, window becomes [6, 11]
+	// Order by global timestamp: 0, 2, 3, 4, 6, 10
+	// Window 1 [0, 5]: see IDs 1, 1, 3, 1 -> keep 1 (first), 3
+	// Window 2 [6, 11]: see IDs 2, 2 -> keep first 2, skip second duplicate
+	want := []resultNeedle{
+		{id: 1, ts: baseTime},              // ID 1 at t=0
+		{id: 3, ts: baseTime + 3*oneSec},   // ID 3 at t=3 (different ID, kept)
+		{id: 2, ts: baseTime + 6*oneSec},   // ID 2 at t=6 (new window)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected time window deduplication: got %v want %v", got, want)
 	}
 }
 
@@ -234,6 +316,7 @@ func TestMergeNeedleStreamsLastModifiedFallback(t *testing.T) {
 		t.Fatalf("unexpected LastModified fallback merge: got %v want %v", got, want)
 	}
 }
+
 /*
 INTEGRATION TEST DOCUMENTATION:
 
@@ -272,7 +355,7 @@ HOW TO RUN INTEGRATION TESTS:
 To run integration tests, you need to set up a test SeaweedFS cluster:
 
     1. Start a master server: weed master -port=9333
-    2. Start multiple volume servers: 
+    2. Start multiple volume servers:
        - weed volume -port=8080 -master=localhost:9333
        - weed volume -port=8081 -master=localhost:9333
        - weed volume -port=8082 -master=localhost:9333
@@ -286,15 +369,15 @@ The tests below provide a blueprint for what would be tested in a live cluster e
 func TestMergeWorkflowValidation(t *testing.T) {
 	// This test documents the expected merge workflow without requiring live servers
 	expectedWorkflow := map[string]string{
-		"1_collect_replicas":       "Query master to find all replicas of the target volume",
-		"2_validate_replicas":      "Verify at least 2 replicas exist and are healthy",
-		"3_allocate_temporary":     "Create temporary merge volume on third location (not a current replica)",
-		"4_mark_readonly":          "Mark all original replicas as readonly",
-		"5_tail_and_merge":         "Tail all replica needles and merge by timestamp, deduplicating",
-		"6_copy_merged":            "Copy merged volume back to each original replica location",
-		"7_delete_temporary":       "Delete the temporary merge volume from the third location",
-		"8_restore_writable":       "Restore writable state for replicas that were originally writable",
-		"9_verify_completion":      "Log completion status to user",
+		"1_collect_replicas":   "Query master to find all replicas of the target volume",
+		"2_validate_replicas":  "Verify at least 2 replicas exist and are healthy",
+		"3_allocate_temporary": "Create temporary merge volume on third location (not a current replica)",
+		"4_mark_readonly":      "Mark all original replicas as readonly",
+		"5_tail_and_merge":     "Tail all replica needles and merge by timestamp, deduplicating",
+		"6_copy_merged":        "Copy merged volume back to each original replica location",
+		"7_delete_temporary":   "Delete the temporary merge volume from the third location",
+		"8_restore_writable":   "Restore writable state for replicas that were originally writable",
+		"9_verify_completion":  "Log completion status to user",
 	}
 
 	// Verify all expected stages are implemented
@@ -311,16 +394,16 @@ func TestMergeWorkflowValidation(t *testing.T) {
 // TestMergeEdgeCaseHandling validates that the merge handles known edge cases
 func TestMergeEdgeCaseHandling(t *testing.T) {
 	edgeCases := map[string]bool{
-		"network_timeout_during_tail":         true,  // Handled by idle timeout
-		"duplicate_needles_same_stream":       true,  // Handled by allow overwrites within stream
-		"duplicate_needles_across_streams":    true,  // Handled by watermark deduplication
-		"empty_replica_stream":                true,  // Handled by heap empty check
-		"large_volume_memory_efficiency":      true,  // Handled by watermark (not full map)
-		"target_server_allocation_failure":    true,  // Retries other locations
-		"merge_volume_writeend_failure":       true,  // Cleanup deferred
-		"replica_already_readonly":            true,  // Detected and not re-marked
-		"different_needle_metadata":           true,  // Version compatibility maintained
-		"concurrent_writes_prevented":         true,  // Prevented by marking replicas readonly
+		"network_timeout_during_tail":      true, // Handled by idle timeout
+		"duplicate_needles_same_stream":    true, // Handled by allow overwrites within stream
+		"duplicate_needles_across_streams": true, // Handled by watermark deduplication
+		"empty_replica_stream":             true, // Handled by heap empty check
+		"large_volume_memory_efficiency":   true, // Handled by watermark (not full map)
+		"target_server_allocation_failure": true, // Retries other locations
+		"merge_volume_writeend_failure":    true, // Cleanup deferred
+		"replica_already_readonly":         true, // Detected and not re-marked
+		"different_needle_metadata":        true, // Version compatibility maintained
+		"concurrent_writes_prevented":      true, // Prevented by marking replicas readonly
 	}
 
 	passedCount := 0
