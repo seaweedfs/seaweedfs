@@ -51,6 +51,16 @@ func NewEmbeddedIamApi(credentialManager *credential.CredentialManager, iam *Ide
 	}
 }
 
+func (e *EmbeddedIamApi) refreshIAMConfiguration(ctx context.Context) error {
+	if e.iam == nil {
+		return nil
+	}
+	if err := e.iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+		return fmt.Errorf("failed to refresh IAM configuration: %w", err)
+	}
+	return nil
+}
+
 // Constants for service account identifiers
 const (
 	ServiceAccountIDLength  = 12 // Length of the service account ID
@@ -903,6 +913,10 @@ func (e *EmbeddedIamApi) AttachUserPolicy(ctx context.Context, values url.Values
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
+	if err := e.refreshIAMConfiguration(ctx); err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
 	return resp, nil
 }
 
@@ -940,6 +954,10 @@ func (e *EmbeddedIamApi) DetachUserPolicy(ctx context.Context, values url.Values
 		if errors.Is(err, credential.ErrPolicyNotAttached) {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not attached to user %s", policyName, userName)}
 		}
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	if err := e.refreshIAMConfiguration(ctx); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
