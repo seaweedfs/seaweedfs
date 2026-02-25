@@ -389,4 +389,3 @@ func TestAzureErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
 	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
 	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
 }
-
