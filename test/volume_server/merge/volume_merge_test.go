@@ -119,71 +119,45 @@ func TestVolumeMergeReadonly(t *testing.T) {
 		}
 	}
 
-	// Test 1: Try merge while writable (should fail)
+	// Test 1: Merge while writable (merge command will mark volumes readonly as needed)
 	output, err := runWeedShell(t, weedBinary, cluster.MasterAddress(), fmt.Sprintf("volume.merge -volumeId %d", volumeID))
-	if err == nil {
-		t.Fatalf("expected merge to fail while writable, got success: output=%s", output)
-	}
-	t.Logf("Correctly rejected merge while writable: %v", err)
-
-	// Test 2: Mark volumes as readonly, then try merge
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Mark volumes as readonly
-	_, err = volumeClient0.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-		VolumeId: volumeID,
-		Persist:  false,
-	})
 	if err != nil {
-		t.Fatalf("failed to mark volume readonly on server 0: %v", err)
-	}
-
-	_, err = volumeClient1.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{
-		VolumeId: volumeID,
-		Persist:  false,
-	})
-	if err != nil {
-		t.Fatalf("failed to mark volume readonly on server 1: %v", err)
-	}
-
-	// Get volume status to verify readonly state
-	statusResp, err := volumeClient0.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
-		VolumeId: volumeID,
-	})
-	if err != nil {
-		t.Fatalf("failed to get volume status: %v", err)
-	}
-
-	if !statusResp.GetIsReadOnly() {
-		t.Fatalf("expected volume to be marked readonly, but it's not")
-	}
-
-	// Also verify server 1's readonly status
-	statusResp1, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
-		VolumeId: volumeID,
-	})
-	if err != nil {
-		t.Fatalf("failed to get volume status from server 1: %v", err)
-	}
-
-	if !statusResp1.GetIsReadOnly() {
-		t.Fatalf("expected volume %d to be readonly on server 1", volumeID)
-	}
-
-	// Now try merge with readonly volumes
-	output, err = runWeedShell(t, weedBinary, cluster.MasterAddress(), fmt.Sprintf("volume.merge -volumeId %d", volumeID))
-	t.Logf("merge after readonly - output: %s, error: %v", output, err)
-
-	if err != nil {
-		t.Fatalf("volume.merge command failed after marking readonly: %v\noutput: %s", err, output)
+		t.Logf("merge on writable volumes failed: %v\noutput: %s", err, output)
+		t.Fatalf("volume.merge should work on writable volumes (marks them readonly internally)")
 	}
 
 	if !strings.Contains(output, fmt.Sprintf("merged volume %d", volumeID)) {
 		t.Fatalf("expected success message in output, got: %s", output)
 	}
 
-	t.Logf("Successfully tested readonly marking and volume.merge command for volume %d", volumeID)
+	// Verify volumes were marked readonly during merge and restored after
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Check that volumes are writable again after merge (were restored)
+	status0, err := volumeClient0.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("failed to get status after merge: %v", err)
+	}
+
+	status1, err := volumeClient1.VolumeStatus(ctx, &volume_server_pb.VolumeStatusRequest{
+		VolumeId: volumeID,
+	})
+	if err != nil {
+		t.Fatalf("failed to get status from server 1 after merge: %v", err)
+	}
+
+	if status0.GetIsReadOnly() {
+		t.Fatalf("expected volume to be writable again after merge on server 0")
+	}
+
+	if status1.GetIsReadOnly() {
+		t.Fatalf("expected volume to be writable again after merge on server 1")
+	}
+
+	t.Logf("Successfully tested merge on writable volumes and writable restoration")
 }
 
 // TestVolumeMergeRestore verifies that merge restores writable state for originally-writable replicas
