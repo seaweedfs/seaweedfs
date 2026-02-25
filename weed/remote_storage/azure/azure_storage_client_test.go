@@ -10,7 +10,9 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAzureStorageClientBasic tests basic Azure storage client operations
@@ -378,3 +380,13 @@ func TestAzureStorageClientErrors(t *testing.T) {
 		t.Log("Expected error with invalid credentials on ReadFile, but got none (might be cached)")
 	}
 }
+
+func TestAzureRemoteStorageClientImplementsInterface(t *testing.T) {
+	var _ remote_storage.RemoteStorageClient = (*azureRemoteStorageClient)(nil)
+}
+
+func TestAzureErrRemoteObjectNotFoundIsAccessible(t *testing.T) {
+	require.Error(t, remote_storage.ErrRemoteObjectNotFound)
+	require.Equal(t, "remote object not found", remote_storage.ErrRemoteObjectNotFound.Error())
+}
+
