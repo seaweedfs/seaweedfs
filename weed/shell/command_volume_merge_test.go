@@ -58,9 +58,9 @@ func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
 	// Use timestamps far enough apart (> 5 sec) so that same ID with timestamps in different
 	// windows are not deduplicated - they represent separate updates of the same file.
 	const (
-		baseLine     = uint64(0)
-		fiveSecs     = uint64(5_000_000_000)   // 5 seconds
-		thirtySecs   = uint64(30_000_000_000)  // 30 seconds (far outside window)
+		baseLine   = uint64(0)
+		fiveSecs   = uint64(5_000_000_000)  // 5 seconds
+		thirtySecs = uint64(30_000_000_000) // 30 seconds (far outside window)
 	)
 
 	streamA := &sliceNeedleStream{needles: []*needle.Needle{
@@ -95,10 +95,10 @@ func TestMergeNeedleStreamsSkipsCrossStreamDuplicates(t *testing.T) {
 	// Window 2 [15s, 20s]: ID 10@15s (keep), ID 11@20s (keep)
 	// Window 3 [30s, 35s]: ID 10@30s (keep - it's a different write, outside [15,20] window)
 	want := []seenNeedle{
-		{id: 10, ts: baseLine},                      // First ID 10 at t=0
-		{id: 10, ts: baseLine + 3*fiveSecs},         // Second ID 10 at t=15s (different write, outside window)
-		{id: 11, ts: baseLine + 4*fiveSecs},         // ID 11 at t=20s
-		{id: 10, ts: baseLine + thirtySecs},         // Third ID 10 at t=30s (another different write)
+		{id: 10, ts: baseLine},              // First ID 10 at t=0
+		{id: 10, ts: baseLine + 3*fiveSecs}, // Second ID 10 at t=15s (different write, outside window)
+		{id: 11, ts: baseLine + 4*fiveSecs}, // ID 11 at t=20s
+		{id: 10, ts: baseLine + thirtySecs}, // Third ID 10 at t=30s (another different write)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected merge output: got %v want %v", got, want)
@@ -231,9 +231,9 @@ func TestMergeNeedleStreamsTimeWindowDeduplication(t *testing.T) {
 	// Window 1 [0, 5]: see IDs 1, 1, 3, 1 -> keep 1 (first), 3
 	// Window 2 [6, 11]: see IDs 2, 2 -> keep first 2, skip second duplicate
 	want := []resultNeedle{
-		{id: 1, ts: baseTime},              // ID 1 at t=0
-		{id: 3, ts: baseTime + 3*oneSec},   // ID 3 at t=3 (different ID, kept)
-		{id: 2, ts: baseTime + 6*oneSec},   // ID 2 at t=6 (new window)
+		{id: 1, ts: baseTime},            // ID 1 at t=0
+		{id: 3, ts: baseTime + 3*oneSec}, // ID 3 at t=3 (different ID, kept)
+		{id: 2, ts: baseTime + 6*oneSec}, // ID 2 at t=6 (new window)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected time window deduplication: got %v want %v", got, want)
