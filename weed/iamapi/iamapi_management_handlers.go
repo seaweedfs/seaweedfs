@@ -388,10 +388,22 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
 
-	// Remove stored inline policy from persistent storage using per-user index
+	// First, verify the user exists in identities before modifying storage
+	var targetIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			targetIdent = ident
+			break
+		}
+	}
+	if targetIdent == nil {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	}
+
+	// User exists; now proceed with removing the stored inline policy from persistent storage
 	policies := Policies{}
 	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		// Propagate storage errors immediately; don't proceed with in-memory updates
+		// Propagate storage errors immediately
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
@@ -410,13 +422,9 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
 	}
 
-	for _, ident := range s3cfg.Identities {
-		if ident.Name == userName {
-			ident.Actions = aggregatedActions
-			return resp, nil
-		}
-	}
-	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	// Update the found identity's actions
+	targetIdent.Actions = aggregatedActions
+	return resp, nil
 }
 
 func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
