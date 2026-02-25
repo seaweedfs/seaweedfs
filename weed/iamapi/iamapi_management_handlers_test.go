@@ -241,13 +241,13 @@ func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	// Check that alice now has aggregated actions from both policies
 	// Should include Read and List (from policy1) and Write (from policy2)
 	// with resource paths indicating which policy they came from
-	
+
 	// Build a set of actual action strings for exact membership checks
 	actionSet := make(map[string]bool)
 	for _, action := range aliceIdent.Actions {
 		actionSet[action] = true
 	}
-	
+
 	// Expected actions from both policies:
 	// - policy1: GetObject, ListBucket on bucket-a/*  → "Read:bucket-a/*", "List:bucket-a/*"
 	// - policy2: PutObject on bucket-b/*  → "Write:bucket-b/*"
@@ -256,7 +256,7 @@ func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 		"List:bucket-a/*",
 		"Write:bucket-b/*",
 	}
-	
+
 	for _, expectedAction := range expectedActions {
 		assert.True(t, actionSet[expectedAction], "Expected action '%s' not found in aggregated actions. Got: %v", expectedAction, aliceIdent.Actions)
 	}

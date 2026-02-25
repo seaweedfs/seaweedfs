@@ -41,9 +41,6 @@ const (
 // with consistent retry configuration across the application.
 // This centralizes the retry policy to ensure uniform behavior between
 // remote storage and replication sink implementations.
-//
-// Related: Use DefaultAzureOpTimeout for context.WithTimeout when calling Azure operations
-// to ensure the timeout accommodates all retry attempts configured here.
 func DefaultAzBlobClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
@@ -129,6 +126,32 @@ type azureRemoteStorageClient struct {
 }
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
+
+func (az *azureRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultAzureOpTimeout)
+	defer cancel()
+	resp, err := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlobClient(key).GetProperties(ctx, nil)
+	if err != nil {
+		if bloberror.HasCode(err, bloberror.BlobNotFound) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat azure %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	remoteEntry = &filer_pb.RemoteEntry{
+		StorageName: az.conf.Name,
+	}
+	if resp.ContentLength != nil {
+		remoteEntry.RemoteSize = *resp.ContentLength
+	}
+	if resp.LastModified != nil {
+		remoteEntry.RemoteMtime = resp.LastModified.Unix()
+	}
+	if resp.ETag != nil {
+		remoteEntry.RemoteETag = string(*resp.ETag)
+	}
+	return remoteEntry, nil
+}
 
 func (az *azureRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 
@@ -241,29 +264,7 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 }
 
 func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
-
-	props, err := blobClient.GetProperties(context.Background(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	remoteEntry := &filer_pb.RemoteEntry{
-		StorageName: az.conf.Name,
-	}
-
-	if props.LastModified != nil {
-		remoteEntry.RemoteMtime = props.LastModified.Unix()
-	}
-	if props.ContentLength != nil {
-		remoteEntry.RemoteSize = *props.ContentLength
-	}
-	if props.ETag != nil {
-		remoteEntry.RemoteETag = string(*props.ETag)
-	}
-
-	return remoteEntry, nil
+	return az.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]*string {

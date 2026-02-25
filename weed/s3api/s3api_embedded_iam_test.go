@@ -20,9 +20,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -466,6 +468,46 @@ func TestEmbeddedIamAttachUserPolicy(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, response.Code)
 	assert.Equal(t, []string{"TestManagedPolicy"}, api.mockConfig.Identities[0].PolicyNames)
+}
+
+func TestEmbeddedIamAttachUserPolicyRefreshesIAM(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	ctx := context.Background()
+	cm := api.credentialManager
+	user := &iam_pb.Identity{
+		Name: "policyRefreshUser",
+		Credentials: []*iam_pb.Credential{
+			{AccessKey: "REFRESHACCESS", SecretKey: "REFRESHSECRET"},
+		},
+	}
+	require.NoError(t, cm.CreateUser(ctx, user))
+	policy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::bucket/*"),
+			},
+		},
+	}
+	require.NoError(t, cm.PutPolicy(ctx, "RefreshPolicy", policy))
+	require.NoError(t, api.iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := api.iam.lookupByIdentityName("policyRefreshUser")
+	require.NotNil(t, identity)
+	assert.Empty(t, identity.PolicyNames)
+
+	values := url.Values{}
+	values.Set("UserName", "policyRefreshUser")
+	values.Set("PolicyArn", "arn:aws:iam:::policy/RefreshPolicy")
+
+	_, iamErr := api.AttachUserPolicy(ctx, values)
+	require.Nil(t, iamErr)
+
+	identity = api.iam.lookupByIdentityName("policyRefreshUser")
+	require.NotNil(t, identity)
+	assert.Equal(t, []string{"RefreshPolicy"}, identity.PolicyNames)
 }
 
 // TestEmbeddedIamAttachUserPolicyNoSuchPolicy tests attach failure when managed policy does not exist.
