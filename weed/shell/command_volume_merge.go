@@ -67,7 +67,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	targetNodeStr := mergeCommand.String("target", "", "optional target volume server <host>:<port> for temporary merge output")
 	noLock := mergeCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
 	if err = mergeCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *volumeIdInt == 0 {
@@ -119,7 +119,9 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		if !cleanupTarget {
 			return
 		}
-		_ = deleteVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, false)
+		if delErr := deleteVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, false); delErr != nil {
+			glog.Warningf("failed to clean up temporary merge volume %d on %s: %v", volumeId, targetServer, delErr)
+		}
 	}()
 
 	writableReplicaIndices, err := ensureVolumeReadonly(commandEnv, replicas)
@@ -133,7 +135,9 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 			for _, idx := range writableReplicaIndices {
 				writableReplicas = append(writableReplicas, replicas[idx])
 			}
-			_ = markReplicasWritable(commandEnv.option.GrpcDialOption, writableReplicas, true, false)
+			if restoreErr := markReplicasWritable(commandEnv.option.GrpcDialOption, writableReplicas, true, false); restoreErr != nil {
+				glog.Warningf("failed to restore writable state for volume %d: %v", volumeId, restoreErr)
+			}
 		}()
 	}
 
@@ -330,8 +334,7 @@ func needleTimestamp(n *needle.Needle) uint64 {
 
 // memoryBackendFile implements backend.BackendStorageFile using an in-memory buffer
 type memoryBackendFile struct {
-	buf    *bytes.Buffer
-	offset int64
+	buf *bytes.Buffer
 }
 
 func (m *memoryBackendFile) ReadAt(p []byte, off int64) (n int, err error) {
@@ -355,8 +358,12 @@ func (m *memoryBackendFile) WriteAt(p []byte, off int64) (n int, err error) {
 	if off == int64(len(data)) {
 		return m.buf.Write(p)
 	}
-	// Overwrite existing data
-	newData := make([]byte, off+int64(len(p)))
+	// Overwrite existing data: preserve any trailing bytes beyond the write range
+	newLen := off + int64(len(p))
+	if newLen < int64(len(data)) {
+		newLen = int64(len(data))
+	}
+	newData := make([]byte, newLen)
 	copy(newData, data)
 	copy(newData[off:], p)
 	m.buf = bytes.NewBuffer(newData)
@@ -391,8 +398,7 @@ func (m *memoryBackendFile) Sync() error {
 
 func newMemoryBackendFile() *memoryBackendFile {
 	return &memoryBackendFile{
-		buf:    &bytes.Buffer{},
-		offset: 0,
+		buf: &bytes.Buffer{},
 	}
 }
 
