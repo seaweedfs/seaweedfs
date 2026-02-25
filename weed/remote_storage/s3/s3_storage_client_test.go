@@ -57,7 +57,7 @@ func TestS3MakeUsesStaticCredentialsWhenKeysAreProvided(t *testing.T) {
 	require.Equal(t, conf.S3SecretKey, credValue.SecretAccessKey)
 }
 
-func TestS3StatFileImplementsRemoteStorageClientInterface(t *testing.T) {
+func TestS3RemoteStorageClientImplementsInterface(t *testing.T) {
 	var _ remote_storage.RemoteStorageClient = (*s3RemoteStorageClient)(nil)
 }
 

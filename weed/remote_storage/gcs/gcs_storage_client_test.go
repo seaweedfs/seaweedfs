@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGCSStatFileImplementsRemoteStorageClientInterface(t *testing.T) {
+func TestGCSRemoteStorageClientImplementsInterface(t *testing.T) {
 	var _ remote_storage.RemoteStorageClient = (*gcsRemoteStorageClient)(nil)
 }
 

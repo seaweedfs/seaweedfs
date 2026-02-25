@@ -3,6 +3,7 @@ package s3
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"reflect"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -127,10 +128,10 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 		Key:    aws.String(loc.Path[1:]),
 	})
 	if err != nil {
-		if awsErr, ok := err.(awserr.Error); ok && awsErr.Code() == "NotFound" {
+		if reqErr, ok := err.(awserr.RequestFailure); ok && reqErr.StatusCode() == http.StatusNotFound {
 			return nil, remote_storage.ErrRemoteObjectNotFound
 		}
-		return nil, fmt.Errorf("stat %s%s: %w", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("stat s3 %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	remoteEntry = &filer_pb.RemoteEntry{
 		StorageName: s.conf.Name,
@@ -236,21 +237,7 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 }
 
 func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
-		Bucket: aws.String(loc.Bucket),
-		Key:    aws.String(loc.Path[1:]),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: resp.LastModified.Unix(),
-		RemoteSize:  *resp.ContentLength,
-		RemoteETag:  *resp.ETag,
-		StorageName: s.conf.Name,
-	}, nil
-
+	return s.StatFile(loc)
 }
 
 func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {

@@ -381,7 +381,7 @@ func TestAzureStorageClientErrors(t *testing.T) {
 	}
 }
 
-func TestAzureStatFileImplementsRemoteStorageClientInterface(t *testing.T) {
+func TestAzureRemoteStorageClientImplementsInterface(t *testing.T) {
 	var _ remote_storage.RemoteStorageClient = (*azureRemoteStorageClient)(nil)
 }
 

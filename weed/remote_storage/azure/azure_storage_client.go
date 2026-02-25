@@ -32,10 +32,11 @@ const (
 	DefaultAzureOpTimeout = 60 * time.Second
 )
 
-// DefaultAzBlobClientOptions returns the default Azure blob client options
-// with consistent retry configuration across the application.
-// This centralises the retry policy to ensure uniform behaviour between
-// remote storage and replication sink implementations.
+// DefaultAzureOpTimeout is the timeout for individual Azure blob operations.
+// This should be larger than the maximum time the Azure SDK client will spend
+// retrying. With MaxRetries=3 (4 total attempts) and TryTimeout=10s, the maximum
+// time is roughly 4*10s + delays(~7s) = 47s. We use 60s to provide a reasonable
+// buffer while still failing faster than indefinite hangs.
 func DefaultAzBlobClientOptions() *azblob.ClientOptions {
 	return &azblob.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
@@ -259,29 +260,7 @@ func (az *azureRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocati
 }
 
 func (az *azureRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
-
-	props, err := blobClient.GetProperties(context.Background(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	remoteEntry := &filer_pb.RemoteEntry{
-		StorageName: az.conf.Name,
-	}
-
-	if props.LastModified != nil {
-		remoteEntry.RemoteMtime = props.LastModified.Unix()
-	}
-	if props.ContentLength != nil {
-		remoteEntry.RemoteSize = *props.ContentLength
-	}
-	if props.ETag != nil {
-		remoteEntry.RemoteETag = string(*props.ETag)
-	}
-
-	return remoteEntry, nil
+	return az.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]*string {

@@ -140,7 +140,7 @@ func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation
 		if errors.Is(err, storage.ErrObjectNotExist) {
 			return nil, remote_storage.ErrRemoteObjectNotFound
 		}
-		return nil, fmt.Errorf("stat gcs %s/%s: %w", loc.Bucket, loc.Path, err)
+		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
 	}
 	return &filer_pb.RemoteEntry{
 		StorageName: gcs.conf.Name,
@@ -194,20 +194,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(context.Background())
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-		StorageName: gcs.conf.Name,
-	}, nil
-
+	return gcs.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]string {
