@@ -415,13 +415,13 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "HTTP with standard port",
 			host:         "backend:80",
 			proto:        "http",
-			expectedHost: "backend:80",
+			expectedHost: "backend",
 		},
 		{
 			name:         "HTTPS with standard port",
 			host:         "backend:443",
 			proto:        "https",
-			expectedHost: "backend:443",
+			expectedHost: "backend",
 		},
 		{
 			name:         "HTTP without port",
@@ -451,13 +451,13 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			name:         "IPv6 HTTP with standard port",
 			host:         "[::1]:80",
 			proto:        "http",
-			expectedHost: "[::1]:80",
+			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTPS with standard port",
 			host:         "[::1]:443",
 			proto:        "https",
-			expectedHost: "[::1]:443",
+			expectedHost: "::1",
 		},
 		{
 			name:         "IPv6 HTTP without port",

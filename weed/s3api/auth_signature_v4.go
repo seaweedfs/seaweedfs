@@ -788,9 +788,25 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 func extractHostHeader(r *http.Request) string {
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
+	forwardedProto := r.Header.Get("X-Forwarded-Proto")
+
+	// Determine the effective scheme with correct order of precedence:
+	// 1. X-Forwarded-Proto (most authoritative, reflects client's original protocol)
+	// 2. r.TLS (authoritative for direct connection to server)
+	// 3. r.URL.Scheme (fallback, may not always be set correctly)
+	// 4. Default to "http"
+	scheme := "http"
+	if r.URL.Scheme != "" {
+		scheme = r.URL.Scheme
+	}
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwardedProto != "" {
+		scheme = forwardedProto
+	}
 
 	var host, port string
-	explicitPort := false
 	if forwardedHost != "" {
 		// X-Forwarded-Host can be a comma-separated list of hosts when there are multiple proxies.
 		// Use only the first host in the list and trim spaces for robustness.
@@ -799,16 +815,12 @@ func extractHostHeader(r *http.Request) string {
 		} else {
 			host = strings.TrimSpace(forwardedHost)
 		}
-		// Baseline port from forwarded port if available
-		if forwardedPort != "" {
-			port = forwardedPort
-			explicitPort = true
-		}
-		// If the host itself contains a port, it should take precedence
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
-			explicitPort = true
+		}
+		if forwardedPort != "" && isDefaultPort(scheme, port) {
+			port = forwardedPort
 		}
 	} else {
 		host = r.Host
@@ -818,13 +830,12 @@ func extractHostHeader(r *http.Request) string {
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
-			explicitPort = true
 		}
 	}
 
-	// If a port was explicitly provided, join it with the host.
+	// If we have a non-default port, join it with the host.
 	// net.JoinHostPort will handle bracketing for IPv6.
-	if explicitPort && port != "" {
+	if port != "" && !isDefaultPort(scheme, port) {
 		// Strip existing brackets before calling JoinHostPort, which automatically adds
 		// brackets for IPv6 addresses. This prevents double-bracketing like [[::1]]:8080.
 		// Using Trim handles both well-formed and malformed bracketed hosts.
@@ -832,7 +843,7 @@ func extractHostHeader(r *http.Request) string {
 		return net.JoinHostPort(host, port)
 	}
 
-	// No explicit port was provided (or port was empty). According to AWS SDK behavior (aws-sdk-go-v2),
+	// No port or default port was stripped. According to AWS SDK behavior (aws-sdk-go-v2),
 	// when a default port is removed from an IPv6 address, the brackets should also be removed.
 	// This matches AWS S3 signature calculation requirements.
 	// Reference: https://github.com/aws/aws-sdk-go-v2/blob/main/aws/signer/internal/v4/host.go
@@ -842,6 +853,21 @@ func extractHostHeader(r *http.Request) string {
 		return strings.Trim(host, "[]")
 	}
 	return host
+}
+
+func isDefaultPort(scheme, port string) bool {
+	if port == "" {
+		return true
+	}
+
+	switch port {
+	case "80":
+		return strings.EqualFold(scheme, "http")
+	case "443":
+		return strings.EqualFold(scheme, "https")
+	default:
+		return false
+	}
 }
 
 // getScope generate a string of a specific date, an AWS region, and a service.

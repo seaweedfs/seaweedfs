@@ -208,7 +208,7 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedHost:  "example.com",
 			forwardedPort:  "80",
 			forwardedProto: "http",
-			expected:       "example.com:80",
+			expected:       "example.com",
 		},
 		{
 			name:           "X-Forwarded-Host with X-Forwarded-Port (HTTPS standard port 443)",
@@ -216,7 +216,7 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedHost:  "example.com",
 			forwardedPort:  "443",
 			forwardedProto: "https",
-			expected:       "example.com:443",
+			expected:       "example.com",
 		},
 		// Issue #6649: X-Forwarded-Host already contains port (Traefik/HAProxy style)
 		{
@@ -226,14 +226,6 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedPort:  "8433",
 			forwardedProto: "https",
 			expected:       "127.0.0.1:8433",
-		},
-		{
-			name:           "X-Forwarded-Host with standard port already included (HTTPS 443)",
-			hostHeader:     "backend:8333",
-			forwardedHost:  "example.com:443",
-			forwardedPort:  "443",
-			forwardedProto: "https",
-			expected:       "example.com:443",
 		},
 		{
 			name:           "X-Forwarded-Host with port, no X-Forwarded-Port header",
@@ -261,20 +253,20 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "[::1]:8080",
 		},
 		{
-			name:           "IPv6 address without brackets and standard port, should include brackets and port when explicit",
+			name:           "IPv6 address without brackets and standard port, should strip brackets per AWS SDK",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "::1",
 			forwardedPort:  "80",
 			forwardedProto: "http",
-			expected:       "[::1]:80",
+			expected:       "::1",
 		},
 		{
-			name:           "IPv6 address without brackets and standard HTTPS port, should include brackets and port when explicit",
+			name:           "IPv6 address without brackets and standard HTTPS port, should strip brackets per AWS SDK",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "2001:db8::1",
 			forwardedPort:  "443",
 			forwardedProto: "https",
-			expected:       "[2001:db8::1]:443",
+			expected:       "2001:db8::1",
 		},
 		{
 			name:           "IPv6 address with brackets but no port, should add port",
@@ -285,12 +277,12 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "[2001:db8::1]:8080",
 		},
 		{
-			name:           "IPv6 full address with brackets and default port (should preserve port if explicit)",
+			name:           "IPv6 full address with brackets and default port (should strip port and brackets)",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "[2001:db8:85a3::8a2e:370:7334]:443",
 			forwardedPort:  "443",
 			forwardedProto: "https",
-			expected:       "[2001:db8:85a3::8a2e:370:7334]:443",
+			expected:       "2001:db8:85a3::8a2e:370:7334",
 		},
 		{
 			name:           "IPv4-mapped IPv6 address without brackets, should add brackets with port",
