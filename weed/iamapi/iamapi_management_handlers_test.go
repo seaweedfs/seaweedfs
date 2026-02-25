@@ -3,7 +3,6 @@ package iamapi
 import (
 	"encoding/json"
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -240,17 +239,25 @@ func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	assert.Nil(t, iamErr)
 
 	// Check that alice now has aggregated actions from both policies
-	// Should include Read (from policy1) and Write (from policy2)
-	readFound := false
-	writeFound := false
+	// Should include Read and List (from policy1) and Write (from policy2)
+	// with resource paths indicating which policy they came from
+	
+	// Build a set of actual action strings for exact membership checks
+	actionSet := make(map[string]bool)
 	for _, action := range aliceIdent.Actions {
-		if strings.Contains(action, "Read") || strings.Contains(action, "Get") || strings.Contains(action, "List") {
-			readFound = true
-		}
-		if strings.Contains(action, "Write") || strings.Contains(action, "Put") {
-			writeFound = true
-		}
+		actionSet[action] = true
 	}
-	assert.True(t, readFound, "Read actions should be preserved from policy-read")
-	assert.True(t, writeFound, "Write actions should be added from policy-write")
+	
+	// Expected actions from both policies:
+	// - policy1: GetObject, ListBucket on bucket-a/*  → "Read:bucket-a/*", "List:bucket-a/*"
+	// - policy2: PutObject on bucket-b/*  → "Write:bucket-b/*"
+	expectedActions := []string{
+		"Read:bucket-a/*",
+		"List:bucket-a/*",
+		"Write:bucket-b/*",
+	}
+	
+	for _, expectedAction := range expectedActions {
+		assert.True(t, actionSet[expectedAction], "Expected action '%s' not found in aggregated actions. Got: %v", expectedAction, aliceIdent.Actions)
+	}
 }

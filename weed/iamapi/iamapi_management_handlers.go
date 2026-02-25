@@ -52,27 +52,43 @@ func userInlinePolicyPrefix(userName string) string {
 }
 
 // computeAggregatedActionsForUser computes the union of actions across all inline policies for a user.
-func computeAggregatedActionsForUser(iama *IamApiServer, userName string) ([]string, error) {
+// If policies is non-nil, it uses that instead of fetching from storage (for I/O optimization).
+// When policies is nil, it fetches from storage using GetPolicies.
+//
+// Best-effort aggregation: If GetActions fails for a policy document, that policy is logged at Warning level
+// but is NOT removed from persistent storage. This intentional choice ensures:
+// - Stored policy documents survive even if they temporarily fail to parse
+// - The policy data is preserved for potential future fixes or manual inspection
+// - Only the runtime action set (ident.Actions) is affected when GetActions fails
+// This keeps persistent state consistent while gracefully handling parsing errors.
+func computeAggregatedActionsForUser(iama *IamApiServer, userName string, policies *Policies) ([]string, error) {
 	var aggregatedActions []string
 	actionSet := make(map[string]bool)
 
-	policies := Policies{}
-	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return nil, err
+	var policiesToUse Policies
+	if policies != nil {
+		// Use provided Policies (caller already fetched, avoids redundant I/O)
+		policiesToUse = *policies
+	} else {
+		// Fetch from storage
+		if err := iama.s3ApiConfig.GetPolicies(&policiesToUse); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, err
+		}
 	}
 
-	if policies.Policies == nil {
+	if policiesToUse.Policies == nil {
 		return aggregatedActions, nil
 	}
 
 	prefix := userInlinePolicyPrefix(userName)
-	for key, policyDocument := range policies.Policies {
+	for key, policyDocument := range policiesToUse.Policies {
 		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		actions, err := GetActions(&policyDocument)
 		if err != nil {
-			glog.Warningf("Failed to get actions from policy %s: %v", key, err)
+			// Best-effort: policy stored successfully but failed to parse; log and skip from aggregation
+			glog.Warningf("Failed to get actions from stored policy %s for user %s (policy retained in storage): %v", key, userName, err)
 			continue
 		}
 		for _, action := range actions {
@@ -257,8 +273,9 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Compute aggregated actions from all user's inline policies
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName)
+	// Compute aggregated actions from all user's inline policies, passing the local policies
+	// to avoid redundant I/O (reuses the just-written Policies map)
+	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
 	if computeErr != nil {
 		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
 		aggregatedActions = actions // Fall back to current policy's actions
@@ -288,7 +305,11 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 		// Try to retrieve stored inline policy from persistent storage
 		policies := Policies{}
-		if err := iama.s3ApiConfig.GetPolicies(&policies); err == nil && policies.Policies != nil {
+		if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			// Propagate storage errors
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+		if policies.Policies != nil {
 			if policyDocument, exists := policies.Policies[userPolicyKey(userName, policyName)]; exists {
 				policyDocumentJSON, err := json.Marshal(policyDocument)
 				if err != nil {
@@ -355,15 +376,19 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 
 	// Remove stored inline policy from persistent storage
 	policies := Policies{}
-	if err := iama.s3ApiConfig.GetPolicies(&policies); err == nil && policies.Policies != nil {
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		// Propagate storage errors immediately; don't proceed with in-memory updates
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policies.Policies != nil {
 		delete(policies.Policies, userPolicyKey(userName, policyName))
 		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 		}
 	}
 
-	// Recompute aggregated actions from remaining inline policies
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName)
+	// Recompute aggregated actions from remaining inline policies (passing policies to avoid redundant GetPolicies)
+	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
 	if computeErr != nil {
 		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
 	}
