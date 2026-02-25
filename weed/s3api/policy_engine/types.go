@@ -30,11 +30,29 @@ import (
 const (
 	// PolicyVersion2012_10_17 is the standard AWS policy version
 	PolicyVersion2012_10_17 = "2012-10-17"
+
+	// S3 multipart upload actions that are implicitly granted with s3:PutObject
+	// Multipart upload is an implementation detail of putting objects, not a separate permission
+	s3CreateMultipartUpload   = "s3:CreateMultipartUpload"
+	s3UploadPart              = "s3:UploadPart"
+	s3CompleteMultipartUpload = "s3:CompleteMultipartUpload"
+	s3AbortMultipartUpload    = "s3:AbortMultipartUpload"
+	s3ListParts               = "s3:ListParts"
 )
 
 var (
 	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
 	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	// multipartActionSet contains all S3 multipart upload actions
+	// These are treated as equivalent to s3:PutObject for authorization purposes
+	multipartActionSet = map[string]bool{
+		s3CreateMultipartUpload:   true,
+		s3UploadPart:              true,
+		s3CompleteMultipartUpload: true,
+		s3AbortMultipartUpload:    true,
+		s3ListParts:               true,
+	}
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -497,13 +515,27 @@ var S3Actions = map[string]string{
 	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
 }
 
-// MatchesAction checks if an action matches any of the compiled action matchers
+// MatchesAction checks if an action matches any of the compiled action matchers.
+// It also implicitly grants multipart upload actions if s3:PutObject is allowed,
+// since multipart upload is an implementation detail of putting objects.
 func (cs *CompiledStatement) MatchesAction(action string) bool {
 	for _, matcher := range cs.ActionMatchers {
 		if matcher.Match(action) {
 			return true
 		}
 	}
+
+	// Multipart upload operations are part of s3:PutObject permission
+	// If s3:PutObject is allowed, implicitly allow multipart operations
+	if multipartActionSet[action] {
+		// Check if s3:PutObject is explicitly allowed
+		for _, matcher := range cs.ActionMatchers {
+			if matcher.Match("s3:PutObject") {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
