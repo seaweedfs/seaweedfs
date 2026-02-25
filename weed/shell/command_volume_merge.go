@@ -1,12 +1,12 @@
 package shell
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -15,7 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -317,27 +316,86 @@ func needleTimestamp(n *needle.Needle) uint64 {
 	return 0
 }
 
-func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, types.Size, error) {
-	// Use temporary file for serialization (inefficient for large merges, but necessary for the API)
-	// Consider future optimization with streaming WriteNeedleBlob API
-	file, err := os.CreateTemp("", "weed-needle-*.dat")
-	if err != nil {
-		return nil, 0, err
+// memoryBackendFile implements backend.BackendStorageFile using an in-memory buffer
+type memoryBackendFile struct {
+	buf    *bytes.Buffer
+	offset int64
+}
+
+func (m *memoryBackendFile) ReadAt(p []byte, off int64) (n int, err error) {
+	data := m.buf.Bytes()
+	if off >= int64(len(data)) {
+		return 0, io.EOF
 	}
-	defer func() {
-		_ = os.Remove(file.Name())
-	}()
+	n = copy(p, data[off:])
+	if off+int64(n) < int64(len(data)) {
+		return n, nil
+	}
+	return n, io.EOF
+}
 
-	diskFile := backend.NewDiskFile(file)
-	defer diskFile.Close()
+func (m *memoryBackendFile) WriteAt(p []byte, off int64) (n int, err error) {
+	data := m.buf.Bytes()
+	if off > int64(len(data)) {
+		// Pad with zeros
+		m.buf.Write(make([]byte, off-int64(len(data))))
+	}
+	if off == int64(len(data)) {
+		return m.buf.Write(p)
+	}
+	// Overwrite existing data
+	newData := make([]byte, off+int64(len(p)))
+	copy(newData, data)
+	copy(newData[off:], p)
+	m.buf = bytes.NewBuffer(newData)
+	return len(p), nil
+}
 
-	_, size, actualSize, err := n.Append(diskFile, version)
+func (m *memoryBackendFile) Truncate(off int64) error {
+	data := m.buf.Bytes()
+	if off > int64(len(data)) {
+		m.buf.Write(make([]byte, off-int64(len(data))))
+	} else {
+		m.buf = bytes.NewBuffer(data[:off])
+	}
+	return nil
+}
+
+func (m *memoryBackendFile) Close() error {
+	return nil
+}
+
+func (m *memoryBackendFile) GetStat() (datSize int64, modTime time.Time, err error) {
+	return int64(m.buf.Len()), time.Now(), nil
+}
+
+func (m *memoryBackendFile) Name() string {
+	return "memory"
+}
+
+func (m *memoryBackendFile) Sync() error {
+	return nil
+}
+
+func newMemoryBackendFile() *memoryBackendFile {
+	return &memoryBackendFile{
+		buf:    &bytes.Buffer{},
+		offset: 0,
+	}
+}
+
+func needleBlobFromNeedle(n *needle.Needle, version needle.Version) ([]byte, types.Size, error) {
+	// Use in-memory buffer for serialization to avoid expensive temporary file I/O
+	memFile := newMemoryBackendFile()
+	defer memFile.Close()
+
+	_, size, actualSize, err := n.Append(memFile, version)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	buf := make([]byte, actualSize)
-	read, err := diskFile.ReadAt(buf, 0)
+	read, err := memFile.ReadAt(buf, 0)
 	if err != nil && err != io.EOF {
 		return nil, 0, err
 	}
