@@ -774,8 +774,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(r *http.Request, client file
 
 			nsTables, nsToken, err := h.listTablesInNamespaceWithClient(r, client, bucketName, namespace, prefix, tableNameFilter, maxTables-len(tables))
 			if err != nil {
-				glog.Warningf("S3Tables: failed to list tables in namespace %s/%s: %v", bucketName, namespace, err)
-				continue
+				return nil, "", fmt.Errorf("list tables in namespace %s: %w", namespace, err)
 			}
 
 			tables = append(tables, nsTables...)
