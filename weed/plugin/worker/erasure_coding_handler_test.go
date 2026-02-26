@@ -269,7 +269,7 @@ func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
 		},
 	}
 
-	if err := emitErasureCodingDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+	if err := emitErasureCodingDetectionDecisionTrace(sender, metrics, config, nil, 0, false); err != nil {
 		t.Fatalf("emitErasureCodingDetectionDecisionTrace error: %v", err)
 	}
 	if len(sender.events) < 4 {
