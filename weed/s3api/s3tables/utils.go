@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"path"
@@ -105,7 +106,6 @@ func GetTableObjectRootDir() string {
 func GetTableObjectBucketPath(bucketName string) string {
 	return path.Join(GetTableObjectRootDir(), bucketName)
 }
-
 
 // Metadata structures
 

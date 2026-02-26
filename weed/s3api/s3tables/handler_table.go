@@ -1,7 +1,6 @@
 package s3tables
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
