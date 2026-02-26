@@ -1611,6 +1611,8 @@ cosi:
   image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.2"
   driverName: "seaweedfs.objectstorage.k8s.io"
   bucketClassName: "seaweedfs"
+  # Optional parameters to pass to the default BucketClass (e.g., diskType for tiered storage)
+  bucketClassParameters: {}
   endpoint: ""
   region: ""
 
