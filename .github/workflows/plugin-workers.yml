@@ -20,6 +20,10 @@ jobs:
         include:
           - worker: erasure_coding
             path: test/plugin_workers/erasure_coding
+          - worker: vacuum
+            path: test/plugin_workers/vacuum
+          - worker: volume_balance
+            path: test/plugin_workers/volume_balance
 
     steps:
       - name: Set up Go 1.x
