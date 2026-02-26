@@ -117,20 +117,21 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
+          set -o pipefail
           {{- range $createBuckets }}
             {{- $bucketName := .name }}
             {{- $bucketLock := or .lock .objectLock .withLock }}
-            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
+            if /bin/echo 's3.bucket.list' | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
               echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
             else
               echo "Creating bucket '{{ $bucketName }}'..."
-              /bin/echo "s3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}" | /usr/bin/weed shell
+              /bin/echo 's3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}' | /usr/bin/weed shell
             fi
           {{- end }}
           {{- range $createBuckets }}
           {{- $bucketLock := or .lock .objectLock .withLock }}
           {{- if $bucketLock }}
-            /bin/echo "s3.bucket.lock -name {{ .name }} -enable" | /usr/bin/weed shell
+            /bin/echo 's3.bucket.lock -name {{ .name }} -enable' | /usr/bin/weed shell
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
@@ -140,15 +141,24 @@ spec:
               {{- $bucketVersioning = "Enabled" }}
             {{- end }}
           {{- else if kindIs "string" .versioning }}
-            {{- $bucketVersioning = .versioning }}
+            {{- $versioningLower := lower .versioning }}
+            {{- if eq $versioningLower "enabled" "enable" "true" }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- else if eq $versioningLower "suspended" "disable" "false" }}
+              {{- $bucketVersioning = "Suspended" }}
+            {{- else if or (eq .versioning "Enabled") (eq .versioning "Suspended") }}
+              {{- $bucketVersioning = .versioning }}
+            {{- else }}
+              {{- fail (printf "Invalid versioning value for bucket %s: %s. Must be 'Enabled' or 'Suspended'" .name .versioning) }}
+            {{- end }}
           {{- end }}
           {{- if $bucketVersioning }}
-            /bin/echo "s3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}" | /usr/bin/weed shell
+            /bin/echo 's3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}' | /usr/bin/weed shell
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
           {{- if .ttl }}
-            /bin/echo "fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply" | /usr/bin/weed shell
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
           {{- end }}
           {{- end }}
           {{- range $createBuckets }}
