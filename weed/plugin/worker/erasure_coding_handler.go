@@ -242,7 +242,7 @@ func (h *ErasureCodingHandler) Detect(
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
-		proposal, proposalErr := buildErasureCodingProposal(result)
+		proposal, proposalErr := buildErasureCodingProposal(result, h.workingDir)
 		if proposalErr != nil {
 			glog.Warningf("Plugin worker skip invalid erasure_coding proposal: %v", proposalErr)
 			continue
@@ -610,6 +610,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 
 func buildErasureCodingProposal(
 	result *workertypes.TaskDetectionResult,
+	baseWorkingDir string,
 ) (*plugin_pb.JobProposal, error) {
 	if result == nil {
 		return nil, fmt.Errorf("task detection result is nil")
@@ -618,7 +619,7 @@ func buildErasureCodingProposal(
 		return nil, fmt.Errorf("missing typed params for volume %d", result.VolumeID)
 	}
 	params := proto.Clone(result.TypedParams).(*worker_pb.TaskParams)
-	applyErasureCodingExecutionDefaults(params, nil, h.workingDir)
+	applyErasureCodingExecutionDefaults(params, nil, baseWorkingDir)
 
 	paramsPayload, err := proto.Marshal(params)
 	if err != nil {

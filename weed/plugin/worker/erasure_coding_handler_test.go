@@ -179,7 +179,7 @@ func TestBuildErasureCodingProposal(t *testing.T) {
 		TypedParams: params,
 	}
 
-	proposal, err := buildErasureCodingProposal(result)
+	proposal, err := buildErasureCodingProposal(result, "")
 	if err != nil {
 		t.Fatalf("buildErasureCodingProposal() err = %v", err)
 	}

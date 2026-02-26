@@ -81,7 +81,7 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 		return false
 	}
 
-	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption, options.MaxExecute)
+	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption, options.MaxExecute, options.WorkingDir)
 	if err != nil {
 		glog.Errorf("Failed to build plugin worker handlers: %v", err)
 		return false
@@ -163,7 +163,7 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 // The scheduler's effective per-worker MaxExecutionConcurrency is derived from
 // the worker-level configuration (e.g. WorkerOptions.MaxExecutionConcurrency),
 // not directly from the handler's Capability.
-func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExecute int) (pluginworker.JobHandler, error) {
+func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExecute int, workingDir string) (pluginworker.JobHandler, error) {
 	canonicalJobType, err := canonicalPluginWorkerJobType(jobType)
 	if err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExe
 	case "volume_balance":
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
 	case "erasure_coding":
-		return pluginworker.NewErasureCodingHandler(dialOption, options.WorkingDir), nil
+		return pluginworker.NewErasureCodingHandler(dialOption, workingDir), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
 	}
@@ -183,7 +183,7 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExe
 
 // buildPluginWorkerHandlers constructs a deduplicated slice of JobHandlers for
 // the comma-separated jobTypes string, forwarding maxExecute to each handler.
-func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int) ([]pluginworker.JobHandler, error) {
+func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int, workingDir string) ([]pluginworker.JobHandler, error) {
 	parsedJobTypes, err := parsePluginWorkerJobTypes(jobTypes)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxE
 
 	handlers := make([]pluginworker.JobHandler, 0, len(parsedJobTypes))
 	for _, jobType := range parsedJobTypes {
-		handler, buildErr := buildPluginWorkerHandler(jobType, dialOption, maxExecute)
+		handler, buildErr := buildPluginWorkerHandler(jobType, dialOption, maxExecute, workingDir)
 		if buildErr != nil {
 			return nil, buildErr
 		}
