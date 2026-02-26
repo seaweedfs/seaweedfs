@@ -1,17 +1,19 @@
-package main
+//go:build ignore
+// +build ignore
+
+package postgrestest
 
 import (
 	"database/sql"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
-func main() {
+func clientMain() {
 	// Get PostgreSQL connection details from environment
 	host := getEnv("POSTGRES_HOST", "localhost")
 	port := getEnv("POSTGRES_PORT", "5432")
@@ -496,11 +498,4 @@ func stringOrNull(ns sql.NullString) string {
 		return ns.String
 	}
 	return "NULL"
-}
-
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
 }

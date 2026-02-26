@@ -210,6 +210,7 @@ func TestVolumeMoveHandlesInFlightWrites(t *testing.T) {
 
 	var writesMu sync.Mutex
 	var writes []written
+	var uploadErr error
 	writeCtx, writeCancel := context.WithCancel(context.Background())
 	var writerWG sync.WaitGroup
 	writerWG.Add(1)
@@ -227,7 +228,8 @@ func TestVolumeMoveHandlesInFlightWrites(t *testing.T) {
 			resp := framework.UploadBytes(t, client, cluster.VolumeAdminURL(0), liveFid, livePayload)
 			_ = framework.ReadAllAndClose(t, resp)
 			if resp.StatusCode != http.StatusCreated {
-				t.Fatalf("live upload failed: %d", resp.StatusCode)
+				uploadErr = fmt.Errorf("live upload failed: %d", resp.StatusCode)
+				return
 			}
 			writesMu.Lock()
 			writes = append(writes, written{fid: liveFid, data: livePayload})
@@ -252,6 +254,10 @@ func TestVolumeMoveHandlesInFlightWrites(t *testing.T) {
 
 	writeCancel()
 	writerWG.Wait()
+
+	if uploadErr != nil {
+		t.Fatalf("upload goroutine error: %v", uploadErr)
+	}
 
 	writesMu.Lock()
 	sampleCount := len(writes)
