@@ -168,14 +168,17 @@ func parseExternalUrlToHost(externalUrl string) (string, error) {
 	}
 	u, err := url.Parse(externalUrl)
 	if err != nil {
-		return "", fmt.Errorf("invalid external URL %q: %v", externalUrl, err)
+		return "", fmt.Errorf("invalid external URL: parse failed")
 	}
 	if u.Host == "" {
-		return "", fmt.Errorf("invalid external URL %q: missing host", externalUrl)
+		return "", fmt.Errorf("invalid external URL: missing host")
 	}
 	host, port, err := net.SplitHostPort(u.Host)
 	if err != nil {
-		// No port in the URL — just return the hostname as-is
+		// No port in the URL. For IPv6, strip brackets to match AWS SDK.
+		if strings.Contains(u.Host, ":") {
+			return strings.Trim(u.Host, "[]"), nil
+		}
 		return u.Host, nil
 	}
 	// Strip default ports to match AWS SDK SanitizeHostForHeader behavior

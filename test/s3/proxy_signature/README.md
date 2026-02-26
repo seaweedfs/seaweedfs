@@ -14,7 +14,7 @@ SeaweedFS is deployed behind a reverse proxy (nginx).
 
 ## Architecture
 
-```
+```text
 AWS CLI (signs with Host: localhost:9000)
     |
     v

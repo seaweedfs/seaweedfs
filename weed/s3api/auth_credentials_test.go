@@ -861,7 +861,7 @@ func TestParseExternalUrlToHost(t *testing.T) {
 		{
 			name:     "IPv6 without port",
 			input:    "https://[::1]",
-			expected: "[::1]",
+			expected: "::1",
 		},
 		{
 			name:      "invalid URL",

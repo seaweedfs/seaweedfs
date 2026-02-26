@@ -76,9 +76,15 @@ jobs:
           echo "Waiting for SeaweedFS S3 gateway to be ready..."
           S3_READY=0
           for i in $(seq 1 30); do
-            # SeaweedFS S3 is at port 8333 internally
+            # Check logs first for startup message
             if docker compose logs seaweedfs 2>&1 | grep -q "S3 gateway.*started"; then
               echo "SeaweedFS S3 gateway is ready"
+              S3_READY=1
+              break
+            fi
+            # Fallback: try HTTP health check to S3 endpoint (internal port 8333)
+            if curl -s -m 2 http://localhost:8333/ > /dev/null 2>&1 || [ $? -eq 52 ]; then
+              echo "SeaweedFS S3 gateway is responding"
               S3_READY=1
               break
             fi
@@ -111,6 +117,9 @@ jobs:
         working-directory: test/s3/proxy_signature
         run: |
           echo "Cleaning up Docker containers..."
-          docker compose down || true
-          docker ps -a
+          echo "Docker compose logs:"
           docker compose logs --no-color || true
+          echo "Container status before cleanup:"
+          docker ps -a
+          echo "Stopping services..."
+          docker compose down || true

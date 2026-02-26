@@ -55,9 +55,12 @@ echo ""
 # Wait for proxy to be ready
 echo "Waiting for nginx proxy to be ready..."
 for i in $(seq 1 30); do
-    if curl -so /dev/null "http://localhost:9000/" 2>/dev/null; then
-        break
-    fi
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:9000/" 2>/dev/null || echo "000")
+    case $http_code in
+        200|[3][0-9][0-9]|403)
+            break
+            ;;
+    esac
     if [ "$i" -eq 30 ]; then
         fail "Proxy did not become ready in time"
     fi

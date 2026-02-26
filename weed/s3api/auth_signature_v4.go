@@ -797,6 +797,15 @@ func extractHostHeader(r *http.Request, externalHost string) string {
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
 	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
+	// X-Forwarded-Proto and X-Forwarded-Port can be comma-separated lists when there are multiple proxies.
+	// Use only the first value (first-hop).
+	if comma := strings.Index(forwardedPort, ","); comma != -1 {
+		forwardedPort = strings.TrimSpace(forwardedPort[:comma])
+	}
+	if comma := strings.Index(forwardedProto, ","); comma != -1 {
+		forwardedProto = strings.TrimSpace(forwardedProto[:comma])
+	}
+
 	// Determine effective scheme for default port stripping.
 	// Precedence: X-Forwarded-Proto > r.TLS > r.URL.Scheme > "http"
 	scheme := "http"
