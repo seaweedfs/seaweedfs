@@ -159,6 +159,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					consecutivePlanningFailures++
 					if len(results) >= minProposalsBeforeEarlyStop && consecutivePlanningFailures >= maxConsecutivePlanningFailures {
 						glog.Warningf("EC Detection: stopping early after %d consecutive placement failures with %d proposals already planned", consecutivePlanningFailures, len(results))
+						hasMore = true
 						stoppedEarly = true
 						break
 					}
