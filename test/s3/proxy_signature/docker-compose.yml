@@ -11,7 +11,7 @@ services:
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8333/status"]
+      test: ["CMD", "curl", "-sf", "http://seaweedfs:8333/status"]
       interval: 3s
       timeout: 2s
       retries: 20
