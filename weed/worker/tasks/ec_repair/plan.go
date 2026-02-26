@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -101,8 +102,22 @@ func BuildRepairPlan(
 	}
 	states := collectShardStates(topoInfo, "")
 
+	keys := make([]VolumeKey, 0, len(states))
+	for key := range states {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].VolumeID != keys[j].VolumeID {
+			return keys[i].VolumeID < keys[j].VolumeID
+		}
+		if keys[i].Collection != keys[j].Collection {
+			return keys[i].Collection < keys[j].Collection
+		}
+		return keys[i].DiskType < keys[j].DiskType
+	})
+
 	var state *volumeShardState
-	for key, candidate := range states {
+	for _, key := range keys {
 		if key.VolumeID != volumeID {
 			continue
 		}
@@ -112,7 +127,7 @@ func BuildRepairPlan(
 		if diskType != "" && key.DiskType != diskType {
 			continue
 		}
-		state = candidate
+		state = states[key]
 		break
 	}
 	if state == nil {
@@ -437,6 +452,7 @@ func groupDeleteByNode(locations []ShardLocation, activeTopology *topology.Activ
 			}
 		}
 		if nodeAddress == "" {
+			glog.Warningf("EC Repair plan: unable to resolve node address for shard %d on node %s diskType=%s diskID=%d", loc.ShardID, loc.NodeID, loc.DiskType, loc.DiskID)
 			continue
 		}
 		if result[nodeAddress] == nil {
