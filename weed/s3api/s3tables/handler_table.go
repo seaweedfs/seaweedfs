@@ -12,6 +12,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// rejectUnsupportedMetadataLocation validates that metadataLocation is not provided
+func (h *S3TablesHandler) rejectUnsupportedMetadataLocation(w http.ResponseWriter, metadataLocation string) error {
+	if metadataLocation != "" {
+		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "metadataLocation is not supported")
+		return fmt.Errorf("metadataLocation is not supported")
+	}
+	return nil
+}
+
 // handleCreateTable creates a new table in a namespace
 func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 
@@ -161,9 +170,8 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 		return ErrAccessDenied
 	}
 
-	if req.MetadataLocation != "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "metadataLocation is not supported")
-		return fmt.Errorf("metadataLocation is not supported")
+	if err := h.rejectUnsupportedMetadataLocation(w, req.MetadataLocation); err != nil {
+		return err
 	}
 
 	tablePath := GetTablePath(bucketName, namespaceName, tableName)
@@ -1080,9 +1088,8 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return NewAuthError("UpdateTable", principal, "not authorized to update table")
 	}
 
-	if req.MetadataLocation != "" {
-		h.writeError(w, http.StatusBadRequest, ErrCodeInvalidRequest, "metadataLocation is not supported")
-		return fmt.Errorf("metadataLocation is not supported")
+	if err := h.rejectUnsupportedMetadataLocation(w, req.MetadataLocation); err != nil {
+		return err
 	}
 
 	// Check version token if provided
