@@ -31,6 +31,18 @@ type shardAnalysis struct {
 	TotalShards int
 }
 
+func sortVolumeKeys(keys []VolumeKey) {
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].VolumeID != keys[j].VolumeID {
+			return keys[i].VolumeID < keys[j].VolumeID
+		}
+		if keys[i].Collection != keys[j].Collection {
+			return keys[i].Collection < keys[j].Collection
+		}
+		return keys[i].DiskType < keys[j].DiskType
+	})
+}
+
 // Detect scans topology for EC shard issues and returns repair candidates.
 func Detect(topoInfo *master_pb.TopologyInfo, collectionFilter string, maxResults int) ([]*RepairCandidate, bool, error) {
 	if topoInfo == nil {
@@ -42,15 +54,7 @@ func Detect(topoInfo *master_pb.TopologyInfo, collectionFilter string, maxResult
 	for key := range states {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].VolumeID != keys[j].VolumeID {
-			return keys[i].VolumeID < keys[j].VolumeID
-		}
-		if keys[i].Collection != keys[j].Collection {
-			return keys[i].Collection < keys[j].Collection
-		}
-		return keys[i].DiskType < keys[j].DiskType
-	})
+	sortVolumeKeys(keys)
 
 	if maxResults < 0 {
 		maxResults = 0
@@ -108,15 +112,7 @@ func BuildRepairPlan(
 	for key := range states {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].VolumeID != keys[j].VolumeID {
-			return keys[i].VolumeID < keys[j].VolumeID
-		}
-		if keys[i].Collection != keys[j].Collection {
-			return keys[i].Collection < keys[j].Collection
-		}
-		return keys[i].DiskType < keys[j].DiskType
-	})
+	sortVolumeKeys(keys)
 
 	var state *volumeShardState
 	for _, key := range keys {
