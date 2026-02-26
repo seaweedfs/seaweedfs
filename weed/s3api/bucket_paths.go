@@ -58,16 +58,7 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 		s3a.bucketRegistry.tableLocationLock.RUnlock()
 	}
 
-	entry, err := s3a.getEntry(s3tables.GetTableLocationMappingDir(), bucket)
-	tablePath := ""
-	if err == nil && entry != nil {
-		if entry.IsDirectory {
-			tablePath, err = s3a.readTableLocationMappingFromDirectory(bucket)
-		} else if len(entry.Content) > 0 {
-			// Backward compatibility with legacy single-file mappings.
-			tablePath = normalizeTableLocationMappingPath(string(entry.Content))
-		}
-	}
+	tablePath, err := s3a.lookupTableLocationMapping(bucket, s3tables.GetTableLocationMappingDir())
 
 	// Only cache definitive results: successful lookup (tablePath set) or definitive not-found (ErrNotFound)
 	// Don't cache transient errors to avoid treating temporary failures as permanent misses
@@ -89,8 +80,7 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 	return tablePath, true
 }
 
-func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(bucket string) (string, error) {
-	mappingDir := s3tables.GetTableLocationMappingPath(bucket)
+func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(mappingDir string) (string, error) {
 	var mappedPath string
 	conflict := false
 
@@ -134,10 +124,24 @@ func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(bucket string) (st
 	}
 
 	if conflict {
-		glog.V(1).Infof("table location mapping conflict for %s: multiple mapped roots found", bucket)
+		glog.V(1).Infof("table location mapping conflict under %s: multiple mapped roots found", mappingDir)
 		return "", nil
 	}
 	return mappedPath, nil
+}
+
+func (s3a *S3ApiServer) lookupTableLocationMapping(bucket, mappingDir string) (string, error) {
+	entry, err := s3a.getEntry(mappingDir, bucket)
+	if err != nil || entry == nil {
+		return "", err
+	}
+	if entry.IsDirectory {
+		return s3a.readTableLocationMappingFromDirectory(path.Join(mappingDir, bucket))
+	}
+	if len(entry.Content) == 0 {
+		return "", nil
+	}
+	return normalizeTableLocationMappingPath(string(entry.Content)), nil
 }
 
 func normalizeTableLocationMappingPath(rawPath string) string {
