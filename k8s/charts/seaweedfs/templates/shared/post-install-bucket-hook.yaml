@@ -6,9 +6,9 @@
 {{- $bucketsFolder := "/buckets" }}
 {{- $bucketEnvVars := merge (dict) (.Values.global.extraEnvironmentVars | default dict) }}
 {{- if .Values.allInOne.enabled }}
-  {{- $bucketEnvVars = merge $bucketEnvVars (.Values.allInOne.extraEnvironmentVars | default dict) }}
+  {{- $bucketEnvVars = merge (.Values.allInOne.extraEnvironmentVars | default dict) $bucketEnvVars }}
 {{- else }}
-  {{- $bucketEnvVars = merge $bucketEnvVars (.Values.filer.extraEnvironmentVars | default dict) }}
+  {{- $bucketEnvVars = merge (.Values.filer.extraEnvironmentVars | default dict) $bucketEnvVars }}
 {{- end }}
 {{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
 {{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}

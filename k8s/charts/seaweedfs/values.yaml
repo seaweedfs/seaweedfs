@@ -901,7 +901,7 @@ filer:
     #     anonymousRead: true
     #     ttl: 7d
     #     objectLock: true
-    #     versioning: enabled
+    #     versioning: Enabled
     #   - name: bucket-b
     #     anonymousRead: false
 
@@ -935,7 +935,7 @@ s3:
   #     anonymousRead: true
   #     ttl: 7d
   #     objectLock: true
-  #     versioning: enabled
+  #     versioning: Enabled
   #   - name: bucket-b
   #     anonymousRead: false
 
@@ -1444,7 +1444,7 @@ allInOne:
     #     anonymousRead: true
     #     ttl: 7d
     #     objectLock: true
-    #     versioning: enabled
+    #     versioning: Enabled
     #   - name: bucket-b
     #     anonymousRead: false
 
