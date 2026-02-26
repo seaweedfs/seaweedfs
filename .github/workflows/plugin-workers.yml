@@ -1,0 +1,35 @@
+name: "Plugin Worker Integration Tests"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-worker:
+    name: "Plugin Worker: ${{ matrix.worker }}"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - worker: erasure_coding
+            path: test/plugin_workers/erasure_coding
+
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v6
+        with:
+          go-version: ^1.24
+        id: go
+
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v6
+
+      - name: Run plugin worker tests
+        run: go test -v ./${{ matrix.path }}
