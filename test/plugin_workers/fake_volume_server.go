@@ -204,12 +204,15 @@ func (v *VolumeServer) ReceiveFile(stream volume_server_pb.VolumeServer_ReceiveF
 		bytesWritten uint64
 		filePath     string
 	)
+	defer func() {
+		if file != nil {
+			_ = file.Close()
+		}
+	}()
+
 	for {
 		req, err := stream.Recv()
 		if err == io.EOF {
-			if file != nil {
-				_ = file.Close()
-			}
 			if info == nil {
 				return stream.SendAndClose(&volume_server_pb.ReceiveFileResponse{Error: "missing file info"})
 			}

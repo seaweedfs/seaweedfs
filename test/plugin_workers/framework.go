@@ -83,9 +83,6 @@ func NewHarness(t *testing.T, cfg HarnessConfig) *Harness {
 	if len(cfg.Handlers) > 0 {
 		workerOpts.Handlers = cfg.Handlers
 	}
-	if workerOpts.Handler == nil && len(workerOpts.Handlers) == 0 {
-		workerOpts.Handlers = cfg.Handlers
-	}
 
 	worker, err := pluginworker.NewWorker(workerOpts)
 	require.NoError(t, err)
