@@ -410,8 +410,8 @@ func (h *EcRepairHandler) rebuildMissingShards(ctx context.Context, plan *ecrepa
 	}); err != nil {
 		return nil, err
 	}
-	if len(rebuilt) == 0 {
-		rebuilt = append(rebuilt, plan.MissingShards...)
+if len(rebuilt) == 0 && len(plan.MissingShards) > 0 {
+		return nil, fmt.Errorf("rebuild shards for volume %d completed but returned no rebuilt shard IDs", plan.VolumeID)
 	}
 	return rebuilt, nil
 }
