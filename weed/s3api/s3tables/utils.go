@@ -2,8 +2,6 @@ package s3tables
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"path"
@@ -21,8 +19,7 @@ const (
 )
 
 const (
-	tableLocationMappingsDirPath = "/etc/s3tables"
-	tableObjectRootDirName       = ".objects"
+	tableObjectRootDirName = ".objects"
 )
 
 var (
@@ -109,42 +106,6 @@ func GetTableObjectBucketPath(bucketName string) string {
 	return path.Join(GetTableObjectRootDir(), bucketName)
 }
 
-// GetTableLocationMappingDir returns the root path for table location bucket mappings
-func GetTableLocationMappingDir() string {
-	return tableLocationMappingsDirPath
-}
-
-// GetTableLocationMappingPath returns the filer path for a table location bucket mapping
-func GetTableLocationMappingPath(tableLocationBucket string) string {
-	return path.Join(GetTableLocationMappingDir(), tableLocationBucket)
-}
-
-// GetTableLocationMappingEntryPath returns the filer path for a table-specific mapping entry.
-// Each table gets its own entry so multiple tables can share the same external table-location bucket.
-func GetTableLocationMappingEntryPath(tableLocationBucket, tablePath string) string {
-	return path.Join(GetTableLocationMappingPath(tableLocationBucket), tableLocationMappingEntryName(tablePath))
-}
-
-func tableLocationMappingEntryName(tablePath string) string {
-	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
-	sum := sha1.Sum([]byte(normalized))
-	return hex.EncodeToString(sum[:])
-}
-
-func tableBucketPathFromTablePath(tablePath string) (string, bool) {
-	normalized := path.Clean("/" + strings.TrimSpace(strings.TrimPrefix(tablePath, "/")))
-	tablesPrefix := strings.TrimSuffix(TablesPath, "/") + "/"
-	if !strings.HasPrefix(normalized, tablesPrefix) {
-		return "", false
-	}
-
-	remaining := strings.TrimPrefix(normalized, tablesPrefix)
-	bucketName, _, _ := strings.Cut(remaining, "/")
-	if bucketName == "" {
-		return "", false
-	}
-	return path.Join(TablesPath, bucketName), true
-}
 
 // Metadata structures
 
@@ -242,22 +203,6 @@ func validateBucketName(name string) error {
 // ValidateBucketName validates bucket name and returns an error if invalid.
 func ValidateBucketName(name string) error {
 	return validateBucketName(name)
-}
-
-func parseTableLocationBucket(metadataLocation string) (string, bool) {
-	if !strings.HasPrefix(metadataLocation, "s3://") {
-		return "", false
-	}
-	trimmed := strings.TrimPrefix(metadataLocation, "s3://")
-	trimmed = strings.TrimSuffix(trimmed, "/")
-	if trimmed == "" {
-		return "", false
-	}
-	bucket, _, _ := strings.Cut(trimmed, "/")
-	if bucket == "" || !strings.HasSuffix(bucket, "--table-s3") {
-		return "", false
-	}
-	return bucket, true
 }
 
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.

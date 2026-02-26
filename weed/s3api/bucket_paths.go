@@ -1,9 +1,7 @@
 package s3api
 
 import (
-	"context"
 	"errors"
-	"io"
 	"path"
 	"strings"
 
@@ -43,126 +41,6 @@ func (s3a *S3ApiServer) isTableBucket(bucket string) bool {
 	return false
 }
 
-func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
-	if bucket == "" {
-		return "", false
-	}
-
-	// Check cache first
-	if s3a.bucketRegistry != nil {
-		s3a.bucketRegistry.tableLocationLock.RLock()
-		if tablePath, ok := s3a.bucketRegistry.tableLocationCache[bucket]; ok {
-			s3a.bucketRegistry.tableLocationLock.RUnlock()
-			return tablePath, tablePath != ""
-		}
-		s3a.bucketRegistry.tableLocationLock.RUnlock()
-	}
-
-	tablePath, err := s3a.lookupTableLocationMapping(bucket, s3tables.GetTableLocationMappingDir())
-
-	// Only cache definitive results: successful lookup (tablePath set) or definitive not-found (ErrNotFound)
-	// Don't cache transient errors to avoid treating temporary failures as permanent misses
-	if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
-		if s3a.bucketRegistry != nil {
-			s3a.bucketRegistry.tableLocationLock.Lock()
-			s3a.bucketRegistry.tableLocationCache[bucket] = tablePath
-			s3a.bucketRegistry.tableLocationLock.Unlock()
-		}
-	}
-
-	if tablePath == "" {
-		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-			glog.V(1).Infof("table location mapping lookup failed for %s: %v", bucket, err)
-		}
-		return "", false
-	}
-
-	return tablePath, true
-}
-
-func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(mappingDir string) (string, error) {
-	var mappedPath string
-	conflict := false
-
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory: mappingDir,
-			Limit:     4294967295, // math.MaxUint32
-		})
-		if err != nil {
-			return err
-		}
-
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr == io.EOF {
-				return nil
-			}
-			if recvErr != nil {
-				return recvErr
-			}
-			if resp == nil || resp.Entry == nil || resp.Entry.IsDirectory || len(resp.Entry.Content) == 0 {
-				continue
-			}
-
-			candidate := normalizeTableLocationMappingPath(string(resp.Entry.Content))
-			if candidate == "" {
-				continue
-			}
-			if mappedPath == "" {
-				mappedPath = candidate
-				continue
-			}
-			if mappedPath != candidate {
-				conflict = true
-				return nil
-			}
-		}
-	})
-	if err != nil {
-		return "", err
-	}
-
-	if conflict {
-		glog.V(1).Infof("table location mapping conflict under %s: multiple mapped roots found", mappingDir)
-		return "", nil
-	}
-	return mappedPath, nil
-}
-
-func (s3a *S3ApiServer) lookupTableLocationMapping(bucket, mappingDir string) (string, error) {
-	entry, err := s3a.getEntry(mappingDir, bucket)
-	if err != nil || entry == nil {
-		return "", err
-	}
-	if entry.IsDirectory {
-		return s3a.readTableLocationMappingFromDirectory(path.Join(mappingDir, bucket))
-	}
-	if len(entry.Content) == 0 {
-		return "", nil
-	}
-	return normalizeTableLocationMappingPath(string(entry.Content)), nil
-}
-
-func normalizeTableLocationMappingPath(rawPath string) string {
-	rawPath = strings.TrimSpace(rawPath)
-	if rawPath == "" {
-		return ""
-	}
-
-	normalized := path.Clean("/" + strings.TrimPrefix(rawPath, "/"))
-	tablesPrefix := strings.TrimSuffix(s3tables.TablesPath, "/") + "/"
-	if !strings.HasPrefix(normalized, tablesPrefix) {
-		return normalized
-	}
-
-	remaining := strings.TrimPrefix(normalized, tablesPrefix)
-	bucketName, _, _ := strings.Cut(remaining, "/")
-	if bucketName == "" {
-		return ""
-	}
-	return path.Join(s3tables.TablesPath, bucketName)
-}
 
 func (s3a *S3ApiServer) bucketRoot(bucket string) string {
 	// Returns the unified buckets root path for all bucket types
@@ -170,9 +48,6 @@ func (s3a *S3ApiServer) bucketRoot(bucket string) string {
 }
 
 func (s3a *S3ApiServer) bucketDir(bucket string) string {
-	if tablePath, ok := s3a.tableLocationDir(bucket); ok {
-		return tablePath
-	}
 	return path.Join(s3a.bucketRoot(bucket), bucket)
 }
 
@@ -221,8 +96,5 @@ func (s3a *S3ApiServer) bucketExists(bucket string) (bool, error) {
 }
 
 func (s3a *S3ApiServer) getBucketEntry(bucket string) (*filer_pb.Entry, error) {
-	if tablePath, ok := s3a.tableLocationDir(bucket); ok {
-		return s3a.getEntry(path.Dir(tablePath), path.Base(tablePath))
-	}
 	return s3a.getEntry(s3a.option.BucketsPath, bucket)
 }
