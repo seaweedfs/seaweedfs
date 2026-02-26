@@ -15,10 +15,12 @@ import (
 )
 
 type volumeShardState struct {
-	Key         VolumeKey
-	ShardMap    map[uint32][]ShardLocation
-	MaxShardID  uint32
-	SeenTargets map[string]struct{}
+	Key          VolumeKey
+	ShardMap     map[uint32][]ShardLocation
+	MaxShardID   uint32
+	SeenTargets  map[string]struct{}
+	DataShards   int
+	ParityShards int
 }
 
 type shardAnalysis struct {
@@ -66,7 +68,7 @@ func Detect(topoInfo *master_pb.TopologyInfo, collectionFilter string, maxResult
 		if len(analysis.Missing) == 0 && len(analysis.Delete) == 0 {
 			continue
 		}
-		if len(analysis.Missing) > 0 && len(analysis.Keep) < erasure_coding.DataShardsCount {
+		if len(analysis.Missing) > 0 && len(analysis.Keep) < state.DataShards {
 			// Not enough shards to rebuild missing shards safely.
 			continue
 		}
@@ -143,8 +145,8 @@ func BuildRepairPlan(
 			DeleteByNode: map[string][]uint32{},
 		}, nil
 	}
-	if len(analysis.Missing) > 0 && len(analysis.Keep) < erasure_coding.DataShardsCount {
-		return nil, fmt.Errorf("ec volume %d has %d shards, need at least %d to rebuild", volumeID, len(analysis.Keep), erasure_coding.DataShardsCount)
+	if len(analysis.Missing) > 0 && len(analysis.Keep) < state.DataShards {
+		return nil, fmt.Errorf("ec volume %d has %d shards, need at least %d to rebuild", volumeID, len(analysis.Keep), state.DataShards)
 	}
 
 	deleteByNode := groupDeleteByNode(analysis.Delete, activeTopology)
@@ -212,9 +214,11 @@ func collectShardStates(topoInfo *master_pb.TopologyInfo, collectionFilter strin
 						state := states[key]
 						if state == nil {
 							state = &volumeShardState{
-								Key:         key,
-								ShardMap:    make(map[uint32][]ShardLocation),
-								SeenTargets: make(map[string]struct{}),
+								Key:          key,
+								ShardMap:     make(map[uint32][]ShardLocation),
+								SeenTargets:  make(map[string]struct{}),
+								DataShards:   erasure_coding.DataShardsCount,
+								ParityShards: erasure_coding.ParityShardsCount,
 							}
 							states[key] = state
 						}
@@ -259,7 +263,10 @@ func analyzeShardState(state *volumeShardState) shardAnalysis {
 		return analysis
 	}
 
-	expectedTotal := erasure_coding.TotalShardsCount
+	expectedTotal := state.DataShards + state.ParityShards
+	if expectedTotal <= 0 {
+		expectedTotal = erasure_coding.TotalShardsCount
+	}
 	if int(state.MaxShardID)+1 > expectedTotal && int(state.MaxShardID)+1 <= erasure_coding.MaxShardCount {
 		expectedTotal = int(state.MaxShardID) + 1
 	}
