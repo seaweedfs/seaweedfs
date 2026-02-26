@@ -545,6 +545,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
+			if err != nil {
+				return err
+			}
 		} else {
 			// List tables across all namespaces in bucket
 			bucketPath := GetTableBucketPath(bucketName)
@@ -586,6 +589,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
+			if err != nil {
+				return err
+			}
 		}
 		return err
 	})
