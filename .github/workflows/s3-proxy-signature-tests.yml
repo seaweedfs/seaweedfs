@@ -31,9 +31,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build SeaweedFS binary
+      - name: Build SeaweedFS binary for Linux
         run: |
-          go build -buildvcs=false -o test/s3/proxy_signature/weed ./weed
+          GOOS=linux GOARCH=amd64 go build -buildvcs=false -o test/s3/proxy_signature/weed ./weed
 
       - name: Run S3 Proxy Signature Tests
         timeout-minutes: 10
@@ -42,6 +42,16 @@ jobs:
           set -x
           echo "Starting Docker Compose services..."
           docker compose up -d --build
+          
+          # Check if containers are running
+          echo "Checking container status..."
+          docker compose ps
+          
+          # Capture initial logs to diagnose startup issues
+          echo "SeaweedFS logs:"
+          docker compose logs seaweedfs || true
+          echo "Nginx logs:"
+          docker compose logs nginx || true
           
           # Wait for services to be ready
           echo "Waiting for nginx proxy to be ready..."
@@ -57,6 +67,8 @@ jobs:
           done
           if [ $PROXY_READY -eq 0 ]; then
             echo "ERROR: Proxy failed to become ready after 30 seconds"
+            echo "Docker compose logs:"
+            docker compose logs --no-color || true
             exit 1
           fi
           
@@ -75,6 +87,8 @@ jobs:
           done
           if [ $S3_READY -eq 0 ]; then
             echo "ERROR: SeaweedFS S3 gateway failed to become ready after 30 seconds"
+            echo "Docker compose logs:"
+            docker compose logs --no-color || true
             exit 1
           fi
           
