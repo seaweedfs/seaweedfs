@@ -14,6 +14,7 @@ const (
 	TaskTypeVacuum        TaskType = "vacuum"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeBalance       TaskType = "balance"
+	TaskTypeEcRepair      TaskType = "ec_repair"
 	TaskTypeReplication   TaskType = "replication"
 )
 
