@@ -23,21 +23,125 @@ type topologySpec struct {
 	dataCenters  int
 	racksPerDC   int
 	nodesPerRack int
+	diskTypes    []string
+	replicas     int
+	collection   string
+}
+
+type detectionCase struct {
+	name                  string
+	topology              topologySpec
+	adminCollectionFilter string
+	expectProposals       bool
 }
 
 func TestErasureCodingDetectionAcrossTopologies(t *testing.T) {
-	cases := []topologySpec{
+	cases := []detectionCase{
 		{
-			name:         "single-dc-multi-rack",
-			dataCenters:  1,
-			racksPerDC:   2,
-			nodesPerRack: 7,
+			name: "single-dc-multi-rack",
+			topology: topologySpec{
+				name:         "single-dc-multi-rack",
+				dataCenters:  1,
+				racksPerDC:   2,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "ec-test",
+			},
+			expectProposals: true,
 		},
 		{
-			name:         "multi-dc",
-			dataCenters:  2,
-			racksPerDC:   1,
-			nodesPerRack: 7,
+			name: "multi-dc",
+			topology: topologySpec{
+				name:         "multi-dc",
+				dataCenters:  2,
+				racksPerDC:   1,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "ec-test",
+			},
+			expectProposals: true,
+		},
+		{
+			name: "multi-dc-multi-rack",
+			topology: topologySpec{
+				name:         "multi-dc-multi-rack",
+				dataCenters:  2,
+				racksPerDC:   2,
+				nodesPerRack: 4,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "ec-test",
+			},
+			expectProposals: true,
+		},
+		{
+			name: "mixed-disk-types",
+			topology: topologySpec{
+				name:         "mixed-disk-types",
+				dataCenters:  1,
+				racksPerDC:   2,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd", "ssd"},
+				replicas:     1,
+				collection:   "ec-test",
+			},
+			expectProposals: true,
+		},
+		{
+			name: "multi-replica-volume",
+			topology: topologySpec{
+				name:         "multi-replica-volume",
+				dataCenters:  1,
+				racksPerDC:   2,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd"},
+				replicas:     3,
+				collection:   "ec-test",
+			},
+			expectProposals: true,
+		},
+		{
+			name: "collection-filter-match",
+			topology: topologySpec{
+				name:         "collection-filter-match",
+				dataCenters:  1,
+				racksPerDC:   2,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "filtered",
+			},
+			adminCollectionFilter: "filtered",
+			expectProposals:       true,
+		},
+		{
+			name: "collection-filter-mismatch",
+			topology: topologySpec{
+				name:         "collection-filter-mismatch",
+				dataCenters:  1,
+				racksPerDC:   2,
+				nodesPerRack: 7,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "filtered",
+			},
+			adminCollectionFilter: "other",
+			expectProposals:       false,
+		},
+		{
+			name: "insufficient-disks",
+			topology: topologySpec{
+				name:         "insufficient-disks",
+				dataCenters:  1,
+				racksPerDC:   1,
+				nodesPerRack: 2,
+				diskTypes:    []string{"hdd"},
+				replicas:     1,
+				collection:   "ec-test",
+			},
+			expectProposals: false,
 		},
 	}
 
@@ -45,7 +149,7 @@ func TestErasureCodingDetectionAcrossTopologies(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			volumeID := uint32(7)
-			response := buildVolumeListResponse(t, tc, volumeID)
+			response := buildVolumeListResponse(t, tc.topology, volumeID)
 			master := pluginworkers.NewMasterServer(t, response)
 
 			dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -58,6 +162,18 @@ func TestErasureCodingDetectionAcrossTopologies(t *testing.T) {
 			})
 			harness.WaitForJobType("erasure_coding")
 
+			if tc.adminCollectionFilter != "" {
+				err := harness.Plugin().SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+					JobType: "erasure_coding",
+					AdminConfigValues: map[string]*plugin_pb.ConfigValue{
+						"collection_filter": {
+							Kind: &plugin_pb.ConfigValue_StringValue{StringValue: tc.adminCollectionFilter},
+						},
+					},
+				})
+				require.NoError(t, err)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -65,6 +181,12 @@ func TestErasureCodingDetectionAcrossTopologies(t *testing.T) {
 				MasterGrpcAddresses: []string{master.Address()},
 			}, 10)
 			require.NoError(t, err)
+
+			if !tc.expectProposals {
+				require.Empty(t, proposals)
+				return
+			}
+
 			require.NotEmpty(t, proposals)
 
 			proposal := proposals[0]
@@ -87,9 +209,22 @@ func buildVolumeListResponse(t *testing.T, spec topologySpec, volumeID uint32) *
 	volumeSize := uint64(90) * 1024 * 1024
 	volumeModifiedAt := time.Now().Add(-10 * time.Minute).Unix()
 
+	diskTypes := spec.diskTypes
+	if len(diskTypes) == 0 {
+		diskTypes = []string{"hdd"}
+	}
+	replicas := spec.replicas
+	if replicas <= 0 {
+		replicas = 1
+	}
+	collection := spec.collection
+	if collection == "" {
+		collection = "ec-test"
+	}
+
 	var dataCenters []*master_pb.DataCenterInfo
 	nodeIndex := 0
-	volumePlaced := false
+	replicasPlaced := 0
 
 	for dc := 0; dc < spec.dataCenters; dc++ {
 		var racks []*master_pb.RackInfo
@@ -98,6 +233,7 @@ func buildVolumeListResponse(t *testing.T, spec topologySpec, volumeID uint32) *
 			for n := 0; n < spec.nodesPerRack; n++ {
 				nodeIndex++
 				address := fmt.Sprintf("127.0.0.1:%d", 20000+nodeIndex)
+				diskType := diskTypes[(nodeIndex-1)%len(diskTypes)]
 
 				diskInfo := &master_pb.DiskInfo{
 					DiskId:         0,
@@ -106,11 +242,11 @@ func buildVolumeListResponse(t *testing.T, spec topologySpec, volumeID uint32) *
 					VolumeInfos:    []*master_pb.VolumeInformationMessage{},
 				}
 
-				if !volumePlaced {
+				if replicasPlaced < replicas {
 					diskInfo.VolumeCount = 1
 					diskInfo.VolumeInfos = append(diskInfo.VolumeInfos, &master_pb.VolumeInformationMessage{
 						Id:               volumeID,
-						Collection:       "ec-test",
+						Collection:       collection,
 						DiskId:           0,
 						Size:             volumeSize,
 						DeletedByteCount: 0,
@@ -118,13 +254,13 @@ func buildVolumeListResponse(t *testing.T, spec topologySpec, volumeID uint32) *
 						ReplicaPlacement: 1,
 						ReadOnly:         false,
 					})
-					volumePlaced = true
+					replicasPlaced++
 				}
 
 				nodes = append(nodes, &master_pb.DataNodeInfo{
 					Id:        address,
 					Address:   address,
-					DiskInfos: map[string]*master_pb.DiskInfo{"hdd": diskInfo},
+					DiskInfos: map[string]*master_pb.DiskInfo{diskType: diskInfo},
 				})
 			}
 
