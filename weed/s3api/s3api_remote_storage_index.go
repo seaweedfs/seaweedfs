@@ -71,7 +71,7 @@ func (idx *remoteStorageIndex) refresh(grpcDialOption grpc.DialOption, filerAddr
 	idx.mounts = newMounts
 	idx.mu.Unlock()
 	return nil
-}Expand commentComment on lines R41 to R66Resolved
+}
 
 func (idx *remoteStorageIndex) startRefreshLoop(ctx context.Context, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, interval time.Duration) {
 	go func() {
