@@ -21,7 +21,7 @@ const (
 )
 
 const (
-	tableLocationMappingsDirName = ".table-location-mappings"
+	tableLocationMappingsDirPath = "/etc/s3tables"
 	tableObjectRootDirName       = ".objects"
 )
 
@@ -111,7 +111,7 @@ func GetTableObjectBucketPath(bucketName string) string {
 
 // GetTableLocationMappingDir returns the root path for table location bucket mappings
 func GetTableLocationMappingDir() string {
-	return path.Join(TablesPath, tableLocationMappingsDirName)
+	return tableLocationMappingsDirPath
 }
 
 // GetTableLocationMappingPath returns the filer path for a table location bucket mapping
