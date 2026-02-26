@@ -7,15 +7,25 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 )
 
+const defaultPostgresHost = "postgres-server"
+
+func getEnv(key, def string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return def
+}
+
 func clientMain() {
 	// Get PostgreSQL connection details from environment
-	host := getEnv("POSTGRES_HOST", "localhost")
+	host := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 	dbname := getEnv("POSTGRES_DB", "default")
@@ -104,7 +114,7 @@ func testSystemInfo(db *sql.DB) error {
 	}
 
 	// Use individual connections for each query to avoid protocol issues
-	connStr := getEnv("POSTGRES_HOST", "postgres-server")
+	connStr := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 	dbname := getEnv("POSTGRES_DB", "logs")
@@ -120,12 +130,12 @@ func testSystemInfo(db *sql.DB) error {
 			log.Printf("  Query '%s' failed to connect: %v", q.query, err)
 			continue
 		}
-		defer tempDB.Close()
 
 		var result string
 		err = tempDB.QueryRow(q.query).Scan(&result)
 		if err != nil {
 			log.Printf("  Query '%s' failed: %v", q.query, err)
+			tempDB.Close()
 			continue
 		}
 		log.Printf("  %s: %s", q.name, result)
@@ -315,7 +325,7 @@ func testDatabaseSwitching(db *sql.DB) error {
 	databases := []string{"analytics", "ecommerce", "logs"}
 
 	// Use fresh connections to avoid protocol issues
-	connStr := getEnv("POSTGRES_HOST", "postgres-server")
+	connStr := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 
@@ -330,7 +340,6 @@ func testDatabaseSwitching(db *sql.DB) error {
 			log.Printf("  Could not connect to '%s': %v", dbName, err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// Test the connection by executing a simple query
 		var newDB string
@@ -374,7 +383,7 @@ func testSystemColumns(db *sql.DB) error {
 
 		// Use fresh connection to avoid protocol state issues
 		connStr := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable",
-			getEnv("POSTGRES_HOST", "postgres-server"),
+			getEnv("POSTGRES_HOST", defaultPostgresHost),
 			getEnv("POSTGRES_PORT", "5432"),
 			getEnv("POSTGRES_USER", "seaweedfs"),
 			getEnv("POSTGRES_DB", "logs"))
@@ -384,7 +393,6 @@ func testSystemColumns(db *sql.DB) error {
 			log.Printf("    Could not create connection: %v", err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// First check if table exists and has data (safer than COUNT which was causing crashes)
 		rows, err := tempDB.Query(fmt.Sprintf("SELECT id FROM %s LIMIT 1", table))
@@ -446,7 +454,6 @@ func testComplexQueries(db *sql.DB) error {
 			log.Printf("    Could not create connection: %v", err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// Test basic SELECT with LIMIT (avoid COUNT which was causing crashes)
 		rows, err := tempDB.Query(fmt.Sprintf("SELECT id FROM %s LIMIT 5", table))
@@ -477,25 +484,15 @@ func testComplexQueries(db *sql.DB) error {
 					if err := rows.Scan(&foundID); err == nil && foundID == testID {
 						log.Printf("    ✓ WHERE clause working: found record with ID %d", foundID)
 					}
-				}
-				rows.Close()
 			}
-
-			log.Printf("  ✓ Complex queries test passed for '%s'", table)
-			tempDB.Close()
-			return nil
+			rows.Close()
 		}
 
+		log.Printf("  ✓ Complex queries test passed for '%s'", table)
 		tempDB.Close()
+		return nil
 	}
 
 	log.Println("  Complex queries test completed - avoided crash-prone patterns")
 	return nil
-}
-
-func stringOrNull(ns sql.NullString) string {
-	if ns.Valid {
-		return ns.String
-	}
-	return "NULL"
 }
