@@ -52,8 +52,8 @@ func (c *commandS3BucketVersioning) Do(args []string, commandEnv *CommandEnv, wr
 	statusFlag := bucketCommand.String("status", "", "versioning status: Enabled or Suspended")
 	enable := bucketCommand.Bool("enable", false, "enable versioning on the bucket")
 	suspend := bucketCommand.Bool("suspend", false, "suspend versioning on the bucket")
-	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+if err = bucketCommand.Parse(args); err != nil {
+		return err
 	}
 
 	if *bucketName == "" {
