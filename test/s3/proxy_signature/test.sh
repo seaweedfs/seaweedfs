@@ -55,15 +55,21 @@ echo ""
 # Wait for proxy to be ready
 echo "Waiting for nginx proxy to be ready..."
 for i in $(seq 1 30); do
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:9000/" 2>/dev/null || echo "000")
-    case $http_code in
-        200|[3][0-9][0-9]|403)
+    # Use aws CLI for health check if curl is missing
+    if command -v curl >/dev/null 2>&1; then
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" "$PROXY_ENDPOINT/" 2>/dev/null || echo "000")
+        case $http_code in
+            200|403|405) break ;;
+        esac
+    else
+        if aws s3api list-buckets --endpoint-url "$PROXY_ENDPOINT" --no-sign-request >/dev/null 2>&1; then
             break
-            ;;
-    esac
+        fi
+    fi
     if [ "$i" -eq 30 ]; then
         fail "Proxy did not become ready in time"
     fi
+    echo "Waiting for proxy $i/30..."
     sleep 1
 done
 echo "Proxy is ready."
