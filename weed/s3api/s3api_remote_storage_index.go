@@ -47,21 +47,21 @@ func (idx *remoteStorageIndex) refresh(grpcDialOption grpc.DialOption, filerAddr
 	idx.mu.RUnlock()
 
 	newMounts := make(map[string]mountEntry, len(mappings.Mappings))
+	keepPrev := func(dir, reason string, err error) {
+		glog.Warningf("remoteStorageIndex: %s: %v", reason, err)
+		if existing, ok := prev[dir]; ok {
+			newMounts[dir] = existing
+		}
+	}
 	for dir, loc := range mappings.Mappings {
 		conf, confErr := filer.ReadRemoteStorageConf(grpcDialOption, filerAddress, loc.Name)
 		if confErr != nil {
-			glog.Warningf("remoteStorageIndex: failed to load conf for %s: %v", loc.Name, confErr)
-			if existing, ok := prev[dir]; ok {
-				newMounts[dir] = existing
-			}
+			keepPrev(dir, "failed to load conf for "+loc.Name, confErr)
 			continue
 		}
 		client, clientErr := remote_storage.GetRemoteStorage(conf)
 		if clientErr != nil {
-			glog.Warningf("remoteStorageIndex: failed to build client for %s: %v", loc.Name, clientErr)
-			if existing, ok := prev[dir]; ok {
-				newMounts[dir] = existing
-			}
+			keepPrev(dir, "failed to build client for "+loc.Name, clientErr)
 			continue
 		}
 		newMounts[dir] = mountEntry{loc: loc, client: client}
@@ -206,16 +206,17 @@ func (s3a *S3ApiServer) doLazyFetch(ctx context.Context, objectFilerPath string,
 	// SkipCheckParentDirectory is required because parent directories are not
 	// pre-populated under lazy pull mode; the filer tree is built on demand.
 	saveErr := s3a.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
-		_, createErr := filerClient.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		return filer_pb.CreateEntry(ctx, filerClient, &filer_pb.CreateEntryRequest{
 			Directory:                dir,
 			Entry:                    entry,
 			IsFromOtherCluster:       false,
 			SkipCheckParentDirectory: true,
 		})
-		return createErr
 	})
 	if saveErr != nil {
 		glog.Warningf("lazyFetchFromRemote: failed to persist filer entry for %s/%s: %v", bucket, object, saveErr)
+		// Availability over consistency: serve remote metadata for this request
+		// but forget the singleflight key so the next request retries the filer write.
 		s3a.remoteStorageIdx.fetchGroup.Forget(objectFilerPath)
 	}
 
