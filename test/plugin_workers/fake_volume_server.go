@@ -30,6 +30,10 @@ type VolumeServer struct {
 	mu                 sync.Mutex
 	receivedFiles      map[string]uint64
 	mountRequests      []*volume_server_pb.VolumeEcShardsMountRequest
+	unmountRequests    []*volume_server_pb.VolumeEcShardsUnmountRequest
+	copyRequests       []*volume_server_pb.VolumeEcShardsCopyRequest
+	rebuildRequests    []*volume_server_pb.VolumeEcShardsRebuildRequest
+	ecDeleteRequests   []*volume_server_pb.VolumeEcShardsDeleteRequest
 	deleteRequests     []*volume_server_pb.VolumeDeleteRequest
 	markReadonlyCalls  int
 	vacuumGarbageRatio float64
@@ -131,6 +135,46 @@ func (v *VolumeServer) MountRequests() []*volume_server_pb.VolumeEcShardsMountRe
 
 	out := make([]*volume_server_pb.VolumeEcShardsMountRequest, len(v.mountRequests))
 	copy(out, v.mountRequests)
+	return out
+}
+
+// UnmountRequests returns recorded unmount requests.
+func (v *VolumeServer) UnmountRequests() []*volume_server_pb.VolumeEcShardsUnmountRequest {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	out := make([]*volume_server_pb.VolumeEcShardsUnmountRequest, len(v.unmountRequests))
+	copy(out, v.unmountRequests)
+	return out
+}
+
+// CopyRequests returns recorded EC shard copy requests.
+func (v *VolumeServer) CopyRequests() []*volume_server_pb.VolumeEcShardsCopyRequest {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	out := make([]*volume_server_pb.VolumeEcShardsCopyRequest, len(v.copyRequests))
+	copy(out, v.copyRequests)
+	return out
+}
+
+// RebuildRequests returns recorded EC shard rebuild requests.
+func (v *VolumeServer) RebuildRequests() []*volume_server_pb.VolumeEcShardsRebuildRequest {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	out := make([]*volume_server_pb.VolumeEcShardsRebuildRequest, len(v.rebuildRequests))
+	copy(out, v.rebuildRequests)
+	return out
+}
+
+// EcDeleteRequests returns recorded EC shard delete requests.
+func (v *VolumeServer) EcDeleteRequests() []*volume_server_pb.VolumeEcShardsDeleteRequest {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	out := make([]*volume_server_pb.VolumeEcShardsDeleteRequest, len(v.ecDeleteRequests))
+	copy(out, v.ecDeleteRequests)
 	return out
 }
 
@@ -258,6 +302,34 @@ func (v *VolumeServer) VolumeEcShardsMount(ctx context.Context, req *volume_serv
 	v.mountRequests = append(v.mountRequests, req)
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeEcShardsMountResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeEcShardsUnmount(ctx context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
+	v.mu.Lock()
+	v.unmountRequests = append(v.unmountRequests, req)
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeEcShardsUnmountResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+	v.mu.Lock()
+	v.copyRequests = append(v.copyRequests, req)
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_server_pb.VolumeEcShardsRebuildRequest) (*volume_server_pb.VolumeEcShardsRebuildResponse, error) {
+	v.mu.Lock()
+	v.rebuildRequests = append(v.rebuildRequests, req)
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeEcShardsRebuildResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_server_pb.VolumeEcShardsDeleteRequest) (*volume_server_pb.VolumeEcShardsDeleteResponse, error) {
+	v.mu.Lock()
+	v.ecDeleteRequests = append(v.ecDeleteRequests, req)
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeEcShardsDeleteResponse{}, nil
 }
 
 func (v *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
