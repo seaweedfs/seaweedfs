@@ -228,16 +228,18 @@ func (h *ErasureCodingHandler) Detect(
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := erasurecodingtask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
+	maxResults := int(request.MaxResults)
+	if maxResults < 0 {
+		maxResults = 0
+	}
+	results, hasMore, err := erasurecodingtask.Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
-	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results, maxResults, hasMore); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
 	}
 
-	maxResults := int(request.MaxResults)
-	hasMore := false
 	if maxResults > 0 && len(results) > maxResults {
 		hasMore = true
 		results = results[:maxResults]
@@ -273,6 +275,8 @@ func emitErasureCodingDetectionDecisionTrace(
 	metrics []*workertypes.VolumeHealthMetrics,
 	taskConfig *erasurecodingtask.Config,
 	results []*workertypes.TaskDetectionResult,
+	maxResults int,
+	hasMore bool,
 ) error {
 	if sender == nil || taskConfig == nil {
 		return nil
@@ -341,11 +345,20 @@ func emitErasureCodingDetectionDecisionTrace(
 	}
 
 	totalVolumes := len(metrics)
+	summarySuffix := ""
+	if hasMore {
+		if maxResults > 0 {
+			summarySuffix = fmt.Sprintf(" (max_results=%d reached; remaining volumes not evaluated)", maxResults)
+		} else {
+			summarySuffix = " (max_results reached; remaining volumes not evaluated)"
+		}
+	}
 	summaryMessage := ""
 	if len(results) == 0 {
 		summaryMessage = fmt.Sprintf(
-			"EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			"EC detection: No tasks created for %d volumes%s (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes,
+			summarySuffix,
 			skippedAlreadyEC,
 			skippedTooSmall,
 			skippedCollectionFilter,
@@ -354,8 +367,9 @@ func emitErasureCodingDetectionDecisionTrace(
 		)
 	} else {
 		summaryMessage = fmt.Sprintf(
-			"EC detection: Created %d task(s) from %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			"EC detection: Created %d task(s)%s from %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			len(results),
+			summarySuffix,
 			totalVolumes,
 			skippedAlreadyEC,
 			skippedTooSmall,
@@ -371,6 +385,12 @@ func emitErasureCodingDetectionDecisionTrace(
 		},
 		"selected_tasks": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
+		},
+		"max_results": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(maxResults)},
+		},
+		"has_more": {
+			Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: hasMore},
 		},
 		"skipped_already_ec": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedAlreadyEC)},

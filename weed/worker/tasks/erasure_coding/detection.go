@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -15,14 +16,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Detection implements the detection logic for erasure coding tasks
-func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
+// Detection implements the detection logic for erasure coding tasks.
+// It respects ctx cancellation and can stop early once maxResults is reached.
+func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, bool, error) {
 	if !config.IsEnabled() {
-		return nil, nil
+		return nil, false, nil
+	}
+
+	if maxResults < 0 {
+		maxResults = 0
 	}
 
 	ecConfig := config.(*Config)
 	var results []*types.TaskDetectionResult
+	hasMore := false
+	stoppedEarly := false
 	now := time.Now()
 	quietThreshold := time.Duration(ecConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(ecConfig.MinSizeMB) * 1024 * 1024 // Configurable minimum
@@ -34,14 +42,40 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	skippedQuietTime := 0
 	skippedFullness := 0
 
+	allowedCollections := make(map[string]bool)
+	if ecConfig.CollectionFilter != "" {
+		for _, collection := range strings.Split(ecConfig.CollectionFilter, ",") {
+			trimmed := strings.TrimSpace(collection)
+			if trimmed != "" {
+				allowedCollections[trimmed] = true
+			}
+		}
+	}
+
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
 	for _, metric := range metrics {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return results, hasMore, err
+			}
+		}
 		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
 	}
 
 	// Iterate over groups to check criteria and creation tasks
 	for _, groupMetrics := range volumeGroups {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return results, hasMore, err
+			}
+		}
+		if maxResults > 0 && len(results) >= maxResults {
+			hasMore = true
+			stoppedEarly = true
+			break
+		}
+
 		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
 		metric := groupMetrics[0]
 		for _, m := range groupMetrics {
@@ -63,12 +97,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		}
 
 		// Check collection filter if specified
-		if ecConfig.CollectionFilter != "" {
-			// Parse comma-separated collections
-			allowedCollections := make(map[string]bool)
-			for _, collection := range strings.Split(ecConfig.CollectionFilter, ",") {
-				allowedCollections[strings.TrimSpace(collection)] = true
-			}
+		if len(allowedCollections) > 0 {
 			// Skip if volume's collection is not in the allowed list
 			if !allowedCollections[metric.Collection] {
 				skippedCollectionFilter++
@@ -78,6 +107,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 		// Check quiet duration and fullness criteria
 		if metric.Age >= quietThreshold && metric.FullnessRatio >= ecConfig.FullnessRatio {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return results, hasMore, err
+				}
+			}
 			glog.Infof("EC Detection: Volume %d meets all criteria, attempting to create task", metric.VolumeID)
 
 			// Generate task ID for ActiveTopology integration
@@ -239,6 +273,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 			glog.Infof("EC Detection: Successfully created EC task for volume %d, adding to results", metric.VolumeID)
 			results = append(results, result)
+			if maxResults > 0 && len(results) >= maxResults {
+				hasMore = true
+				stoppedEarly = true
+				break
+			}
 		} else {
 			// Count debug reasons
 			if metric.Age < quietThreshold {
@@ -256,7 +295,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	}
 
 	// Log debug summary if no tasks were created
-	if len(results) == 0 && len(metrics) > 0 {
+	if len(results) == 0 && len(metrics) > 0 && !stoppedEarly {
 		totalVolumes := len(metrics)
 		glog.Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
@@ -273,7 +312,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		}
 	}
 
-	return results, nil
+	return results, hasMore, nil
 }
 
 // planECDestinations plans the destinations for erasure coding operation
