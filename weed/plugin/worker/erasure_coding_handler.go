@@ -3,7 +3,6 @@ package pluginworker
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,10 +26,11 @@ type erasureCodingWorkerConfig struct {
 // ErasureCodingHandler is the plugin job handler for erasure coding.
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
+	workingDir     string
 }
 
-func NewErasureCodingHandler(grpcDialOption grpc.DialOption) *ErasureCodingHandler {
-	return &ErasureCodingHandler{grpcDialOption: grpcDialOption}
+func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
+	return &ErasureCodingHandler{grpcDialOption: grpcDialOption, workingDir: strings.TrimSpace(workingDir)}
 }
 
 func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
@@ -473,7 +473,7 @@ func (h *ErasureCodingHandler) Execute(
 		return err
 	}
 
-	applyErasureCodingExecutionDefaults(params, request.GetClusterContext())
+	applyErasureCodingExecutionDefaults(params, request.GetClusterContext(), h.workingDir)
 
 	if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
 		return fmt.Errorf("erasure coding source node is required")
@@ -618,7 +618,7 @@ func buildErasureCodingProposal(
 		return nil, fmt.Errorf("missing typed params for volume %d", result.VolumeID)
 	}
 	params := proto.Clone(result.TypedParams).(*worker_pb.TaskParams)
-	applyErasureCodingExecutionDefaults(params, nil)
+	applyErasureCodingExecutionDefaults(params, nil, h.workingDir)
 
 	paramsPayload, err := proto.Marshal(params)
 	if err != nil {
@@ -769,6 +769,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 func applyErasureCodingExecutionDefaults(
 	params *worker_pb.TaskParams,
 	clusterContext *plugin_pb.ClusterContext,
+	baseWorkingDir string,
 ) {
 	if params == nil {
 		return
@@ -789,7 +790,7 @@ func applyErasureCodingExecutionDefaults(
 	if ecParams.ParityShards <= 0 {
 		ecParams.ParityShards = ecstorage.ParityShardsCount
 	}
-	ecParams.WorkingDir = defaultErasureCodingWorkingDir()
+	ecParams.WorkingDir = defaultErasureCodingWorkingDir(baseWorkingDir)
 	ecParams.CleanupSource = true
 	if strings.TrimSpace(ecParams.MasterClient) == "" && clusterContext != nil && len(clusterContext.MasterGrpcAddresses) > 0 {
 		ecParams.MasterClient = clusterContext.MasterGrpcAddresses[0]
@@ -900,6 +901,10 @@ func assignECShardIDs(totalShards int, targetCount int) [][]uint32 {
 	return assignments
 }
 
-func defaultErasureCodingWorkingDir() string {
-	return filepath.Join(os.TempDir(), "seaweedfs-ec")
+func defaultErasureCodingWorkingDir(baseWorkingDir string) string {
+	dir := strings.TrimSpace(baseWorkingDir)
+	if dir == "" {
+		return filepath.Join(".", "seaweedfs-ec")
+	}
+	return filepath.Join(dir, "seaweedfs-ec")
 }

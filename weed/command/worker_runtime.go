@@ -175,7 +175,7 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExe
 	case "volume_balance":
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
 	case "erasure_coding":
-		return pluginworker.NewErasureCodingHandler(dialOption), nil
+		return pluginworker.NewErasureCodingHandler(dialOption, options.WorkingDir), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
 	}
