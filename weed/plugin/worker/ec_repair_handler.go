@@ -20,6 +20,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const recentTaskWindowSize = 10
+
 type ecRepairWorkerConfig struct {
 	MinIntervalSeconds int
 }
@@ -410,8 +412,13 @@ func (h *EcRepairHandler) rebuildMissingShards(ctx context.Context, plan *ecrepa
 	}); err != nil {
 		return nil, err
 	}
-if len(rebuilt) == 0 && len(plan.MissingShards) > 0 {
-		return nil, fmt.Errorf("rebuild shards for volume %d completed but returned no rebuilt shard IDs", plan.VolumeID)
+	if len(rebuilt) == 0 {
+		if len(plan.MissingShards) > 0 {
+			glog.V(1).Infof("EC Repair: resp.RebuiltShardIds empty; assuming all missing shards rebuilt for volume %d (%d shards)", plan.VolumeID, len(plan.MissingShards))
+		} else {
+			glog.V(1).Infof("EC Repair: resp.RebuiltShardIds empty for volume %d with no missing shards declared", plan.VolumeID)
+		}
+		rebuilt = append(rebuilt, plan.MissingShards...)
 	}
 	return rebuilt, nil
 }
@@ -562,7 +569,7 @@ func (h *EcRepairHandler) fetchTopology(ctx context.Context, masterAddresses []s
 		if response == nil || response.TopologyInfo == nil {
 			continue
 		}
-		activeTopology := topology.NewActiveTopology(10)
+		activeTopology := topology.NewActiveTopology(recentTaskWindowSize)
 		if err := activeTopology.UpdateTopology(response.TopologyInfo); err != nil {
 			return nil, nil, err
 		}

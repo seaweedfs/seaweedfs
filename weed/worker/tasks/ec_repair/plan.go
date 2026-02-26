@@ -56,7 +56,7 @@ func Detect(topoInfo *master_pb.TopologyInfo, collectionFilter string, maxResult
 	var candidates []*RepairCandidate
 	hasMore := false
 
-	for _, key := range keys {
+	for idx, key := range keys {
 		state := states[key]
 		if state == nil {
 			continue
@@ -80,9 +80,7 @@ func Detect(topoInfo *master_pb.TopologyInfo, collectionFilter string, maxResult
 		})
 
 		if maxResults > 0 && len(candidates) >= maxResults {
-			if len(candidates) < len(keys) {
-				hasMore = true
-			}
+			hasMore = idx < len(keys)-1
 			break
 		}
 	}
