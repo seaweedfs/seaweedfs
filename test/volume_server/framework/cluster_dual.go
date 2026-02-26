@@ -33,7 +33,7 @@ type DualVolumeCluster struct {
 	volumeGrpcPort1 int
 	volumePubPort1  int
 
-	masterCmd *exec.Cmd
+	masterCmd  *exec.Cmd
 	volumeCmd0 *exec.Cmd
 	volumeCmd1 *exec.Cmd
 
@@ -79,21 +79,21 @@ func StartDualVolumeCluster(t testing.TB, profile matrix.Profile) *DualVolumeClu
 	}
 
 	c := &DualVolumeCluster{
-		testingTB:      t,
-		profile:        profile,
-		weedBinary:     weedBinary,
-		baseDir:        baseDir,
-		configDir:      configDir,
-		logsDir:        logsDir,
-		keepLogs:       keepLogs,
-		masterPort:     masterPort,
-		masterGrpcPort: masterGrpcPort,
-		volumePort0:    ports[0],
+		testingTB:       t,
+		profile:         profile,
+		weedBinary:      weedBinary,
+		baseDir:         baseDir,
+		configDir:       configDir,
+		logsDir:         logsDir,
+		keepLogs:        keepLogs,
+		masterPort:      masterPort,
+		masterGrpcPort:  masterGrpcPort,
+		volumePort0:     ports[0],
 		volumeGrpcPort0: ports[1],
-		volumePubPort0: ports[0],
-		volumePort1:    ports[2],
+		volumePubPort0:  ports[0],
+		volumePort1:     ports[2],
 		volumeGrpcPort1: ports[3],
-		volumePubPort1: ports[2],
+		volumePubPort1:  ports[2],
 	}
 	if profile.SplitPublicPort {
 		c.volumePubPort0 = ports[4]
