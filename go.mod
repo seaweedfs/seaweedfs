@@ -143,7 +143,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
-	github.com/parquet-go/parquet-go v0.26.4
+	github.com/parquet-go/parquet-go v0.28.0
 	github.com/pkg/sftp v1.13.10
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/rclone/rclone v1.73.1
@@ -270,8 +270,8 @@ require (
 	github.com/substrait-io/substrait v0.69.0 // indirect
 	github.com/substrait-io/substrait-go/v4 v4.4.0 // indirect
 	github.com/substrait-io/substrait-protobuf/go v0.71.0 // indirect
-	github.com/twpayne/go-geom v1.4.1 // indirect
-	github.com/twpayne/go-kml v1.5.2 // indirect
+	github.com/twpayne/go-geom v1.6.1 // indirect
+	github.com/twpayne/go-kml/v3 v3.2.1 // indirect
 	github.com/tyler-smith/go-bip39 v1.1.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
@@ -348,7 +348,7 @@ require (
 	github.com/buengese/sgzip v0.1.1 // indirect
 	github.com/calebcase/tmpfile v1.0.3 // indirect
 	github.com/chilts/sid v0.0.0-20190607042430-660e94789ec9 // indirect
-	github.com/cloudflare/circl v1.6.1 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cloudinary/cloudinary-go/v2 v2.13.0 // indirect
 	github.com/cloudsoda/go-smb2 v0.0.0-20250228001242-d4c70e6251cc // indirect
 	github.com/cloudsoda/sddl v0.0.0-20250224235906-926454e91efc // indirect
@@ -459,7 +459,7 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/samber/lo v1.52.0 // indirect
-	github.com/seaweedfs/cockroachdb-parser v0.0.0-20251021184156-909763b17138
+	github.com/seaweedfs/cockroachdb-parser v0.0.0-20260225204133-2f342c5ea564
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect

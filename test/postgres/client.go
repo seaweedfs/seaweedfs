@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -11,9 +14,22 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const defaultPostgresHost = "postgres-server"
+
+func getEnv(key, def string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return def
+}
+
 func main() {
+	clientMain()
+}
+
+func clientMain() {
 	// Get PostgreSQL connection details from environment
-	host := getEnv("POSTGRES_HOST", "localhost")
+	host := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 	dbname := getEnv("POSTGRES_DB", "default")
@@ -102,7 +118,7 @@ func testSystemInfo(db *sql.DB) error {
 	}
 
 	// Use individual connections for each query to avoid protocol issues
-	connStr := getEnv("POSTGRES_HOST", "postgres-server")
+	connStr := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 	dbname := getEnv("POSTGRES_DB", "logs")
@@ -118,12 +134,12 @@ func testSystemInfo(db *sql.DB) error {
 			log.Printf("  Query '%s' failed to connect: %v", q.query, err)
 			continue
 		}
-		defer tempDB.Close()
 
 		var result string
 		err = tempDB.QueryRow(q.query).Scan(&result)
 		if err != nil {
 			log.Printf("  Query '%s' failed: %v", q.query, err)
+			tempDB.Close()
 			continue
 		}
 		log.Printf("  %s: %s", q.name, result)
@@ -313,7 +329,7 @@ func testDatabaseSwitching(db *sql.DB) error {
 	databases := []string{"analytics", "ecommerce", "logs"}
 
 	// Use fresh connections to avoid protocol issues
-	connStr := getEnv("POSTGRES_HOST", "postgres-server")
+	connStr := getEnv("POSTGRES_HOST", defaultPostgresHost)
 	port := getEnv("POSTGRES_PORT", "5432")
 	user := getEnv("POSTGRES_USER", "seaweedfs")
 
@@ -328,7 +344,6 @@ func testDatabaseSwitching(db *sql.DB) error {
 			log.Printf("  Could not connect to '%s': %v", dbName, err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// Test the connection by executing a simple query
 		var newDB string
@@ -372,7 +387,7 @@ func testSystemColumns(db *sql.DB) error {
 
 		// Use fresh connection to avoid protocol state issues
 		connStr := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable",
-			getEnv("POSTGRES_HOST", "postgres-server"),
+			getEnv("POSTGRES_HOST", defaultPostgresHost),
 			getEnv("POSTGRES_PORT", "5432"),
 			getEnv("POSTGRES_USER", "seaweedfs"),
 			getEnv("POSTGRES_DB", "logs"))
@@ -382,7 +397,6 @@ func testSystemColumns(db *sql.DB) error {
 			log.Printf("    Could not create connection: %v", err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// First check if table exists and has data (safer than COUNT which was causing crashes)
 		rows, err := tempDB.Query(fmt.Sprintf("SELECT id FROM %s LIMIT 1", table))
@@ -444,7 +458,6 @@ func testComplexQueries(db *sql.DB) error {
 			log.Printf("    Could not create connection: %v", err)
 			continue
 		}
-		defer tempDB.Close()
 
 		// Test basic SELECT with LIMIT (avoid COUNT which was causing crashes)
 		rows, err := tempDB.Query(fmt.Sprintf("SELECT id FROM %s LIMIT 5", table))
@@ -469,38 +482,36 @@ func testComplexQueries(db *sql.DB) error {
 			// Test WHERE clause with known ID (safer than arbitrary conditions)
 			testID := ids[0]
 			rows, err = tempDB.Query(fmt.Sprintf("SELECT id FROM %s WHERE id = %d", table, testID))
-			if err == nil {
+			if err != nil {
+				log.Printf("    WHERE query failed: %v", err)
+				tempDB.Close()
+				return fmt.Errorf("WHERE clause test failed for table '%s'", table)
+			}
+
+			foundMatch := false
+			if rows.Next() {
 				var foundID int64
-				if rows.Next() {
-					if err := rows.Scan(&foundID); err == nil && foundID == testID {
-						log.Printf("    ✓ WHERE clause working: found record with ID %d", foundID)
-					}
+				if err := rows.Scan(&foundID); err == nil && foundID == testID {
+					log.Printf("    ✓ WHERE clause working: found record with ID %d", foundID)
+					foundMatch = true
 				}
-				rows.Close()
+			}
+			rows.Close()
+
+			if !foundMatch {
+				tempDB.Close()
+				return fmt.Errorf("WHERE clause test failed: no matching record found for ID %d in table '%s'", testID, table)
 			}
 
 			log.Printf("  ✓ Complex queries test passed for '%s'", table)
 			tempDB.Close()
 			return nil
+		} else {
+			tempDB.Close()
+			return fmt.Errorf("no records found in table '%s' - cannot test WHERE clause", table)
 		}
-
-		tempDB.Close()
 	}
 
 	log.Println("  Complex queries test completed - avoided crash-prone patterns")
 	return nil
-}
-
-func stringOrNull(ns sql.NullString) string {
-	if ns.Valid {
-		return ns.String
-	}
-	return "NULL"
-}
-
-func getEnv(key, defaultValue string) string {
-	if value, exists := os.LookupEnv(key); exists {
-		return value
-	}
-	return defaultValue
 }

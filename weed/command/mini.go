@@ -1186,7 +1186,7 @@ func startMiniPluginWorker(ctx context.Context) {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency))
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency), workerDir)
 	if err != nil {
 		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
 	}
