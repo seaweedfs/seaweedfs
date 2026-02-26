@@ -6,6 +6,10 @@ metadata:
   name: {{ .Values.cosi.bucketClassName }}
 driverName: {{ .Values.cosi.driverName }}
 deletionPolicy: Delete
+{{- with .Values.cosi.bucketClassParameters }}
+parameters:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 kind: BucketAccessClass
 apiVersion: objectstorage.k8s.io/v1alpha1
