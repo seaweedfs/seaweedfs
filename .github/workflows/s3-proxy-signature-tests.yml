@@ -33,8 +33,11 @@ jobs:
 
       - name: Build SeaweedFS binary for Linux
         run: |
-          GOOS=linux GOARCH=amd64 go build -buildvcs=false -o test/s3/proxy_signature/weed ./weed
+          set -x
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -v -o test/s3/proxy_signature/weed ./weed
           ls -al test/s3/proxy_signature/weed
+          file test/s3/proxy_signature/weed
+          ldd test/s3/proxy_signature/weed || true
 
       - name: Run S3 Proxy Signature Tests
         timeout-minutes: 10
@@ -48,10 +51,15 @@ jobs:
           echo "Checking container status..."
           docker compose ps
           
-          # Inspect binary in container
-          echo "Inspecting SeaweedFS /usr/bin/ in container:"
-          docker compose exec -T seaweedfs ls -al /usr/bin/ || true
-          docker compose exec -T seaweedfs ls -al /usr/bin/weed || true
+          # Inspect binary in container image
+          echo "Inspecting binary in SeaweedFS container image:"
+          IMAGE_ID=$(docker compose images -q seaweedfs)
+          if [ -n "$IMAGE_ID" ]; then
+            docker run --rm "$IMAGE_ID" ls -al /usr/bin/weed || true
+            docker run --rm "$IMAGE_ID" ldd /usr/bin/weed || true
+          else
+            echo "Skipping image inspection: seaweedfs image not found"
+          fi
           
           # Capture initial logs to diagnose startup issues
           echo "SeaweedFS logs:"
@@ -123,6 +131,8 @@ jobs:
         working-directory: test/s3/proxy_signature
         run: |
           echo "Cleaning up Docker containers..."
+          ls -al weed || true
+          ldd weed || true
           echo "Docker compose logs:"
           docker compose logs --no-color || true
           echo "Container status before cleanup:"
