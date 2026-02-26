@@ -499,7 +499,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err == nil {
 				namespacePolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch namespace policy: %v", err)
+				return fmt.Errorf("failed to fetch namespace policy: %w", err)
 			}
 
 			// Fetch bucket metadata and policy
@@ -509,17 +509,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 				}
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket metadata: %v", err)
+				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
 
 			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return err
+				return fmt.Errorf("failed to read bucket tags: %w", err)
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -546,7 +546,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
 			if err != nil {
-				return err
+				return fmt.Errorf("list tables in namespace %v: %w", namespaceName, err)
 			}
 		} else {
 			// List tables across all namespaces in bucket
@@ -558,10 +558,10 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
 			if err := json.Unmarshal(data, &bucketMeta); err != nil {
-				return err
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 			}
 
 			// Fetch bucket policy if it exists
@@ -569,10 +569,10 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err == nil {
 				bucketPolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return err
+				return fmt.Errorf("failed to read bucket tags: %w", err)
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -590,7 +590,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
 			if err != nil {
-				return err
+				return fmt.Errorf("list tables in all namespaces: %w", err)
 			}
 		}
 		return err
