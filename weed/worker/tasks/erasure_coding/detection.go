@@ -17,6 +17,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
+const (
+	minProposalsBeforeEarlyStop    = 10
+	maxConsecutivePlanningFailures = 10
+)
+
 // Detection implements the detection logic for erasure coding tasks.
 // It respects ctx cancellation and can stop early once maxResults is reached.
 func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, bool, error) {
@@ -42,6 +47,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	skippedCollectionFilter := 0
 	skippedQuietTime := 0
 	skippedFullness := 0
+	consecutivePlanningFailures := 0
 
 	var planner *ecPlacementPlanner
 
@@ -150,8 +156,16 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				multiPlan, err := planECDestinations(planner, metric, ecConfig)
 				if err != nil {
 					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
+					consecutivePlanningFailures++
+					if len(results) >= minProposalsBeforeEarlyStop && consecutivePlanningFailures >= maxConsecutivePlanningFailures {
+						glog.Warningf("EC Detection: stopping early after %d consecutive placement failures with %d proposals already planned", consecutivePlanningFailures, len(results))
+						hasMore = true
+						stoppedEarly = true
+						break
+					}
 					continue // Skip this volume if destination planning fails
 				}
+				consecutivePlanningFailures = 0
 				glog.Infof("EC Detection: Successfully planned %d destinations for volume %d", len(multiPlan.Plans), metric.VolumeID)
 
 				// Calculate expected shard size for EC operation
