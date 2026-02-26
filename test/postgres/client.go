@@ -1,7 +1,7 @@
 //go:build ignore
 // +build ignore
 
-package postgrestest
+package main
 
 import (
 	"database/sql"
@@ -21,6 +21,10 @@ func getEnv(key, def string) string {
 		return value
 	}
 	return def
+}
+
+func main() {
+	clientMain()
 }
 
 func clientMain() {
@@ -478,19 +482,34 @@ func testComplexQueries(db *sql.DB) error {
 			// Test WHERE clause with known ID (safer than arbitrary conditions)
 			testID := ids[0]
 			rows, err = tempDB.Query(fmt.Sprintf("SELECT id FROM %s WHERE id = %d", table, testID))
-			if err == nil {
+			if err != nil {
+				log.Printf("    WHERE query failed: %v", err)
+				tempDB.Close()
+				return fmt.Errorf("WHERE clause test failed for table '%s'", table)
+			}
+
+			foundMatch := false
+			if rows.Next() {
 				var foundID int64
-				if rows.Next() {
-					if err := rows.Scan(&foundID); err == nil && foundID == testID {
-						log.Printf("    ✓ WHERE clause working: found record with ID %d", foundID)
-					}
+				if err := rows.Scan(&foundID); err == nil && foundID == testID {
+					log.Printf("    ✓ WHERE clause working: found record with ID %d", foundID)
+					foundMatch = true
+				}
 			}
 			rows.Close()
-		}
 
-		log.Printf("  ✓ Complex queries test passed for '%s'", table)
-		tempDB.Close()
-		return nil
+			if !foundMatch {
+				tempDB.Close()
+				return fmt.Errorf("WHERE clause test failed: no matching record found for ID %d in table '%s'", testID, table)
+			}
+
+			log.Printf("  ✓ Complex queries test passed for '%s'", table)
+			tempDB.Close()
+			return nil
+		} else {
+			tempDB.Close()
+			return fmt.Errorf("no records found in table '%s' - cannot test WHERE clause", table)
+		}
 	}
 
 	log.Println("  Complex queries test completed - avoided crash-prone patterns")
