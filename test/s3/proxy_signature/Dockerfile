@@ -1,5 +1,5 @@
 FROM alpine:3.20
-RUN apk add --no-cache fuse curl && \
+RUN apk add --no-cache curl && \
     addgroup -S seaweed && \
     adduser -S seaweed -G seaweed
 COPY weed /usr/bin/weed
