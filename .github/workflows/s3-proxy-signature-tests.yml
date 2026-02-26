@@ -97,7 +97,7 @@ jobs:
               break
             fi
             # Fallback: try HTTP health check to S3 endpoint (internal port 8333)
-            if curl -s -m 2 http://localhost:8333/ > /dev/null 2>&1 || [ $? -eq 52 ]; then
+            if curl -s -m 2 http://seaweedfs:8333/ > /dev/null 2>&1 || [ $? -eq 52 ]; then
               echo "SeaweedFS S3 gateway is responding"
               S3_READY=1
               break
