@@ -121,7 +121,8 @@ spec:
           {{- range $createBuckets }}
             {{- $bucketName := .name }}
             {{- $bucketLock := or .lock .objectLock .withLock }}
-            if /bin/echo 's3.bucket.list' | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
+            bucket_list=$(/bin/echo 's3.bucket.list' | /usr/bin/weed shell) || { echo "Error listing s3 buckets"; exit 1; }
+            if echo "$bucket_list" | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
               echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
             else
               echo "Creating bucket '{{ $bucketName }}'..."
