@@ -248,6 +248,18 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
 }
 
+// GetRole retrieves a role definition by name.
+func (m *IAMManager) GetRole(ctx context.Context, roleName string) (*RoleDefinition, error) {
+	if !m.initialized {
+		return nil, fmt.Errorf("IAM manager not initialized")
+	}
+	if roleName == "" {
+		return nil, fmt.Errorf("role name cannot be empty")
+	}
+
+	return m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
+}
+
 // UpdateBucketPolicy updates the policy for a bucket
 func (m *IAMManager) UpdateBucketPolicy(ctx context.Context, bucketName string, policyJSON []byte) error {
 	if !m.initialized {

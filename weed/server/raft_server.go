@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
@@ -114,6 +115,14 @@ func (s *StateMachine) Restore(r io.ReadCloser) error {
 	return nil
 }
 
+var registerMaxVolumeIdCommandOnce sync.Once
+
+func registerMaxVolumeIdCommand() {
+	registerMaxVolumeIdCommandOnce.Do(func() {
+		raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	})
+}
+
 func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      option.Peers,
@@ -126,7 +135,7 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		raft.SetLogLevel(2)
 	}
 
-	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	registerMaxVolumeIdCommand()
 
 	var err error
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)

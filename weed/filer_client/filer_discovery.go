@@ -51,7 +51,7 @@ func (fds *FilerDiscoveryService) discoverFilersFromMaster(masterAddr pb.ServerA
 	// Convert HTTP master address to gRPC address (HTTP port + 10000)
 	grpcAddr := masterAddr.ToGrpcAddress()
 
-	conn, err := grpc.NewClient(grpcAddr, fds.grpcDialOption)
+	conn, err := pb.GrpcDial(context.Background(), grpcAddr, false, fds.grpcDialOption)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to master at %s: %v", grpcAddr, err)
 	}

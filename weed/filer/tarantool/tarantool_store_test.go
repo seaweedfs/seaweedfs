@@ -1,5 +1,4 @@
 //go:build tarantool
-// +build tarantool
 
 package tarantool
 

@@ -3,7 +3,6 @@ package pluginworker
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,10 +26,11 @@ type erasureCodingWorkerConfig struct {
 // ErasureCodingHandler is the plugin job handler for erasure coding.
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
+	workingDir     string
 }
 
-func NewErasureCodingHandler(grpcDialOption grpc.DialOption) *ErasureCodingHandler {
-	return &ErasureCodingHandler{grpcDialOption: grpcDialOption}
+func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
+	return &ErasureCodingHandler{grpcDialOption: grpcDialOption, workingDir: strings.TrimSpace(workingDir)}
 }
 
 func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
@@ -228,24 +228,21 @@ func (h *ErasureCodingHandler) Detect(
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := erasurecodingtask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
+	maxResults := int(request.MaxResults)
+	if maxResults < 0 {
+		maxResults = 0
+	}
+	results, hasMore, err := erasurecodingtask.Detection(ctx, metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
-	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+	if traceErr := emitErasureCodingDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results, maxResults, hasMore); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
-	}
-
-	maxResults := int(request.MaxResults)
-	hasMore := false
-	if maxResults > 0 && len(results) > maxResults {
-		hasMore = true
-		results = results[:maxResults]
 	}
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
-		proposal, proposalErr := buildErasureCodingProposal(result)
+		proposal, proposalErr := buildErasureCodingProposal(result, h.workingDir)
 		if proposalErr != nil {
 			glog.Warningf("Plugin worker skip invalid erasure_coding proposal: %v", proposalErr)
 			continue
@@ -273,6 +270,8 @@ func emitErasureCodingDetectionDecisionTrace(
 	metrics []*workertypes.VolumeHealthMetrics,
 	taskConfig *erasurecodingtask.Config,
 	results []*workertypes.TaskDetectionResult,
+	maxResults int,
+	hasMore bool,
 ) error {
 	if sender == nil || taskConfig == nil {
 		return nil
@@ -280,15 +279,7 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := make(map[string]bool)
-	if strings.TrimSpace(taskConfig.CollectionFilter) != "" {
-		for _, collection := range strings.Split(taskConfig.CollectionFilter, ",") {
-			trimmed := strings.TrimSpace(collection)
-			if trimmed != "" {
-				allowedCollections[trimmed] = true
-			}
-		}
-	}
+	allowedCollections := erasurecodingtask.ParseCollectionFilter(taskConfig.CollectionFilter)
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -341,11 +332,16 @@ func emitErasureCodingDetectionDecisionTrace(
 	}
 
 	totalVolumes := len(metrics)
+	summarySuffix := ""
+	if hasMore {
+		summarySuffix = fmt.Sprintf(" (max_results=%d reached; remaining volumes not evaluated)", maxResults)
+	}
 	summaryMessage := ""
 	if len(results) == 0 {
 		summaryMessage = fmt.Sprintf(
-			"EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			"EC detection: No tasks created for %d volumes%s (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes,
+			summarySuffix,
 			skippedAlreadyEC,
 			skippedTooSmall,
 			skippedCollectionFilter,
@@ -354,8 +350,9 @@ func emitErasureCodingDetectionDecisionTrace(
 		)
 	} else {
 		summaryMessage = fmt.Sprintf(
-			"EC detection: Created %d task(s) from %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+			"EC detection: Created %d task(s)%s from %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			len(results),
+			summarySuffix,
 			totalVolumes,
 			skippedAlreadyEC,
 			skippedTooSmall,
@@ -371,6 +368,12 @@ func emitErasureCodingDetectionDecisionTrace(
 		},
 		"selected_tasks": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(results))},
+		},
+		"max_results": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(maxResults)},
+		},
+		"has_more": {
+			Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: hasMore},
 		},
 		"skipped_already_ec": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedAlreadyEC)},
@@ -470,7 +473,7 @@ func (h *ErasureCodingHandler) Execute(
 		return err
 	}
 
-	applyErasureCodingExecutionDefaults(params, request.GetClusterContext())
+	applyErasureCodingExecutionDefaults(params, request.GetClusterContext(), h.workingDir)
 
 	if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
 		return fmt.Errorf("erasure coding source node is required")
@@ -607,6 +610,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 
 func buildErasureCodingProposal(
 	result *workertypes.TaskDetectionResult,
+	baseWorkingDir string,
 ) (*plugin_pb.JobProposal, error) {
 	if result == nil {
 		return nil, fmt.Errorf("task detection result is nil")
@@ -615,7 +619,7 @@ func buildErasureCodingProposal(
 		return nil, fmt.Errorf("missing typed params for volume %d", result.VolumeID)
 	}
 	params := proto.Clone(result.TypedParams).(*worker_pb.TaskParams)
-	applyErasureCodingExecutionDefaults(params, nil)
+	applyErasureCodingExecutionDefaults(params, nil, baseWorkingDir)
 
 	paramsPayload, err := proto.Marshal(params)
 	if err != nil {
@@ -766,6 +770,7 @@ func decodeErasureCodingTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParam
 func applyErasureCodingExecutionDefaults(
 	params *worker_pb.TaskParams,
 	clusterContext *plugin_pb.ClusterContext,
+	baseWorkingDir string,
 ) {
 	if params == nil {
 		return
@@ -786,7 +791,7 @@ func applyErasureCodingExecutionDefaults(
 	if ecParams.ParityShards <= 0 {
 		ecParams.ParityShards = ecstorage.ParityShardsCount
 	}
-	ecParams.WorkingDir = defaultErasureCodingWorkingDir()
+	ecParams.WorkingDir = defaultErasureCodingWorkingDir(baseWorkingDir)
 	ecParams.CleanupSource = true
 	if strings.TrimSpace(ecParams.MasterClient) == "" && clusterContext != nil && len(clusterContext.MasterGrpcAddresses) > 0 {
 		ecParams.MasterClient = clusterContext.MasterGrpcAddresses[0]
@@ -897,6 +902,10 @@ func assignECShardIDs(totalShards int, targetCount int) [][]uint32 {
 	return assignments
 }
 
-func defaultErasureCodingWorkingDir() string {
-	return filepath.Join(os.TempDir(), "seaweedfs-ec")
+func defaultErasureCodingWorkingDir(baseWorkingDir string) string {
+	dir := strings.TrimSpace(baseWorkingDir)
+	if dir == "" {
+		return filepath.Join(".", "seaweedfs-ec")
+	}
+	return filepath.Join(dir, "seaweedfs-ec")
 }

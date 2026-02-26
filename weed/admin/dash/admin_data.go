@@ -6,10 +6,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -184,28 +184,28 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 }
 
 // ShowAdmin displays the main admin page (now uses GetAdminData)
-func (s *AdminServer) ShowAdmin(c *gin.Context) {
-	username := c.GetString("username")
+func (s *AdminServer) ShowAdmin(w http.ResponseWriter, r *http.Request) {
+	username := UsernameFromContext(r.Context())
 
 	adminData, err := s.GetAdminData(username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get admin data: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get admin data: "+err.Error())
 		return
 	}
 
 	// Return JSON for API calls
-	c.JSON(http.StatusOK, adminData)
+	writeJSON(w, http.StatusOK, adminData)
 }
 
 // ShowOverview displays cluster overview
-func (s *AdminServer) ShowOverview(c *gin.Context) {
+func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 	topology, err := s.GetClusterTopology()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, topology)
+	writeJSON(w, http.StatusOK, topology)
 }
 
 // getMasterNodesStatus checks status of all master nodes
@@ -233,7 +233,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	currentMaster := s.masterClient.GetMaster(context.Background())
 	if currentMaster != "" {
 		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(currentMaster),
+			Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 			IsLeader: isLeader,
 		})
 	}
@@ -257,7 +257,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		// Process each filer node
 		for _, node := range resp.ClusterNodes {
 			filerNodes = append(filerNodes, FilerNode{
-				Address:     node.Address,
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
 				LastUpdated: time.Now(),

@@ -1,5 +1,4 @@
 //go:build netbsd || plan9
-// +build netbsd plan9
 
 package stats
 

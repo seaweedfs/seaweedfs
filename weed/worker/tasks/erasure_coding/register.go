@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -58,7 +59,10 @@ func RegisterErasureCodingTask() {
 				dialOpt,
 			), nil
 		},
-		DetectionFunc:  Detection,
+		DetectionFunc: func(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
+			results, _, err := Detection(context.Background(), metrics, clusterInfo, config, 0)
+			return results, err
+		},
 		ScanInterval:   1 * time.Hour,
 		SchedulingFunc: Scheduling,
 		MaxConcurrent:  1,

@@ -3,12 +3,6 @@ package dash
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"sort"
-	"strings"
-	"time"
-
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -25,6 +19,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -631,7 +629,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 	// Add masters from topology
 	for _, master := range topology.Masters {
 		masterInfo := &MasterInfo{
-			Address:  master.Address,
+			Address:  pb.ServerAddress(master.Address).ToHttpAddress(),
 			IsLeader: master.IsLeader,
 			Suffrage: "",
 		}
@@ -653,6 +651,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
 			address := server.Address
+			httpAddress := pb.ServerAddress(address).ToHttpAddress()
 
 			// Update existing master info or create new one
 			if masterInfo, exists := masterMap[address]; exists {
@@ -662,7 +661,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			} else {
 				// Create new master info from raft data
 				masterInfo := &MasterInfo{
-					Address:  address,
+					Address:  httpAddress,
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
@@ -699,7 +698,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			masters = append(masters, MasterInfo{
-				Address:  string(currentMaster),
+				Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 				IsLeader: true,
 				Suffrage: "Voter",
 			})
@@ -733,7 +732,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			filerInfo := FilerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -780,7 +779,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			brokerInfo := MessageBrokerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -816,18 +815,18 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 // VacuumVolume method moved to volume_management.go
 
 // TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
-func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(w http.ResponseWriter, r *http.Request) {
 	err := as.TriggerTopicRetentionPurge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Topic retention purge triggered successfully"})
 }
 
 // GetConfigInfo returns information about the admin configuration
-func (as *AdminServer) GetConfigInfo(c *gin.Context) {
+func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo := as.configPersistence.GetConfigInfo()
 
 	// Add additional admin server info
@@ -845,7 +844,7 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 		configInfo["maintenance_running"] = false
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config_info": configInfo,
 		"title":       "Configuration Information",
 	})

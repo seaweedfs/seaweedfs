@@ -20,13 +20,17 @@ if [ "$(id -u)" = "0" ]; then
   
   DATA_UID=$(stat -c '%u' /data 2>/dev/null)
   DATA_GID=$(stat -c '%g' /data 2>/dev/null)
-  
-  # Only run chown -R if ownership doesn't match (much faster for subsequent starts)
+
+  # Only run chown -R if ownership doesn't already match (avoids expensive
+  # recursive chown on subsequent starts, and is a no-op on OpenShift when
+  # fsGroup has already set correct ownership on the PVC).
+  if [ "$DATA_UID" != "$SEAWEED_UID" ] || [ "$DATA_GID" != "$SEAWEED_GID" ]; then
     echo "Fixing /data ownership for seaweed user (uid=$SEAWEED_UID, gid=$SEAWEED_GID)"
     if ! chown -R seaweed:seaweed /data; then
       echo "Warning: Failed to change ownership of /data. This may cause permission errors." >&2
       echo "If /data is read-only or has mount issues, the application may fail to start." >&2
     fi
+  fi
   
   # Use su-exec to drop privileges and run as seaweed user
   exec su-exec seaweed "$0" "$@"
@@ -54,7 +58,7 @@ isArgPassed() {
 case "$1" in
 
   'master')
-  	ARGS="-mdir=/data -volumePreallocate -volumeSizeLimitMB=1024"
+  	ARGS="-mdir=/data -volumeSizeLimitMB=1024"
   	shift
   	exec /usr/bin/weed -logtostderr=true master $ARGS $@
 	;;
@@ -69,9 +73,9 @@ case "$1" in
 	;;
 
   'server')
-  	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	ARGS="-dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024"
   	if isArgPassed "-volume.max" "$@"; then
-  	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	  ARGS="-dir=/data -master.volumeSizeLimitMB=1024"
   	fi
  	shift
   	exec /usr/bin/weed -logtostderr=true server $ARGS $@

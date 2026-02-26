@@ -141,7 +141,7 @@ func TestShouldSkipDetectionByInterval(t *testing.T) {
 }
 
 func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
-	handler := NewVacuumHandler(nil)
+	handler := NewVacuumHandler(nil, 0)
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: "balance",
 	}, noopDetectionSender{})
@@ -158,7 +158,7 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 }
 
 func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
-	handler := NewVacuumHandler(nil)
+	handler := NewVacuumHandler(nil, 0)
 	sender := &recordingDetectionSender{}
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType:           "vacuum",

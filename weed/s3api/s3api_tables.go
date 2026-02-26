@@ -48,6 +48,11 @@ func (st *S3TablesApiServer) SetDefaultAllow(allow bool) {
 	st.handler.SetDefaultAllow(allow)
 }
 
+// SetIAMAuthorizer injects the IAM authorizer for S3 Tables IAM checks.
+func (st *S3TablesApiServer) SetIAMAuthorizer(authorizer s3tables.IAMAuthorizer) {
+	st.handler.SetIAMAuthorizer(authorizer)
+}
+
 // S3TablesHandler handles S3 Tables API requests
 func (st *S3TablesApiServer) S3TablesHandler(w http.ResponseWriter, r *http.Request) {
 	st.handler.HandleRequest(w, r, st)
@@ -64,6 +69,9 @@ func (s3a *S3ApiServer) registerS3TablesRoutes(router *mux.Router) {
 	s3TablesApi := NewS3TablesApiServer(s3a)
 	if s3a.iam != nil && s3a.iam.iamIntegration != nil {
 		s3TablesApi.SetDefaultAllow(s3a.iam.iamIntegration.DefaultAllow())
+		if s3Integration, ok := s3a.iam.iamIntegration.(*S3IAMIntegration); ok && s3Integration.iamManager != nil {
+			s3TablesApi.SetIAMAuthorizer(s3Integration.iamManager)
+		}
 	} else {
 		// If IAM is not configured, allow all access by default
 		s3TablesApi.SetDefaultAllow(true)

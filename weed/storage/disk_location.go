@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,7 @@ type DiskLocation struct {
 	MaxVolumeCount         int32
 	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
+	AvailableSpace         atomic.Uint64
 	volumes                map[needle.VolumeId]*Volume
 	volumesLock            sync.RWMutex
 
@@ -513,10 +515,12 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 func (l *DiskLocation) CheckDiskSpace() {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatus(dir)
+		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
-
+		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
+		l.AvailableSpace.Store(available)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
 		if isLow != l.isDiskSpaceLow {
 			l.isDiskSpaceLow = !l.isDiskSpaceLow

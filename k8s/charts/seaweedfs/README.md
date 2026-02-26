@@ -324,12 +324,29 @@ worker:
 ```
 
 Deploy the specialized workers as separate releases:
+### Specialized Worker Deployment
 ```bash
 # Deploy vacuum workers
 helm install seaweedfs-worker-vacuum seaweedfs/seaweedfs -f values-worker-vacuum.yaml
 
 # Deploy balance workers
 helm install seaweedfs-worker-balance seaweedfs/seaweedfs -f values-worker-balance.yaml
+```
+
+## OpenShift Support
+
+SeaweedFS can be deployed on OpenShift or any cluster enforcing the Kubernetes "restricted" Pod Security Standard. By default, OpenShift blocks containers that run as root or use `hostPath` volumes.
+
+To deploy on OpenShift, use the provided `openshift-values.yaml` which overrides the default configuration to:
+1. Use `PersistentVolumeClaims` instead of `hostPath`.
+2. Enable `runAsNonRoot` and omit hardcoded UIDs to allow OpenShift to assign valid UIDs automatically.
+3. Apply appropriate `seccompProfile` and drop capabilities.
+
+Usage:
+```bash
+helm install seaweedfs seaweedfs/seaweedfs \
+  -n seaweedfs --create-namespace \
+  -f openshift-values.yaml
 ```
 
 ## Enterprise

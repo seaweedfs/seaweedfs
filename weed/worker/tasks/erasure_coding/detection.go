@@ -1,7 +1,9 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,14 +17,26 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-// Detection implements the detection logic for erasure coding tasks
-func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
+const (
+	minProposalsBeforeEarlyStop    = 10
+	maxConsecutivePlanningFailures = 10
+)
+
+// Detection implements the detection logic for erasure coding tasks.
+// It respects ctx cancellation and can stop early once maxResults is reached.
+func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, bool, error) {
 	if !config.IsEnabled() {
-		return nil, nil
+		return nil, false, nil
+	}
+
+	if maxResults < 0 {
+		maxResults = 0
 	}
 
 	ecConfig := config.(*Config)
 	var results []*types.TaskDetectionResult
+	hasMore := false
+	stoppedEarly := false
 	now := time.Now()
 	quietThreshold := time.Duration(ecConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(ecConfig.MinSizeMB) * 1024 * 1024 // Configurable minimum
@@ -33,15 +47,46 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	skippedCollectionFilter := 0
 	skippedQuietTime := 0
 	skippedFullness := 0
+	consecutivePlanningFailures := 0
+
+	var planner *ecPlacementPlanner
+
+	allowedCollections := ParseCollectionFilter(ecConfig.CollectionFilter)
 
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
 	for _, metric := range metrics {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return results, hasMore, err
+			}
+		}
 		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
 	}
 
+	groupKeys := make([]uint32, 0, len(volumeGroups))
+	for volumeID := range volumeGroups {
+		groupKeys = append(groupKeys, volumeID)
+	}
+	sort.Slice(groupKeys, func(i, j int) bool { return groupKeys[i] < groupKeys[j] })
+
 	// Iterate over groups to check criteria and creation tasks
-	for _, groupMetrics := range volumeGroups {
+	for idx, volumeID := range groupKeys {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return results, hasMore, err
+			}
+		}
+		if maxResults > 0 && len(results) >= maxResults {
+			if idx+1 < len(groupKeys) {
+				hasMore = true
+			}
+			stoppedEarly = true
+			break
+		}
+
+		groupMetrics := volumeGroups[volumeID]
+
 		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
 		metric := groupMetrics[0]
 		for _, m := range groupMetrics {
@@ -63,12 +108,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		}
 
 		// Check collection filter if specified
-		if ecConfig.CollectionFilter != "" {
-			// Parse comma-separated collections
-			allowedCollections := make(map[string]bool)
-			for _, collection := range strings.Split(ecConfig.CollectionFilter, ",") {
-				allowedCollections[strings.TrimSpace(collection)] = true
-			}
+		if len(allowedCollections) > 0 {
 			// Skip if volume's collection is not in the allowed list
 			if !allowedCollections[metric.Collection] {
 				skippedCollectionFilter++
@@ -78,6 +118,11 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 
 		// Check quiet duration and fullness criteria
 		if metric.Age >= quietThreshold && metric.FullnessRatio >= ecConfig.FullnessRatio {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return results, hasMore, err
+				}
+			}
 			glog.Infof("EC Detection: Volume %d meets all criteria, attempting to create task", metric.VolumeID)
 
 			// Generate task ID for ActiveTopology integration
@@ -105,11 +150,22 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 				}
 
 				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
-				multiPlan, err := planECDestinations(clusterInfo.ActiveTopology, metric, ecConfig)
+				if planner == nil {
+					planner = newECPlacementPlanner(clusterInfo.ActiveTopology)
+				}
+				multiPlan, err := planECDestinations(planner, metric, ecConfig)
 				if err != nil {
 					glog.Warningf("Failed to plan EC destinations for volume %d: %v", metric.VolumeID, err)
+					consecutivePlanningFailures++
+					if len(results) >= minProposalsBeforeEarlyStop && consecutivePlanningFailures >= maxConsecutivePlanningFailures {
+						glog.Warningf("EC Detection: stopping early after %d consecutive placement failures with %d proposals already planned", consecutivePlanningFailures, len(results))
+						hasMore = true
+						stoppedEarly = true
+						break
+					}
 					continue // Skip this volume if destination planning fails
 				}
+				consecutivePlanningFailures = 0
 				glog.Infof("EC Detection: Successfully planned %d destinations for volume %d", len(multiPlan.Plans), metric.VolumeID)
 
 				// Calculate expected shard size for EC operation
@@ -189,6 +245,13 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					}
 				}
 
+				// Convert sources before mutating topology
+				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
+				if err != nil {
+					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
+					continue
+				}
+
 				err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
 					TaskID:       taskID,
 					TaskType:     topology.TaskTypeErasureCoding,
@@ -202,15 +265,12 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 					continue // Skip this volume if topology task addition fails
 				}
 
+				if planner != nil {
+					planner.applyTaskReservations(int64(metric.Size), sources, destinations)
+				}
+
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
-
-				// Convert sources
-				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
-				if err != nil {
-					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
-					continue
-				}
 
 				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
@@ -256,7 +316,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	}
 
 	// Log debug summary if no tasks were created
-	if len(results) == 0 && len(metrics) > 0 {
+	if len(results) == 0 && len(metrics) > 0 && !stoppedEarly {
 		totalVolumes := len(metrics)
 		glog.Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
@@ -273,12 +333,197 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		}
 	}
 
-	return results, nil
+	return results, hasMore, nil
+}
+
+func ParseCollectionFilter(filter string) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, collection := range strings.Split(filter, ",") {
+		trimmed := strings.TrimSpace(collection)
+		if trimmed != "" {
+			allowed[trimmed] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
+
+type ecDiskState struct {
+	baseAvailable      int64
+	reservedVolumes    int32
+	reservedShardSlots int32
+}
+
+type ecPlacementPlanner struct {
+	activeTopology *topology.ActiveTopology
+	candidates     []*placement.DiskCandidate
+	candidateByKey map[string]*placement.DiskCandidate
+	diskStates     map[string]*ecDiskState
+}
+
+func newECPlacementPlanner(activeTopology *topology.ActiveTopology) *ecPlacementPlanner {
+	if activeTopology == nil {
+		return nil
+	}
+
+	disks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 0)
+	candidates := diskInfosToCandidates(disks)
+	if len(candidates) == 0 {
+		return &ecPlacementPlanner{
+			activeTopology: activeTopology,
+			candidates:     candidates,
+			candidateByKey: map[string]*placement.DiskCandidate{},
+			diskStates:     map[string]*ecDiskState{},
+		}
+	}
+
+	candidateByKey := make(map[string]*placement.DiskCandidate, len(candidates))
+	diskStates := make(map[string]*ecDiskState, len(candidates))
+	for _, candidate := range candidates {
+		key := ecDiskKey(candidate.NodeID, candidate.DiskID)
+		candidateByKey[key] = candidate
+		diskStates[key] = &ecDiskState{
+			baseAvailable: int64(candidate.FreeSlots),
+		}
+	}
+
+	return &ecPlacementPlanner{
+		activeTopology: activeTopology,
+		candidates:     candidates,
+		candidateByKey: candidateByKey,
+		diskStates:     diskStates,
+	}
+}
+
+func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC string, shardsNeeded int) ([]*placement.DiskCandidate, error) {
+	if p == nil || p.activeTopology == nil {
+		return nil, fmt.Errorf("ec placement planner is not initialized")
+	}
+	if shardsNeeded <= 0 {
+		return nil, fmt.Errorf("invalid shardsNeeded %d", shardsNeeded)
+	}
+
+	config := placement.PlacementRequest{
+		ShardsNeeded:           shardsNeeded,
+		MaxShardsPerServer:     0,
+		MaxShardsPerRack:       0,
+		MaxTaskLoad:            topology.MaxTaskLoadForECPlacement,
+		PreferDifferentServers: true,
+		PreferDifferentRacks:   true,
+	}
+
+	result, err := placement.SelectDestinations(p.candidates, config)
+	if err != nil {
+		return nil, err
+	}
+	return result.SelectedDisks, nil
+}
+
+func (p *ecPlacementPlanner) applyTaskReservations(volumeSize int64, sources []topology.TaskSourceSpec, destinations []topology.TaskDestinationSpec) {
+	if p == nil {
+		return
+	}
+
+	touched := make(map[string]bool)
+
+	for _, source := range sources {
+		impact := p.sourceImpact(source, volumeSize)
+		p.applyImpact(source.ServerID, source.DiskID, impact)
+		p.bumpShardCount(source.ServerID, source.DiskID, impact.ShardSlots)
+		key := ecDiskKey(source.ServerID, source.DiskID)
+		if !touched[key] {
+			p.bumpLoad(source.ServerID, source.DiskID)
+			touched[key] = true
+		}
+	}
+
+	for _, dest := range destinations {
+		impact := p.destinationImpact(dest, volumeSize)
+		p.applyImpact(dest.ServerID, dest.DiskID, impact)
+		p.bumpShardCount(dest.ServerID, dest.DiskID, impact.ShardSlots)
+		key := ecDiskKey(dest.ServerID, dest.DiskID)
+		if !touched[key] {
+			p.bumpLoad(dest.ServerID, dest.DiskID)
+			touched[key] = true
+		}
+	}
+}
+
+func (p *ecPlacementPlanner) sourceImpact(source topology.TaskSourceSpec, volumeSize int64) topology.StorageSlotChange {
+	if source.StorageImpact != nil {
+		return *source.StorageImpact
+	}
+	if source.CleanupType == topology.CleanupECShards {
+		return topology.CalculateECShardCleanupImpact(volumeSize)
+	}
+	impact, _ := topology.CalculateTaskStorageImpact(topology.TaskTypeErasureCoding, volumeSize)
+	return impact
+}
+
+func (p *ecPlacementPlanner) destinationImpact(dest topology.TaskDestinationSpec, volumeSize int64) topology.StorageSlotChange {
+	if dest.StorageImpact != nil {
+		return *dest.StorageImpact
+	}
+	_, impact := topology.CalculateTaskStorageImpact(topology.TaskTypeErasureCoding, volumeSize)
+	return impact
+}
+
+func (p *ecPlacementPlanner) applyImpact(nodeID string, diskID uint32, impact topology.StorageSlotChange) {
+	if impact.IsZero() {
+		return
+	}
+	key := ecDiskKey(nodeID, diskID)
+	state, ok := p.diskStates[key]
+	if !ok {
+		return
+	}
+
+	state.reservedVolumes += impact.VolumeSlots
+	state.reservedShardSlots += impact.ShardSlots
+
+	available := state.baseAvailable - int64(state.reservedVolumes) - int64(state.reservedShardSlots)/int64(topology.ShardsPerVolumeSlot)
+	if available < 0 {
+		available = 0
+	}
+
+	if candidate, ok := p.candidateByKey[key]; ok {
+		candidate.FreeSlots = int(available)
+		candidate.VolumeCount = candidate.MaxVolumeCount - available
+	}
+}
+
+func (p *ecPlacementPlanner) bumpLoad(nodeID string, diskID uint32) {
+	key := ecDiskKey(nodeID, diskID)
+	if candidate, ok := p.candidateByKey[key]; ok {
+		candidate.LoadCount++
+	}
+}
+
+func (p *ecPlacementPlanner) bumpShardCount(nodeID string, diskID uint32, delta int32) {
+	if delta == 0 {
+		return
+	}
+	key := ecDiskKey(nodeID, diskID)
+	if candidate, ok := p.candidateByKey[key]; ok {
+		candidate.ShardCount += int(delta)
+		if candidate.ShardCount < 0 {
+			candidate.ShardCount = 0
+		}
+	}
+}
+
+func ecDiskKey(nodeID string, diskID uint32) string {
+	return fmt.Sprintf("%s:%d", nodeID, diskID)
 }
 
 // planECDestinations plans the destinations for erasure coding operation
 // This function implements EC destination planning logic directly in the detection phase
-func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.VolumeHealthMetrics, ecConfig *Config) (*topology.MultiDestinationPlan, error) {
+func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config) (*topology.MultiDestinationPlan, error) {
+	if planner == nil || planner.activeTopology == nil {
+		return nil, fmt.Errorf("active topology not available for EC placement")
+	}
 	// Calculate expected shard size for EC operation
 	expectedShardSize := uint64(metric.Size) / uint64(erasure_coding.DataShardsCount)
 
@@ -286,7 +531,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	var sourceRack, sourceDC string
 
 	// Extract rack and DC from topology info
-	topologyInfo := activeTopology.GetTopologyInfo()
+	topologyInfo := planner.activeTopology.GetTopologyInfo()
 	if topologyInfo != nil {
 		for _, dc := range topologyInfo.DataCenterInfos {
 			for _, rack := range dc.RackInfos {
@@ -307,17 +552,11 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 		}
 	}
 
-	// Get available disks for EC placement with effective capacity consideration (includes pending tasks)
-	// For EC, we typically need 1 volume slot per shard, so use minimum capacity of 1
-	// For EC, we need at least 1 available volume slot on a disk to consider it for placement.
-	// Note: We don't exclude the source server since the original volume will be deleted after EC conversion
-	availableDisks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 1)
-	if len(availableDisks) < erasure_coding.MinTotalDisks {
-		return nil, fmt.Errorf("insufficient disks for EC placement: need %d, have %d (considering pending/active tasks)", erasure_coding.MinTotalDisks, len(availableDisks))
+	// Select best disks for EC placement with rack/DC diversity using the cached planner
+	selectedDisks, err := planner.selectDestinations(sourceRack, sourceDC, erasure_coding.TotalShardsCount)
+	if err != nil {
+		return nil, err
 	}
-
-	// Select best disks for EC placement with rack/DC diversity
-	selectedDisks := selectBestECDestinations(availableDisks, sourceRack, sourceDC, erasure_coding.TotalShardsCount)
 	if len(selectedDisks) < erasure_coding.MinTotalDisks {
 		return nil, fmt.Errorf("found %d disks, but could not find %d suitable destinations for EC placement", len(selectedDisks), erasure_coding.MinTotalDisks)
 	}
@@ -328,7 +567,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 
 	for _, disk := range selectedDisks {
 		// Get the target server address
-		targetAddress, err := util.ResolveServerAddress(disk.NodeID, activeTopology)
+		targetAddress, err := util.ResolveServerAddress(disk.NodeID, planner.activeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve address for target server %s: %v", disk.NodeID, err)
 		}
@@ -340,7 +579,7 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 			TargetRack:     disk.Rack,
 			TargetDC:       disk.DataCenter,
 			ExpectedSize:   expectedShardSize, // Set calculated EC shard size
-			PlacementScore: calculateECScore(disk, sourceRack, sourceDC),
+			PlacementScore: calculateECScoreCandidate(disk, sourceRack, sourceDC),
 		}
 		plans = append(plans, plan)
 
@@ -353,8 +592,10 @@ func planECDestinations(activeTopology *topology.ActiveTopology, metric *types.V
 	// Log capacity utilization information using ActiveTopology's encapsulated logic
 	totalEffectiveCapacity := int64(0)
 	for _, plan := range plans {
-		effectiveCapacity := activeTopology.GetEffectiveAvailableCapacity(plan.TargetNode, plan.TargetDisk)
-		totalEffectiveCapacity += effectiveCapacity
+		key := ecDiskKey(plan.TargetNode, plan.TargetDisk)
+		if candidate, ok := planner.candidateByKey[key]; ok {
+			totalEffectiveCapacity += int64(candidate.FreeSlots)
+		}
 	}
 
 	glog.V(1).Infof("Planned EC destinations for volume %d (size=%d bytes): expected shard size=%d bytes, %d shards across %d racks, %d DCs, total effective capacity=%d slots",
@@ -565,18 +806,18 @@ func candidatesToDiskInfos(candidates []*placement.DiskCandidate, originalDisks 
 	return result
 }
 
-// calculateECScore calculates placement score for EC operations
-// Used for logging and plan metadata
-func calculateECScore(disk *topology.DiskInfo, sourceRack, sourceDC string) float64 {
-	if disk.DiskInfo == nil {
+// calculateECScoreCandidate calculates placement score for EC operations.
+// Used for logging and plan metadata.
+func calculateECScoreCandidate(disk *placement.DiskCandidate, sourceRack, sourceDC string) float64 {
+	if disk == nil {
 		return 0.0
 	}
 
 	score := 0.0
 
 	// Prefer disks with available capacity (primary factor)
-	if disk.DiskInfo.MaxVolumeCount > 0 {
-		utilization := float64(disk.DiskInfo.VolumeCount) / float64(disk.DiskInfo.MaxVolumeCount)
+	if disk.MaxVolumeCount > 0 {
+		utilization := float64(disk.VolumeCount) / float64(disk.MaxVolumeCount)
 		score += (1.0 - utilization) * 60.0 // Up to 60 points for available capacity
 	}
 

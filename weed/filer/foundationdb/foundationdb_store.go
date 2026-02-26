@@ -1,5 +1,4 @@
 //go:build foundationdb
-// +build foundationdb
 
 // Package foundationdb provides a filer store implementation using FoundationDB as the backend.
 //

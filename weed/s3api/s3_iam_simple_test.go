@@ -370,8 +370,8 @@ func TestMapLegacyActionToIAM(t *testing.T) {
 		},
 		{
 			name:         "granular_multipart_action",
-			legacyAction: s3_constants.ACTION_CREATE_MULTIPART_UPLOAD,
-			expected:     "s3:CreateMultipartUpload",
+			legacyAction: s3_constants.S3_ACTION_CREATE_MULTIPART,
+			expected:     s3_constants.S3_ACTION_CREATE_MULTIPART,
 		},
 		{
 			name:         "unknown_action_with_s3_prefix",

@@ -38,6 +38,7 @@ type CommandEnv struct {
 	option       *ShellOptions
 	locker       *exclusive_locks.ExclusiveLocker
 	noLock       bool
+	verbose      bool
 }
 
 func NewCommandEnv(options *ShellOptions) *CommandEnv {

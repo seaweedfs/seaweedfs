@@ -91,6 +91,46 @@ func (s *PropagatingCredentialStore) propagateChange(ctx context.Context, fn fun
 	wg.Wait()
 }
 
+func (s *PropagatingCredentialStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.AttachUserPolicy %s -> %s", username, policyName)
+	if err := s.CredentialStore.AttachUserPolicy(ctx, username, policyName); err != nil {
+		return err
+	}
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after attaching policy: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DetachUserPolicy %s -> %s", username, policyName)
+	if err := s.CredentialStore.DetachUserPolicy(ctx, username, policyName); err != nil {
+		return err
+	}
+	// Fetch updated identity to propagate
+	identity, err := s.CredentialStore.GetUser(ctx, username)
+	if err != nil {
+		glog.Warningf("failed to get user %s after detaching policy: %v", username, err)
+		return nil
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	return s.CredentialStore.ListAttachedUserPolicies(ctx, username)
+}
+
 func (s *PropagatingCredentialStore) CreateUser(ctx context.Context, identity *iam_pb.Identity) error {
 	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateUser %s", identity.Name)
 	if err := s.CredentialStore.CreateUser(ctx, identity); err != nil {
@@ -194,6 +234,10 @@ func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name stri
 		return err
 	})
 	return nil
+}
+
+func (s *PropagatingCredentialStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListPolicyNames(ctx)
 }
 
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {

@@ -1,22 +1,24 @@
 package command
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gin-contrib/sessions"
-	"github.com/gin-contrib/sessions/cookie"
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
 	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin"
@@ -232,25 +234,10 @@ func runAdmin(cmd *Command, args []string) bool {
 
 // startAdminServer starts the actual admin server
 func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
-	// Set Gin mode
-	gin.SetMode(gin.ReleaseMode)
-
 	// Create router
-	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		if param.StatusCode == 200 {
-			return ""
-		}
-		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n%s",
-			param.TimeStamp.Format("2006/01/02 - 15:04:05"),
-			param.StatusCode,
-			param.Latency,
-			param.ClientIP,
-			param.Method,
-			param.Path,
-			param.ErrorMessage,
-		)
-	}), gin.Recovery())
+	r := mux.NewRouter()
+	r.Use(loggingMiddleware)
+	r.Use(recoveryMiddleware)
 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
@@ -276,30 +263,30 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Detect TLS configuration to set Secure cookie flag
 	cookieSecure := viper.GetString("https.admin.key") != ""
 
-	// Session store - load or generate session key
-	sessionKeyBytes, err := loadOrGenerateSessionKey(dataDir)
+	// Session store - load or generate session keys
+	authKey, encKey, err := loadOrGenerateSessionKeys(dataDir)
 	if err != nil {
 		return fmt.Errorf("failed to get session key: %w", err)
 	}
-	store := cookie.NewStore(sessionKeyBytes)
+	store := sessions.NewCookieStore(authKey, encKey)
 
 	// Configure session options to ensure cookies are properly saved
-	store.Options(sessions.Options{
+	store.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   3600 * 24,    // 24 hours
 		HttpOnly: true,         // Prevent JavaScript access
 		Secure:   cookieSecure, // Set based on actual TLS configuration
 		SameSite: http.SameSiteLaxMode,
-	})
-
-	r.Use(sessions.Sessions("admin-session", store))
+	}
 
 	// Static files - serve from embedded filesystem
 	staticFS, err := admin.GetStaticFS()
 	if err != nil {
 		log.Printf("Warning: Failed to load embedded static files: %v", err)
 	} else {
-		r.StaticFS("/static", http.FS(staticFS))
+		staticHandler := http.FileServer(http.FS(staticFS))
+		r.Handle("/static", http.RedirectHandler("/static/", http.StatusMovedPermanently))
+		r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", staticHandler))
 	}
 
 	// Create admin server (plugin is always enabled)
@@ -328,7 +315,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Create handlers and setup routes
 	authRequired := *options.adminPassword != ""
-	adminHandlers := handlers.NewAdminHandlers(adminServer)
+	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
 	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
 
 	// Server configuration
@@ -395,49 +382,156 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	return nil
 }
 
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+func (r *statusRecorder) Push(target string, opts *http.PushOptions) error {
+	if p, ok := r.ResponseWriter.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w}
+
+		next.ServeHTTP(recorder, r)
+
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status >= 200 && status < 300 {
+			return
+		}
+
+		log.Printf("[HTTP] %v | %3d | %13v | %15s | %-7s %s",
+			time.Now().Format("2006/01/02 - 15:04:05"),
+			status,
+			time.Since(start),
+			r.RemoteAddr,
+			r.Method,
+			r.URL.Path,
+		)
+	})
+}
+
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("panic: %v\n%s", err, debug.Stack())
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // GetAdminOptions returns the admin command options for testing
 func GetAdminOptions() *AdminOptions {
 	return &AdminOptions{}
 }
 
-// loadOrGenerateSessionKey loads an existing session key from dataDir or generates a new one
-func loadOrGenerateSessionKey(dataDir string) ([]byte, error) {
-	const sessionKeyLength = 32
+// loadOrGenerateSessionKeys loads or creates authentication/encryption keys for session cookies.
+func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
+	const keyLen = 32
+
 	if dataDir == "" {
-		// No persistence, generate random key
-		log.Println("No dataDir specified, generating ephemeral session key")
-		key := make([]byte, sessionKeyLength)
-		_, err := rand.Read(key)
-		return key, err
+		// No persistence, generate ephemeral keys
+		log.Println("No dataDir specified, generating ephemeral session keys")
+		authKey := make([]byte, keyLen)
+		encKey := make([]byte, keyLen)
+		if _, err := rand.Read(authKey); err != nil {
+			return nil, nil, err
+		}
+		if _, err := rand.Read(encKey); err != nil {
+			return nil, nil, err
+		}
+		return authKey, encKey, nil
 	}
 
 	sessionKeyPath := filepath.Join(dataDir, ".session_key")
 
-	// Try to load existing key
 	if data, err := os.ReadFile(sessionKeyPath); err == nil {
-		if len(data) == sessionKeyLength {
+		switch len(data) {
+		case keyLen:
+			authKey := make([]byte, keyLen)
+			copy(authKey, data)
+
+			encKey := make([]byte, keyLen)
+			if _, err := rand.Read(encKey); err != nil {
+				return nil, nil, err
+			}
+			log.Printf("Warning: Upgrading session key at %s by adding an encryption key; existing cookies will be invalidated", sessionKeyPath)
+
+			combined := append(authKey, encKey...)
+			if err := os.WriteFile(sessionKeyPath, combined, 0600); err != nil {
+				log.Printf("Warning: Failed to persist upgraded session key: %v", err)
+			} else {
+				log.Printf("Upgraded session key file to include encryption key: %s", sessionKeyPath)
+			}
+			return authKey, encKey, nil
+		case 2 * keyLen:
+			authKey := make([]byte, keyLen)
+			encKey := make([]byte, keyLen)
+			copy(authKey, data[:keyLen])
+			copy(encKey, data[keyLen:])
 			log.Printf("Loaded persisted session key from %s", sessionKeyPath)
-			return data, nil
+			return authKey, encKey, nil
+		default:
+			log.Printf("Warning: Invalid session key file (expected %d or %d bytes, got %d), generating new key", keyLen, 2*keyLen, len(data))
 		}
-		log.Printf("Warning: Invalid session key file (expected %d bytes, got %d), generating new key", sessionKeyLength, len(data))
 	} else if !os.IsNotExist(err) {
 		log.Printf("Warning: Failed to read session key from %s: %v. A new key will be generated.", sessionKeyPath, err)
 	}
 
-	// Generate new key
-	key := make([]byte, sessionKeyLength)
+	key := make([]byte, 2*keyLen)
 	if _, err := rand.Read(key); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Save key for future use
 	if err := os.WriteFile(sessionKeyPath, key, 0600); err != nil {
 		log.Printf("Warning: Failed to persist session key: %v", err)
 	} else {
 		log.Printf("Generated and persisted new session key to %s", sessionKeyPath)
 	}
 
-	return key, nil
+	return key[:keyLen], key[keyLen:], nil
 }
 
 // expandHomeDir expands the tilde (~) in a path to the user's home directory
@@ -466,20 +560,16 @@ func expandHomeDir(path string) (string, error) {
 	}
 
 	// Handle ~username/ patterns
-	if strings.HasPrefix(path, "~") {
-		parts := strings.SplitN(path[1:], "/", 2)
-		username := parts[0]
+	parts := strings.SplitN(path[1:], "/", 2)
+	username := parts[0]
 
-		targetUser, err := user.Lookup(username)
-		if err != nil {
-			return "", fmt.Errorf("user %s not found: %v", username, err)
-		}
-
-		if len(parts) == 1 {
-			return targetUser.HomeDir, nil
-		}
-		return filepath.Join(targetUser.HomeDir, parts[1]), nil
+	targetUser, err := user.Lookup(username)
+	if err != nil {
+		return "", fmt.Errorf("user %s not found: %v", username, err)
 	}
 
-	return path, nil
+	if len(parts) == 1 {
+		return targetUser.HomeDir, nil
+	}
+	return filepath.Join(targetUser.HomeDir, parts[1]), nil
 }

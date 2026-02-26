@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 func (store *MemoryStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -21,9 +22,16 @@ func (store *MemoryStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiC
 
 	// Convert all users to identities
 	for _, user := range store.users {
-		// Deep copy the identity to avoid mutation issues
-		identityCopy := store.deepCopyIdentity(user)
-		config.Identities = append(config.Identities, identityCopy)
+		config.Identities = append(config.Identities, store.deepCopyIdentity(user))
+	}
+
+	// Add all policies
+	for name, doc := range store.policies {
+		content, _ := json.Marshal(doc)
+		config.Policies = append(config.Policies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
 	}
 
 	return config, nil
@@ -40,16 +48,23 @@ func (store *MemoryStore) SaveConfiguration(ctx context.Context, config *iam_pb.
 	// Clear existing data
 	store.users = make(map[string]*iam_pb.Identity)
 	store.accessKeys = make(map[string]string)
+	store.policies = make(map[string]policy_engine.PolicyDocument)
 
 	// Add all identities
 	for _, identity := range config.Identities {
-		// Deep copy to avoid mutation issues
-		identityCopy := store.deepCopyIdentity(identity)
-		store.users[identity.Name] = identityCopy
+		store.users[identity.Name] = store.deepCopyIdentity(identity)
 
 		// Index access keys
 		for _, credential := range identity.Credentials {
 			store.accessKeys[credential.AccessKey] = identity.Name
+		}
+	}
+
+	// Add all policies
+	for _, policy := range config.Policies {
+		var doc policy_engine.PolicyDocument
+		if err := json.Unmarshal([]byte(policy.Content), &doc); err == nil {
+			store.policies[policy.Name] = doc
 		}
 	}
 
@@ -284,6 +299,7 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
@@ -295,8 +311,91 @@ func (store *MemoryStore) deepCopyIdentity(identity *iam_pb.Identity) *iam_pb.Id
 			Account:     identity.Account,
 			Credentials: identity.Credentials,
 			Actions:     identity.Actions,
+			PolicyNames: identity.PolicyNames,
 		}
 	}
 
 	return &copy
+}
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *MemoryStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	// Verify policy exists
+	if _, exists := store.policies[policyName]; !exists {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			return credential.ErrPolicyAlreadyAttached
+		}
+	}
+
+	user.PolicyNames = append(user.PolicyNames, policyName)
+	return nil
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *MemoryStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return credential.ErrUserNotFound
+	}
+
+	found := false
+	var newPolicies []string
+	for _, p := range user.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicies = append(newPolicies, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	user.PolicyNames = newPolicies
+	return nil
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *MemoryStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	user, exists := store.users[username]
+	if !exists {
+		return nil, credential.ErrUserNotFound
+	}
+
+	// Return copy to prevent mutation
+	result := make([]string, len(user.PolicyNames))
+	copy(result, user.PolicyNames)
+	return result, nil
 }

@@ -179,7 +179,7 @@ func TestBuildErasureCodingProposal(t *testing.T) {
 		TypedParams: params,
 	}
 
-	proposal, err := buildErasureCodingProposal(result)
+	proposal, err := buildErasureCodingProposal(result, "")
 	if err != nil {
 		t.Fatalf("buildErasureCodingProposal() err = %v", err)
 	}
@@ -195,7 +195,7 @@ func TestBuildErasureCodingProposal(t *testing.T) {
 }
 
 func TestErasureCodingHandlerRejectsUnsupportedJobType(t *testing.T) {
-	handler := NewErasureCodingHandler(nil)
+	handler := NewErasureCodingHandler(nil, "")
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: "vacuum",
 	}, noopDetectionSender{})
@@ -212,7 +212,7 @@ func TestErasureCodingHandlerRejectsUnsupportedJobType(t *testing.T) {
 }
 
 func TestErasureCodingHandlerDetectSkipsByMinInterval(t *testing.T) {
-	handler := NewErasureCodingHandler(nil)
+	handler := NewErasureCodingHandler(nil, "")
 	sender := &recordingDetectionSender{}
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType:           "erasure_coding",
@@ -269,7 +269,7 @@ func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
 		},
 	}
 
-	if err := emitErasureCodingDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+	if err := emitErasureCodingDetectionDecisionTrace(sender, metrics, config, nil, 0, false); err != nil {
 		t.Fatalf("emitErasureCodingDetectionDecisionTrace error: %v", err)
 	}
 	if len(sender.events) < 4 {
@@ -288,7 +288,7 @@ func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
 }
 
 func TestErasureCodingDescriptorOmitsLocalExecutionFields(t *testing.T) {
-	descriptor := NewErasureCodingHandler(nil).Descriptor()
+	descriptor := NewErasureCodingHandler(nil, "").Descriptor()
 	if descriptor == nil || descriptor.WorkerConfigForm == nil {
 		t.Fatalf("expected worker config form in descriptor")
 	}
@@ -301,6 +301,7 @@ func TestErasureCodingDescriptorOmitsLocalExecutionFields(t *testing.T) {
 }
 
 func TestApplyErasureCodingExecutionDefaultsForcesLocalFields(t *testing.T) {
+	baseWorkingDir := "/var/lib/seaweedfs-worker"
 	params := &worker_pb.TaskParams{
 		TaskId:   "ec-test",
 		VolumeId: 100,
@@ -314,14 +315,14 @@ func TestApplyErasureCodingExecutionDefaultsForcesLocalFields(t *testing.T) {
 		},
 	}
 
-	applyErasureCodingExecutionDefaults(params, nil)
+	applyErasureCodingExecutionDefaults(params, nil, baseWorkingDir)
 
 	ecParams := params.GetErasureCodingParams()
 	if ecParams == nil {
 		t.Fatalf("expected erasure coding params")
 	}
-	if ecParams.WorkingDir != defaultErasureCodingWorkingDir() {
-		t.Fatalf("expected local working_dir %q, got %q", defaultErasureCodingWorkingDir(), ecParams.WorkingDir)
+	if ecParams.WorkingDir != defaultErasureCodingWorkingDir(baseWorkingDir) {
+		t.Fatalf("expected local working_dir %q, got %q", defaultErasureCodingWorkingDir(baseWorkingDir), ecParams.WorkingDir)
 	}
 	if !ecParams.CleanupSource {
 		t.Fatalf("expected cleanup_source true")
