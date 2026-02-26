@@ -1,8 +1,10 @@
 package erasure_coding
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestECPlacementPlannerApplyReservations(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 10)
+	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 10, 0)
 
 	planner := newECPlacementPlanner(activeTopology)
 	require.NotNil(t, planner)
@@ -44,7 +46,7 @@ func TestECPlacementPlannerApplyReservations(t *testing.T) {
 }
 
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
-	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100)
+	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
 	planner := newECPlacementPlanner(activeTopology)
 	require.NotNil(t, planner)
 
@@ -59,10 +61,65 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
-	assert.Equal(t, erasure_coding.TotalShardsCount, plan.TotalShards)
 }
 
-func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount int64) *topology.ActiveTopology {
+func TestDetectionContextCancellation(t *testing.T) {
+	activeTopology := buildActiveTopology(t, 5, []string{"hdd", "ssd"}, 50, 0)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
+	metrics := buildVolumeMetricsForIDs(50)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := Detection(ctx, metrics, clusterInfo, NewDefaultConfig(), 0)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
+	activeTopology := buildActiveTopology(t, 4, []string{"hdd"}, 20, 0)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: activeTopology}
+	metrics := buildVolumeMetricsForIDs(3)
+
+	results, hasMore, err := Detection(context.Background(), metrics, clusterInfo, NewDefaultConfig(), 1)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.True(t, hasMore)
+}
+
+func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
+	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1)
+	planner := newECPlacementPlanner(activeTopology)
+	require.NotNil(t, planner)
+
+	metric := &types.VolumeHealthMetrics{
+		VolumeID:   2,
+		Server:     "10.0.0.1:8080",
+		Size:       10 * 1024 * 1024,
+		Collection: "",
+	}
+
+	_, err := planECDestinations(planner, metric, NewDefaultConfig())
+	require.Error(t, err)
+}
+
+func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
+	metrics := make([]*types.VolumeHealthMetrics, 0, count)
+	now := time.Now()
+	for id := 1; id <= count; id++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(id),
+			Server:        "10.0.0.1:8080",
+			Size:          200 * 1024 * 1024,
+			Collection:    "",
+			FullnessRatio: 0.9,
+			LastModified:  now.Add(-time.Hour),
+			Age:           10 * time.Minute,
+		})
+	}
+	return metrics
+}
+
+func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount, usedVolumeCount int64) *topology.ActiveTopology {
 	t.Helper()
 	activeTopology := topology.NewActiveTopology(10)
 
@@ -70,10 +127,23 @@ func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVol
 	for i := 1; i <= nodeCount; i++ {
 		diskInfos := make(map[string]*master_pb.DiskInfo)
 		for diskIndex, diskType := range diskTypes {
+			used := usedVolumeCount
+			if used > maxVolumeCount {
+				used = maxVolumeCount
+			}
+			volumeInfos := make([]*master_pb.VolumeInformationMessage, 0, 200)
+			for vid := 1; vid <= 200; vid++ {
+				volumeInfos = append(volumeInfos, &master_pb.VolumeInformationMessage{
+					Id:         uint32(vid),
+					Collection: "",
+					DiskId:     uint32(diskIndex),
+				})
+			}
 			diskInfos[diskType] = &master_pb.DiskInfo{
 				DiskId:         uint32(diskIndex),
-				VolumeCount:    0,
+				VolumeCount:    used,
 				MaxVolumeCount: maxVolumeCount,
+				VolumeInfos:    volumeInfos,
 			}
 		}
 

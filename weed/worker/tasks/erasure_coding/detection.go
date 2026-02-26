@@ -3,6 +3,7 @@ package erasure_coding
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,15 +45,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 	var planner *ecPlacementPlanner
 
-	allowedCollections := make(map[string]bool)
-	if ecConfig.CollectionFilter != "" {
-		for _, collection := range strings.Split(ecConfig.CollectionFilter, ",") {
-			trimmed := strings.TrimSpace(collection)
-			if trimmed != "" {
-				allowedCollections[trimmed] = true
-			}
-		}
-	}
+	allowedCollections := ParseCollectionFilter(ecConfig.CollectionFilter)
 
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
@@ -65,18 +58,28 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		volumeGroups[metric.VolumeID] = append(volumeGroups[metric.VolumeID], metric)
 	}
 
+	groupKeys := make([]uint32, 0, len(volumeGroups))
+	for volumeID := range volumeGroups {
+		groupKeys = append(groupKeys, volumeID)
+	}
+	sort.Slice(groupKeys, func(i, j int) bool { return groupKeys[i] < groupKeys[j] })
+
 	// Iterate over groups to check criteria and creation tasks
-	for _, groupMetrics := range volumeGroups {
+	for idx, volumeID := range groupKeys {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
 				return results, hasMore, err
 			}
 		}
 		if maxResults > 0 && len(results) >= maxResults {
-			hasMore = true
+			if idx+1 < len(groupKeys) {
+				hasMore = true
+			}
 			stoppedEarly = true
 			break
 		}
+
+		groupMetrics := volumeGroups[volumeID]
 
 		// Find canonical metric (lowest Server ID) to ensure consistent task deduplication
 		metric := groupMetrics[0]
@@ -228,6 +231,13 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 					}
 				}
 
+				// Convert sources before mutating topology
+				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
+				if err != nil {
+					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
+					continue
+				}
+
 				err = clusterInfo.ActiveTopology.AddPendingTask(topology.TaskSpec{
 					TaskID:       taskID,
 					TaskType:     topology.TaskTypeErasureCoding,
@@ -247,13 +257,6 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 				glog.V(2).Infof("Added pending EC shard task %s to ActiveTopology for volume %d with %d cleanup sources and %d shard destinations",
 					taskID, metric.VolumeID, len(sources), len(multiPlan.Plans))
-
-				// Convert sources
-				sourcesProto, err := convertTaskSourcesToProtobuf(sources, metric.VolumeID, clusterInfo.ActiveTopology)
-				if err != nil {
-					glog.Warningf("Failed to convert sources for EC task on volume %d: %v, skipping", metric.VolumeID, err)
-					continue
-				}
 
 				// Create unified sources and targets for EC task
 				result.TypedParams = &worker_pb.TaskParams{
@@ -282,11 +285,6 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 			glog.Infof("EC Detection: Successfully created EC task for volume %d, adding to results", metric.VolumeID)
 			results = append(results, result)
-			if maxResults > 0 && len(results) >= maxResults {
-				hasMore = true
-				stoppedEarly = true
-				break
-			}
 		} else {
 			// Count debug reasons
 			if metric.Age < quietThreshold {
@@ -322,6 +320,20 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	}
 
 	return results, hasMore, nil
+}
+
+func ParseCollectionFilter(filter string) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, collection := range strings.Split(filter, ",") {
+		trimmed := strings.TrimSpace(collection)
+		if trimmed != "" {
+			allowed[trimmed] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
 }
 
 type ecDiskState struct {

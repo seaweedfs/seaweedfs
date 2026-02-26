@@ -240,11 +240,6 @@ func (h *ErasureCodingHandler) Detect(
 		glog.Warningf("Plugin worker failed to emit erasure_coding detection trace: %v", traceErr)
 	}
 
-	if maxResults > 0 && len(results) > maxResults {
-		hasMore = true
-		results = results[:maxResults]
-	}
-
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
 		proposal, proposalErr := buildErasureCodingProposal(result)
@@ -284,15 +279,7 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := make(map[string]bool)
-	if strings.TrimSpace(taskConfig.CollectionFilter) != "" {
-		for _, collection := range strings.Split(taskConfig.CollectionFilter, ",") {
-			trimmed := strings.TrimSpace(collection)
-			if trimmed != "" {
-				allowedCollections[trimmed] = true
-			}
-		}
-	}
+	allowedCollections := erasurecodingtask.ParseCollectionFilter(taskConfig.CollectionFilter)
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -347,11 +334,7 @@ func emitErasureCodingDetectionDecisionTrace(
 	totalVolumes := len(metrics)
 	summarySuffix := ""
 	if hasMore {
-		if maxResults > 0 {
-			summarySuffix = fmt.Sprintf(" (max_results=%d reached; remaining volumes not evaluated)", maxResults)
-		} else {
-			summarySuffix = " (max_results reached; remaining volumes not evaluated)"
-		}
+		summarySuffix = fmt.Sprintf(" (max_results=%d reached; remaining volumes not evaluated)", maxResults)
 	}
 	summaryMessage := ""
 	if len(results) == 0 {
