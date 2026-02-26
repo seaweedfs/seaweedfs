@@ -58,7 +58,7 @@ isArgPassed() {
 case "$1" in
 
   'master')
-  	ARGS="-mdir=/data -volumePreallocate -volumeSizeLimitMB=1024"
+  	ARGS="-mdir=/data -volumeSizeLimitMB=1024"
   	shift
   	exec /usr/bin/weed -logtostderr=true master $ARGS $@
 	;;
@@ -73,9 +73,9 @@ case "$1" in
 	;;
 
   'server')
-  	ARGS="-dir=/data -volume.max=0 -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	ARGS="-dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024"
   	if isArgPassed "-volume.max" "$@"; then
-  	  ARGS="-dir=/data -master.volumePreallocate -master.volumeSizeLimitMB=1024"
+  	  ARGS="-dir=/data -master.volumeSizeLimitMB=1024"
   	fi
  	shift
   	exec /usr/bin/weed -logtostderr=true server $ARGS $@
