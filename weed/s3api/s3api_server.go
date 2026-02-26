@@ -58,6 +58,7 @@ type S3ApiServerOption struct {
 	Cipher                    bool // encrypt data on volume servers
 	BindIp                    string
 	GrpcPort                  int
+	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
 }
 
 type S3ApiServer struct {

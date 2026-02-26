@@ -160,6 +160,7 @@ func TestExtractHostHeader(t *testing.T) {
 		forwardedHost  string
 		forwardedPort  string
 		forwardedProto string
+		externalHost   string
 		expected       string
 	}{
 		{
@@ -228,6 +229,14 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "127.0.0.1:8433",
 		},
 		{
+			name:           "X-Forwarded-Host with standard port already included (HTTPS 443)",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "example.com:443",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expected:       "example.com",
+		},
+		{
 			name:           "X-Forwarded-Host with port, no X-Forwarded-Port header",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "example.com:9000",
@@ -253,7 +262,7 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "[::1]:8080",
 		},
 		{
-			name:           "IPv6 address without brackets and standard port, should strip brackets per AWS SDK",
+			name:           "IPv6 address without brackets and standard port, should strip default port",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "::1",
 			forwardedPort:  "80",
@@ -261,7 +270,7 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "::1",
 		},
 		{
-			name:           "IPv6 address without brackets and standard HTTPS port, should strip brackets per AWS SDK",
+			name:           "IPv6 address without brackets and standard HTTPS port, should strip default port",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "2001:db8::1",
 			forwardedPort:  "443",
@@ -277,7 +286,7 @@ func TestExtractHostHeader(t *testing.T) {
 			expected:       "[2001:db8::1]:8080",
 		},
 		{
-			name:           "IPv6 full address with brackets and default port (should strip port and brackets)",
+			name:           "IPv6 full address with brackets and default port (should strip default port)",
 			hostHeader:     "backend:8333",
 			forwardedHost:  "[2001:db8:85a3::8a2e:370:7334]:443",
 			forwardedPort:  "443",
@@ -333,6 +342,28 @@ func TestExtractHostHeader(t *testing.T) {
 			forwardedProto: "http",
 			expected:       "bucket.domain.com:442",
 		},
+		// externalHost override tests
+		{
+			name:         "externalHost overrides everything",
+			hostHeader:   "backend:8333",
+			externalHost: "api.example.com:9000",
+			expected:     "api.example.com:9000",
+		},
+		{
+			name:           "externalHost overrides X-Forwarded-Host",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "proxy.example.com",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			externalHost:   "api.example.com",
+			expected:       "api.example.com",
+		},
+		{
+			name:         "externalHost with IPv6",
+			hostHeader:   "backend:8333",
+			externalHost: "[::1]:9000",
+			expected:     "[::1]:9000",
+		},
 	}
 
 	for _, tt := range tests {
@@ -356,7 +387,7 @@ func TestExtractHostHeader(t *testing.T) {
 			}
 
 			// Test the function
-			result := extractHostHeader(req)
+			result := extractHostHeader(req, tt.externalHost)
 			if result != tt.expected {
 				t.Errorf("extractHostHeader() = %q, want %q", result, tt.expected)
 			}
@@ -389,7 +420,7 @@ func TestExtractSignedHeadersCase(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r, _ := http.NewRequest("GET", "http://"+tt.host+"/", nil)
 			r.Host = tt.host
-			extracted, errCode := extractSignedHeaders(tt.signedHeads, r)
+			extracted, errCode := extractSignedHeaders(tt.signedHeads, r, "")
 			if errCode != s3err.ErrNone {
 				t.Fatalf("extractSignedHeaders failed: %v", errCode)
 			}

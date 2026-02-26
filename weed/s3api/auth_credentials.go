@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -53,6 +55,7 @@ type IdentityAccessManagement struct {
 	identityAnonymous *Identity
 	hashMu            sync.RWMutex
 	domain            string
+	externalHost      string // pre-computed host for S3 signature verification (from ExternalUrl)
 	isAuthEnabled     bool
 	credentialManager *credential.CredentialManager
 	filerClient       *wdclient.FilerClient
@@ -154,13 +157,56 @@ func (iam *IdentityAccessManagement) SetFilerClient(filerClient *wdclient.FilerC
 	}
 }
 
+// parseExternalUrlToHost parses an external URL and returns the host string
+// to use for S3 signature verification. It applies the same default port
+// stripping rules as the AWS SDK: port 80 is stripped for HTTP, port 443
+// is stripped for HTTPS, all other ports are preserved.
+// Returns empty string for empty input.
+func parseExternalUrlToHost(externalUrl string) (string, error) {
+	if externalUrl == "" {
+		return "", nil
+	}
+	u, err := url.Parse(externalUrl)
+	if err != nil {
+		return "", fmt.Errorf("invalid external URL: parse failed")
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("invalid external URL: missing host")
+	}
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		// No port in the URL. For IPv6, strip brackets to match AWS SDK.
+		if strings.Contains(u.Host, ":") {
+			return strings.Trim(u.Host, "[]"), nil
+		}
+		return u.Host, nil
+	}
+	// Strip default ports to match AWS SDK SanitizeHostForHeader behavior
+	if (port == "80" && strings.EqualFold(u.Scheme, "http")) ||
+		(port == "443" && strings.EqualFold(u.Scheme, "https")) {
+		return host, nil
+	}
+	return net.JoinHostPort(host, port), nil
+}
+
 func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
 	return NewIdentityAccessManagementWithStore(option, filerClient, "")
 }
 
 func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient *wdclient.FilerClient, explicitStore string) *IdentityAccessManagement {
+	var externalHost string
+	if option.ExternalUrl != "" {
+		var err error
+		externalHost, err = parseExternalUrlToHost(option.ExternalUrl)
+		if err != nil {
+			glog.Fatalf("failed to parse s3.externalUrl: %v", err)
+		}
+		glog.V(0).Infof("S3 signature verification will use external host: %q (from %q)", externalHost, option.ExternalUrl)
+	}
+
 	iam := &IdentityAccessManagement{
 		domain:       option.DomainName,
+		externalHost: externalHost,
 		hashes:       make(map[string]*sync.Pool),
 		hashCounters: make(map[string]*int32),
 		filerClient:  filerClient,
