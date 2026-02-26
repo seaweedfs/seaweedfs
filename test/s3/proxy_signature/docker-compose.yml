@@ -4,11 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
     command: >
-      /usr/bin/weed server
-      -master -volume -filer -s3
+      /usr/bin/weed mini
       -s3.config=/etc/seaweedfs/s3.json
       -s3.externalUrl=http://localhost:9000
-      -volume.max=0
       -ip=seaweedfs
     volumes:
       - ./s3.json:/etc/seaweedfs/s3.json:ro
