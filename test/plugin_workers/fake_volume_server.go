@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -26,11 +27,19 @@ type VolumeServer struct {
 	address  string
 	baseDir  string
 
-	mu                sync.Mutex
-	receivedFiles     map[string]uint64
-	mountRequests     []*volume_server_pb.VolumeEcShardsMountRequest
-	deleteRequests    []*volume_server_pb.VolumeDeleteRequest
-	markReadonlyCalls int
+	mu                 sync.Mutex
+	receivedFiles      map[string]uint64
+	mountRequests      []*volume_server_pb.VolumeEcShardsMountRequest
+	deleteRequests     []*volume_server_pb.VolumeDeleteRequest
+	markReadonlyCalls  int
+	vacuumGarbageRatio float64
+	vacuumCheckCalls   int
+	vacuumCompactCalls int
+	vacuumCommitCalls  int
+	vacuumCleanupCalls int
+	volumeCopyCalls    int
+	volumeMountCalls   int
+	tailReceiverCalls  int
 }
 
 // NewVolumeServer starts a test volume server using the provided base directory.
@@ -92,6 +101,27 @@ func (v *VolumeServer) ReceivedFiles() map[string]uint64 {
 		out[key] = value
 	}
 	return out
+}
+
+// SetVacuumGarbageRatio sets the garbage ratio returned by VacuumVolumeCheck.
+func (v *VolumeServer) SetVacuumGarbageRatio(ratio float64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.vacuumGarbageRatio = ratio
+}
+
+// VacuumStats returns the vacuum RPC call counts.
+func (v *VolumeServer) VacuumStats() (check, compact, commit, cleanup int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.vacuumCheckCalls, v.vacuumCompactCalls, v.vacuumCommitCalls, v.vacuumCleanupCalls
+}
+
+// BalanceStats returns the balance RPC call counts.
+func (v *VolumeServer) BalanceStats() (copyCalls, mountCalls, tailCalls int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.volumeCopyCalls, v.volumeMountCalls, v.tailReceiverCalls
 }
 
 // MountRequests returns recorded mount requests.
@@ -245,4 +275,58 @@ func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serve
 	v.markReadonlyCalls++
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
+}
+
+func (v *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {
+	v.mu.Lock()
+	v.vacuumCheckCalls++
+	ratio := v.vacuumGarbageRatio
+	v.mu.Unlock()
+	return &volume_server_pb.VacuumVolumeCheckResponse{GarbageRatio: ratio}, nil
+}
+
+func (v *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
+	v.mu.Lock()
+	v.vacuumCompactCalls++
+	v.mu.Unlock()
+	return stream.Send(&volume_server_pb.VacuumVolumeCompactResponse{ProcessedBytes: 1024})
+}
+
+func (v *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	v.mu.Lock()
+	v.vacuumCommitCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.VacuumVolumeCommitResponse{}, nil
+}
+
+func (v *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {
+	v.mu.Lock()
+	v.vacuumCleanupCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.VacuumVolumeCleanupResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, stream volume_server_pb.VolumeServer_VolumeCopyServer) error {
+	v.mu.Lock()
+	v.volumeCopyCalls++
+	v.mu.Unlock()
+
+	if err := stream.Send(&volume_server_pb.VolumeCopyResponse{ProcessedBytes: 1024}); err != nil {
+		return err
+	}
+	return stream.Send(&volume_server_pb.VolumeCopyResponse{LastAppendAtNs: uint64(time.Now().UnixNano())})
+}
+
+func (v *VolumeServer) VolumeMount(ctx context.Context, req *volume_server_pb.VolumeMountRequest) (*volume_server_pb.VolumeMountResponse, error) {
+	v.mu.Lock()
+	v.volumeMountCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeMountResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_server_pb.VolumeTailReceiverRequest) (*volume_server_pb.VolumeTailReceiverResponse, error) {
+	v.mu.Lock()
+	v.tailReceiverCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeTailReceiverResponse{}, nil
 }
