@@ -20,6 +20,8 @@ jobs:
         include:
           - worker: erasure_coding
             path: test/plugin_workers/erasure_coding
+          - worker: ec_repair
+            path: test/plugin_workers/ec_repair
           - worker: vacuum
             path: test/plugin_workers/vacuum
           - worker: volume_balance
