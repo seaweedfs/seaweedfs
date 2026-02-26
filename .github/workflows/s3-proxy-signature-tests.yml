@@ -34,6 +34,7 @@ jobs:
       - name: Build SeaweedFS binary for Linux
         run: |
           GOOS=linux GOARCH=amd64 go build -buildvcs=false -o test/s3/proxy_signature/weed ./weed
+          ls -al test/s3/proxy_signature/weed
 
       - name: Run S3 Proxy Signature Tests
         timeout-minutes: 10
@@ -46,6 +47,11 @@ jobs:
           # Check if containers are running
           echo "Checking container status..."
           docker compose ps
+          
+          # Inspect binary in container
+          echo "Inspecting SeaweedFS /usr/bin/ in container:"
+          docker compose exec -T seaweedfs ls -al /usr/bin/ || true
+          docker compose exec -T seaweedfs ls -al /usr/bin/weed || true
           
           # Capture initial logs to diagnose startup issues
           echo "SeaweedFS logs:"
