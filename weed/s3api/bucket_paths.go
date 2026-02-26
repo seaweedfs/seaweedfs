@@ -58,7 +58,7 @@ func (s3a *S3ApiServer) tableLocationDir(bucket string) (string, bool) {
 		s3a.bucketRegistry.tableLocationLock.RUnlock()
 	}
 
-	tablePath, err := s3a.lookupTableLocationMapping(bucket, s3tables.GetTableLocationMappingDir(), s3tables.GetTableLocationMappingPath)
+	tablePath, err := s3a.lookupTableLocationMapping(bucket, s3tables.GetTableLocationMappingDir())
 
 	// Only cache definitive results: successful lookup (tablePath set) or definitive not-found (ErrNotFound)
 	// Don't cache transient errors to avoid treating temporary failures as permanent misses
@@ -130,13 +130,13 @@ func (s3a *S3ApiServer) readTableLocationMappingFromDirectory(mappingDir string)
 	return mappedPath, nil
 }
 
-func (s3a *S3ApiServer) lookupTableLocationMapping(bucket, mappingDir string, mappingPath func(string) string) (string, error) {
+func (s3a *S3ApiServer) lookupTableLocationMapping(bucket, mappingDir string) (string, error) {
 	entry, err := s3a.getEntry(mappingDir, bucket)
 	if err != nil || entry == nil {
 		return "", err
 	}
 	if entry.IsDirectory {
-		return s3a.readTableLocationMappingFromDirectory(mappingPath(bucket))
+		return s3a.readTableLocationMappingFromDirectory(path.Join(mappingDir, bucket))
 	}
 	if len(entry.Content) == 0 {
 		return "", nil
