@@ -677,6 +677,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
+	taskInstance.SetWorkingDir(taskWorkingDir)
 
 	// If we have a file logger, adapt it so task WithFields logs are captured into file
 	if fileLogger != nil {

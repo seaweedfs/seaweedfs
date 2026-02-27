@@ -106,9 +106,10 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	}
 
 	// Use the working directory from task parameters, or fall back to a default
-	baseWorkDir := t.workDir
-
-	// Create unique working directory for this task
+	baseWorkDir := ecParams.WorkingDir
+	if baseWorkDir == "" {
+		baseWorkDir = t.GetWorkingDir()
+	}
 	taskWorkDir := filepath.Join(baseWorkDir, fmt.Sprintf("vol_%d_%d", t.volumeID, time.Now().Unix()))
 	if err := os.MkdirAll(taskWorkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create task working directory %s: %v", taskWorkDir, err)
