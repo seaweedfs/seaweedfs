@@ -667,12 +667,16 @@ func (r *Plugin) ListKnownJobTypes() ([]JobTypeInfo, error) {
 				jobTypeToCap[jobType] = cap
 				continue
 			}
+			// Preserve existing if it has DisplayName but cap doesn't.
+			if existing.DisplayName != "" && cap.DisplayName == "" {
+				continue
+			}
 			// Prefer capabilities with a non-empty DisplayName.
 			if existing.DisplayName == "" && cap.DisplayName != "" {
 				jobTypeToCap[jobType] = cap
 				continue
 			}
-			// If DisplayName preference does not decide, prefer higher Weight.
+			// If DisplayName statuses are equal, prefer higher Weight.
 			if cap.Weight > existing.Weight {
 				jobTypeToCap[jobType] = cap
 			}
