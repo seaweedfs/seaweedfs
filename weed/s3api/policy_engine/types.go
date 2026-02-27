@@ -181,9 +181,9 @@ type CompiledPolicy struct {
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
-	ActionMatchers    []*WildcardMatcher
-	ResourceMatchers  []*WildcardMatcher
-	PrincipalMatchers []*WildcardMatcher
+	ActionMatchers    []*wildcard.WildcardMatcher
+	ResourceMatchers  []*wildcard.WildcardMatcher
+	PrincipalMatchers []*wildcard.WildcardMatcher
 	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
@@ -196,7 +196,7 @@ type CompiledStatement struct {
 
 	// NotResource patterns (resource should NOT match these)
 	NotResourcePatterns        []*regexp.Regexp
-	NotResourceMatchers        []*WildcardMatcher
+	NotResourceMatchers        []*wildcard.WildcardMatcher
 	DynamicNotResourcePatterns []string
 }
 

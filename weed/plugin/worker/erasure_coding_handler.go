@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
@@ -280,7 +281,7 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := erasurecodingtask.ParseCollectionFilter(taskConfig.CollectionFilter)
+	allowedCollections := wildcard.CompileWildcardMatchers(taskConfig.CollectionFilter)
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -318,7 +319,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			skippedTooSmall++
 			continue
 		}
-		if len(allowedCollections) > 0 && !erasurecodingtask.MatchesCollectionFilter(allowedCollections, metric.Collection) {
+		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}

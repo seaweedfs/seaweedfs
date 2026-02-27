@@ -51,7 +51,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 	var planner *ecPlacementPlanner
 
-	allowedCollections := ParseCollectionFilter(ecConfig.CollectionFilter)
+	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
 
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
@@ -108,7 +108,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		}
 
 		// Check collection filter if specified
-		if len(allowedCollections) > 0 && !MatchesCollectionFilter(allowedCollections, metric.Collection) {
+		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}
@@ -331,14 +331,6 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	}
 
 	return results, hasMore, nil
-}
-
-func ParseCollectionFilter(filter string) []*wildcard.WildcardMatcher {
-	return wildcard.CompileWildcardMatchers(filter)
-}
-
-func MatchesCollectionFilter(patterns []*wildcard.WildcardMatcher, collection string) bool {
-	return wildcard.MatchesAnyWildcard(patterns, collection)
 }
 
 type ecDiskState struct {
