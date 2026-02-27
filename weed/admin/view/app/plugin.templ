@@ -1293,9 +1293,8 @@ templ Plugin(page string) {
                 var jobTypes = [];
 
                 for (var k = 0; k < known.length; k++) {
-                    var item = known[k];
-                    var knownType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
-                    knownType = String(knownType || '').trim();
+                    var item = parseJobTypeItem(known[k]);
+                    var knownType = item.jobType;
                     if (!knownType || seen[knownType]) {
                         continue;
                     }
