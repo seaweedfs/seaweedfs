@@ -990,14 +990,19 @@ func TestGetNextTask_SkipsVolumeConflictsAcrossTypes(t *testing.T) {
 		Server:      "server1",
 		ScheduledAt: now.Add(-3 * time.Second),
 	})
-	mq.AddTask(&MaintenanceTask{
+	t2 := &MaintenanceTask{
 		ID:          "t2",
 		Type:        MaintenanceTaskType("erasure_coding"),
 		Priority:    PriorityNormal,
 		VolumeID:    100,
 		Server:      "server1",
+		Status:      TaskStatusPending,
 		ScheduledAt: now.Add(-2 * time.Second),
-	})
+	}
+	mq.mutex.Lock()
+	mq.tasks[t2.ID] = t2
+	mq.pendingTasks = append(mq.pendingTasks, t2)
+	mq.mutex.Unlock()
 	mq.AddTask(&MaintenanceTask{
 		ID:          "t3",
 		Type:        MaintenanceTaskType("vacuum"),
