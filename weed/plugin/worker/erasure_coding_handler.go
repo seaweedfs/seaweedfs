@@ -906,7 +906,7 @@ func assignECShardIDs(totalShards int, targetCount int) [][]uint32 {
 func defaultErasureCodingWorkingDir(baseWorkingDir string) string {
 	dir := strings.TrimSpace(baseWorkingDir)
 	if dir == "" {
-		return filepath.Join(".", "seaweedfs-ec")
+		return filepath.Join(".", "erasure_coding")
 	}
-	return filepath.Join(dir, "seaweedfs-ec")
+	return filepath.Join(dir, "erasure_coding")
 }
