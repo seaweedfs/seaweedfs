@@ -1031,12 +1031,13 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
-	// Start workers after admin server is ready
+	// Start consolidated worker runtime (both standard and plugin runtimes)
 	workerDir := filepath.Join(*miniDataFolders, "worker")
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create worker directory: %v", err)
+		glog.Fatalf("Failed to create unified worker directory: %v", err)
 	}
 
+	glog.Infof("Starting consolidated maintenance worker system (directory: %s)", workerDir)
 	startMiniWorker(workerDir)
 	startMiniPluginWorker(ctx, workerDir)
 
@@ -1098,7 +1099,7 @@ func waitForWorkerReady(workerGrpcAddr string) {
 
 // startMiniWorker starts a single worker for the admin server
 func startMiniWorker(workerDir string) {
-	glog.Infof("Starting maintenance worker for admin server")
+	glog.V(1).Infof("Initializing standard worker runtime")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
