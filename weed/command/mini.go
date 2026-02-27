@@ -728,6 +728,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
+	*miniDataFolders = util.ResolvePath(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -1030,9 +1031,14 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
-	// Start worker after admin server is ready
-	startMiniWorker()
-	startMiniPluginWorker(ctx)
+	// Start workers after admin server is ready
+	workerDir := filepath.Join(*miniDataFolders, "worker")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		glog.Fatalf("Failed to create worker directory: %v", err)
+	}
+
+	startMiniWorker(workerDir)
+	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
@@ -1091,17 +1097,13 @@ func waitForWorkerReady(workerGrpcAddr string) {
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker() {
+func startMiniWorker(workerDir string) {
 	glog.Infof("Starting maintenance worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
 
-	// Use worker directory under main data folder
-	workerDir := filepath.Join(*miniDataFolders, "worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	glog.Infof("Worker connecting to admin server: %s", adminAddr)
 	glog.Infof("Worker capabilities: %s", capabilities)
@@ -1170,7 +1172,7 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-func startMiniPluginWorker(ctx context.Context) {
+func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	glog.Infof("Starting plugin worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -1179,10 +1181,7 @@ func startMiniPluginWorker(ctx context.Context) {
 		glog.Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
 	}
 
-	workerDir := filepath.Join(*miniDataFolders, "plugin_worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create plugin worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")

@@ -143,7 +143,7 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 		return "", err
 	}
 
-	workerIDPath := filepath.Join(workingDir, "plugin.worker.id")
+	workerIDPath := filepath.Join(workingDir, "worker.id")
 	if data, err := os.ReadFile(workerIDPath); err == nil {
 		if persisted := strings.TrimSpace(string(data)); persisted != "" {
 			return persisted, nil
