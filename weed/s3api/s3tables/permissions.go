@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Permission represents a specific action permission
@@ -217,7 +218,7 @@ func hasIdentityPermission(operation string, ctx *PolicyContext) bool {
 			if action == candidate {
 				return true
 			}
-			if strings.ContainsAny(action, "*?") && policy_engine.MatchesWildcard(action, candidate) {
+			if strings.ContainsAny(action, "*?") && wildcard.MatchesWildcard(action, candidate) {
 				return true
 			}
 		}
@@ -238,7 +239,7 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 			return true
 		}
 		// Support wildcard matching for principals (e.g., "arn:aws:iam::*:user/admin")
-		return policy_engine.MatchesWildcard(p, principal)
+		return wildcard.MatchesWildcard(p, principal)
 	case []interface{}:
 		// Array of principals
 		for _, item := range p {
@@ -247,7 +248,7 @@ func matchesPrincipal(principalSpec interface{}, principal string) bool {
 					return true
 				}
 				// Support wildcard matching
-				if policy_engine.MatchesWildcard(str, principal) {
+				if wildcard.MatchesWildcard(str, principal) {
 					return true
 				}
 			}
@@ -302,7 +303,7 @@ func matchesActionPattern(pattern, action string) bool {
 
 	// Wildcard match using policy engine's wildcard matcher
 	// Supports both * (any sequence) and ? (single character) anywhere in the pattern
-	return policy_engine.MatchesWildcard(pattern, action)
+	return wildcard.MatchesWildcard(pattern, action)
 }
 
 func matchesConditions(conditions map[string]map[string]interface{}, ctx *PolicyContext) bool {
@@ -411,7 +412,7 @@ func matchesResourcePattern(pattern, resourceARN string) bool {
 	}
 
 	// Wildcard match using policy engine's wildcard matcher
-	return policy_engine.MatchesWildcard(pattern, resourceARN)
+	return wildcard.MatchesWildcard(pattern, resourceARN)
 }
 
 // Helper functions for specific permissions

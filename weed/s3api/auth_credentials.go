@@ -21,9 +21,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
 	// Import KMS providers to register them
@@ -1471,10 +1471,10 @@ func (identity *Identity) CanDo(action Action, bucket string, objectKey string) 
 		act := string(a)
 		if strings.ContainsAny(act, "*?") {
 			// Pattern has wildcards - use smart matching
-			if policy_engine.MatchesWildcard(act, target) {
+			if wildcard.MatchesWildcard(act, target) {
 				return true
 			}
-			if policy_engine.MatchesWildcard(act, adminTarget) {
+			if wildcard.MatchesWildcard(act, adminTarget) {
 				return true
 			}
 		} else {
