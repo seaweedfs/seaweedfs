@@ -1294,7 +1294,7 @@ templ Plugin(page string) {
 
                 for (var k = 0; k < known.length; k++) {
                     var item = parseJobTypeItem(known[k]);
-                    var knownType = item.jobType;
+                    var knownType = item && item.jobType ? String(item.jobType).trim() : '';
                     if (!knownType || seen[knownType]) {
                         continue;
                     }
