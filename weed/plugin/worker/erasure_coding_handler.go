@@ -40,7 +40,7 @@ func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
 		CanExecute:              true,
 		MaxDetectionConcurrency: 1,
 		MaxExecutionConcurrency: 1,
-		DisplayName:             "Erasure Coding",
+		DisplayName:             "EC Encoding",
 		Description:             "Converts full and quiet volumes into EC shards",
 	}
 }
@@ -48,7 +48,7 @@ func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
 func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 	return &plugin_pb.JobTypeDescriptor{
 		JobType:           "erasure_coding",
-		DisplayName:       "Erasure Coding",
+		DisplayName:       "EC Encoding",
 		Description:       "Detect and execute erasure coding for suitable volumes",
 		Icon:              "fas fa-shield-alt",
 		DescriptorVersion: 1,
