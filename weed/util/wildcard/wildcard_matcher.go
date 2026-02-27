@@ -177,15 +177,6 @@ func matchWildcardString(pattern, str string) bool {
 	return patternIndex == len(pattern)
 }
 
-func matchWildcardRegex(pattern, str string) bool {
-	matcher, err := GetCachedWildcardMatcher(pattern)
-	if err != nil {
-		glog.Errorf("Error getting WildcardMatcher for pattern %s: %v. Falling back to matchWildcardString.", pattern, err)
-		return matchWildcardString(pattern, str)
-	}
-	return matcher.Match(str)
-}
-
 func compileWildcardPattern(pattern string) (*regexp.Regexp, error) {
 	escaped := regexp.QuoteMeta(pattern)
 	escaped = strings.ReplaceAll(escaped, `\*`, `.*`)
