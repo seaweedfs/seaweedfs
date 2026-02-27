@@ -1,4 +1,4 @@
-package fuse_test
+package fuse
 
 import (
 	"testing"
