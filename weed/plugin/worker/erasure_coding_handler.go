@@ -318,7 +318,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			skippedTooSmall++
 			continue
 		}
-		if len(allowedCollections) > 0 && !allowedCollections[metric.Collection] {
+		if len(allowedCollections) > 0 && !erasurecodingtask.MatchesCollectionFilter(allowedCollections, metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}
@@ -569,9 +569,7 @@ func (h *ErasureCodingHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	// Reuse the same master topology fetch/build flow used by the vacuum handler.
-	helper := &VacuumHandler{grpcDialOption: h.grpcDialOption}
-	return helper.collectVolumeMetrics(ctx, masterAddresses, collectionFilter)
+	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 }
 
 func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *erasureCodingWorkerConfig {
