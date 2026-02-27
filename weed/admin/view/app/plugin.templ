@@ -683,6 +683,25 @@ templ Plugin(page string) {
                 return 'configuration';
             }
 
+            // Parse a job type item (string or object) into a safe object shape
+            function parseJobTypeItem(item) {
+                var jobType = '';
+                var displayName = '';
+                
+                if (typeof item === 'string') {
+                    jobType = String(item || '').trim();
+                    displayName = jobType;
+                } else if (item && typeof item === 'object') {
+                    jobType = String(item.job_type || item.jobType || '').trim();
+                    displayName = String(item.display_name || item.displayName || jobType || '').trim();
+                    if (!displayName) {
+                        displayName = jobType;
+                    }
+                }
+                
+                return { jobType: jobType, displayName: displayName };
+            }
+
             function topTabKeyForJobType(jobType) {
                 var normalized = String(jobType || '').trim();
                 if (!normalized) {
@@ -706,9 +725,8 @@ templ Plugin(page string) {
                 }
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    var item = jobTypes[i];
-                    var itemJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
-                    if (String(itemJobType || '').trim() === normalized) {
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    if (item.jobType === normalized) {
                         return true;
                     }
                 }
@@ -730,8 +748,8 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                var firstItem = state.jobTypes[0];
-                state.selectedJobType = typeof firstItem === 'string' ? firstItem : (firstItem.job_type || firstItem.jobType || '');
+                var firstItem = parseJobTypeItem(state.jobTypes[0]);
+                state.selectedJobType = firstItem.jobType;
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -752,8 +770,8 @@ templ Plugin(page string) {
 
                 if (state.activeTopTab === 'overview') {
                     if (!state.selectedJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                        var item = state.jobTypes[0];
-                        state.selectedJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
+                        var item = parseJobTypeItem(state.jobTypes[0]);
+                        state.selectedJobType = item.jobType;
                     }
                     return;
                 }
@@ -762,8 +780,8 @@ templ Plugin(page string) {
                     topTabJobType = state.selectedJobType;
                 }
                 if (!topTabJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                    var item = state.jobTypes[0];
-                    topTabJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
+                    var item = parseJobTypeItem(state.jobTypes[0]);
+                    topTabJobType = item.jobType;
                 }
                 if (!topTabJobType) {
                     state.activeTopTab = 'overview';
@@ -789,10 +807,9 @@ templ Plugin(page string) {
 
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    var itemData = jobTypes[i];
-                    // Handle both old string format and new object format
-                    var jobType = typeof itemData === 'string' ? itemData : (itemData.job_type || itemData.jobType || '');
-                    var displayName = typeof itemData === 'object' ? (itemData.display_name || itemData.displayName || jobType) : jobType;
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    var jobType = item.jobType;
+                    var displayName = item.displayName;
                     
                     if (!jobType) {
                         continue;

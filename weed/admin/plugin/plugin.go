@@ -654,18 +654,26 @@ func (r *Plugin) ListKnownJobTypes() ([]JobTypeInfo, error) {
 	result := make([]JobTypeInfo, 0, len(jobTypeList))
 	workers := r.registry.List()
 
+	// Pre-calculate the capability for each job type from available workers.
+	// Use the first worker's capability info for deterministic results.
+	jobTypeToCap := make(map[string]*plugin_pb.JobTypeCapability)
+	for _, worker := range workers {
+		for jobType, cap := range worker.Capabilities {
+			if _, exists := jobTypeToCap[jobType]; !exists && cap != nil {
+				jobTypeToCap[jobType] = cap
+			}
+		}
+	}
+
 	for _, jobType := range jobTypeList {
 		info := JobTypeInfo{JobType: jobType}
 
-		// Get display name and weight from worker capabilities
-		for _, worker := range workers {
-			if cap, ok := worker.Capabilities[jobType]; ok && cap != nil {
-				if cap.DisplayName != "" {
-					info.DisplayName = cap.DisplayName
-				}
-				info.Weight = cap.Weight
-				break // Use the first worker's capability info
+		// Get display name and weight from pre-calculated capabilities
+		if cap, ok := jobTypeToCap[jobType]; ok && cap != nil {
+			if cap.DisplayName != "" {
+				info.DisplayName = cap.DisplayName
 			}
+			info.Weight = cap.Weight
 		}
 
 		// Default display name to job type if not set
