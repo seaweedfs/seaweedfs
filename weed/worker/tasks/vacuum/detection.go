@@ -98,10 +98,10 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
 func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
 	// Use configured values or defaults
-	garbageThreshold := 0.3                    // Default 30%
-	verifyChecksum := true                     // Default to verify
-	batchSize := int32(1000)                   // Default batch size
-	workingDir := "/tmp/seaweedfs_vacuum_work" // Default working directory
+	garbageThreshold := 0.3  // Default 30%
+	verifyChecksum := true   // Default to verify
+	batchSize := int32(1000) // Default batch size
+	workingDir := ""         // Use worker-provided default if empty
 
 	if vacuumConfig != nil {
 		garbageThreshold = vacuumConfig.GarbageThreshold

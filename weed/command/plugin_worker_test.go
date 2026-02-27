@@ -153,11 +153,11 @@ func TestResolvePluginWorkerID(t *testing.T) {
 	if generated == "" {
 		t.Fatalf("expected generated id")
 	}
-	if len(generated) < 7 || generated[:7] != "plugin-" {
-		t.Fatalf("expected generated id prefix plugin-, got %q", generated)
+	if len(generated) < 2 || generated[:2] != "w-" {
+		t.Fatalf("expected generated id prefix w-, got %q", generated)
 	}
 
-	persistedPath := filepath.Join(dir, "plugin.worker.id")
+	persistedPath := filepath.Join(dir, "worker.id")
 	if _, statErr := os.Stat(persistedPath); statErr != nil {
 		t.Fatalf("expected persisted worker id file: %v", statErr)
 	}
