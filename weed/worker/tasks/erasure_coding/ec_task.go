@@ -120,9 +120,9 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.workDir = taskWorkDir
 	glog.V(1).Infof("Task working directory configured: %s (logs will be written here)", taskWorkDir)
 
-	// Ensure cleanup of working directory (but preserve logs)
+	// Ensure cleanup of working directory
 	defer func() {
-		// Clean up volume files and EC shards, but preserve the directory structure and any logs
+		// Clean up volume files and EC shards
 		patterns := []string{"*.dat", "*.idx", "*.ec*", "*.vif"}
 		for _, pattern := range patterns {
 			matches, err := filepath.Glob(filepath.Join(taskWorkDir, pattern))
@@ -135,7 +135,12 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 				}
 			}
 		}
-		glog.V(1).Infof("Cleaned up volume files from working directory: %s (logs preserved)", taskWorkDir)
+		// Remove the entire working directory
+		if err := os.RemoveAll(taskWorkDir); err != nil {
+			glog.V(2).Infof("Could not remove working directory %s: %v", taskWorkDir, err)
+		} else {
+			glog.V(1).Infof("Cleaned up working directory: %s", taskWorkDir)
+		}
 	}()
 
 	// Step 1: Mark volume readonly
