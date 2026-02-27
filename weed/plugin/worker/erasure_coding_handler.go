@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
@@ -280,7 +281,7 @@ func emitErasureCodingDetectionDecisionTrace(
 
 	quietThreshold := time.Duration(taskConfig.QuietForSeconds) * time.Second
 	minSizeBytes := uint64(taskConfig.MinSizeMB) * 1024 * 1024
-	allowedCollections := erasurecodingtask.ParseCollectionFilter(taskConfig.CollectionFilter)
+	allowedCollections := wildcard.CompileWildcardMatchers(taskConfig.CollectionFilter)
 
 	volumeGroups := make(map[uint32][]*workertypes.VolumeHealthMetrics)
 	for _, metric := range metrics {
@@ -318,7 +319,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			skippedTooSmall++
 			continue
 		}
-		if len(allowedCollections) > 0 && !allowedCollections[metric.Collection] {
+		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
 			skippedCollectionFilter++
 			continue
 		}
@@ -569,9 +570,7 @@ func (h *ErasureCodingHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	// Reuse the same master topology fetch/build flow used by the vacuum handler.
-	helper := &VacuumHandler{grpcDialOption: h.grpcDialOption}
-	return helper.collectVolumeMetrics(ctx, masterAddresses, collectionFilter)
+	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 }
 
 func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *erasureCodingWorkerConfig {
@@ -906,7 +905,7 @@ func assignECShardIDs(totalShards int, targetCount int) [][]uint32 {
 func defaultErasureCodingWorkingDir(baseWorkingDir string) string {
 	dir := strings.TrimSpace(baseWorkingDir)
 	if dir == "" {
-		return filepath.Join(".", "seaweedfs-ec")
+		return filepath.Join(".", "erasure_coding")
 	}
-	return filepath.Join(dir, "seaweedfs-ec")
+	return filepath.Join(dir, "erasure_coding")
 }

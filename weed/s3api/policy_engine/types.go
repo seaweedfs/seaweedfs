@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Policy Engine Types
@@ -180,9 +181,9 @@ type CompiledPolicy struct {
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
-	ActionMatchers    []*WildcardMatcher
-	ResourceMatchers  []*WildcardMatcher
-	PrincipalMatchers []*WildcardMatcher
+	ActionMatchers    []*wildcard.WildcardMatcher
+	ResourceMatchers  []*wildcard.WildcardMatcher
+	PrincipalMatchers []*wildcard.WildcardMatcher
 	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
@@ -195,7 +196,7 @@ type CompiledStatement struct {
 
 	// NotResource patterns (resource should NOT match these)
 	NotResourcePatterns        []*regexp.Regexp
-	NotResourceMatchers        []*WildcardMatcher
+	NotResourceMatchers        []*wildcard.WildcardMatcher
 	DynamicNotResourcePatterns []string
 }
 
@@ -328,7 +329,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ActionPatterns = append(compiled.ActionPatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(action)
+		matcher, err := wildcard.NewWildcardMatcher(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create action matcher %s: %v", action, err)
 		}
@@ -352,7 +353,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ResourcePatterns = append(compiled.ResourcePatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(resource)
+		matcher, err := wildcard.NewWildcardMatcher(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource matcher %s: %v", resource, err)
 		}
@@ -377,7 +378,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.PrincipalPatterns = append(compiled.PrincipalPatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(principal)
+			matcher, err := wildcard.NewWildcardMatcher(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
@@ -403,7 +404,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(notResource)
+			matcher, err := wildcard.NewWildcardMatcher(notResource)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
 			}
@@ -419,7 +420,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 // compilePattern compiles a wildcard pattern to regex
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	return CompileWildcardPattern(pattern)
+	return wildcard.CompileWildcardPattern(pattern)
 }
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
@@ -571,11 +572,11 @@ func (cp *CompiledPolicy) EvaluatePolicy(args *PolicyEvaluationArgs) (bool, Poli
 
 // FastMatchesWildcard uses cached WildcardMatcher for performance
 func FastMatchesWildcard(pattern, str string) bool {
-	matcher, err := GetCachedWildcardMatcher(pattern)
+	matcher, err := wildcard.GetCachedWildcardMatcher(pattern)
 	if err != nil {
 		glog.Errorf("Error getting cached WildcardMatcher for pattern %s: %v", pattern, err)
 		// Fall back to the original implementation
-		return MatchesWildcard(pattern, str)
+		return wildcard.MatchesWildcard(pattern, str)
 	}
 	return matcher.Match(str)
 }

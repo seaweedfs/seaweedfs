@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -252,9 +252,9 @@ func TestMatchWildcardPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.pattern+"_"+tt.target, func(t *testing.T) {
-			result := policy_engine.MatchesWildcard(tt.pattern, tt.target)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.target)
 			if result != tt.match {
-				t.Errorf("policy_engine.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
+				t.Errorf("wildcard.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
 			}
 		})
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -12,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -51,7 +51,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 	var planner *ecPlacementPlanner
 
-	allowedCollections := ParseCollectionFilter(ecConfig.CollectionFilter)
+	allowedCollections := wildcard.CompileWildcardMatchers(ecConfig.CollectionFilter)
 
 	// Group metrics by VolumeID to handle replicas and select canonical server
 	volumeGroups := make(map[uint32][]*types.VolumeHealthMetrics)
@@ -108,12 +108,9 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 		}
 
 		// Check collection filter if specified
-		if len(allowedCollections) > 0 {
-			// Skip if volume's collection is not in the allowed list
-			if !allowedCollections[metric.Collection] {
-				skippedCollectionFilter++
-				continue
-			}
+		if len(allowedCollections) > 0 && !wildcard.MatchesAnyWildcard(allowedCollections, metric.Collection) {
+			skippedCollectionFilter++
+			continue
 		}
 
 		// Check quiet duration and fullness criteria
@@ -334,20 +331,6 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	}
 
 	return results, hasMore, nil
-}
-
-func ParseCollectionFilter(filter string) map[string]bool {
-	allowed := make(map[string]bool)
-	for _, collection := range strings.Split(filter, ",") {
-		trimmed := strings.TrimSpace(collection)
-		if trimmed != "" {
-			allowed[trimmed] = true
-		}
-	}
-	if len(allowed) == 0 {
-		return nil
-	}
-	return allowed
 }
 
 type ecDiskState struct {
