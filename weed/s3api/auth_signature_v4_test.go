@@ -364,6 +364,31 @@ func TestExtractHostHeader(t *testing.T) {
 			externalHost: "[::1]:9000",
 			expected:     "[::1]:9000",
 		},
+		// Bug fix: X-Forwarded-Port should not override more specific ports in other headers
+		{
+			name:           "User reported case: X-Forwarded-Port misreports 443 but Host has 30007",
+			hostHeader:     "storage-stgops.mt.mtnet:30007",
+			forwardedHost:  "storage-stgops.mt.mtnet",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expected:       "storage-stgops.mt.mtnet:30007",
+		},
+		{
+			name:           "X-Forwarded-Host already contains correct port, ignore misaligned X-Forwarded-Port",
+			hostHeader:     "backend:8333",
+			forwardedHost:  "storage-stgops.mt.mtnet:30007",
+			forwardedPort:  "443",
+			forwardedProto: "https",
+			expected:       "storage-stgops.mt.mtnet:30007",
+		},
+		{
+			name:           "X-Forwarded-Host has no port, match r.Host hostname and take its port",
+			hostHeader:     "example.com:8080",
+			forwardedHost:  "example.com",
+			forwardedPort:  "80",
+			forwardedProto: "http",
+			expected:       "example.com:8080",
+		},
 	}
 
 	for _, tt := range tests {

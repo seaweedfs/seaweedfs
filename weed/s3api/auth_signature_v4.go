@@ -828,29 +828,32 @@ func extractHostHeader(r *http.Request, externalHost string) string {
 		} else {
 			host = strings.TrimSpace(forwardedHost)
 		}
-		// Baseline port from forwarded port if available
-		if forwardedPort != "" {
-			port = forwardedPort
-		}
+
 		// If the host itself contains a port, it should take precedence
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
+		} else {
+			// If X-Forwarded-Host has no port, try to get port from r.Host if hostnames match
+			if rh, rp, err := net.SplitHostPort(r.Host); err == nil && rh == host {
+				port = rp
+			} else if forwardedPort != "" {
+				port = forwardedPort
+			}
 		}
 	} else {
 		host = r.Host
 		if host == "" {
 			host = r.URL.Host
 		}
-		// Also apply X-Forwarded-Port in the fallback path
-		if forwardedPort != "" {
-			if h, _, err := net.SplitHostPort(host); err == nil {
-				host = h
-			}
-			port = forwardedPort
-		} else if h, p, err := net.SplitHostPort(host); err == nil {
+
+		// If the host already contains a port, use it.
+		// Otherwise, if X-Forwarded-Port is set, use it.
+		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
+		} else if forwardedPort != "" {
+			port = forwardedPort
 		}
 	}
 
