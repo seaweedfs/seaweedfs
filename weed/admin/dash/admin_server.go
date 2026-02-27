@@ -3,6 +3,11 @@ package dash
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -19,10 +24,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"net/http"
-	"sort"
-	"strings"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -980,7 +981,7 @@ func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeR
 }
 
 // ListPluginJobTypes returns known plugin job types from connected worker registry and persisted data.
-func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
+func (s *AdminServer) ListPluginJobTypes() ([]adminplugin.JobTypeInfo, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}

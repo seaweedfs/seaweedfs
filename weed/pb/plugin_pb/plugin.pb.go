@@ -1209,6 +1209,7 @@ type JobTypeCapability struct {
 	MaxExecutionConcurrency int32                  `protobuf:"varint,5,opt,name=max_execution_concurrency,json=maxExecutionConcurrency,proto3" json:"max_execution_concurrency,omitempty"`
 	DisplayName             string                 `protobuf:"bytes,6,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	Description             string                 `protobuf:"bytes,7,opt,name=description,proto3" json:"description,omitempty"`
+	Weight                  int32                  `protobuf:"varint,8,opt,name=weight,proto3" json:"weight,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -1290,6 +1291,13 @@ func (x *JobTypeCapability) GetDescription() string {
 		return x.Description
 	}
 	return ""
+}
+
+func (x *JobTypeCapability) GetWeight() int32 {
+	if x != nil {
+		return x.Weight
+	}
+	return 0
 }
 
 type RequestConfigSchema struct {
@@ -3948,7 +3956,7 @@ const file_plugin_proto_rawDesc = "" +
 	"\bjob_type\x18\x03 \x01(\tR\ajobType\x12&\n" +
 	"\x05state\x18\x04 \x01(\x0e2\x10.plugin.JobStateR\x05state\x12)\n" +
 	"\x10progress_percent\x18\x05 \x01(\x01R\x0fprogressPercent\x12\x14\n" +
-	"\x05stage\x18\x06 \x01(\tR\x05stage\"\xab\x02\n" +
+	"\x05stage\x18\x06 \x01(\tR\x05stage\"\xc3\x02\n" +
 	"\x11JobTypeCapability\x12\x19\n" +
 	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12\x1d\n" +
 	"\n" +
@@ -3958,7 +3966,8 @@ const file_plugin_proto_rawDesc = "" +
 	"\x19max_detection_concurrency\x18\x04 \x01(\x05R\x17maxDetectionConcurrency\x12:\n" +
 	"\x19max_execution_concurrency\x18\x05 \x01(\x05R\x17maxExecutionConcurrency\x12!\n" +
 	"\fdisplay_name\x18\x06 \x01(\tR\vdisplayName\x12 \n" +
-	"\vdescription\x18\a \x01(\tR\vdescription\"U\n" +
+	"\vdescription\x18\a \x01(\tR\vdescription\x12\x16\n" +
+	"\x06weight\x18\b \x01(\x05R\x06weight\"U\n" +
 	"\x13RequestConfigSchema\x12\x19\n" +
 	"\bjob_type\x18\x01 \x01(\tR\ajobType\x12#\n" +
 	"\rforce_refresh\x18\x02 \x01(\bR\fforceRefresh\"\xda\x01\n" +
