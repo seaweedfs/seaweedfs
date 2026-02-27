@@ -42,6 +42,7 @@ func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
 		MaxExecutionConcurrency: 1,
 		DisplayName:             "EC Encoding",
 		Description:             "Converts full and quiet volumes into EC shards",
+		Weight:                  80,
 	}
 }
 

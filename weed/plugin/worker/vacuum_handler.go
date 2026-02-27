@@ -55,6 +55,7 @@ func (h *VacuumHandler) Capability() *plugin_pb.JobTypeCapability {
 		MaxExecutionConcurrency: maxExec,
 		DisplayName:             "Volume Vacuum",
 		Description:             "Reclaims disk space by removing deleted files from volumes",
+		Weight:                  60,
 	}
 }
 
