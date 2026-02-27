@@ -96,6 +96,7 @@ message JobTypeCapability {
   int32 max_execution_concurrency = 5;
   string display_name = 6;
   string description = 7;
+  int32 weight = 8;
 }
 
 message RequestConfigSchema {

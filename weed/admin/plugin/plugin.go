@@ -34,6 +34,13 @@ type Options struct {
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 }
 
+// JobTypeInfo contains metadata about a plugin job type.
+type JobTypeInfo struct {
+	JobType     string `json:"job_type"`
+	DisplayName string `json:"display_name"`
+	Weight      int32  `json:"weight"`
+}
+
 type Plugin struct {
 	plugin_pb.UnimplementedPluginControlServiceServer
 
@@ -623,7 +630,7 @@ func (r *Plugin) ListWorkers() []*WorkerSession {
 	return r.registry.List()
 }
 
-func (r *Plugin) ListKnownJobTypes() ([]string, error) {
+func (r *Plugin) ListKnownJobTypes() ([]JobTypeInfo, error) {
 	registryJobTypes := r.registry.JobTypes()
 	storedJobTypes, err := r.store.ListJobTypes()
 	if err != nil {
@@ -638,12 +645,46 @@ func (r *Plugin) ListKnownJobTypes() ([]string, error) {
 		jobTypeSet[jobType] = struct{}{}
 	}
 
-	out := make([]string, 0, len(jobTypeSet))
+	jobTypeList := make([]string, 0, len(jobTypeSet))
 	for jobType := range jobTypeSet {
-		out = append(out, jobType)
+		jobTypeList = append(jobTypeList, jobType)
 	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(jobTypeList)
+
+	result := make([]JobTypeInfo, 0, len(jobTypeList))
+	workers := r.registry.List()
+
+	for _, jobType := range jobTypeList {
+		info := JobTypeInfo{JobType: jobType}
+
+		// Get display name and weight from worker capabilities
+		for _, worker := range workers {
+			if cap, ok := worker.Capabilities[jobType]; ok && cap != nil {
+				if cap.DisplayName != "" {
+					info.DisplayName = cap.DisplayName
+				}
+				info.Weight = cap.Weight
+				break // Use the first worker's capability info
+			}
+		}
+
+		// Default display name to job type if not set
+		if info.DisplayName == "" {
+			info.DisplayName = jobType
+		}
+
+		result = append(result, info)
+	}
+
+	// Sort by weight (descending) then by job type (ascending)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Weight != result[j].Weight {
+			return result[i].Weight > result[j].Weight // higher weight first
+		}
+		return result[i].JobType < result[j].JobType // alphabetical as tiebreaker
+	})
+
+	return result, nil
 }
 
 // FilterProposalsWithActiveJobs drops proposals that are already assigned/running.

@@ -706,7 +706,9 @@ templ Plugin(page string) {
                 }
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    if (String(jobTypes[i] || '').trim() === normalized) {
+                    var item = jobTypes[i];
+                    var itemJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
+                    if (String(itemJobType || '').trim() === normalized) {
                         return true;
                     }
                 }
@@ -728,7 +730,8 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                var firstItem = state.jobTypes[0];
+                state.selectedJobType = typeof firstItem === 'string' ? firstItem : (firstItem.job_type || firstItem.jobType || '');
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -749,7 +752,8 @@ templ Plugin(page string) {
 
                 if (state.activeTopTab === 'overview') {
                     if (!state.selectedJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                        state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                        var item = state.jobTypes[0];
+                        state.selectedJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
                     }
                     return;
                 }
@@ -758,7 +762,8 @@ templ Plugin(page string) {
                     topTabJobType = state.selectedJobType;
                 }
                 if (!topTabJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                    topTabJobType = String(state.jobTypes[0] || '').trim();
+                    var item = state.jobTypes[0];
+                    topTabJobType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
                 }
                 if (!topTabJobType) {
                     state.activeTopTab = 'overview';
@@ -784,14 +789,18 @@ templ Plugin(page string) {
 
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    var jobType = String(jobTypes[i] || '').trim();
+                    var itemData = jobTypes[i];
+                    // Handle both old string format and new object format
+                    var jobType = typeof itemData === 'string' ? itemData : (itemData.job_type || itemData.jobType || '');
+                    var displayName = typeof itemData === 'object' ? (itemData.display_name || itemData.displayName || jobType) : jobType;
+                    
                     if (!jobType) {
                         continue;
                     }
                     html += '' +
                         '<li class="nav-item">' +
                         '<button type="button" class="nav-link" data-plugin-top-tab="' + escapeHtml(topTabKeyForJobType(jobType)) + '">' +
-                        escapeHtml(jobType) +
+                        escapeHtml(displayName) +
                         '</button>' +
                         '</li>';
                 }
@@ -1267,7 +1276,9 @@ templ Plugin(page string) {
                 var jobTypes = [];
 
                 for (var k = 0; k < known.length; k++) {
-                    var knownType = String(known[k] || '').trim();
+                    var item = known[k];
+                    var knownType = typeof item === 'string' ? item : (item.job_type || item.jobType || '');
+                    knownType = String(knownType || '').trim();
                     if (!knownType || seen[knownType]) {
                         continue;
                     }
