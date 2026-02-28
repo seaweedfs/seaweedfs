@@ -45,6 +45,10 @@ type Session struct {
 	negotiator *LoginNegotiator
 	loginDone  bool
 
+	// Negotiated session parameters
+	negImmediateData bool
+	negInitialR2T    bool
+
 	// Data sequencing
 	dataInWriter *DataInWriter
 
@@ -177,8 +181,12 @@ func (s *Session) handleLogin(pdu *PDU) error {
 		s.state = SessionLoggedIn
 		result := s.negotiator.Result()
 		s.dataInWriter = NewDataInWriter(uint32(result.MaxRecvDataSegLen))
+		s.negImmediateData = result.ImmediateData
+		s.negInitialR2T = result.InitialR2T
 
-		// Bind SCSI handler to the device for the target the initiator logged into
+		// Bind SCSI handler to the device for the target the initiator logged into.
+		// Discovery sessions have no TargetName — s.scsi stays nil, which is
+		// checked in handleSCSICmd.
 		if s.devices != nil && result.TargetName != "" {
 			dev := s.devices.LookupDevice(result.TargetName)
 			s.scsi = NewSCSIHandler(dev)
@@ -215,12 +223,25 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 		return s.sendReject(pdu, 0x0b) // protocol error
 	}
 
+	// Discovery sessions have no SCSI handler — reject commands
+	if s.scsi == nil {
+		return s.sendReject(pdu, 0x04) // command not supported
+	}
+
 	cdb := pdu.CDB()
 	itt := pdu.InitiatorTaskTag()
 	flags := pdu.OpSpecific1()
 
-	// Advance CmdSN
+	// CmdSN validation for non-immediate commands (RFC 7143 section 4.2.2.1)
 	if !pdu.Immediate() {
+		cmdSN := pdu.CmdSN()
+		expCmdSN := s.expCmdSN.Load()
+		maxCmdSN := s.maxCmdSN.Load()
+		// CmdSN is within window if ExpCmdSN <= CmdSN <= MaxCmdSN (serial arithmetic)
+		if !cmdSNInWindow(cmdSN, expCmdSN, maxCmdSN) {
+			s.logger.Printf("CmdSN %d out of window [%d, %d], dropping", cmdSN, expCmdSN, maxCmdSN)
+			return nil // silently drop per RFC 7143
+		}
 		s.advanceCmdSN()
 	}
 
@@ -233,8 +254,12 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	if isWrite && expectedLen > 0 {
 		collector := NewDataOutCollector(expectedLen)
 
-		// Immediate data
+		// Immediate data — enforce negotiated ImmediateData flag
 		if len(pdu.DataSegment) > 0 {
+			if !s.negImmediateData {
+				// ImmediateData=No but initiator sent data — reject
+				return s.sendCheckCondition(itt, SenseIllegalRequest, ASCInvalidFieldInCDB, ASCQLuk)
+			}
 			if err := collector.AddImmediateData(pdu.DataSegment); err != nil {
 				return s.sendCheckCondition(itt, SenseIllegalRequest, ASCInvalidFieldInCDB, ASCQLuk)
 			}
@@ -386,6 +411,17 @@ func (s *Session) handleTaskMgmt(pdu *PDU) error {
 func (s *Session) advanceCmdSN() {
 	s.expCmdSN.Add(1)
 	s.maxCmdSN.Add(1)
+}
+
+// cmdSNInWindow checks if cmdSN is within [expCmdSN, maxCmdSN] using
+// serial number arithmetic (RFC 7143 section 4.2.2.1). Handles uint32 wrap.
+func cmdSNInWindow(cmdSN, expCmdSN, maxCmdSN uint32) bool {
+	// Serial comparison: a <= b means (b - a) < 2^31
+	return serialLE(expCmdSN, cmdSN) && serialLE(cmdSN, maxCmdSN)
+}
+
+func serialLE(a, b uint32) bool {
+	return a == b || int32(b-a) > 0
 }
 
 func (s *Session) sendReject(origPDU *PDU, reason uint8) error {

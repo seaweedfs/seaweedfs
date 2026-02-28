@@ -405,6 +405,9 @@ func (h *SCSIHandler) unmap(cdb [16]byte, dataOut []byte) SCSIResult {
 	if int(blockDescLen)+8 > len(dataOut) {
 		return illegalRequest(ASCInvalidFieldInCDB, ASCQLuk)
 	}
+	if blockDescLen%16 != 0 {
+		return illegalRequest(ASCInvalidFieldInCDB, ASCQLuk)
+	}
 
 	// Each UNMAP block descriptor is 16 bytes
 	descData := dataOut[8 : 8+blockDescLen]

@@ -6,9 +6,10 @@ import (
 )
 
 var (
-	ErrDataSNOrder    = errors.New("iscsi: Data-Out DataSN out of order")
-	ErrDataOverflow   = errors.New("iscsi: data exceeds expected transfer length")
-	ErrDataIncomplete = errors.New("iscsi: data transfer incomplete")
+	ErrDataSNOrder      = errors.New("iscsi: Data-Out DataSN out of order")
+	ErrDataOffsetOrder  = errors.New("iscsi: Data-Out buffer offset out of order")
+	ErrDataOverflow     = errors.New("iscsi: data exceeds expected transfer length")
+	ErrDataIncomplete   = errors.New("iscsi: data transfer incomplete")
 )
 
 // DataInWriter splits a read response into multiple Data-In PDUs, respecting
@@ -138,6 +139,11 @@ func (c *DataOutCollector) AddDataOut(pdu *PDU) error {
 
 	if end > c.expectedLen {
 		return ErrDataOverflow
+	}
+
+	// Validate buffer offset matches received position (DataPDUInOrder/DataSequenceInOrder)
+	if offset != c.received {
+		return ErrDataOffsetOrder
 	}
 
 	copy(c.buf[offset:], data)
