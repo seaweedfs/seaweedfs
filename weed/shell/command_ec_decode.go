@@ -378,16 +378,6 @@ func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.Volume
 	return res
 }
 
-func collectFreeVolumeCountsByNode(topoInfo *master_pb.TopologyInfo, diskType types.DiskType) map[pb.ServerAddress]int64 {
-	res := make(map[pb.ServerAddress]int64)
-	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
-		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
-			res[pb.NewServerAddressFromDataNode(dn)] = diskInfo.FreeVolumeCount
-		}
-	})
-	return res
-}
-
 type decodeDiskUsageState struct {
 	byNode map[pb.ServerAddress]*decodeDiskUsageCounts
 }
