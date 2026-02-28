@@ -82,10 +82,14 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	if err != nil {
 		return err
 	}
+	var diskUsageState *decodeDiskUsageState
+	if *checkMinFreeSpace {
+		diskUsageState = newDecodeDiskUsageState(topologyInfo, diskType)
+	}
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace)
+		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState)
 	}
 
 	// apply to all volumes in the collection
@@ -95,7 +99,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace); err != nil {
+		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace, diskUsageState); err != nil {
 			return err
 		}
 	}
@@ -103,7 +107,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, checkMinFreeSpace bool) (err error) {
+func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, checkMinFreeSpace bool, diskUsageState *decodeDiskUsageState) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
@@ -118,12 +122,22 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("no EC shards found for volume %d (diskType %s)", vid, diskType.ReadableString())
 	}
 
+	var originalShardCounts map[pb.ServerAddress]int
+	if diskUsageState != nil {
+		originalShardCounts = make(map[pb.ServerAddress]int, len(nodeToEcShardsInfo))
+		for location, si := range nodeToEcShardsInfo {
+			originalShardCounts[location] = si.Count()
+		}
+	}
+
 	var eligibleTargets map[pb.ServerAddress]struct{}
 	if checkMinFreeSpace {
-		freeVolumeCounts := collectFreeVolumeCountsByNode(topoInfo, diskType)
+		if diskUsageState == nil {
+			return fmt.Errorf("min free space checking requires disk usage state")
+		}
 		eligibleTargets = make(map[pb.ServerAddress]struct{})
 		for location := range nodeToEcShardsInfo {
-			if freeCount, found := freeVolumeCounts[location]; found && freeCount > 0 {
+			if freeCount, found := diskUsageState.freeVolumeCount(location); found && freeCount > 0 {
 				eligibleTargets[location] = struct{}{}
 			}
 		}
@@ -144,7 +158,13 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		// Special case: if the EC index has no live entries, decoding is a no-op.
 		// Just purge EC shards and return success without generating/mounting an empty volume.
 		if isEcDecodeEmptyVolumeErr(err) {
-			return unmountAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, nodeToEcShardsInfo, vid)
+			if err := unmountAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, nodeToEcShardsInfo, vid); err != nil {
+				return err
+			}
+			if diskUsageState != nil {
+				diskUsageState.applyDecode(targetNodeLocation, originalShardCounts, false)
+			}
+			return nil
 		}
 		return fmt.Errorf("generate normal volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
@@ -153,6 +173,9 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	err = mountVolumeAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, targetNodeLocation, nodeToEcShardsInfo, vid)
 	if err != nil {
 		return fmt.Errorf("delete ec shards for volume %d: %v", vid, err)
+	}
+	if diskUsageState != nil {
+		diskUsageState.applyDecode(targetNodeLocation, originalShardCounts, true)
 	}
 
 	return nil
@@ -363,4 +386,59 @@ func collectFreeVolumeCountsByNode(topoInfo *master_pb.TopologyInfo, diskType ty
 		}
 	})
 	return res
+}
+
+type decodeDiskUsageState struct {
+	byNode map[pb.ServerAddress]*decodeDiskUsageCounts
+}
+
+type decodeDiskUsageCounts struct {
+	maxVolumeCount    int64
+	volumeCount       int64
+	remoteVolumeCount int64
+	ecShardCount      int64
+}
+
+func newDecodeDiskUsageState(topoInfo *master_pb.TopologyInfo, diskType types.DiskType) *decodeDiskUsageState {
+	state := &decodeDiskUsageState{byNode: make(map[pb.ServerAddress]*decodeDiskUsageCounts)}
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
+			state.byNode[pb.NewServerAddressFromDataNode(dn)] = &decodeDiskUsageCounts{
+				maxVolumeCount:    diskInfo.MaxVolumeCount,
+				volumeCount:       diskInfo.VolumeCount,
+				remoteVolumeCount: diskInfo.RemoteVolumeCount,
+				ecShardCount:      int64(countShards(diskInfo.EcShardInfos)),
+			}
+		}
+	})
+	return state
+}
+
+func (state *decodeDiskUsageState) freeVolumeCount(location pb.ServerAddress) (int64, bool) {
+	if state == nil {
+		return 0, false
+	}
+	usage, found := state.byNode[location]
+	if !found {
+		return 0, false
+	}
+	free := usage.maxVolumeCount - (usage.volumeCount - usage.remoteVolumeCount)
+	free -= (usage.ecShardCount + 1) / int64(erasure_coding.DataShardsCount)
+	return free, true
+}
+
+func (state *decodeDiskUsageState) applyDecode(targetNodeLocation pb.ServerAddress, shardCounts map[pb.ServerAddress]int, createdVolume bool) {
+	if state == nil {
+		return
+	}
+	for location, shardCount := range shardCounts {
+		if usage, found := state.byNode[location]; found {
+			usage.ecShardCount -= int64(shardCount)
+		}
+	}
+	if createdVolume {
+		if usage, found := state.byNode[targetNodeLocation]; found {
+			usage.volumeCount++
+		}
+	}
 }
