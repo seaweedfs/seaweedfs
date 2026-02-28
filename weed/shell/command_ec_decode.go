@@ -114,8 +114,22 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
+	var eligibleTargets map[pb.ServerAddress]struct{}
+	if !ignoreMinFreeSpace {
+		freeVolumeCounts := collectFreeVolumeCountsByNode(topoInfo, diskType)
+		eligibleTargets = make(map[pb.ServerAddress]struct{})
+		for location := range nodeToEcShardsInfo {
+			if freeCount, found := freeVolumeCounts[location]; found && freeCount > 0 {
+				eligibleTargets[location] = struct{}{}
+			}
+		}
+		if len(eligibleTargets) == 0 {
+			return fmt.Errorf("no eligible target datanodes with free volume slots for volume %d (diskType %s); use -ignoreMinFreeSpace to override", vid, diskType.ReadableString())
+		}
+	}
+
 	// collect ec shards to the server with most space
-	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcShardsInfo, collection, vid)
+	targetNodeLocation, err := collectEcShards(commandEnv, nodeToEcShardsInfo, collection, vid, eligibleTargets)
 	if err != nil {
 		return fmt.Errorf("collectEcShards for volume %d: %v", vid, err)
 	}
@@ -209,17 +223,25 @@ func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, c
 
 }
 
-func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, collection string, vid needle.VolumeId) (targetNodeLocation pb.ServerAddress, err error) {
+func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, collection string, vid needle.VolumeId, eligibleTargets map[pb.ServerAddress]struct{}) (targetNodeLocation pb.ServerAddress, err error) {
 
 	maxShardCount := 0
 	existingShardsInfo := erasure_coding.NewShardsInfo()
 	for loc, si := range nodeToShardsInfo {
+		if eligibleTargets != nil {
+			if _, ok := eligibleTargets[loc]; !ok {
+				continue
+			}
+		}
 		toBeCopiedShardCount := si.MinusParityShards().Count()
 		if toBeCopiedShardCount > maxShardCount {
 			maxShardCount = toBeCopiedShardCount
 			targetNodeLocation = loc
 			existingShardsInfo = si
 		}
+	}
+	if targetNodeLocation == "" {
+		return "", fmt.Errorf("no eligible target datanodes available to decode volume %d", vid)
 	}
 
 	fmt.Printf("collectEcShards: ec volume %d collect shards to %s from: %+v\n", vid, targetNodeLocation, nodeToShardsInfo)
@@ -326,5 +348,15 @@ func collectEcNodeShardsInfo(topoInfo *master_pb.TopologyInfo, vid needle.Volume
 		}
 	})
 
+	return res
+}
+
+func collectFreeVolumeCountsByNode(topoInfo *master_pb.TopologyInfo, diskType types.DiskType) map[pb.ServerAddress]int64 {
+	res := make(map[pb.ServerAddress]int64)
+	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
+		if diskInfo, found := dn.DiskInfos[string(diskType)]; found {
+			res[pb.NewServerAddressFromDataNode(dn)] = diskInfo.FreeVolumeCount
+		}
+	})
 	return res
 }
