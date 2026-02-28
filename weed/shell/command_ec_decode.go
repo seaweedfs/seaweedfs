@@ -229,7 +229,7 @@ func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, c
 
 func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, collection string, vid needle.VolumeId, eligibleTargets map[pb.ServerAddress]struct{}) (targetNodeLocation pb.ServerAddress, err error) {
 
-	maxShardCount := 0
+	maxShardCount := -1
 	existingShardsInfo := erasure_coding.NewShardsInfo()
 	for loc, si := range nodeToShardsInfo {
 		if eligibleTargets != nil {
