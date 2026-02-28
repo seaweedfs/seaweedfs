@@ -21,6 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
 	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
@@ -399,7 +401,21 @@ func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 	}
 
 	bucketDeleted := false
+	namespaceCreated := false
+	tableCreated := false
+	namespaceName := fmt.Sprintf("lakekeeper_ns_%d", time.Now().UnixNano())
+	tableName := fmt.Sprintf("lakekeeper_table_%d", time.Now().UnixNano())
 	defer func() {
+		if tableCreated {
+			if err := client.DeleteTable(ctx, bucketARN, namespaceName, tableName); err != nil {
+				t.Logf("Failed to delete table: %v", err)
+			}
+		}
+		if namespaceCreated {
+			if err := client.DeleteNamespace(ctx, bucketARN, namespaceName); err != nil {
+				t.Logf("Failed to delete namespace: %v", err)
+			}
+		}
 		if bucketDeleted {
 			return
 		}
@@ -426,6 +442,112 @@ func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 	if _, err := client.GetTableBucket(ctx, bucketARN); err != nil {
 		t.Fatalf("GetTableBucket failed: %v", err)
 	}
+
+	if err := client.CreateNamespace(ctx, bucketARN, namespaceName); err != nil {
+		t.Fatalf("CreateNamespace failed: %v", err)
+	}
+	namespaceCreated = true
+
+	if err := client.CreateTable(ctx, bucketARN, namespaceName, tableName); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+	tableCreated = true
+
+	s3Client, err := newS3Client(ctx, endpoint, region, creds)
+	if err != nil {
+		t.Fatalf("Create S3 client failed: %v", err)
+	}
+
+	objectKey := fmt.Sprintf("%s/%s/data/part-%d.parquet", namespaceName, tableName, time.Now().UnixNano())
+	createResp, err := s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload failed: %v", err)
+	}
+	uploadID := aws.ToString(createResp.UploadId)
+	multipartCompleted := false
+	defer func() {
+		if uploadID == "" || multipartCompleted {
+			return
+		}
+		_, _ = s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(bucketName),
+			Key:      aws.String(objectKey),
+			UploadId: aws.String(uploadID),
+		})
+	}()
+
+	partSize := 5 * 1024 * 1024
+	part1 := bytes.Repeat([]byte("a"), partSize)
+	part2 := bytes.Repeat([]byte("b"), 1024*1024)
+
+	part1Resp, err := s3Client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   aws.String(uploadID),
+		PartNumber: aws.Int32(1),
+		Body:       bytes.NewReader(part1),
+	})
+	if err != nil {
+		t.Fatalf("UploadPart 1 failed: %v", err)
+	}
+
+	part2Resp, err := s3Client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		UploadId:   aws.String(uploadID),
+		PartNumber: aws.Int32(2),
+		Body:       bytes.NewReader(part2),
+	})
+	if err != nil {
+		t.Fatalf("UploadPart 2 failed: %v", err)
+	}
+
+	_, err = s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &s3types.CompletedMultipartUpload{
+			Parts: []s3types.CompletedPart{
+				{
+					ETag:       part1Resp.ETag,
+					PartNumber: aws.Int32(1),
+				},
+				{
+					ETag:       part2Resp.ETag,
+					PartNumber: aws.Int32(2),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload failed: %v", err)
+	}
+	multipartCompleted = true
+
+	headResp, err := s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	if err != nil {
+		t.Fatalf("HeadObject after multipart upload failed: %v", err)
+	}
+	expectedSize := int64(len(part1) + len(part2))
+	if headResp.ContentLength == nil || *headResp.ContentLength != expectedSize {
+		t.Fatalf("Unexpected content length: got %d want %d", aws.ToInt64(headResp.ContentLength), expectedSize)
+	}
+
+	if err := client.DeleteTable(ctx, bucketARN, namespaceName, tableName); err != nil {
+		t.Fatalf("DeleteTable failed: %v", err)
+	}
+	tableCreated = false
+
+	if err := client.DeleteNamespace(ctx, bucketARN, namespaceName); err != nil {
+		t.Fatalf("DeleteNamespace failed: %v", err)
+	}
+	namespaceCreated = false
 
 	if err := client.DeleteTableBucket(ctx, bucketARN); err != nil {
 		t.Fatalf("DeleteTableBucket failed: %v", err)
@@ -484,6 +606,33 @@ func (c *s3TablesClient) ListTableBuckets(ctx context.Context) ([]s3tables.Table
 func (c *s3TablesClient) DeleteTableBucket(ctx context.Context, arn string) error {
 	path := "/buckets/" + url.PathEscape(arn)
 	return c.doRequest(ctx, "DeleteTableBucket", http.MethodDelete, path, nil, nil)
+}
+
+func (c *s3TablesClient) CreateNamespace(ctx context.Context, bucketARN, namespace string) error {
+	req := &s3tables.CreateNamespaceRequest{
+		Namespace: []string{namespace},
+	}
+	path := "/namespaces/" + url.PathEscape(bucketARN)
+	return c.doRequest(ctx, "CreateNamespace", http.MethodPut, path, req, nil)
+}
+
+func (c *s3TablesClient) DeleteNamespace(ctx context.Context, bucketARN, namespace string) error {
+	path := "/namespaces/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace)
+	return c.doRequest(ctx, "DeleteNamespace", http.MethodDelete, path, nil, nil)
+}
+
+func (c *s3TablesClient) CreateTable(ctx context.Context, bucketARN, namespace, name string) error {
+	req := &s3tables.CreateTableRequest{
+		Name:   name,
+		Format: "ICEBERG",
+	}
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace)
+	return c.doRequest(ctx, "CreateTable", http.MethodPut, path, req, nil)
+}
+
+func (c *s3TablesClient) DeleteTable(ctx context.Context, bucketARN, namespace, name string) error {
+	path := "/tables/" + url.PathEscape(bucketARN) + "/" + url.PathEscape(namespace) + "/" + url.PathEscape(name)
+	return c.doRequest(ctx, "DeleteTable", http.MethodDelete, path, nil, nil)
 }
 
 func (c *s3TablesClient) doRequest(ctx context.Context, operation, method, path string, body interface{}, out interface{}) error {
@@ -575,4 +724,30 @@ func assumeRole(ctx context.Context, endpoint, region, accessKey, secretKey, rol
 		SessionToken:    aws.ToString(resp.Credentials.SessionToken),
 		Source:          "lakekeeper-sts",
 	}, nil
+}
+
+func newS3Client(ctx context.Context, endpoint, region string, creds aws.Credentials) (*s3.Client, error) {
+	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+		if service == s3.ServiceID {
+			return aws.Endpoint{
+				URL:               endpoint,
+				SigningRegion:     region,
+				HostnameImmutable: true,
+			}, nil
+		}
+		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+	})
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken)),
+		config.WithEndpointResolverWithOptions(resolver),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	}), nil
 }
