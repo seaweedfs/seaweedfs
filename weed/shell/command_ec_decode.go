@@ -35,7 +35,7 @@ func (c *commandEcDecode) Name() string {
 func (c *commandEcDecode) Help() string {
 	return `decode a erasure coded volume into a normal volume
 
-	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>]
+	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-ignoreMinFreeSpace]
 
 	The -collection parameter supports regular expressions for pattern matching:
 	  - Use exact match: ec.decode -collection="^mybucket$"
@@ -44,6 +44,7 @@ func (c *commandEcDecode) Help() string {
 
 	Options:
 	  -diskType: source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)
+	  -ignoreMinFreeSpace: ignore min free space checks when selecting the decode target
 
 	Examples:
 	  # Decode EC shards from HDD (default)
@@ -64,6 +65,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
 	collection := decodeCommand.String("collection", "", "the collection name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
+	ignoreMinFreeSpace := decodeCommand.Bool("ignoreMinFreeSpace", false, "ignore min free space checks when selecting the decode target")
 	if err = decodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -83,7 +85,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType)
+		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *ignoreMinFreeSpace)
 	}
 
 	// apply to all volumes in the collection
@@ -93,7 +95,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType); err != nil {
+		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *ignoreMinFreeSpace); err != nil {
 			return err
 		}
 	}
@@ -101,7 +103,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType) (err error) {
+func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, ignoreMinFreeSpace bool) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
