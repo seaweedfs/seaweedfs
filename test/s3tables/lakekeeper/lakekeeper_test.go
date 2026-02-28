@@ -1,15 +1,30 @@
 package lakekeeper
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+
 	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
 type TestEnvironment struct {
@@ -363,173 +378,201 @@ except Exception as e:
 func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 	t.Helper()
 
-	scriptContent := fmt.Sprintf(`
-import boto3
-import botocore
-import botocore.config
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
-from botocore.credentials import Credentials
-from botocore.httpsession import URLLib3Session
-from urllib.parse import quote
-import json
-import sys
-import time
-import logging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
-# Enable botocore debug logging to see signature calculation
-logging.basicConfig(level=logging.DEBUG)
-botocore.session.get_session().set_debug_logger()
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", env.s3Port)
+	region := "us-east-1"
+	roleArn := "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
+	sessionName := "lakekeeper-session"
 
-print("Starting Lakekeeper table bucket repro test...")
-
-endpoint_url = "http://host.docker.internal:%d"
-access_key = "%s"
-secret_key = "%s"
-region = "us-east-1"
-
-def get_status(resp):
-    return getattr(resp, "status_code", getattr(resp, "status", None))
-
-def get_body(resp):
-    body = getattr(resp, "content", None)
-    if body is None:
-        body = getattr(resp, "data", b"")
-    if body is None:
-        body = b""
-    return body
-
-def read_json(resp):
-    body = get_body(resp)
-    if not body:
-        return {}
-    return json.loads(body.decode("utf-8"))
-
-def signed_request(method, path, body, access_key_id, secret_access_key, session_token):
-    url = endpoint_url + path
-    headers = {}
-    body_bytes = b""
-    if body is not None:
-        body_bytes = json.dumps(body).encode("utf-8")
-        headers["Content-Type"] = "application/x-amz-json-1.1"
-    request = AWSRequest(method=method, url=url, data=body_bytes, headers=headers)
-    credentials = Credentials(access_key_id, secret_access_key, session_token)
-    SigV4Auth(credentials, "s3tables", region).add_auth(request)
-    session = URLLib3Session()
-    return session.send(request.prepare())
-
-try:
-    config = botocore.config.Config(
-        retries={'max_attempts': 3}
-    )
-    sts = boto3.client(
-        'sts',
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=region,
-        config=config
-    )
-
-    role_arn = "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
-    session_name = "lakekeeper-session"
-
-    print(f"Calling AssumeRole on {role_arn} with POST body...")
-    response = sts.assume_role(
-        RoleArn=role_arn,
-        RoleSessionName=session_name
-    )
-
-    creds = response['Credentials']
-    access_key_id = creds['AccessKeyId']
-    secret_access_key = creds['SecretAccessKey']
-    session_token = creds['SessionToken']
-
-    print("Verifying S3 Tables operations with vended credentials...")
-    bucket = f"lakekeeper-table-bucket-{int(time.time() * 1000)}"
-
-    resp = signed_request("PUT", "/buckets", {"name": bucket}, access_key_id, secret_access_key, session_token)
-    status = get_status(resp)
-    if status != 200:
-        print(f"FAILED: CreateTableBucket returned {status}, body: {get_body(resp)}")
-        sys.exit(1)
-
-    data = read_json(resp)
-    bucket_arn = data.get("arn")
-    if not bucket_arn:
-        print(f"FAILED: CreateTableBucket missing arn in response: {data}")
-        sys.exit(1)
-    print(f"Created table bucket ARN: {bucket_arn}")
-
-    resp = signed_request("GET", "/buckets", None, access_key_id, secret_access_key, session_token)
-    status = get_status(resp)
-    if status != 200:
-        print(f"FAILED: ListTableBuckets returned {status}, body: {get_body(resp)}")
-        sys.exit(1)
-
-    data = read_json(resp)
-    buckets = [b.get("name") for b in data.get("tableBuckets", [])]
-    print(f"Found table buckets: {buckets}")
-    if bucket not in buckets:
-        print(f"FAILED: Bucket {bucket} not found in list")
-        sys.exit(1)
-
-    get_path = "/buckets/" + quote(bucket_arn, safe="")
-    resp = signed_request("GET", get_path, None, access_key_id, secret_access_key, session_token)
-    status = get_status(resp)
-    if status != 200:
-        print(f"FAILED: GetTableBucket returned {status}, body: {get_body(resp)}")
-        sys.exit(1)
-
-    resp = signed_request("DELETE", get_path, None, access_key_id, secret_access_key, session_token)
-    status = get_status(resp)
-    if status != 200:
-        print(f"FAILED: DeleteTableBucket returned {status}, body: {get_body(resp)}")
-        sys.exit(1)
-
-    resp = signed_request("GET", get_path, None, access_key_id, secret_access_key, session_token)
-    status = get_status(resp)
-    if status == 200:
-        print("FAILED: expected GetTableBucket to fail after deletion")
-        sys.exit(1)
-
-    print("SUCCESS: Lakekeeper table bucket flow verified!")
-    sys.exit(0)
-
-except Exception as e:
-    print(f"FAILED: {e}")
-    if hasattr(e, 'response'):
-        print(f"Response: {e.response}")
-    import traceback
-    traceback.print_exc()
-    sys.exit(1)
-`, env.s3Port, env.accessKey, env.secretKey)
-
-	scriptPath := filepath.Join(env.dataDir, "lakekeeper_table_bucket_repro.py")
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
-		t.Fatalf("Failed to write python script: %v", err)
-	}
-
-	containerName := "seaweed-lakekeeper-table-client-" + fmt.Sprintf("%d", time.Now().UnixNano())
-
-	// Create a context with timeout for the docker run command
-	dockerCtx, dockerCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer dockerCancel()
-
-	cmd := exec.CommandContext(dockerCtx, "docker", "run", "--rm",
-		"--name", containerName,
-		"--add-host", "host.docker.internal:host-gateway",
-		"-v", fmt.Sprintf("%s:/work", env.dataDir),
-		"python:3",
-		"/bin/bash", "-c", "pip install boto3 && python /work/lakekeeper_table_bucket_repro.py",
-	)
-
-	output, err := cmd.CombinedOutput()
+	creds, err := assumeRole(ctx, endpoint, region, env.accessKey, env.secretKey, roleArn, sessionName)
 	if err != nil {
-		if dockerCtx.Err() == context.DeadlineExceeded {
-			t.Fatalf("Lakekeeper table bucket client timed out after 5 minutes\nOutput:\n%s", string(output))
-		}
-		t.Fatalf("Lakekeeper table bucket client failed: %v\nOutput:\n%s", err, string(output))
+		t.Fatalf("AssumeRole failed: %v", err)
 	}
-	t.Logf("Lakekeeper table bucket client output:\n%s", string(output))
+
+	client := newS3TablesClient(endpoint, region, creds)
+	bucketName := fmt.Sprintf("lakekeeper-table-bucket-%d", time.Now().UnixNano())
+	bucketARN, err := client.CreateTableBucket(ctx, bucketName)
+	if err != nil {
+		t.Fatalf("CreateTableBucket failed: %v", err)
+	}
+
+	bucketDeleted := false
+	defer func() {
+		if bucketDeleted {
+			return
+		}
+		if err := client.DeleteTableBucket(ctx, bucketARN); err != nil {
+			t.Logf("Failed to delete table bucket: %v", err)
+		}
+	}()
+
+	buckets, err := client.ListTableBuckets(ctx)
+	if err != nil {
+		t.Fatalf("ListTableBuckets failed: %v", err)
+	}
+	found := false
+	for _, b := range buckets {
+		if b.Name == bucketName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Created table bucket %s not found in list", bucketName)
+	}
+
+	if _, err := client.GetTableBucket(ctx, bucketARN); err != nil {
+		t.Fatalf("GetTableBucket failed: %v", err)
+	}
+
+	if err := client.DeleteTableBucket(ctx, bucketARN); err != nil {
+		t.Fatalf("DeleteTableBucket failed: %v", err)
+	}
+	bucketDeleted = true
+
+	if _, err := client.GetTableBucket(ctx, bucketARN); err == nil {
+		t.Fatalf("expected GetTableBucket to fail after deletion")
+	}
+}
+
+type s3TablesClient struct {
+	endpoint   string
+	region     string
+	creds      aws.Credentials
+	httpClient *http.Client
+}
+
+func newS3TablesClient(endpoint, region string, creds aws.Credentials) *s3TablesClient {
+	return &s3TablesClient{
+		endpoint: endpoint,
+		region:   region,
+		creds:    creds,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
+func (c *s3TablesClient) CreateTableBucket(ctx context.Context, name string) (string, error) {
+	req := &s3tables.CreateTableBucketRequest{Name: name}
+	var resp s3tables.CreateTableBucketResponse
+	if err := c.doRequest(ctx, "CreateTableBucket", http.MethodPut, "/buckets", req, &resp); err != nil {
+		return "", err
+	}
+	return resp.ARN, nil
+}
+
+func (c *s3TablesClient) GetTableBucket(ctx context.Context, arn string) (*s3tables.GetTableBucketResponse, error) {
+	path := "/buckets/" + url.PathEscape(arn)
+	var resp s3tables.GetTableBucketResponse
+	if err := c.doRequest(ctx, "GetTableBucket", http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *s3TablesClient) ListTableBuckets(ctx context.Context) ([]s3tables.TableBucketSummary, error) {
+	var resp s3tables.ListTableBucketsResponse
+	if err := c.doRequest(ctx, "ListTableBuckets", http.MethodGet, "/buckets", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.TableBuckets, nil
+}
+
+func (c *s3TablesClient) DeleteTableBucket(ctx context.Context, arn string) error {
+	path := "/buckets/" + url.PathEscape(arn)
+	return c.doRequest(ctx, "DeleteTableBucket", http.MethodDelete, path, nil, nil)
+}
+
+func (c *s3TablesClient) doRequest(ctx context.Context, operation, method, path string, body interface{}, out interface{}) error {
+	var bodyBytes []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("%s: marshal request: %w", operation, err)
+		}
+		bodyBytes = encoded
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("%s: create request: %w", operation, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	}
+	req.Host = req.URL.Host
+	req.Header.Set("Host", req.URL.Host)
+
+	payloadHash := sha256.Sum256(bodyBytes)
+	if err := v4.NewSigner().SignHTTP(ctx, c.creds, req, hex.EncodeToString(payloadHash[:]), "s3tables", c.region, time.Now()); err != nil {
+		return fmt.Errorf("%s: sign request: %w", operation, err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: request failed: %w", operation, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("%s failed with status %d and could not read response body: %v", operation, resp.StatusCode, readErr)
+		}
+		var errResp s3tables.S3TablesError
+		if jsonErr := json.Unmarshal(bodyBytes, &errResp); jsonErr == nil && (errResp.Type != "" || errResp.Message != "") {
+			return fmt.Errorf("%s failed: %s - %s", operation, errResp.Type, errResp.Message)
+		}
+		return fmt.Errorf("%s failed with status %d: %s", operation, resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+	}
+
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("%s: decode response: %w", operation, err)
+	}
+	return nil
+}
+
+func assumeRole(ctx context.Context, endpoint, region, accessKey, secretKey, roleArn, sessionName string) (aws.Credentials, error) {
+	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+		if service == sts.ServiceID {
+			return aws.Endpoint{
+				URL:               endpoint,
+				SigningRegion:     region,
+				HostnameImmutable: true,
+			}, nil
+		}
+		return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+	})
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
+		config.WithEndpointResolverWithOptions(resolver),
+	)
+	if err != nil {
+		return aws.Credentials{}, err
+	}
+
+	client := sts.NewFromConfig(cfg)
+	resp, err := client.AssumeRole(ctx, &sts.AssumeRoleInput{
+		RoleArn:         aws.String(roleArn),
+		RoleSessionName: aws.String(sessionName),
+	})
+	if err != nil {
+		return aws.Credentials{}, err
+	}
+	if resp.Credentials == nil {
+		return aws.Credentials{}, fmt.Errorf("missing credentials in AssumeRole response")
+	}
+	return aws.Credentials{
+		AccessKeyID:     aws.ToString(resp.Credentials.AccessKeyId),
+		SecretAccessKey: aws.ToString(resp.Credentials.SecretAccessKey),
+		SessionToken:    aws.ToString(resp.Credentials.SessionToken),
+		Source:          "lakekeeper-sts",
+	}, nil
 }
