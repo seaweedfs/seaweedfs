@@ -48,6 +48,18 @@ type TestEnvironment struct {
 	secretKey      string
 }
 
+const (
+	lakekeeperRegion      = "us-east-1"
+	lakekeeperRoleArn     = "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
+	lakekeeperSessionName = "lakekeeper-session"
+)
+
+type lakekeeperSession struct {
+	endpoint string
+	region   string
+	creds    aws.Credentials
+}
+
 func TestLakekeeperIntegration(t *testing.T) {
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
@@ -239,126 +251,58 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 func runLakekeeperRepro(t *testing.T, env *TestEnvironment) {
 	t.Helper()
 
-	scriptContent := fmt.Sprintf(`
-import boto3
-import botocore.config
-import botocore
-from botocore.exceptions import ClientError
-import os
-import sys
-import time
-import logging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
-# Enable botocore debug logging to see signature calculation
-logging.basicConfig(level=logging.DEBUG)
-botocore.session.get_session().set_debug_logger()
-
-print("Starting Lakekeeper repro test...")
-
-endpoint_url = "http://host.docker.internal:%d"
-access_key = "%s"
-secret_key = "%s"
-region = "us-east-1"
-
-print(f"Connecting to {endpoint_url}")
-
-try:
-    config = botocore.config.Config(
-        retries={'max_attempts': 3}
-    )
-    sts = boto3.client(
-        'sts',
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=region,
-        config=config
-    )
-
-    role_arn = "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
-    session_name = "lakekeeper-session"
-
-    print(f"Calling AssumeRole on {role_arn} with POST body...")
-    
-    # Standard boto3 call sends parameters in POST body
-    response = sts.assume_role(
-        RoleArn=role_arn,
-        RoleSessionName=session_name
-    )
-
-    creds = response['Credentials']
-    access_key_id = creds['AccessKeyId']
-    secret_access_key = creds['SecretAccessKey']
-    session_token = creds['SessionToken']
-
-    print(f"Success! Got credentials with prefix: {access_key_id[:4]}")
-    
-    if not access_key_id.startswith("ASIA"):
-        print(f"FAILED: Expected ASIA prefix, got {access_key_id}")
-        sys.exit(1)
-
-    print("Verifying S3 operations with vended credentials...")
-    s3 = boto3.client(
-        's3',
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
-        aws_session_token=session_token,
-        region_name=region,
-        config=config
-    )
-
-    bucket = "lakekeeper-vended-bucket"
-    print(f"Creating bucket {bucket}...")
-    s3.create_bucket(Bucket=bucket)
-
-    print("Listing buckets...")
-    response = s3.list_buckets()
-    buckets = [b['Name'] for b in response['Buckets']]
-    print(f"Found buckets: {buckets}")
-
-    if bucket not in buckets:
-        print(f"FAILED: Bucket {bucket} not found in list")
-        sys.exit(1)
-
-    print("SUCCESS: Lakekeeper flow verified!")
-    sys.exit(0)
-    
-except Exception as e:
-    print(f"FAILED: {e}")
-    # Print more details if it is a ClientError
-    if hasattr(e, 'response'):
-        print(f"Response: {e.response}")
-    sys.exit(1)
-`, env.s3Port, env.accessKey, env.secretKey)
-
-	scriptPath := filepath.Join(env.dataDir, "lakekeeper_repro.py")
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
-		t.Fatalf("Failed to write python script: %v", err)
-	}
-
-	containerName := "seaweed-lakekeeper-client-" + fmt.Sprintf("%d", time.Now().UnixNano())
-
-	// Create a context with timeout for the docker run command
-	dockerCtx, dockerCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer dockerCancel()
-
-	cmd := exec.CommandContext(dockerCtx, "docker", "run", "--rm",
-		"--name", containerName,
-		"--add-host", "host.docker.internal:host-gateway",
-		"-v", fmt.Sprintf("%s:/work", env.dataDir),
-		"python:3",
-		"/bin/bash", "-c", "pip install boto3 && python /work/lakekeeper_repro.py",
-	)
-
-	output, err := cmd.CombinedOutput()
+	session, err := newLakekeeperSession(ctx, env)
 	if err != nil {
-		if dockerCtx.Err() == context.DeadlineExceeded {
-			t.Fatalf("Lakekeeper repro client timed out after 5 minutes\nOutput:\n%s", string(output))
-		}
-		t.Fatalf("Lakekeeper repro client failed: %v\nOutput:\n%s", err, string(output))
+		t.Fatalf("AssumeRole failed: %v", err)
 	}
-	t.Logf("Lakekeeper repro client output:\n%s", string(output))
+
+	s3Client, err := newS3Client(ctx, session.endpoint, session.region, session.creds)
+	if err != nil {
+		t.Fatalf("Create S3 client failed: %v", err)
+	}
+
+	bucketName := fmt.Sprintf("lakekeeper-vended-bucket-%d", time.Now().UnixNano())
+	if _, err := s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(bucketName),
+	}); err != nil {
+		t.Fatalf("CreateBucket failed: %v", err)
+	}
+
+	bucketCreated := true
+	defer func() {
+		if !bucketCreated {
+			return
+		}
+		_, _ = s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{
+			Bucket: aws.String(bucketName),
+		})
+	}()
+
+	listResp, err := s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		t.Fatalf("ListBuckets failed: %v", err)
+	}
+
+	found := false
+	for _, bucket := range listResp.Buckets {
+		if aws.ToString(bucket.Name) == bucketName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Bucket %s not found in list", bucketName)
+	}
+
+	if _, err := s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{
+		Bucket: aws.String(bucketName),
+	}); err != nil {
+		t.Fatalf("DeleteBucket failed: %v", err)
+	}
+	bucketCreated = false
 }
 
 func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
@@ -367,17 +311,12 @@ func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d", env.s3Port)
-	region := "us-east-1"
-	roleArn := "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
-	sessionName := "lakekeeper-session"
-
-	creds, err := assumeRole(ctx, endpoint, region, env.accessKey, env.secretKey, roleArn, sessionName)
+	session, err := newLakekeeperSession(ctx, env)
 	if err != nil {
 		t.Fatalf("AssumeRole failed: %v", err)
 	}
 
-	client := newS3TablesClient(endpoint, region, creds)
+	client := newS3TablesClient(session.endpoint, session.region, session.creds)
 	bucketName := fmt.Sprintf("lakekeeper-table-bucket-%d", time.Now().UnixNano())
 	bucketARN, err := client.CreateTableBucket(ctx, bucketName)
 	if err != nil {
@@ -437,7 +376,7 @@ func runLakekeeperTableBucketRepro(t *testing.T, env *TestEnvironment) {
 	}
 	tableCreated = true
 
-	s3Client, err := newS3Client(ctx, endpoint, region, creds)
+	s3Client, err := newS3Client(ctx, session.endpoint, session.region, session.creds)
 	if err != nil {
 		t.Fatalf("Create S3 client failed: %v", err)
 	}
@@ -734,4 +673,17 @@ func newS3Client(ctx context.Context, endpoint, region string, creds aws.Credent
 	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
 	}), nil
+}
+
+func newLakekeeperSession(ctx context.Context, env *TestEnvironment) (lakekeeperSession, error) {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", env.s3Port)
+	creds, err := assumeRole(ctx, endpoint, lakekeeperRegion, env.accessKey, env.secretKey, lakekeeperRoleArn, lakekeeperSessionName)
+	if err != nil {
+		return lakekeeperSession{}, err
+	}
+	return lakekeeperSession{
+		endpoint: endpoint,
+		region:   lakekeeperRegion,
+		creds:    creds,
+	}, nil
 }
