@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -30,11 +31,7 @@ type logger interface {
 }
 
 type withFieldLogger interface {
-	WithFields(map[string]interface{}) interface {
-		Info(string, ...interface{})
-		Warning(string, ...interface{})
-		Error(string, ...interface{})
-	}
+	WithFields(map[string]interface{}) logger
 }
 
 func withFields(log logger, fields map[string]interface{}) logger {
@@ -42,7 +39,31 @@ func withFields(log logger, fields map[string]interface{}) logger {
 		return log
 	}
 	if wf, ok := log.(withFieldLogger); ok {
-		if enhanced, ok := wf.WithFields(fields).(logger); ok {
+		return wf.WithFields(fields)
+	}
+
+	val := reflect.ValueOf(log)
+	method := val.MethodByName("WithFields")
+	if !method.IsValid() {
+		return log
+	}
+	methodType := method.Type()
+	if methodType.NumIn() != 1 || methodType.NumOut() != 1 {
+		return log
+	}
+	argType := methodType.In(0)
+	mapType := reflect.TypeOf(map[string]interface{}{})
+	var arg reflect.Value
+	if mapType.AssignableTo(argType) {
+		arg = reflect.ValueOf(fields)
+	} else if mapType.ConvertibleTo(argType) {
+		arg = reflect.ValueOf(fields).Convert(argType)
+	} else {
+		return log
+	}
+	result := method.Call([]reflect.Value{arg})[0]
+	if result.IsValid() && result.CanInterface() {
+		if enhanced, ok := result.Interface().(logger); ok {
 			return enhanced
 		}
 	}
@@ -163,7 +184,7 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 			}
 
 			if err := sendShardFileToDestination(volumeID, collection, dialOption, destNode, filePath, shardType); err != nil {
-				return nil, fmt.Errorf("failed to send %s to %s: %v", shardType, destNode, err)
+				return nil, fmt.Errorf("failed to send %s to %s: %w", shardType, destNode, err)
 			}
 
 			withFields(log, map[string]interface{}{
