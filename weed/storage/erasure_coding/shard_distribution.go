@@ -137,7 +137,6 @@ func DistributeEcShards(volumeID uint32, collection string, targets []*worker_pb
 		return nil, fmt.Errorf("no shard assignments found from planning phase")
 	}
 
-	var mountErrors []error
 	for destNode, assignedShards := range shardAssignment {
 		withFields(log, map[string]interface{}{
 			"destination":     destNode,
@@ -193,6 +192,7 @@ func MountEcShards(volumeID uint32, collection string, shardAssignment map[strin
 
 	log := ensureLogger(logger)
 
+	var mountErrors []error
 	for destNode, assignedShards := range shardAssignment {
 		var shardIds []uint32
 		var metadataFiles []string
