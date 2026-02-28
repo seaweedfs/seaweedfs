@@ -114,6 +114,10 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
+	if len(nodeToEcShardsInfo) == 0 {
+		return fmt.Errorf("no EC shards found for volume %d (diskType %s)", vid, diskType.ReadableString())
+	}
+
 	var eligibleTargets map[pb.ServerAddress]struct{}
 	if checkMinFreeSpace {
 		freeVolumeCounts := collectFreeVolumeCountsByNode(topoInfo, diskType)
