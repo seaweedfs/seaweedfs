@@ -35,7 +35,7 @@ func (c *commandEcDecode) Name() string {
 func (c *commandEcDecode) Help() string {
 	return `decode a erasure coded volume into a normal volume
 
-	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-ignoreMinFreeSpace]
+	ec.decode [-collection=""] [-volumeId=<volume_id>] [-diskType=<disk_type>] [-checkMinFreeSpace]
 
 	The -collection parameter supports regular expressions for pattern matching:
 	  - Use exact match: ec.decode -collection="^mybucket$"
@@ -44,7 +44,7 @@ func (c *commandEcDecode) Help() string {
 
 	Options:
 	  -diskType: source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)
-	  -ignoreMinFreeSpace: ignore min free space checks when selecting the decode target
+	  -checkMinFreeSpace: check min free space when selecting the decode target (default true)
 
 	Examples:
 	  # Decode EC shards from HDD (default)
@@ -65,7 +65,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	volumeId := decodeCommand.Int("volumeId", 0, "the volume id")
 	collection := decodeCommand.String("collection", "", "the collection name")
 	diskTypeStr := decodeCommand.String("diskType", "", "source disk type where EC shards are stored (hdd, ssd, or empty for default hdd)")
-	ignoreMinFreeSpace := decodeCommand.Bool("ignoreMinFreeSpace", false, "ignore min free space checks when selecting the decode target")
+	checkMinFreeSpace := decodeCommand.Bool("checkMinFreeSpace", true, "check min free space when selecting the decode target")
 	if err = decodeCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -85,7 +85,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	// volumeId is provided
 	if vid != 0 {
-		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *ignoreMinFreeSpace)
+		return doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace)
 	}
 
 	// apply to all volumes in the collection
@@ -95,7 +95,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 	fmt.Printf("ec decode volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *ignoreMinFreeSpace); err != nil {
+		if err = doEcDecode(commandEnv, topologyInfo, *collection, vid, diskType, *checkMinFreeSpace); err != nil {
 			return err
 		}
 	}
@@ -103,7 +103,7 @@ func (c *commandEcDecode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	return nil
 }
 
-func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, ignoreMinFreeSpace bool) (err error) {
+func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collection string, vid needle.VolumeId, diskType types.DiskType, checkMinFreeSpace bool) (err error) {
 
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
@@ -115,7 +115,7 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 	fmt.Printf("ec volume %d shard locations: %+v\n", vid, nodeToEcShardsInfo)
 
 	var eligibleTargets map[pb.ServerAddress]struct{}
-	if !ignoreMinFreeSpace {
+	if checkMinFreeSpace {
 		freeVolumeCounts := collectFreeVolumeCountsByNode(topoInfo, diskType)
 		eligibleTargets = make(map[pb.ServerAddress]struct{})
 		for location := range nodeToEcShardsInfo {
@@ -124,7 +124,7 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 			}
 		}
 		if len(eligibleTargets) == 0 {
-			return fmt.Errorf("no eligible target datanodes with free volume slots for volume %d (diskType %s); use -ignoreMinFreeSpace to override", vid, diskType.ReadableString())
+			return fmt.Errorf("no eligible target datanodes with free volume slots for volume %d (diskType %s); use -checkMinFreeSpace=false to override", vid, diskType.ReadableString())
 		}
 	}
 
