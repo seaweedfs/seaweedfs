@@ -216,6 +216,27 @@ func (ln *LoginNegotiator) HandleLoginPDU(req *PDU, resolver TargetResolver) *PD
 					setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailMissingParam)
 					return resp
 				}
+				// Session type
+				if st, ok := params.Get("SessionType"); ok {
+					ln.SessionType = st
+				}
+				if ln.SessionType == "" {
+					ln.SessionType = "Normal"
+				}
+				// Target name (required for Normal sessions)
+				if tn, ok := params.Get("TargetName"); ok {
+					if ln.SessionType == "Normal" {
+						if resolver == nil || !resolver.HasTarget(tn) {
+							setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailNotFound)
+							return resp
+						}
+					}
+					ln.TargetName = tn
+					ln.targetOK = true
+				} else if ln.SessionType == "Normal" && !ln.targetOK {
+					setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailMissingParam)
+					return resp
+				}
 			} else {
 				setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailInitiatorError)
 				return resp
@@ -319,9 +340,9 @@ func (ln *LoginNegotiator) negotiateParams(req *Params, resp *Params) {
 		case "DataDigest":
 			resp.Set(key, "None")
 		case "TargetName", "InitiatorName", "SessionType", "AuthMethod":
-			// Already handled or declarative — skip
-		case "TargetAlias":
-			// Informational from initiator — skip
+			// Already handled or declarative -- skip
+		case "TargetAlias", "InitiatorAlias":
+			// Informational -- skip
 		default:
 			// Unknown keys: respond with NotUnderstood
 			resp.Set(key, "NotUnderstood")

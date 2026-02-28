@@ -22,9 +22,10 @@ import (
 func main() {
 	volPath := flag.String("vol", "", "path to BlockVol file")
 	addr := flag.String("addr", ":3260", "listen address")
+	portal := flag.String("portal", "", "advertised address for discovery (e.g. 10.0.0.1:3260,1)")
 	iqn := flag.String("iqn", "iqn.2024.com.seaweedfs:vol1", "target IQN")
 	create := flag.Bool("create", false, "create a new volume file")
-	size := flag.String("size", "1G", "volume size (e.g., 1G, 100M) — used with -create")
+	size := flag.String("size", "1G", "volume size (e.g., 1G, 100M) -- used with -create")
 	flag.Parse()
 
 	if *volPath == "" {
@@ -73,6 +74,9 @@ func main() {
 	config.TargetName = *iqn
 	config.TargetAlias = "SeaweedFS BlockVol"
 	ts := iscsi.NewTargetServer(*addr, config, logger)
+	if *portal != "" {
+		ts.SetPortalAddr(*portal)
+	}
 	ts.AddVolume(*iqn, adapter)
 
 	// Graceful shutdown on signal

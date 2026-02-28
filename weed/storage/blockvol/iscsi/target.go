@@ -17,11 +17,12 @@ var (
 // TargetServer manages the iSCSI target: TCP listener, volume registry,
 // and active sessions.
 type TargetServer struct {
-	mu       sync.RWMutex
-	listener net.Listener
-	config   TargetConfig
-	volumes  map[string]BlockDevice // target IQN -> device
-	addr     string
+	mu           sync.RWMutex
+	listener     net.Listener
+	config       TargetConfig
+	volumes      map[string]BlockDevice // target IQN -> device
+	addr         string
+	portalAddr   string // advertised address for discovery (if empty, uses listener addr)
 
 	// Active session tracking for graceful shutdown
 	activeMu sync.Mutex
@@ -72,15 +73,28 @@ func (ts *TargetServer) HasTarget(name string) bool {
 	return ok
 }
 
+// SetPortalAddr sets the address advertised in discovery responses.
+// Use this when the listen address is 0.0.0.0 or [::] and clients
+// need a routable IP. Format: "ip:port,portal-group" (e.g. "10.0.0.1:3260,1").
+func (ts *TargetServer) SetPortalAddr(addr string) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.portalAddr = addr
+}
+
 // ListTargets implements TargetLister.
 func (ts *TargetServer) ListTargets() []DiscoveryTarget {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
+	addr := ts.portalAddr
+	if addr == "" {
+		addr = ts.ListenAddr()
+	}
 	targets := make([]DiscoveryTarget, 0, len(ts.volumes))
 	for iqn := range ts.volumes {
 		targets = append(targets, DiscoveryTarget{
 			Name:    iqn,
-			Address: ts.ListenAddr(),
+			Address: addr,
 		})
 	}
 	return targets
