@@ -49,14 +49,6 @@ type TestEnvironment struct {
 }
 
 func TestLakekeeperIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	if !testutil.HasDocker() {
-		t.Skip("Docker not available, skipping Lakekeeper integration test")
-	}
-
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
 
@@ -69,14 +61,6 @@ func TestLakekeeperIntegration(t *testing.T) {
 }
 
 func TestLakekeeperTableBucketIntegration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	if !testutil.HasDocker() {
-		t.Skip("Docker not available, skipping Lakekeeper table bucket integration test")
-	}
-
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
 
