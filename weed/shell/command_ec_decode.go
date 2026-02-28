@@ -413,7 +413,7 @@ func (state *decodeDiskUsageState) freeVolumeCount(location pb.ServerAddress) (i
 		return 0, false
 	}
 	free := usage.maxVolumeCount - (usage.volumeCount - usage.remoteVolumeCount)
-	free -= (usage.ecShardCount + 1) / int64(erasure_coding.DataShardsCount)
+	free -= (usage.ecShardCount + int64(erasure_coding.DataShardsCount) - 1) / int64(erasure_coding.DataShardsCount)
 	return free, true
 }
 
