@@ -144,6 +144,19 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "number",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "preferred_tags",
+				JSONName:     "preferred_tags",
+				Type:         config.FieldTypeString,
+				DefaultValue: "",
+				Required:     false,
+				DisplayName:  "Preferred Disk Tags",
+				Description:  "Comma-separated disk tags to prioritize for EC shard placement",
+				HelpText:     "EC shards will be placed on disks with these tags first, then fall back to other disks if needed",
+				Placeholder:  "fast,ssd",
+				InputType:    "text",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
@@ -161,6 +174,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				QuietForSeconds:  int32(c.QuietForSeconds),
 				MinVolumeSizeMb:  int32(c.MinSizeMB),
 				CollectionFilter: c.CollectionFilter,
+				PreferredTags:    c.PreferredTags,
 			},
 		},
 	}
@@ -183,6 +197,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.QuietForSeconds = int(ecConfig.QuietForSeconds)
 		c.MinSizeMB = int(ecConfig.MinVolumeSizeMb)
 		c.CollectionFilter = ecConfig.CollectionFilter
+		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 	}
 
 	return nil
