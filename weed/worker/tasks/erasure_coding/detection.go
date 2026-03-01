@@ -564,6 +564,12 @@ func diskHasTag(tags []string, tag string) bool {
 	return false
 }
 
+// buildCandidateSets builds tiered candidate sets for preferred-tag prioritized placement.
+// For a planner with preferredTags, it accumulates disks matching each tag in order into
+// progressively larger tiers. It emits a candidate set once a tier reaches shardsNeeded,
+// then continues accumulating for subsequent tags. Finally, it falls back to the full
+// p.candidates set if preferred-tag tiers are insufficient. This ensures tagged disks
+// are selected first before falling back to all available candidates.
 func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement.DiskCandidate {
 	if p == nil {
 		return nil
