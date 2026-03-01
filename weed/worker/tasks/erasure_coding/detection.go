@@ -578,6 +578,8 @@ func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement
 			candidateSets = append(candidateSets, append([]*placement.DiskCandidate(nil), tier...))
 		}
 	}
+	// Defensive check: selectDestinations always ensures shardsNeeded > 0 before calling
+	// buildCandidateSets, but this branch handles direct callers and edge cases.
 	if shardsNeeded <= 0 && len(tier) > 0 {
 		candidateSets = append(candidateSets, append([]*placement.DiskCandidate(nil), tier...))
 	}

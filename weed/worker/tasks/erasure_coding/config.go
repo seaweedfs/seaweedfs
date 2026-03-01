@@ -163,6 +163,8 @@ func GetConfigSpec() base.ConfigSpec {
 
 // ToTaskPolicy converts configuration to a TaskPolicy protobuf message
 func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
+	// Defensive copy of PreferredTags to prevent external mutation
+	preferredTagsCopy := append([]string(nil), c.PreferredTags...)
 	return &worker_pb.TaskPolicy{
 		Enabled:               c.Enabled,
 		MaxConcurrent:         int32(c.MaxConcurrent),
@@ -174,7 +176,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				QuietForSeconds:  int32(c.QuietForSeconds),
 				MinVolumeSizeMb:  int32(c.MinSizeMB),
 				CollectionFilter: c.CollectionFilter,
-				PreferredTags:    c.PreferredTags,
+				PreferredTags:    preferredTagsCopy,
 			},
 		},
 	}
