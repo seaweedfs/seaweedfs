@@ -17,7 +17,7 @@ import (
 func TestECPlacementPlannerApplyReservations(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 10, 0)
 
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	key := ecDiskKey("10.0.0.1:8080", 0)
@@ -47,7 +47,7 @@ func TestECPlacementPlannerApplyReservations(t *testing.T) {
 
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{
@@ -61,6 +61,70 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, plan)
 	assert.Equal(t, erasure_coding.TotalShardsCount, len(plan.Plans))
+}
+
+func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
+	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
+	topo := activeTopology.GetTopologyInfo()
+	for _, dc := range topo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for k, node := range rack.DataNodeInfos {
+				for diskType := range node.DiskInfos {
+					if k < 2 {
+						node.DiskInfos[diskType].Tags = []string{"fast"}
+					} else {
+						node.DiskInfos[diskType].Tags = []string{"slow"}
+					}
+				}
+			}
+		}
+	}
+	require.NoError(t, activeTopology.UpdateTopology(topo))
+
+	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
+	require.NotNil(t, planner)
+
+	selected, err := planner.selectDestinations("", "", 2)
+	require.NoError(t, err)
+	require.Len(t, selected, 2)
+
+	for _, candidate := range selected {
+		key := ecDiskKey(candidate.NodeID, candidate.DiskID)
+		assert.True(t, diskHasTag(planner.diskTags[key], "fast"))
+	}
+}
+
+func TestECPlacementPlannerFallsBackWhenTagsInsufficient(t *testing.T) {
+	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
+	topo := activeTopology.GetTopologyInfo()
+	for _, dc := range topo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for i, node := range rack.DataNodeInfos {
+				for diskType := range node.DiskInfos {
+					if i == 0 {
+						node.DiskInfos[diskType].Tags = []string{"fast"}
+					}
+				}
+			}
+		}
+	}
+	require.NoError(t, activeTopology.UpdateTopology(topo))
+
+	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
+	require.NotNil(t, planner)
+
+	selected, err := planner.selectDestinations("", "", 3)
+	require.NoError(t, err)
+	require.Len(t, selected, 3)
+
+	taggedCount := 0
+	for _, candidate := range selected {
+		key := ecDiskKey(candidate.NodeID, candidate.DiskID)
+		if diskHasTag(planner.diskTags[key], "fast") {
+			taggedCount++
+		}
+	}
+	assert.Less(t, taggedCount, len(selected))
 }
 
 func TestDetectionContextCancellation(t *testing.T) {
@@ -88,7 +152,7 @@ func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
 
 func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1)
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{

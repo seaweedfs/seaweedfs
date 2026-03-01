@@ -115,6 +115,7 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
 					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
 					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+					Tags:              append([]string(nil), disk.DiskInfo.DiskInfo.Tags...),
 				}
 				diskCopy.DiskInfo = diskInfoCopy
 				diskCopy.DiskInfo.MaxVolumeCount = disk.DiskInfo.DiskInfo.MaxVolumeCount // Ensure Max is set
@@ -178,6 +179,7 @@ func (at *ActiveTopology) GetDisksForPlanning(taskType TaskType, excludeNodeID s
 					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
 					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
 					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+					Tags:              append([]string(nil), disk.DiskInfo.DiskInfo.Tags...),
 				}
 				diskCopy.DiskInfo = diskInfoCopy
 

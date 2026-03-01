@@ -92,6 +92,7 @@ func NewStore(
 	idxFolder string,
 	needleMapKind NeedleMapKind,
 	diskTypes []DiskType,
+	diskTags [][]string,
 	ldbTimeout int64,
 ) (s *Store) {
 	s = &Store{
@@ -113,7 +114,11 @@ func NewStore(
 
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
+		var tags []string
+		if i < len(diskTags) {
+			tags = diskTags[i]
+		}
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
@@ -474,6 +479,13 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	for _, loc := range s.Locations {
 		uuidList = append(uuidList, loc.DirectoryUuid)
 	}
+	var diskTags []*master_pb.DiskTag
+	for diskID, loc := range s.Locations {
+		diskTags = append(diskTags, &master_pb.DiskTag{
+			DiskId: uint32(diskID),
+			Tags:   append([]string(nil), loc.Tags...),
+		})
+	}
 
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
@@ -504,6 +516,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		HasNoVolumes:    len(volumeMessages) == 0,
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
+		DiskTags:        diskTags,
 	}
 
 }

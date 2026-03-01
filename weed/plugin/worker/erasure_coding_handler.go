@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
@@ -128,6 +129,14 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
+						{
+							Name:        "preferred_tags",
+							Label:       "Preferred Tags",
+							Description: "Comma-separated disk tags to prioritize for EC shard placement, ordered by preference.",
+							Placeholder: "fast,ssd",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
 					},
 				},
 			},
@@ -143,6 +152,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_interval_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
+				},
+				"preferred_tags": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
 		},
@@ -168,6 +180,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_interval_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
+			},
+			"preferred_tags": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 			},
 		},
 	}
@@ -601,6 +616,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	if minIntervalSeconds < 0 {
 		minIntervalSeconds = 0
 	}
+	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig:         taskConfig,

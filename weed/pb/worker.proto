@@ -314,6 +314,7 @@ message ErasureCodingTaskConfig {
   int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
   int32 min_volume_size_mb = 3;     // Minimum volume size for EC
   string collection_filter = 4;     // Only process volumes from specific collections
+  repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
 }
 
 // BalanceTaskConfig contains balance-specific configuration

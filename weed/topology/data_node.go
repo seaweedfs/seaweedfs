@@ -25,6 +25,7 @@ type DataNode struct {
 	IsTerminating bool
 
 	MaintenanceMode bool
+	diskTags        map[uint32][]string
 }
 
 func NewDataNode(id string) *DataNode {
@@ -291,7 +292,39 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		disk := c.(*Disk)
 		m.DiskInfos[string(disk.Id())] = disk.ToDiskInfo()
 	}
+
+	dn.RLock()
+	diskTags := make(map[uint32][]string, len(dn.diskTags))
+	for diskID, tags := range dn.diskTags {
+		diskTags[diskID] = append([]string(nil), tags...)
+	}
+	dn.RUnlock()
+	for _, diskInfo := range m.DiskInfos {
+		if diskInfo == nil {
+			continue
+		}
+		if tags, found := diskTags[diskInfo.DiskId]; found {
+			diskInfo.Tags = append([]string(nil), tags...)
+		}
+	}
 	return m
+}
+
+func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
+	if len(tags) == 0 {
+		return
+	}
+	dn.Lock()
+	if dn.diskTags == nil {
+		dn.diskTags = make(map[uint32][]string, len(tags))
+	}
+	for _, tagInfo := range tags {
+		if tagInfo == nil {
+			continue
+		}
+		dn.diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
+	}
+	dn.Unlock()
 }
 
 // GetVolumeIds returns the human readable volume ids limited to count of max 100.

@@ -11,9 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
+	workerutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -148,7 +149,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 
 				glog.Infof("EC Detection: ActiveTopology available, planning destinations for volume %d", metric.VolumeID)
 				if planner == nil {
-					planner = newECPlacementPlanner(clusterInfo.ActiveTopology)
+					planner = newECPlacementPlanner(clusterInfo.ActiveTopology, ecConfig.PreferredTags)
 				}
 				multiPlan, err := planECDestinations(planner, metric, ecConfig)
 				if err != nil {
@@ -344,21 +345,27 @@ type ecPlacementPlanner struct {
 	candidates     []*placement.DiskCandidate
 	candidateByKey map[string]*placement.DiskCandidate
 	diskStates     map[string]*ecDiskState
+	diskTags       map[string][]string
+	preferredTags  []string
 }
 
-func newECPlacementPlanner(activeTopology *topology.ActiveTopology) *ecPlacementPlanner {
+func newECPlacementPlanner(activeTopology *topology.ActiveTopology, preferredTags []string) *ecPlacementPlanner {
 	if activeTopology == nil {
 		return nil
 	}
 
 	disks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 0)
 	candidates := diskInfosToCandidates(disks)
+	tagsByKey := collectDiskTags(disks)
+	normalizedPreferredTags := util.NormalizeTagList(preferredTags)
 	if len(candidates) == 0 {
 		return &ecPlacementPlanner{
 			activeTopology: activeTopology,
 			candidates:     candidates,
 			candidateByKey: map[string]*placement.DiskCandidate{},
 			diskStates:     map[string]*ecDiskState{},
+			diskTags:       tagsByKey,
+			preferredTags:  normalizedPreferredTags,
 		}
 	}
 
@@ -377,6 +384,8 @@ func newECPlacementPlanner(activeTopology *topology.ActiveTopology) *ecPlacement
 		candidates:     candidates,
 		candidateByKey: candidateByKey,
 		diskStates:     diskStates,
+		diskTags:       tagsByKey,
+		preferredTags:  normalizedPreferredTags,
 	}
 }
 
@@ -397,11 +406,21 @@ func (p *ecPlacementPlanner) selectDestinations(sourceRack, sourceDC string, sha
 		PreferDifferentRacks:   true,
 	}
 
-	result, err := placement.SelectDestinations(p.candidates, config)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for _, candidates := range p.buildCandidateSets(shardsNeeded) {
+		if len(candidates) == 0 {
+			continue
+		}
+		result, err := placement.SelectDestinations(candidates, config)
+		if err == nil {
+			return result.SelectedDisks, nil
+		}
+		lastErr = err
 	}
-	return result.SelectedDisks, nil
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no EC placement candidates available")
+	}
+	return nil, lastErr
 }
 
 func (p *ecPlacementPlanner) applyTaskReservations(volumeSize int64, sources []topology.TaskSourceSpec, destinations []topology.TaskDestinationSpec) {
@@ -501,6 +520,77 @@ func ecDiskKey(nodeID string, diskID uint32) string {
 	return fmt.Sprintf("%s:%d", nodeID, diskID)
 }
 
+func collectDiskTags(disks []*topology.DiskInfo) map[string][]string {
+	tagMap := make(map[string][]string, len(disks))
+	for _, disk := range disks {
+		if disk == nil || disk.DiskInfo == nil {
+			continue
+		}
+		key := ecDiskKey(disk.NodeID, disk.DiskID)
+		tags := util.NormalizeTagList(disk.DiskInfo.Tags)
+		if len(tags) > 0 {
+			tagMap[key] = tags
+		}
+	}
+	return tagMap
+}
+
+func diskHasTag(tags []string, tag string) bool {
+	if tag == "" || len(tags) == 0 {
+		return false
+	}
+	for _, candidate := range tags {
+		if candidate == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// buildCandidateSets builds tiered candidate sets for preferred-tag prioritized placement.
+// For a planner with preferredTags, it accumulates disks matching each tag in order into
+// progressively larger tiers. It emits a candidate set once a tier reaches shardsNeeded,
+// then continues accumulating for subsequent tags. Finally, it falls back to the full
+// p.candidates set if preferred-tag tiers are insufficient. This ensures tagged disks
+// are selected first before falling back to all available candidates.
+func (p *ecPlacementPlanner) buildCandidateSets(shardsNeeded int) [][]*placement.DiskCandidate {
+	if p == nil {
+		return nil
+	}
+	if len(p.preferredTags) == 0 {
+		return [][]*placement.DiskCandidate{p.candidates}
+	}
+	selected := make(map[string]bool, len(p.candidates))
+	var tier []*placement.DiskCandidate
+	var candidateSets [][]*placement.DiskCandidate
+	for _, tag := range p.preferredTags {
+		for _, candidate := range p.candidates {
+			key := ecDiskKey(candidate.NodeID, candidate.DiskID)
+			if selected[key] {
+				continue
+			}
+			if diskHasTag(p.diskTags[key], tag) {
+				selected[key] = true
+				tier = append(tier, candidate)
+			}
+		}
+		if shardsNeeded > 0 && len(tier) >= shardsNeeded {
+			candidateSets = append(candidateSets, append([]*placement.DiskCandidate(nil), tier...))
+		}
+	}
+	// Defensive check: selectDestinations always ensures shardsNeeded > 0 before calling
+	// buildCandidateSets, but this branch handles direct callers and edge cases.
+	if shardsNeeded <= 0 && len(tier) > 0 {
+		candidateSets = append(candidateSets, append([]*placement.DiskCandidate(nil), tier...))
+	}
+	if len(tier) < len(p.candidates) {
+		candidateSets = append(candidateSets, p.candidates)
+	} else if len(candidateSets) == 0 {
+		candidateSets = append(candidateSets, p.candidates)
+	}
+	return candidateSets
+}
+
 // planECDestinations plans the destinations for erasure coding operation
 // This function implements EC destination planning logic directly in the detection phase
 func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthMetrics, ecConfig *Config) (*topology.MultiDestinationPlan, error) {
@@ -550,7 +640,7 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 
 	for _, disk := range selectedDisks {
 		// Get the target server address
-		targetAddress, err := util.ResolveServerAddress(disk.NodeID, planner.activeTopology)
+		targetAddress, err := workerutil.ResolveServerAddress(disk.NodeID, planner.activeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve address for target server %s: %v", disk.NodeID, err)
 		}
@@ -654,7 +744,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
-		serverAddress, err := util.ResolveServerAddress(source.ServerID, activeTopology)
+		serverAddress, err := workerutil.ResolveServerAddress(source.ServerID, activeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve address for source server %s: %v", source.ServerID, err)
 		}

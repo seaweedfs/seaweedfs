@@ -31,6 +31,7 @@ type DiskLocation struct {
 	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
+	Tags                   []string
 	MaxVolumeCount         int32
 	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
@@ -76,7 +77,7 @@ func writeNewUuid(fileName string) (string, error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string) *DiskLocation {
 	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -88,11 +89,18 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	if err != nil {
 		glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
 	}
+	// Defensive copy of tags to prevent external mutation
+	var copiedTags []string
+	if len(tags) > 0 {
+		copiedTags = make([]string, len(tags))
+		copy(copiedTags, tags)
+	}
 	location := &DiskLocation{
 		Directory:              dir,
 		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
+		Tags:                   copiedTags,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,

@@ -12,10 +12,11 @@ import (
 // Config extends BaseConfig with erasure coding specific settings
 type Config struct {
 	base.BaseConfig
-	QuietForSeconds  int     `json:"quiet_for_seconds"`
-	FullnessRatio    float64 `json:"fullness_ratio"`
-	CollectionFilter string  `json:"collection_filter"`
-	MinSizeMB        int     `json:"min_size_mb"`
+	QuietForSeconds  int      `json:"quiet_for_seconds"`
+	FullnessRatio    float64  `json:"fullness_ratio"`
+	CollectionFilter string   `json:"collection_filter"`
+	MinSizeMB        int      `json:"min_size_mb"`
+	PreferredTags    []string `json:"preferred_tags"`
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -30,6 +31,7 @@ func NewDefaultConfig() *Config {
 		FullnessRatio:    0.8, // 80%
 		CollectionFilter: "",
 		MinSizeMB:        30, // 30MB (more reasonable than 100MB)
+		PreferredTags:    nil,
 	}
 }
 
@@ -142,12 +144,27 @@ func GetConfigSpec() base.ConfigSpec {
 				InputType:    "number",
 				CSSClasses:   "form-control",
 			},
+			{
+				Name:         "preferred_tags",
+				JSONName:     "preferred_tags",
+				Type:         config.FieldTypeString,
+				DefaultValue: "",
+				Required:     false,
+				DisplayName:  "Preferred Disk Tags",
+				Description:  "Comma-separated disk tags to prioritize for EC shard placement",
+				HelpText:     "EC shards will be placed on disks with these tags first, then fall back to other disks if needed",
+				Placeholder:  "fast,ssd",
+				InputType:    "text",
+				CSSClasses:   "form-control",
+			},
 		},
 	}
 }
 
 // ToTaskPolicy converts configuration to a TaskPolicy protobuf message
 func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
+	// Defensive copy of PreferredTags to prevent external mutation
+	preferredTagsCopy := append([]string(nil), c.PreferredTags...)
 	return &worker_pb.TaskPolicy{
 		Enabled:               c.Enabled,
 		MaxConcurrent:         int32(c.MaxConcurrent),
@@ -159,6 +176,7 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 				QuietForSeconds:  int32(c.QuietForSeconds),
 				MinVolumeSizeMb:  int32(c.MinSizeMB),
 				CollectionFilter: c.CollectionFilter,
+				PreferredTags:    preferredTagsCopy,
 			},
 		},
 	}
@@ -181,6 +199,7 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 		c.QuietForSeconds = int(ecConfig.QuietForSeconds)
 		c.MinSizeMB = int(ecConfig.MinVolumeSizeMb)
 		c.CollectionFilter = ecConfig.CollectionFilter
+		c.PreferredTags = append([]string(nil), ecConfig.PreferredTags...)
 	}
 
 	return nil
