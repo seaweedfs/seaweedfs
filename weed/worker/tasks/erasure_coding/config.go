@@ -12,10 +12,11 @@ import (
 // Config extends BaseConfig with erasure coding specific settings
 type Config struct {
 	base.BaseConfig
-	QuietForSeconds  int     `json:"quiet_for_seconds"`
-	FullnessRatio    float64 `json:"fullness_ratio"`
-	CollectionFilter string  `json:"collection_filter"`
-	MinSizeMB        int     `json:"min_size_mb"`
+	QuietForSeconds  int      `json:"quiet_for_seconds"`
+	FullnessRatio    float64  `json:"fullness_ratio"`
+	CollectionFilter string   `json:"collection_filter"`
+	MinSizeMB        int      `json:"min_size_mb"`
+	PreferredTags    []string `json:"preferred_tags"`
 }
 
 // NewDefaultConfig creates a new default erasure coding configuration
@@ -30,6 +31,7 @@ func NewDefaultConfig() *Config {
 		FullnessRatio:    0.8, // 80%
 		CollectionFilter: "",
 		MinSizeMB:        30, // 30MB (more reasonable than 100MB)
+		PreferredTags:    nil,
 	}
 }
 
