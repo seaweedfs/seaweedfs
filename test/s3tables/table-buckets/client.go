@@ -112,6 +112,7 @@ func (c *S3TablesClient) signRequest(req *http.Request, body []byte) error {
 	creds := aws.Credentials{
 		AccessKeyID:     c.accessKey,
 		SecretAccessKey: c.secretKey,
+		SessionToken:    c.sessionToken,
 	}
 	if req.Host == "" {
 		req.Host = req.URL.Host

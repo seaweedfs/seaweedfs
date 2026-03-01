@@ -31,21 +31,32 @@ type TestCluster struct {
 
 // S3TablesClient is a simple client for S3 Tables API
 type S3TablesClient struct {
-	endpoint  string
-	region    string
-	accessKey string
-	secretKey string
-	client    *http.Client
+	endpoint     string
+	region       string
+	accessKey    string
+	secretKey    string
+	sessionToken string
+	client       *http.Client
 }
 
 // NewS3TablesClient creates a new S3 Tables client
 func NewS3TablesClient(endpoint, region, accessKey, secretKey string) *S3TablesClient {
+	return newS3TablesClient(endpoint, region, accessKey, secretKey, "")
+}
+
+// NewS3TablesClientWithSession creates a new S3 Tables client with session token
+func NewS3TablesClientWithSession(endpoint, region, accessKey, secretKey, sessionToken string) *S3TablesClient {
+	return newS3TablesClient(endpoint, region, accessKey, secretKey, sessionToken)
+}
+
+func newS3TablesClient(endpoint, region, accessKey, secretKey, sessionToken string) *S3TablesClient {
 	return &S3TablesClient{
-		endpoint:  endpoint,
-		region:    region,
-		accessKey: accessKey,
-		secretKey: secretKey,
-		client:    &http.Client{Timeout: 30 * time.Second},
+		endpoint:     endpoint,
+		region:       region,
+		accessKey:    accessKey,
+		secretKey:    secretKey,
+		sessionToken: sessionToken,
+		client:       &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

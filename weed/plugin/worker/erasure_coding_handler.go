@@ -24,14 +24,19 @@ type erasureCodingWorkerConfig struct {
 	MinIntervalSeconds int
 }
 
-// ErasureCodingHandler is the plugin job handler for erasure coding.
+// ErasureCodingHandler is the plugin job handler for erasure coding (includes ec_vacuum).
 type ErasureCodingHandler struct {
 	grpcDialOption grpc.DialOption
 	workingDir     string
+	ecVacuumExecutor *ecVacuumExecutor
 }
 
 func NewErasureCodingHandler(grpcDialOption grpc.DialOption, workingDir string) *ErasureCodingHandler {
-	return &ErasureCodingHandler{grpcDialOption: grpcDialOption, workingDir: strings.TrimSpace(workingDir)}
+	return &ErasureCodingHandler{
+		grpcDialOption:   grpcDialOption,
+		workingDir:       strings.TrimSpace(workingDir),
+		ecVacuumExecutor: newEcVacuumExecutor(grpcDialOption, workingDir),
+	}
 }
 
 func (h *ErasureCodingHandler) Capability() *plugin_pb.JobTypeCapability {
@@ -130,6 +135,23 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
+				{
+					SectionId:   "ec_vacuum",
+					Title:       "EC Vacuum",
+					Description: "Controls for EC volume vacuum detection.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "ec_deleted_ratio_threshold",
+							Label:       "EC Deleted Ratio Threshold",
+							Description: "Detect EC volumes with deleted ratio >= threshold.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_DOUBLE,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							Required:    true,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 1}},
+						},
+					},
+				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"quiet_for_seconds": {
@@ -143,6 +165,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_interval_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
+				},
+				"ec_deleted_ratio_threshold": {
+					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: defaultEcVacuumDeletedRatioThreshold},
 				},
 			},
 		},
@@ -168,6 +193,9 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_interval_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
+			},
+			"ec_deleted_ratio_threshold": {
+				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: defaultEcVacuumDeletedRatioThreshold},
 			},
 		},
 	}
@@ -260,10 +288,23 @@ func (h *ErasureCodingHandler) Detect(
 		return err
 	}
 
+	// Detect and propose ec_vacuum jobs for EC volumes with excessive deletions
+	ecDeleteRatioThreshold := readDoubleConfig(request.GetWorkerConfigValues(), "ec_deleted_ratio_threshold", defaultEcVacuumDeletedRatioThreshold)
+	ecVacuumProposals := h.detectEcVacuumOpportunities(ctx, masters, collectionFilter, ecDeleteRatioThreshold, activeTopology, maxResults)
+	if len(ecVacuumProposals) > 0 {
+		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
+			JobType:   "ec_vacuum",
+			Proposals: ecVacuumProposals,
+			HasMore:   false,
+		}); err != nil {
+			return err
+		}
+	}
+
 	return sender.SendComplete(&plugin_pb.DetectionComplete{
 		JobType:        "erasure_coding",
 		Success:        true,
-		TotalProposals: int32(len(proposals)),
+		TotalProposals: int32(len(proposals) + len(ecVacuumProposals)),
 	})
 }
 
@@ -455,6 +496,60 @@ func emitErasureCodingDetectionDecisionTrace(
 	return nil
 }
 
+func (h *ErasureCodingHandler) detectEcVacuumOpportunities(
+	ctx context.Context,
+	masters []string,
+	collectionFilter string,
+	deleteRatioThreshold float64,
+	activeTopology *topology.ActiveTopology,
+	maxResults int,
+) []*plugin_pb.JobProposal {
+	if h.ecVacuumExecutor == nil || len(masters) == 0 {
+		return nil
+	}
+	
+	var proposals []*plugin_pb.JobProposal
+	
+	candidates, _, err := collectEcVolumeCandidatesFromMasters(ctx, masters, collectionFilter, h.grpcDialOption)
+	if err != nil {
+		glog.Warningf("Failed to collect EC volume candidates for vacuum detection: %v", err)
+		return nil
+	}
+	
+	for _, candidate := range candidates {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				break
+			}
+		}
+		if maxResults > 0 && len(proposals) >= maxResults {
+			break
+		}
+		if activeTopology != nil && activeTopology.HasAnyTask(candidate.VolumeID) {
+			continue
+		}
+		
+		ratio, deletedCount, totalEntries, err := computeEcDeletionRatio(ctx, candidate, h.workingDir, h.grpcDialOption)
+		if err != nil {
+			glog.V(2).Infof("EC vacuum detection skipped for volume %d: %v", candidate.VolumeID, err)
+			continue
+		}
+		
+		if ratio < deleteRatioThreshold {
+			continue
+		}
+		
+		proposal, proposalErr := buildEcVacuumProposal(candidate, ratio, deletedCount, totalEntries)
+		if proposalErr != nil {
+			glog.Warningf("EC vacuum proposal skipped for volume %d: %v", candidate.VolumeID, proposalErr)
+			continue
+		}
+		proposals = append(proposals, proposal)
+	}
+	
+	return proposals
+}
+
 func (h *ErasureCodingHandler) Execute(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
@@ -466,9 +561,21 @@ func (h *ErasureCodingHandler) Execute(
 	if sender == nil {
 		return fmt.Errorf("execution sender is nil")
 	}
-	if request.Job.JobType != "" && request.Job.JobType != "erasure_coding" {
-		return fmt.Errorf("job type %q is not handled by erasure_coding worker", request.Job.JobType)
+	
+	jobType := request.Job.JobType
+	if jobType == "" {
+		jobType = "erasure_coding"
 	}
+	
+	// Dispatch to ec_vacuum executor if job type is ec_vacuum
+	if jobType == "ec_vacuum" {
+		return h.executeEcVacuum(ctx, request, sender)
+	}
+	
+	if jobType != "erasure_coding" {
+		return fmt.Errorf("job type %q is not handled by erasure_coding worker", jobType)
+	}
+	
 
 	params, err := decodeErasureCodingTaskParams(request.Job)
 	if err != nil {
@@ -561,6 +668,80 @@ func (h *ErasureCodingHandler) Execute(
 		},
 		Activities: []*plugin_pb.ActivityEvent{
 			buildExecutorActivity("completed", resultSummary),
+		},
+	})
+}
+
+func (h *ErasureCodingHandler) executeEcVacuum(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender ExecutionSender) error {
+	if h.ecVacuumExecutor == nil {
+		return fmt.Errorf("ec_vacuum executor not initialized")
+	}
+	
+	volumeId, collection, err := decodeEcVacuumJob(request.Job)
+	if err != nil {
+		return err
+	}
+	
+	masters := make([]string, 0)
+	if request.ClusterContext != nil {
+		masters = append(masters, request.ClusterContext.MasterGrpcAddresses...)
+	}
+	if len(masters) == 0 {
+		return fmt.Errorf("master grpc addresses are required for ec_vacuum execution")
+	}
+	
+	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId:           request.Job.JobId,
+		JobType:         request.Job.JobType,
+		State:           plugin_pb.JobState_JOB_STATE_ASSIGNED,
+		ProgressPercent: 0,
+		Stage:           "assigned",
+		Message:         "ec_vacuum job accepted",
+		Activities: []*plugin_pb.ActivityEvent{
+			buildExecutorActivity("assigned", "ec_vacuum job accepted"),
+		},
+	}); err != nil {
+		return err
+	}
+	
+	progress := func(percent float64, stage, message string) {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId:           request.Job.JobId,
+			JobType:         request.Job.JobType,
+			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+			ProgressPercent: percent,
+			Stage:           stage,
+			Message:         message,
+			Activities: []*plugin_pb.ActivityEvent{
+				buildExecutorActivity(stage, message),
+			},
+		})
+	}
+	
+	if err := h.ecVacuumExecutor.Run(ctx, volumeId, collection, masters, progress); err != nil {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId:           request.Job.JobId,
+			JobType:         request.Job.JobType,
+			State:           plugin_pb.JobState_JOB_STATE_FAILED,
+			ProgressPercent: 0,
+			Stage:           "error",
+			Message:         fmt.Sprintf("ec_vacuum failed: %v", err),
+			Activities: []*plugin_pb.ActivityEvent{
+				buildExecutorActivity("error", fmt.Sprintf("ec_vacuum failed: %v", err)),
+			},
+		})
+		return err
+	}
+	
+	return sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId:           request.Job.JobId,
+		JobType:         request.Job.JobType,
+		State:           plugin_pb.JobState_JOB_STATE_SUCCEEDED,
+		ProgressPercent: 100,
+		Stage:           "completed",
+		Message:         "ec_vacuum completed successfully",
+		Activities: []*plugin_pb.ActivityEvent{
+			buildExecutorActivity("completed", "ec_vacuum completed successfully"),
 		},
 	})
 }
