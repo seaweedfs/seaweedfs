@@ -17,7 +17,7 @@ import (
 func TestECPlacementPlannerApplyReservations(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 10, 0)
 
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	key := ecDiskKey("10.0.0.1:8080", 0)
@@ -47,7 +47,7 @@ func TestECPlacementPlannerApplyReservations(t *testing.T) {
 
 func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 7, []string{"hdd", "ssd"}, 100, 0)
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{
@@ -88,7 +88,7 @@ func TestDetectionMaxResultsHonorsLimit(t *testing.T) {
 
 func TestPlanECDestinationsFailsWithInsufficientCapacity(t *testing.T) {
 	activeTopology := buildActiveTopology(t, 1, []string{"hdd"}, 1, 1)
-	planner := newECPlacementPlanner(activeTopology)
+	planner := newECPlacementPlanner(activeTopology, nil)
 	require.NotNil(t, planner)
 
 	metric := &types.VolumeHealthMetrics{
