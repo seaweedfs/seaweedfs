@@ -3,6 +3,7 @@ package iscsi
 import (
 	"errors"
 	"strconv"
+	"time"
 )
 
 // Login status classes (RFC 7143, Section 11.13.5)
@@ -69,6 +70,7 @@ type TargetConfig struct {
 	InitialR2T              bool
 	ImmediateData           bool
 	ErrorRecoveryLevel      int
+	DataOutTimeout          time.Duration // read deadline for Data-Out collection (default 30s)
 }
 
 // DefaultTargetConfig returns sensible defaults for a target.
@@ -86,6 +88,7 @@ func DefaultTargetConfig() TargetConfig {
 		InitialR2T:               true,
 		ImmediateData:            true,
 		ErrorRecoveryLevel:       0,
+		DataOutTimeout:           30 * time.Second,
 	}
 }
 

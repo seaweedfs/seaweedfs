@@ -314,7 +314,7 @@ func testDataOutOverflow(t *testing.T) {
 }
 
 func testR2TBuild(t *testing.T) {
-	pdu := BuildR2T(0x100, 0x200, 0, 4096, 4096, 5, 10, 20)
+	pdu := BuildR2T(0x100, 0x200, 0, 4096, 4096, 10, 20)
 	if pdu.Opcode() != OpR2T {
 		t.Fatal("wrong opcode")
 	}
@@ -332,9 +332,6 @@ func testR2TBuild(t *testing.T) {
 	}
 	if pdu.DesiredDataLength() != 4096 {
 		t.Fatal("desired length wrong")
-	}
-	if pdu.StatSN() != 5 {
-		t.Fatal("StatSN wrong")
 	}
 }
 

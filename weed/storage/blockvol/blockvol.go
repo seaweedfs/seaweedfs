@@ -5,6 +5,7 @@ package blockvol
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -21,22 +22,38 @@ type CreateOptions struct {
 	Replication string // default "000"
 }
 
+// ErrVolumeClosed is returned when an operation is attempted on a closed BlockVol.
+var ErrVolumeClosed = errors.New("blockvol: volume closed")
+
 // BlockVol is the core block volume engine.
 type BlockVol struct {
-	mu          sync.RWMutex
-	fd          *os.File
-	path        string
-	super       Superblock
-	wal         *WALWriter
-	dirtyMap    *DirtyMap
-	groupCommit *GroupCommitter
-	flusher     *Flusher
-	nextLSN     atomic.Uint64
-	healthy     atomic.Bool
+	mu             sync.RWMutex
+	fd             *os.File
+	path           string
+	super          Superblock
+	config         BlockVolConfig
+	wal            *WALWriter
+	dirtyMap       *DirtyMap
+	groupCommit    *GroupCommitter
+	flusher        *Flusher
+	nextLSN        atomic.Uint64
+	healthy        atomic.Bool
+	closed         atomic.Bool
+	opsOutstanding atomic.Int64 // in-flight Read/Write/Trim/SyncCache ops
+	opsDrained     chan struct{}
 }
 
 // CreateBlockVol creates a new block volume file at path.
-func CreateBlockVol(path string, opts CreateOptions) (*BlockVol, error) {
+func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*BlockVol, error) {
+	var cfg BlockVolConfig
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
+	}
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	if opts.VolumeSize == 0 {
 		return nil, ErrInvalidVolumeSize
 	}
@@ -74,20 +91,25 @@ func CreateBlockVol(path string, opts CreateOptions) (*BlockVol, error) {
 		return nil, fmt.Errorf("blockvol: sync: %w", err)
 	}
 
-	dm := NewDirtyMap()
+	dm := NewDirtyMap(cfg.DirtyMapShards)
 	wal := NewWALWriter(fd, sb.WALOffset, sb.WALSize, 0, 0)
 	v := &BlockVol{
-		fd:       fd,
-		path:     path,
-		super:    sb,
-		wal:      wal,
-		dirtyMap: dm,
+		fd:         fd,
+		path:       path,
+		super:      sb,
+		config:     cfg,
+		wal:        wal,
+		dirtyMap:   dm,
+		opsDrained: make(chan struct{}, 1),
 	}
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:   fd.Sync,
-		OnDegraded: func() { v.healthy.Store(false) },
+		SyncFunc:     fd.Sync,
+		MaxDelay:     cfg.GroupCommitMaxDelay,
+		MaxBatch:     cfg.GroupCommitMaxBatch,
+		LowWatermark: cfg.GroupCommitLowWatermark,
+		OnDegraded:   func() { v.healthy.Store(false) },
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -95,13 +117,23 @@ func CreateBlockVol(path string, opts CreateOptions) (*BlockVol, error) {
 		Super:    &v.super,
 		WAL:      wal,
 		DirtyMap: dm,
+		Interval: cfg.FlushInterval,
 	})
 	go v.flusher.Run()
 	return v, nil
 }
 
 // OpenBlockVol opens an existing block volume file and runs crash recovery.
-func OpenBlockVol(path string) (*BlockVol, error) {
+func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
+	var cfg BlockVolConfig
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
+	}
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	fd, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("blockvol: open file: %w", err)
@@ -117,7 +149,7 @@ func OpenBlockVol(path string) (*BlockVol, error) {
 		return nil, fmt.Errorf("blockvol: validate superblock: %w", err)
 	}
 
-	dirtyMap := NewDirtyMap()
+	dirtyMap := NewDirtyMap(cfg.DirtyMapShards)
 
 	// Run WAL recovery: replay entries from tail to head.
 	result, err := RecoverWAL(fd, &sb, dirtyMap)
@@ -133,17 +165,22 @@ func OpenBlockVol(path string) (*BlockVol, error) {
 
 	wal := NewWALWriter(fd, sb.WALOffset, sb.WALSize, sb.WALHead, sb.WALTail)
 	v := &BlockVol{
-		fd:       fd,
-		path:     path,
-		super:    sb,
-		wal:      wal,
-		dirtyMap: dirtyMap,
+		fd:         fd,
+		path:       path,
+		super:      sb,
+		config:     cfg,
+		wal:        wal,
+		dirtyMap:   dirtyMap,
+		opsDrained: make(chan struct{}, 1),
 	}
 	v.nextLSN.Store(nextLSN)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:   fd.Sync,
-		OnDegraded: func() { v.healthy.Store(false) },
+		SyncFunc:     fd.Sync,
+		MaxDelay:     cfg.GroupCommitMaxDelay,
+		MaxBatch:     cfg.GroupCommitMaxBatch,
+		LowWatermark: cfg.GroupCommitLowWatermark,
+		OnDegraded:   func() { v.healthy.Store(false) },
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -151,14 +188,71 @@ func OpenBlockVol(path string) (*BlockVol, error) {
 		Super:    &v.super,
 		WAL:      wal,
 		DirtyMap: dirtyMap,
+		Interval: cfg.FlushInterval,
 	})
 	go v.flusher.Run()
 	return v, nil
 }
 
+// beginOp increments the in-flight ops counter. Returns ErrVolumeClosed if
+// the volume is already closed, so callers must not proceed.
+func (v *BlockVol) beginOp() error {
+	v.opsOutstanding.Add(1)
+	if v.closed.Load() {
+		v.endOp()
+		return ErrVolumeClosed
+	}
+	return nil
+}
+
+// endOp decrements the in-flight ops counter and signals the drain channel
+// if this was the last op and the volume is closing.
+func (v *BlockVol) endOp() {
+	if v.opsOutstanding.Add(-1) == 0 && v.closed.Load() {
+		select {
+		case v.opsDrained <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// appendWithRetry appends a WAL entry, retrying on WAL-full by triggering
+// the flusher until the timeout expires.
+func (v *BlockVol) appendWithRetry(entry *WALEntry) (uint64, error) {
+	walOff, err := v.wal.Append(entry)
+	if errors.Is(err, ErrWALFull) {
+		deadline := time.After(v.config.WALFullTimeout)
+		for errors.Is(err, ErrWALFull) {
+			if v.closed.Load() {
+				return 0, ErrVolumeClosed
+			}
+			v.flusher.NotifyUrgent()
+			select {
+			case <-deadline:
+				return 0, fmt.Errorf("blockvol: WAL full timeout: %w", ErrWALFull)
+			case <-time.After(1 * time.Millisecond):
+			}
+			walOff, err = v.wal.Append(entry)
+		}
+	}
+	if err != nil {
+		return 0, fmt.Errorf("blockvol: WAL append: %w", err)
+	}
+	// Re-check closed after retry: Close() may have freed WAL space
+	// while we were retrying, allowing Append to succeed.
+	if v.closed.Load() {
+		return 0, ErrVolumeClosed
+	}
+	return walOff, nil
+}
+
 // WriteLBA writes data at the given logical block address.
 // Data length must be a multiple of BlockSize.
 func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
 	if err := ValidateWrite(lba, uint32(len(data)), v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
 	}
@@ -173,9 +267,14 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 		Data:   data,
 	}
 
-	walOff, err := v.wal.Append(entry)
+	walOff, err := v.appendWithRetry(entry)
 	if err != nil {
-		return fmt.Errorf("blockvol: WriteLBA: %w", err)
+		return err
+	}
+
+	// Check WAL pressure and notify flusher if threshold exceeded.
+	if v.wal.UsedFraction() >= v.config.WALPressureThreshold {
+		v.flusher.NotifyUrgent()
 	}
 
 	// Update dirty map: one entry per block written.
@@ -191,6 +290,10 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 // ReadLBA reads data at the given logical block address.
 // length is in bytes and must be a multiple of BlockSize.
 func (v *BlockVol) ReadLBA(lba uint64, length uint32) ([]byte, error) {
+	if err := v.beginOp(); err != nil {
+		return nil, err
+	}
+	defer v.endOp()
 	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return nil, err
 	}
@@ -212,9 +315,18 @@ func (v *BlockVol) ReadLBA(lba uint64, length uint32) ([]byte, error) {
 
 // readOneBlock reads a single block, checking dirty map first, then extent.
 func (v *BlockVol) readOneBlock(lba uint64) ([]byte, error) {
-	walOff, _, _, ok := v.dirtyMap.Get(lba)
+	walOff, lsn, _, ok := v.dirtyMap.Get(lba)
 	if ok {
-		return v.readBlockFromWAL(walOff, lba)
+		data, stale, err := v.readBlockFromWAL(walOff, lba, lsn)
+		if err != nil {
+			return nil, err
+		}
+		if !stale {
+			return data, nil
+		}
+		// WAL slot was reused (flusher reclaimed it between our
+		// dirty map read and WAL read). The data is already flushed
+		// to the extent region, so fall through to extent read.
 	}
 	return v.readBlockFromExtent(lba)
 }
@@ -224,12 +336,23 @@ func (v *BlockVol) readOneBlock(lba uint64) ([]byte, error) {
 const maxWALEntryDataLen = 256 * 1024 * 1024 // 256MB absolute ceiling
 
 // readBlockFromWAL reads a block's data from its WAL entry.
-func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64) ([]byte, error) {
+// Returns (data, stale, err). If stale is true, the WAL slot was reused
+// by a newer entry (flusher reclaimed it) and the caller should fall back
+// to the extent region.
+func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64, expectedLSN uint64) ([]byte, bool, error) {
 	// Read the WAL entry header to get the full entry size.
 	headerBuf := make([]byte, walEntryHeaderSize)
 	absOff := int64(v.super.WALOffset + walOff)
 	if _, err := v.fd.ReadAt(headerBuf, absOff); err != nil {
-		return nil, fmt.Errorf("readBlockFromWAL: read header at %d: %w", absOff, err)
+		return nil, false, fmt.Errorf("readBlockFromWAL: read header at %d: %w", absOff, err)
+	}
+
+	// WAL reuse guard: validate LSN before trusting the entry.
+	// If the flusher reclaimed this slot and a new write reused it,
+	// the LSN will differ — fall back to extent read.
+	entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
+	if entryLSN != expectedLSN {
+		return nil, true, nil // stale — WAL slot reused
 	}
 
 	// Check entry type first — TRIM has no data payload, so Length is
@@ -237,38 +360,44 @@ func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64) ([]byte, error) {
 	entryType := headerBuf[16] // Type is at offset LSN(8) + Epoch(8) = 16
 	if entryType == EntryTypeTrim {
 		// TRIM entry: return zeros regardless of Length field.
-		return make([]byte, v.super.BlockSize), nil
+		return make([]byte, v.super.BlockSize), false, nil
 	}
 	if entryType != EntryTypeWrite {
-		return nil, fmt.Errorf("readBlockFromWAL: expected WRITE or TRIM entry, got type 0x%02x", entryType)
+		// Unexpected type at a supposedly valid offset — treat as stale.
+		return nil, true, nil
 	}
 
 	// Parse and validate the data Length field before allocating (WRITE only).
 	dataLen := v.parseDataLength(headerBuf)
 	if uint64(dataLen) > v.super.WALSize || uint64(dataLen) > maxWALEntryDataLen {
-		return nil, fmt.Errorf("readBlockFromWAL: corrupt entry length %d exceeds WAL size %d", dataLen, v.super.WALSize)
+		// LSN matched but length is corrupt — real data integrity error.
+		return nil, false, fmt.Errorf("readBlockFromWAL: corrupt entry length %d exceeds WAL size %d", dataLen, v.super.WALSize)
 	}
 
 	entryLen := walEntryHeaderSize + int(dataLen)
 	fullBuf := make([]byte, entryLen)
 	if _, err := v.fd.ReadAt(fullBuf, absOff); err != nil {
-		return nil, fmt.Errorf("readBlockFromWAL: read entry at %d: %w", absOff, err)
+		return nil, false, fmt.Errorf("readBlockFromWAL: read entry at %d: %w", absOff, err)
 	}
 
 	entry, err := DecodeWALEntry(fullBuf)
 	if err != nil {
-		return nil, fmt.Errorf("readBlockFromWAL: decode: %w", err)
+		// LSN matched but CRC failed — real corruption.
+		return nil, false, fmt.Errorf("readBlockFromWAL: decode: %w", err)
 	}
 
-	// Find the block within the entry's data.
+	// Final guard: verify the entry actually covers this LBA.
+	if lba < entry.LBA {
+		return nil, true, nil // stale — different entry at same offset
+	}
 	blockOffset := (lba - entry.LBA) * uint64(v.super.BlockSize)
 	if blockOffset+uint64(v.super.BlockSize) > uint64(len(entry.Data)) {
-		return nil, fmt.Errorf("readBlockFromWAL: block offset %d out of range for entry data len %d", blockOffset, len(entry.Data))
+		return nil, true, nil // stale — LBA out of range
 	}
 
 	block := make([]byte, v.super.BlockSize)
 	copy(block, entry.Data[blockOffset:blockOffset+uint64(v.super.BlockSize)])
-	return block, nil
+	return block, false, nil
 }
 
 // parseDataLength extracts the Length field from a WAL entry header buffer.
@@ -293,6 +422,10 @@ func (v *BlockVol) readBlockFromExtent(lba uint64) ([]byte, error) {
 // The trim is recorded in the WAL with a Length field so the flusher
 // can zero the extent region and recovery can replay the trim.
 func (v *BlockVol) Trim(lba uint64, length uint32) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
 	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
 	}
@@ -306,9 +439,9 @@ func (v *BlockVol) Trim(lba uint64, length uint32) error {
 		Length: length,
 	}
 
-	walOff, err := v.wal.Append(entry)
+	walOff, err := v.appendWithRetry(entry)
 	if err != nil {
-		return fmt.Errorf("blockvol: Trim: %w", err)
+		return err
 	}
 
 	// Update dirty map: mark each trimmed block so the flusher sees it.
@@ -349,18 +482,34 @@ type VolumeInfo struct {
 // SyncCache ensures all previously written WAL entries are durable on disk.
 // It submits a sync request to the group committer, which batches fsyncs.
 func (v *BlockVol) SyncCache() error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
 	return v.groupCommit.Submit()
 }
 
 // Close shuts down the block volume and closes the file.
-// Shutdown order: group committer → stop flusher goroutine → final flush → close fd.
+// Shutdown order: drain in-flight ops → group committer → flusher → final flush → close fd.
 func (v *BlockVol) Close() error {
+	v.closed.Store(true)
+
+	// Drain in-flight ops: beginOp checks closed and returns ErrVolumeClosed,
+	// so no new ops can start. Wait for existing ones to finish (max 5s).
+	if v.opsOutstanding.Load() > 0 {
+		select {
+		case <-v.opsDrained:
+		case <-time.After(5 * time.Second):
+			// Proceed with shutdown even if ops are stuck.
+		}
+	}
+
 	if v.groupCommit != nil {
 		v.groupCommit.Stop()
 	}
 	var flushErr error
 	if v.flusher != nil {
-		v.flusher.Stop()      // stop background goroutine first (no concurrent flush)
+		v.flusher.Stop()         // stop background goroutine first (no concurrent flush)
 		flushErr = v.flusher.FlushOnce() // then do final flush safely
 	}
 	closeErr := v.fd.Close()

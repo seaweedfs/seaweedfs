@@ -186,6 +186,18 @@ func (w *WALWriter) LogicalTail() uint64 {
 	return t
 }
 
+// UsedFraction returns the fraction of WAL space currently in use (0.0 to 1.0).
+func (w *WALWriter) UsedFraction() float64 {
+	w.mu.Lock()
+	u := w.used()
+	s := w.walSize
+	w.mu.Unlock()
+	if s == 0 {
+		return 0
+	}
+	return float64(u) / float64(s)
+}
+
 // Sync fsyncs the underlying file descriptor.
 func (w *WALWriter) Sync() error {
 	return w.fd.Sync()

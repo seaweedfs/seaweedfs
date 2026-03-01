@@ -144,6 +144,13 @@ func (ts *TargetServer) handleConn(conn net.Conn) {
 	defer ts.sessions.Done()
 	defer conn.Close()
 
+	// Reject connections accepted during shutdown.
+	select {
+	case <-ts.closed:
+		return
+	default:
+	}
+
 	ts.logger.Printf("new connection from %s", conn.RemoteAddr())
 
 	sess := NewSession(conn, ts.config, ts, ts, ts.logger)

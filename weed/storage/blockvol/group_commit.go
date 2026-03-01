@@ -2,20 +2,25 @@ package blockvol
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var ErrGroupCommitShutdown = errors.New("blockvol: group committer shut down")
+var (
+	ErrGroupCommitShutdown = errors.New("blockvol: group committer shut down")
+	ErrGroupCommitPanic    = errors.New("blockvol: group committer panic in syncFunc")
+)
 
 // GroupCommitter batches SyncCache requests and performs a single fsync
 // for the entire batch. This amortizes the cost of fsync across many callers.
 type GroupCommitter struct {
-	syncFunc   func() error  // called to fsync (injectable for testing)
-	maxDelay   time.Duration // max wait before flushing a partial batch
-	maxBatch   int           // flush immediately when this many waiters accumulate
-	onDegraded func()        // called when fsync fails
+	syncFunc     func() error  // called to fsync (injectable for testing)
+	maxDelay     time.Duration // max wait before flushing a partial batch
+	maxBatch     int           // flush immediately when this many waiters accumulate
+	lowWatermark int           // skip delay if fewer pending (0 = always wait)
+	onDegraded   func()        // called when fsync fails
 
 	mu       sync.Mutex
 	pending  []chan error
@@ -30,10 +35,11 @@ type GroupCommitter struct {
 
 // GroupCommitterConfig configures the group committer.
 type GroupCommitterConfig struct {
-	SyncFunc   func() error  // required: the fsync function
-	MaxDelay   time.Duration // default 1ms
-	MaxBatch   int           // default 64
-	OnDegraded func()        // optional: called on fsync error
+	SyncFunc     func() error  // required: the fsync function
+	MaxDelay     time.Duration // default 1ms
+	MaxBatch     int           // default 64
+	LowWatermark int           // skip delay if fewer pending (0 = always wait)
+	OnDegraded   func()        // optional: called on fsync error
 }
 
 // NewGroupCommitter creates a new group committer. Call Run() to start it.
@@ -48,13 +54,14 @@ func NewGroupCommitter(cfg GroupCommitterConfig) *GroupCommitter {
 		cfg.OnDegraded = func() {}
 	}
 	return &GroupCommitter{
-		syncFunc:   cfg.SyncFunc,
-		maxDelay:   cfg.MaxDelay,
-		maxBatch:   cfg.MaxBatch,
-		onDegraded: cfg.OnDegraded,
-		notifyCh:   make(chan struct{}, 1),
-		stopCh:     make(chan struct{}),
-		done:       make(chan struct{}),
+		syncFunc:     cfg.SyncFunc,
+		maxDelay:     cfg.MaxDelay,
+		maxBatch:     cfg.MaxBatch,
+		lowWatermark: cfg.LowWatermark,
+		onDegraded:   cfg.OnDegraded,
+		notifyCh:     make(chan struct{}, 1),
+		stopCh:       make(chan struct{}),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -70,29 +77,44 @@ func (gc *GroupCommitter) Run() {
 		case <-gc.notifyCh:
 		}
 
-		// Collect batch: wait up to maxDelay for more waiters, or until maxBatch reached.
-		deadline := time.NewTimer(gc.maxDelay)
-		for {
+		// Adaptive: if pending count is below low watermark, flush immediately
+		// without waiting for more waiters.
+		skipDelay := false
+		if gc.lowWatermark > 0 {
 			gc.mu.Lock()
 			n := len(gc.pending)
 			gc.mu.Unlock()
-			if n >= gc.maxBatch {
-				deadline.Stop()
-				break
-			}
-			select {
-			case <-gc.stopCh:
-				deadline.Stop()
-				gc.markStoppedAndDrain()
-				return
-			case <-deadline.C:
-				goto flush
-			case <-gc.notifyCh:
-				continue
+			if n < gc.lowWatermark {
+				skipDelay = true
 			}
 		}
 
-	flush:
+		if !skipDelay {
+			// Collect batch: wait up to maxDelay for more waiters, or until maxBatch reached.
+			deadline := time.NewTimer(gc.maxDelay)
+			collectDone := false
+			for !collectDone {
+				gc.mu.Lock()
+				n := len(gc.pending)
+				gc.mu.Unlock()
+				if n >= gc.maxBatch {
+					deadline.Stop()
+					collectDone = true
+					break
+				}
+				select {
+				case <-gc.stopCh:
+					deadline.Stop()
+					gc.markStoppedAndDrain()
+					return
+				case <-deadline.C:
+					collectDone = true
+				case <-gc.notifyCh:
+					continue
+				}
+			}
+		}
+
 		// Take all pending waiters.
 		gc.mu.Lock()
 		batch := gc.pending
@@ -103,8 +125,9 @@ func (gc *GroupCommitter) Run() {
 			continue
 		}
 
-		// Perform fsync.
-		err := gc.syncFunc()
+		// Perform fsync with panic recovery. A panic in syncFunc must
+		// not leave waiters hung — notify them and drain stragglers.
+		err := gc.callSyncFunc()
 		gc.syncCount.Add(1)
 		if err != nil {
 			gc.onDegraded()
@@ -113,6 +136,12 @@ func (gc *GroupCommitter) Run() {
 		// Wake all waiters.
 		for _, ch := range batch {
 			ch <- err
+		}
+
+		// If syncFunc panicked, stop accepting new work.
+		if errors.Is(err, ErrGroupCommitPanic) {
+			gc.markStoppedAndDrain()
+			return
 		}
 	}
 }
@@ -150,6 +179,17 @@ func (gc *GroupCommitter) Stop() {
 // SyncCount returns the number of fsyncs performed (for testing).
 func (gc *GroupCommitter) SyncCount() uint64 {
 	return gc.syncCount.Load()
+}
+
+// callSyncFunc calls syncFunc with panic recovery. Returns ErrGroupCommitPanic
+// wrapping the panic value if syncFunc panics.
+func (gc *GroupCommitter) callSyncFunc() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrGroupCommitPanic, r)
+		}
+	}()
+	return gc.syncFunc()
 }
 
 // markStoppedAndDrain sets the stopped flag under mu and drains all pending

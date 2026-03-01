@@ -8,12 +8,17 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var (
-	ErrSessionClosed = errors.New("iscsi: session closed")
+	ErrSessionClosed    = errors.New("iscsi: session closed")
 	ErrCmdSNOutOfWindow = errors.New("iscsi: CmdSN out of window")
 )
+
+// maxPendingQueue limits the number of non-Data-Out PDUs that can be
+// queued during a Data-Out collection phase. 2× the CmdSN window (32).
+const maxPendingQueue = 64
 
 // SessionState tracks the lifecycle of an iSCSI session.
 type SessionState int
@@ -39,7 +44,7 @@ type Session struct {
 	// Sequence numbers
 	expCmdSN atomic.Uint32 // expected CmdSN from initiator
 	maxCmdSN atomic.Uint32 // max CmdSN we allow
-	statSN   uint32        // target status sequence number
+	statSN   uint32        // target status sequence number (txLoop only after login)
 
 	// Login state
 	negotiator *LoginNegotiator
@@ -53,9 +58,12 @@ type Session struct {
 	dataInWriter *DataInWriter
 
 	// PDU queue for commands received during Data-Out collection.
-	// The initiator pipelines commands; we may read a SCSI Command
-	// while waiting for Data-Out PDUs.
 	pending []*PDU
+
+	// TX goroutine channel for response PDUs.
+	// Buffered; txLoop reads and writes to conn.
+	respCh chan *PDU
+	txDone chan struct{}
 
 	// Shutdown
 	closed   atomic.Bool
@@ -77,6 +85,8 @@ func NewSession(conn net.Conn, config TargetConfig, resolver TargetResolver, dev
 		resolver:   resolver,
 		devices:    devices,
 		negotiator: NewLoginNegotiator(config),
+		respCh:     make(chan *PDU, 64),
+		txDone:     make(chan struct{}),
 		logger:     logger,
 	}
 	s.expCmdSN.Store(1)
@@ -85,21 +95,44 @@ func NewSession(conn net.Conn, config TargetConfig, resolver TargetResolver, dev
 }
 
 // HandleConnection processes PDUs until the connection is closed or an error occurs.
+// Login phase runs inline (single goroutine). After login completes, a txLoop
+// goroutine is started for pipelined response writing.
 func (s *Session) HandleConnection() error {
 	defer s.close()
 
-	for !s.closed.Load() {
-		pdu, err := s.nextPDU()
+	// Login phase: handle login PDUs inline (no txLoop yet).
+	if err := s.loginPhase(); err != nil {
+		return err
+	}
+
+	if !s.loginDone {
+		// Connection closed during login phase.
+		return nil
+	}
+
+	// Start TX goroutine for full-feature phase.
+	go s.txLoop()
+
+	// RX loop: read PDUs and dispatch serially.
+	err := s.rxLoop()
+
+	// Shutdown: close respCh so txLoop exits, then wait for it.
+	close(s.respCh)
+	<-s.txDone
+
+	return err
+}
+
+// loginPhase handles login PDUs inline until login is complete or connection closes.
+func (s *Session) loginPhase() error {
+	for !s.closed.Load() && !s.loginDone {
+		pdu, err := ReadPDU(s.conn)
 		if err != nil {
-			if s.closed.Load() {
-				return nil
-			}
-			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+			if s.closed.Load() || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return fmt.Errorf("read PDU: %w", err)
 		}
-
 		if err := s.dispatch(pdu); err != nil {
 			if s.closed.Load() {
 				return nil
@@ -108,6 +141,102 @@ func (s *Session) HandleConnection() error {
 		}
 	}
 	return nil
+}
+
+// rxLoop reads PDUs from the connection and dispatches them serially.
+// Response PDUs are enqueued on respCh by handlers.
+func (s *Session) rxLoop() error {
+	for !s.closed.Load() {
+		pdu, err := s.nextPDU()
+		if err != nil {
+			if s.closed.Load() || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("read PDU: %w", err)
+		}
+		if err := s.dispatch(pdu); err != nil {
+			if s.closed.Load() {
+				return nil
+			}
+			return fmt.Errorf("dispatch %s: %w", OpcodeName(pdu.Opcode()), err)
+		}
+	}
+	return nil
+}
+
+// txLoop reads response PDUs from respCh, assigns StatSN, and writes to conn.
+// Runs as a goroutine during full-feature phase.
+func (s *Session) txLoop() {
+	defer close(s.txDone)
+	for pdu := range s.respCh {
+		if pdu == nil {
+			continue
+		}
+		// Assign StatSN based on PDU type.
+		switch s.pduStatSNMode(pdu) {
+		case statSNAssign:
+			s.mu.Lock()
+			pdu.SetStatSN(s.statSN)
+			s.statSN++
+			pdu.SetExpCmdSN(s.expCmdSN.Load())
+			pdu.SetMaxCmdSN(s.maxCmdSN.Load())
+			s.mu.Unlock()
+		case statSNCopy:
+			s.mu.Lock()
+			pdu.SetStatSN(s.statSN)
+			pdu.SetExpCmdSN(s.expCmdSN.Load())
+			pdu.SetMaxCmdSN(s.maxCmdSN.Load())
+			s.mu.Unlock()
+		}
+		if err := WritePDU(s.conn, pdu); err != nil {
+			if !s.closed.Load() {
+				s.logger.Printf("txLoop write error: %v", err)
+			}
+			// Close connection so rxLoop exits, which lets HandleConnection
+			// close respCh, which lets the drain loop below finish.
+			s.closed.Store(true)
+			s.conn.Close()
+			for range s.respCh {
+			}
+			return
+		}
+	}
+}
+
+// statSNMode controls how txLoop handles StatSN for a PDU.
+type statSNMode int
+
+const (
+	statSNNone   statSNMode = iota // don't touch (intermediate Data-In)
+	statSNAssign                   // assign current StatSN, increment
+	statSNCopy                     // assign current StatSN, do NOT increment (R2T)
+)
+
+// pduStatSNMode returns the StatSN handling mode for the given PDU.
+func (s *Session) pduStatSNMode(pdu *PDU) statSNMode {
+	op := pdu.Opcode()
+	switch op {
+	case OpSCSIDataIn:
+		// Only the final Data-In PDU (with S-bit) gets StatSN.
+		if pdu.OpSpecific1()&FlagS != 0 {
+			return statSNAssign
+		}
+		return statSNNone
+	case OpR2T:
+		// R2T carries StatSN but does NOT increment it (RFC 7143).
+		return statSNCopy
+	default:
+		return statSNAssign
+	}
+}
+
+// enqueue sends a response PDU to the TX goroutine.
+func (s *Session) enqueue(pdu *PDU) {
+	select {
+	case s.respCh <- pdu:
+	case <-s.txDone:
+		// TX loop exited, discard response.
+	}
 }
 
 // nextPDU returns the next PDU to process, draining the pending queue
@@ -166,7 +295,7 @@ func (s *Session) handleLogin(pdu *PDU) error {
 
 	resp := s.negotiator.HandleLoginPDU(pdu, s.resolver)
 
-	// Set sequence numbers
+	// During login phase, StatSN is assigned inline (no txLoop yet).
 	resp.SetStatSN(s.statSN)
 	s.statSN++
 	resp.SetExpCmdSN(s.expCmdSN.Load())
@@ -184,9 +313,6 @@ func (s *Session) handleLogin(pdu *PDU) error {
 		s.negImmediateData = result.ImmediateData
 		s.negInitialR2T = result.InitialR2T
 
-		// Bind SCSI handler to the device for the target the initiator logged into.
-		// Discovery sessions have no TargetName — s.scsi stays nil, which is
-		// checked in handleSCSICmd.
 		if s.devices != nil && result.TargetName != "" {
 			dev := s.devices.LookupDevice(result.TargetName)
 			s.scsi = NewSCSIHandler(dev)
@@ -200,22 +326,19 @@ func (s *Session) handleLogin(pdu *PDU) error {
 }
 
 func (s *Session) handleText(pdu *PDU) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if !s.loginDone {
+		return s.sendReject(pdu, 0x0b) // protocol error
+	}
 
-	// Gather discovery targets from resolver if it supports listing
 	var targets []DiscoveryTarget
 	if lister, ok := s.resolver.(TargetLister); ok {
 		targets = lister.ListTargets()
 	}
 
 	resp := HandleTextRequest(pdu, targets)
-	resp.SetStatSN(s.statSN)
-	s.statSN++
-	resp.SetExpCmdSN(s.expCmdSN.Load())
-	resp.SetMaxCmdSN(s.maxCmdSN.Load())
-
-	return WritePDU(s.conn, resp)
+	// ExpCmdSN/MaxCmdSN are set by txLoop via pduNeedsStatSN.
+	s.enqueue(resp)
+	return nil
 }
 
 func (s *Session) handleSCSICmd(pdu *PDU) error {
@@ -223,7 +346,6 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 		return s.sendReject(pdu, 0x0b) // protocol error
 	}
 
-	// Discovery sessions have no SCSI handler — reject commands
 	if s.scsi == nil {
 		return s.sendReject(pdu, 0x04) // command not supported
 	}
@@ -232,15 +354,14 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	itt := pdu.InitiatorTaskTag()
 	flags := pdu.OpSpecific1()
 
-	// CmdSN validation for non-immediate commands (RFC 7143 section 4.2.2.1)
+	// CmdSN validation for non-immediate commands
 	if !pdu.Immediate() {
 		cmdSN := pdu.CmdSN()
 		expCmdSN := s.expCmdSN.Load()
 		maxCmdSN := s.maxCmdSN.Load()
-		// CmdSN is within window if ExpCmdSN <= CmdSN <= MaxCmdSN (serial arithmetic)
 		if !cmdSNInWindow(cmdSN, expCmdSN, maxCmdSN) {
 			s.logger.Printf("CmdSN %d out of window [%d, %d], dropping", cmdSN, expCmdSN, maxCmdSN)
-			return nil // silently drop per RFC 7143
+			return nil
 		}
 		s.advanceCmdSN()
 	}
@@ -254,10 +375,8 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	if isWrite && expectedLen > 0 {
 		collector := NewDataOutCollector(expectedLen)
 
-		// Immediate data — enforce negotiated ImmediateData flag
 		if len(pdu.DataSegment) > 0 {
 			if !s.negImmediateData {
-				// ImmediateData=No but initiator sent data — reject
 				return s.sendCheckCondition(itt, SenseIllegalRequest, ASCInvalidFieldInCDB, ASCQLuk)
 			}
 			if err := collector.AddImmediateData(pdu.DataSegment); err != nil {
@@ -265,7 +384,6 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 			}
 		}
 
-		// If more data needed, send R2T and collect Data-Out PDUs
 		if !collector.Done() {
 			if err := s.collectDataOut(collector, itt); err != nil {
 				return err
@@ -278,52 +396,51 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	// Execute SCSI command
 	result := s.scsi.HandleCommand(cdb, dataOut)
 
-	// Send response
-	s.mu.Lock()
-	expCmdSN := s.expCmdSN.Load()
-	maxCmdSN := s.maxCmdSN.Load()
-	s.mu.Unlock()
-
 	if isRead && result.Status == SCSIStatusGood && len(result.Data) > 0 {
-		// Send Data-In PDUs
-		s.mu.Lock()
-		_, err := s.dataInWriter.WriteDataIn(s.conn, result.Data, itt, expCmdSN, maxCmdSN, &s.statSN)
-		s.mu.Unlock()
-		return err
+		// Build Data-In PDUs and enqueue them all.
+		pdus := s.dataInWriter.BuildDataInPDUs(result.Data, itt, s.expCmdSN.Load(), s.maxCmdSN.Load())
+		for _, p := range pdus {
+			s.enqueue(p)
+		}
+		return nil
 	}
 
-	// Send SCSI Response
-	s.mu.Lock()
-	err := SendSCSIResponse(s.conn, result, itt, &s.statSN, expCmdSN, maxCmdSN)
-	s.mu.Unlock()
-	return err
+	// Build SCSI Response PDU and enqueue.
+	resp := BuildSCSIResponse(result, itt, s.expCmdSN.Load(), s.maxCmdSN.Load())
+	s.enqueue(resp)
+	return nil
 }
 
 func (s *Session) collectDataOut(collector *DataOutCollector, itt uint32) error {
 	var r2tSN uint32
-	ttt := itt // use ITT as TTT for simplicity
+	ttt := itt
+
+	// Clear any read deadline on exit (success or error).
+	defer s.conn.SetReadDeadline(time.Time{})
 
 	for !collector.Done() {
-		// Send R2T
-		s.mu.Lock()
+		// Build R2T and enqueue (txLoop assigns StatSN before writing).
 		r2t := BuildR2T(itt, ttt, r2tSN, s.totalReceived(collector), collector.Remaining(),
-			s.statSN, s.expCmdSN.Load(), s.maxCmdSN.Load())
-		s.mu.Unlock()
+			s.expCmdSN.Load(), s.maxCmdSN.Load())
 
-		if err := WritePDU(s.conn, r2t); err != nil {
-			return err
-		}
+		s.enqueue(r2t)
 		r2tSN++
 
+		// Set read deadline for Data-Out collection.
+		if s.config.DataOutTimeout > 0 {
+			s.conn.SetReadDeadline(time.Now().Add(s.config.DataOutTimeout))
+		}
+
 		// Read Data-Out PDUs until F-bit.
-		// The initiator may pipeline other commands; queue them for later.
 		for {
 			doPDU, err := ReadPDU(s.conn)
 			if err != nil {
 				return err
 			}
 			if doPDU.Opcode() != OpSCSIDataOut {
-				// Not our Data-Out — queue for later dispatch
+				if len(s.pending) >= maxPendingQueue {
+					return fmt.Errorf("pending queue overflow (%d PDUs)", maxPendingQueue)
+				}
 				s.pending = append(s.pending, doPDU)
 				continue
 			}
@@ -343,69 +460,59 @@ func (s *Session) totalReceived(c *DataOutCollector) uint32 {
 }
 
 func (s *Session) handleNOPOut(pdu *PDU) error {
+	if !s.loginDone {
+		return s.sendReject(pdu, 0x0b) // protocol error
+	}
+
 	resp := &PDU{}
 	resp.SetOpcode(OpNOPIn)
 	resp.SetOpSpecific1(FlagF)
 	resp.SetInitiatorTaskTag(pdu.InitiatorTaskTag())
 	resp.SetTargetTransferTag(0xFFFFFFFF)
 
-	s.mu.Lock()
-	resp.SetStatSN(s.statSN)
-	s.statSN++
-	resp.SetExpCmdSN(s.expCmdSN.Load())
-	resp.SetMaxCmdSN(s.maxCmdSN.Load())
-	s.mu.Unlock()
-
-	// Echo back data if present
 	if len(pdu.DataSegment) > 0 {
 		resp.DataSegment = pdu.DataSegment
 	}
 
-	return WritePDU(s.conn, resp)
+	s.enqueue(resp)
+	return nil
 }
 
 func (s *Session) handleLogout(pdu *PDU) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.state = SessionLogout
+	if !s.loginDone {
+		return s.sendReject(pdu, 0x0b) // protocol error
+	}
 
 	resp := &PDU{}
 	resp.SetOpcode(OpLogoutResp)
 	resp.SetOpSpecific1(FlagF)
 	resp.SetInitiatorTaskTag(pdu.InitiatorTaskTag())
 	resp.BHS[2] = 0x00 // response: connection/session closed successfully
-	resp.SetStatSN(s.statSN)
-	s.statSN++
-	resp.SetExpCmdSN(s.expCmdSN.Load())
-	resp.SetMaxCmdSN(s.maxCmdSN.Load())
 
-	if err := WritePDU(s.conn, resp); err != nil {
-		return err
-	}
+	s.enqueue(resp)
 
-	// Signal HandleConnection to exit
+	// Give txLoop a moment to write the response before closing.
+	// We signal close after enqueue so the logout response is sent.
+	s.mu.Lock()
+	s.state = SessionLogout
+	s.mu.Unlock()
 	s.closed.Store(true)
-	s.conn.Close()
 	return nil
 }
 
 func (s *Session) handleTaskMgmt(pdu *PDU) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	if !s.loginDone {
+		return s.sendReject(pdu, 0x0b) // protocol error
+	}
 
-	// Simplified: always respond with "function complete"
 	resp := &PDU{}
 	resp.SetOpcode(OpSCSITaskResp)
 	resp.SetOpSpecific1(FlagF)
 	resp.SetInitiatorTaskTag(pdu.InitiatorTaskTag())
 	resp.BHS[2] = 0x00 // function complete
-	resp.SetStatSN(s.statSN)
-	s.statSN++
-	resp.SetExpCmdSN(s.expCmdSN.Load())
-	resp.SetMaxCmdSN(s.maxCmdSN.Load())
 
-	return WritePDU(s.conn, resp)
+	s.enqueue(resp)
+	return nil
 }
 
 func (s *Session) advanceCmdSN() {
@@ -416,7 +523,6 @@ func (s *Session) advanceCmdSN() {
 // cmdSNInWindow checks if cmdSN is within [expCmdSN, maxCmdSN] using
 // serial number arithmetic (RFC 7143 section 4.2.2.1). Handles uint32 wrap.
 func cmdSNInWindow(cmdSN, expCmdSN, maxCmdSN uint32) bool {
-	// Serial comparison: a <= b means (b - a) < 2^31
 	return serialLE(expCmdSN, cmdSN) && serialLE(cmdSN, maxCmdSN)
 }
 
@@ -430,18 +536,21 @@ func (s *Session) sendReject(origPDU *PDU, reason uint8) error {
 	resp.SetOpSpecific1(FlagF)
 	resp.BHS[2] = reason
 	resp.SetInitiatorTaskTag(0xFFFFFFFF)
-
-	s.mu.Lock()
-	resp.SetStatSN(s.statSN)
-	s.statSN++
-	resp.SetExpCmdSN(s.expCmdSN.Load())
-	resp.SetMaxCmdSN(s.maxCmdSN.Load())
-	s.mu.Unlock()
-
-	// Include the rejected BHS in the data segment
 	resp.DataSegment = origPDU.BHS[:]
 
-	return WritePDU(s.conn, resp)
+	if s.loginDone {
+		s.enqueue(resp)
+	} else {
+		// During login phase, write inline (no txLoop).
+		s.mu.Lock()
+		resp.SetStatSN(s.statSN)
+		s.statSN++
+		resp.SetExpCmdSN(s.expCmdSN.Load())
+		resp.SetMaxCmdSN(s.maxCmdSN.Load())
+		s.mu.Unlock()
+		return WritePDU(s.conn, resp)
+	}
+	return nil
 }
 
 func (s *Session) sendCheckCondition(itt uint32, senseKey, asc, ascq uint8) error {
@@ -451,9 +560,9 @@ func (s *Session) sendCheckCondition(itt uint32, senseKey, asc, ascq uint8) erro
 		SenseASC:  asc,
 		SenseASCQ: ascq,
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return SendSCSIResponse(s.conn, result, itt, &s.statSN, s.expCmdSN.Load(), s.maxCmdSN.Load())
+	resp := BuildSCSIResponse(result, itt, s.expCmdSN.Load(), s.maxCmdSN.Load())
+	s.enqueue(resp)
+	return nil
 }
 
 // TargetLister is an optional interface that TargetResolver can implement
@@ -463,7 +572,6 @@ type TargetLister interface {
 }
 
 // DeviceLookup resolves a target IQN to a BlockDevice.
-// Used after login to bind the session to the correct volume.
 type DeviceLookup interface {
 	LookupDevice(iqn string) BlockDevice
 }

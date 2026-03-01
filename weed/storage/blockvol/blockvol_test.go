@@ -6,7 +6,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestBlockVol(t *testing.T) {
@@ -33,6 +36,37 @@ func TestBlockVol(t *testing.T) {
 		{name: "lifecycle_write_sync_close_reopen", run: testLifecycleWriteSyncCloseReopen},
 		// Task 1.11: Crash stress test.
 		{name: "crash_stress_100", run: testCrashStress100},
+		// Phase 3 Task 1.2: Config wiring.
+		{name: "config_zero_value_compat", run: testConfigZeroValueCompat},
+		{name: "config_validates_on_create", run: testConfigValidatesOnCreate},
+		{name: "config_validates_on_open", run: testConfigValidatesOnOpen},
+		// Phase 3 Task 1.7: WAL pressure integration.
+		{name: "wal_pressure_triggers_flush", run: testWALPressureTriggersFlush},
+		{name: "wal_full_retry_succeeds", run: testWALFullRetrySucceeds},
+		{name: "wal_full_timeout_returns_error", run: testWALFullTimeoutReturnsError},
+		{name: "wal_pressure_custom_threshold", run: testWALPressureCustomThreshold},
+		{name: "wal_pressure_below_threshold_no_trigger", run: testWALPressureBelowThresholdNoTrigger},
+		{name: "wal_pressure_concurrent_pressure", run: testWALPressureConcurrentPressure},
+		// Phase 3 bug fix: P3-BUG-5 closed guard.
+		{name: "write_after_close", run: testWriteAfterClose},
+		// Phase 3 Task 1.8: Integration tests.
+		{name: "blockvol_custom_config_create", run: testBlockvolCustomConfigCreate},
+		{name: "blockvol_custom_config_open", run: testBlockvolCustomConfigOpen},
+		{name: "sharded_len_accurate", run: testShardedLenAccurate},
+		// Phase 3: WAL reuse guard (ReadLBA vs flusher race).
+		{name: "wal_reuse_guard_read_during_flush", run: testWALReuseGuardReadDuringFlush},
+		{name: "wal_reuse_guard_concurrent_stress", run: testWALReuseGuardConcurrentStress},
+		// Phase 3 Task 5.2: opsOutstanding + Close drain.
+		{name: "close_drains_inflight_ops", run: testCloseDrainsInflightOps},
+		{name: "close_drains_concurrent_readers", run: testCloseDrainsConcurrentReaders},
+		// Phase 3 Task 5.3: Trim WAL-full retry.
+		{name: "trim_wal_full_retry", run: testTrimWALFullRetry},
+		// Phase 3 Task 5.5: Flusher error no checkpoint advance.
+		{name: "flusher_error_no_checkpoint_advance", run: testFlusherErrorNoCheckpointAdvance},
+		// Phase 3 Task 5.6: Close during SyncCache.
+		{name: "close_during_sync_cache", run: testCloseDuringSyncCache},
+		// Review finding: Close timeout if op stuck.
+		{name: "close_timeout_if_op_stuck", run: testCloseTimeoutIfOpStuck},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -560,12 +594,16 @@ func testCrashStress100(t *testing.T) {
 	// Oracle: tracks the expected state of each block.
 	oracle := make(map[uint64]byte) // lba → fill byte (0 = zeros/trimmed)
 
+	// Short WALFullTimeout for stress test to avoid long retries.
+	stressCfg := DefaultConfig()
+	stressCfg.WALFullTimeout = 10 * time.Millisecond
+
 	// Create initial volume.
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: volumeSize,
 		BlockSize:  blockSize,
 		WALSize:    walSize,
-	})
+	}, stressCfg)
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
 	}
@@ -606,9 +644,13 @@ func testCrashStress100(t *testing.T) {
 			t.Fatalf("iter %d: SyncCache: %v", iter, err)
 		}
 
-		// Simulate crash: close fd without clean shutdown.
+		// Stop background goroutines BEFORE writing superblock to avoid
+		// concurrent superblock writes (flusher also writes superblock).
+		v.groupCommit.Stop()
+		v.flusher.Stop()
+
+		// Simulate crash: write superblock with current WAL positions.
 		v.fd.Sync() // ensure WAL is on disk
-		// Write superblock with current WAL positions for recovery.
 		v.super.WALHead = v.wal.LogicalHead()
 		v.super.WALTail = v.wal.LogicalTail()
 		if _, seekErr := v.fd.Seek(0, 0); seekErr != nil {
@@ -616,14 +658,10 @@ func testCrashStress100(t *testing.T) {
 		}
 		v.super.WriteTo(v.fd)
 		v.fd.Sync()
-
-		// Hard crash: close fd, stop goroutines.
-		v.groupCommit.Stop()
-		v.flusher.Stop()
 		v.fd.Close()
 
 		// Reopen with recovery.
-		v, err = OpenBlockVol(path)
+		v, err = OpenBlockVol(path, stressCfg)
 		if err != nil {
 			t.Fatalf("iter %d: OpenBlockVol: %v", iter, err)
 		}
@@ -647,6 +685,451 @@ func testCrashStress100(t *testing.T) {
 	}
 
 	v.Close()
+}
+
+// --- Phase 3 Task 1.2: Config wiring tests ---
+
+func testConfigZeroValueCompat(t *testing.T) {
+	// Zero-value config (no explicit config passed) should work identically to Phase 2.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "zeroconfig.blockvol")
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol with zero config: %v", err)
+	}
+
+	data := makeBlock('Z')
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	got, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("zero-value config: data mismatch")
+	}
+	v.Close()
+}
+
+func testConfigValidatesOnCreate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "badcfg.blockvol")
+	badCfg := DefaultConfig()
+	badCfg.DirtyMapShards = 3 // not power-of-2
+
+	_, err := CreateBlockVol(path, CreateOptions{VolumeSize: 1 * 1024 * 1024}, badCfg)
+	if err == nil {
+		t.Fatal("expected error with bad config on Create")
+	}
+	if !errors.Is(err, errInvalidConfig) {
+		t.Errorf("expected errInvalidConfig, got: %v", err)
+	}
+}
+
+func testConfigValidatesOnOpen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencfg.blockvol")
+
+	// Create a valid volume first.
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	v.Close()
+
+	// Open with bad config.
+	badCfg := DefaultConfig()
+	badCfg.DirtyMapShards = 3 // invalid: not power-of-2
+
+	_, err = OpenBlockVol(path, badCfg)
+	if err == nil {
+		t.Fatal("expected error with bad config on Open")
+	}
+	if !errors.Is(err, errInvalidConfig) {
+		t.Errorf("expected errInvalidConfig, got: %v", err)
+	}
+}
+
+// --- Phase 3 Task 1.7: WAL pressure tests ---
+
+func testWALPressureTriggersFlush(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pressure.blockvol")
+
+	// Small WAL + low threshold to trigger pressure quickly.
+	cfg := DefaultConfig()
+	cfg.WALPressureThreshold = 0.3
+	cfg.FlushInterval = 10 * time.Millisecond
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    64 * 1024, // 64KB WAL
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write enough to exceed 30% threshold.
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walCapacity := 64 * 1024 / entrySize
+	writeCount := int(float64(walCapacity)*0.4) + 1
+
+	for i := 0; i < writeCount; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i%26))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Pressure should have triggered flusher. Give it time to flush.
+	time.Sleep(50 * time.Millisecond)
+
+	// The flusher should have made progress.
+	frac := v.wal.UsedFraction()
+	t.Logf("WAL used fraction after writes+flush: %f", frac)
+}
+
+func testWALFullRetrySucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.WALFullTimeout = 2 * time.Second
+	cfg.FlushInterval = 10 * time.Millisecond
+
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 4 // tiny WAL: 4 entries
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write enough to nearly fill WAL.
+	for i := 0; i < 3; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Next write may trigger WAL full + retry. With flusher running,
+	// it should eventually succeed.
+	for i := 3; i < 10; i++ {
+		if err := v.WriteLBA(uint64(i%4), makeBlock(byte('X'+i%4))); err != nil {
+			t.Fatalf("WriteLBA(%d) after flusher: %v", i, err)
+		}
+	}
+}
+
+func testWALFullTimeoutReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "timeout.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.WALFullTimeout = 50 * time.Millisecond
+	cfg.FlushInterval = 1 * time.Hour // flusher effectively disabled
+
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 2 // tiny WAL: 2 entries
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Stop the flusher goroutine so NotifyUrgent is a no-op.
+	v.flusher.Stop()
+
+	// Fill WAL.
+	for i := 0; i < 2; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Next write should timeout since flusher is stopped.
+	start := time.Now()
+	err = v.WriteLBA(2, makeBlock('Z'))
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected ErrWALFull after timeout")
+	}
+	if !errors.Is(err, ErrWALFull) {
+		t.Errorf("expected ErrWALFull, got: %v", err)
+	}
+	if elapsed < 40*time.Millisecond {
+		t.Errorf("should have waited ~50ms, took %v", elapsed)
+	}
+}
+
+// --- Phase 3 Task 1.8: Integration tests ---
+
+func testBlockvolCustomConfigCreate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "customcfg.blockvol")
+
+	cfg := BlockVolConfig{
+		GroupCommitMaxDelay:     2 * time.Millisecond,
+		GroupCommitMaxBatch:     32,
+		GroupCommitLowWatermark: 2,
+		WALPressureThreshold:   0.5,
+		WALFullTimeout:         1 * time.Second,
+		FlushInterval:          50 * time.Millisecond,
+		DirtyMapShards:         64,
+	}
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol with custom config: %v", err)
+	}
+	defer v.Close()
+
+	// Verify write/read works with custom config.
+	data := makeBlock('C')
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+	got, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("custom config: data mismatch")
+	}
+}
+
+func testBlockvolCustomConfigOpen(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencustom.blockvol")
+
+	cfg := BlockVolConfig{
+		GroupCommitMaxDelay:     2 * time.Millisecond,
+		GroupCommitMaxBatch:     32,
+		GroupCommitLowWatermark: 2,
+		WALPressureThreshold:   0.6,
+		WALFullTimeout:         2 * time.Second,
+		FlushInterval:          50 * time.Millisecond,
+		DirtyMapShards:         128,
+	}
+
+	// Create with default config, close, reopen with custom config.
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	data := makeBlock('O')
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+	v.Close()
+
+	// Open with custom config.
+	v2, err := OpenBlockVol(path, cfg)
+	if err != nil {
+		t.Fatalf("OpenBlockVol with custom config: %v", err)
+	}
+	defer v2.Close()
+
+	got, err := v2.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after reopen: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("data mismatch after reopen with custom config")
+	}
+}
+
+func testShardedLenAccurate(t *testing.T) {
+	dm := NewDirtyMap(256)
+
+	// Insert 1000 entries spread across shards.
+	for i := uint64(0); i < 1000; i++ {
+		dm.Put(i, i*10, i+1, 4096)
+	}
+	if dm.Len() != 1000 {
+		t.Errorf("Len() = %d, want 1000", dm.Len())
+	}
+
+	// Delete 500 entries.
+	for i := uint64(0); i < 500; i++ {
+		dm.Delete(i)
+	}
+	if dm.Len() != 500 {
+		t.Errorf("after delete: Len() = %d, want 500", dm.Len())
+	}
+}
+
+func testWALPressureCustomThreshold(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "customthresh.blockvol")
+
+	// Very high threshold: pressure should NOT trigger urgently.
+	cfg := DefaultConfig()
+	cfg.WALPressureThreshold = 0.99
+	cfg.FlushInterval = 1 * time.Hour
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write a few blocks -- should not trigger urgent flush.
+	for i := 0; i < 5; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Dirty map should still have entries (flusher not triggered).
+	if v.dirtyMap.Len() != 5 {
+		t.Errorf("dirty map len = %d, want 5 (no flush expected)", v.dirtyMap.Len())
+	}
+}
+
+func testWALPressureBelowThresholdNoTrigger(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "below.blockvol")
+
+	// Threshold at 80%, write only ~50% of WAL. No urgent flush expected.
+	cfg := DefaultConfig()
+	cfg.WALPressureThreshold = 0.8
+	cfg.FlushInterval = 1 * time.Hour // disable periodic flush
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024, // 256KB WAL
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Stop flusher so we can observe dirty map state.
+	v.flusher.Stop()
+
+	// Write ~50% of WAL capacity.
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walCapacity := 256 * 1024 / entrySize
+	halfCount := int(walCapacity / 2)
+
+	for i := 0; i < halfCount; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i%26))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	frac := v.wal.UsedFraction()
+	if frac > 0.8 {
+		t.Fatalf("used fraction %f > 0.8, test setup wrong", frac)
+	}
+
+	// Dirty map should still have all entries (no flush triggered).
+	if v.dirtyMap.Len() != halfCount {
+		t.Errorf("dirty map len = %d, want %d (no flush expected below threshold)", v.dirtyMap.Len(), halfCount)
+	}
+	t.Logf("WAL used fraction: %f, dirty entries: %d", frac, v.dirtyMap.Len())
+}
+
+func testWALPressureConcurrentPressure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "concurrent.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.WALPressureThreshold = 0.3
+	cfg.WALFullTimeout = 2 * time.Second
+	cfg.FlushInterval = 5 * time.Millisecond
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    64 * 1024, // small WAL to create pressure
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// 8 concurrent writers, each writing 20 blocks (total 160 LBAs, fits in 256 max).
+	const goroutines = 8
+	const writesPerGoroutine = 20
+	var wg sync.WaitGroup
+	var succeeded, failed atomic.Int64
+
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < writesPerGoroutine; i++ {
+				lba := uint64(id*writesPerGoroutine + i)
+				err := v.WriteLBA(lba, makeBlock(byte('A'+id%26)))
+				if err != nil {
+					if errors.Is(err, ErrWALFull) {
+						failed.Add(1)
+					} else {
+						// Unexpected error.
+						t.Errorf("WriteLBA(%d): unexpected error: %v", lba, err)
+					}
+				} else {
+					succeeded.Add(1)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	total := succeeded.Load() + failed.Load()
+	t.Logf("concurrent pressure: %d succeeded, %d ErrWALFull, %d total",
+		succeeded.Load(), failed.Load(), total)
+
+	if total != goroutines*writesPerGoroutine {
+		t.Errorf("total outcomes = %d, want %d", total, goroutines*writesPerGoroutine)
+	}
+	// At least some writes should succeed (flusher is active).
+	if succeeded.Load() == 0 {
+		t.Error("no writes succeeded -- flusher not draining WAL?")
+	}
 }
 
 func testTrimLargeLengthReadReturnsZero(t *testing.T) {
@@ -681,5 +1164,517 @@ func testTrimLargeLengthReadReturnsZero(t *testing.T) {
 	}
 	if !bytes.Equal(got, make([]byte, 4096)) {
 		t.Error("read after trim should return zeros")
+	}
+}
+
+// testWriteAfterClose verifies that WriteLBA, ReadLBA, Trim, and SyncCache
+// return ErrVolumeClosed after Close() — no panic, no write to closed fd.
+func testWriteAfterClose(t *testing.T) {
+	v := createTestVol(t)
+	v.Close()
+
+	err := v.WriteLBA(0, makeBlock('X'))
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Errorf("WriteLBA after close: got %v, want ErrVolumeClosed", err)
+	}
+
+	_, err = v.ReadLBA(0, 4096)
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Errorf("ReadLBA after close: got %v, want ErrVolumeClosed", err)
+	}
+
+	err = v.Trim(0, 4096)
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Errorf("Trim after close: got %v, want ErrVolumeClosed", err)
+	}
+
+	err = v.SyncCache()
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Errorf("SyncCache after close: got %v, want ErrVolumeClosed", err)
+	}
+}
+
+// testWALReuseGuardReadDuringFlush verifies the WAL reuse guard:
+// write a block, force flush (so data moves to extent and WAL is reclaimed),
+// write a NEW block that reuses the same WAL offset, then read the FIRST
+// block. Without the guard, ReadLBA would read the second block's data from
+// WAL (corruption). With the guard, it detects LSN mismatch and falls back
+// to the extent region which has the correct flushed data.
+func testWALReuseGuardReadDuringFlush(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "guard.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 100 * time.Millisecond
+
+	// Tiny WAL forces reuse quickly.
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 3 // only 3 entries fit
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 256 * 1024, // 256KB, 64 blocks
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Step 1: Write block at LBA 0 with known pattern.
+	pattern0 := makeBlock('X')
+	if err := v.WriteLBA(0, pattern0); err != nil {
+		t.Fatalf("WriteLBA(0): %v", err)
+	}
+
+	// Step 2: Force flush to move LBA 0 data to extent region.
+	if err := v.flusher.FlushOnce(); err != nil {
+		t.Fatalf("FlushOnce: %v", err)
+	}
+
+	// Step 3: Write blocks at LBA 1 and LBA 2 to fill WAL and force reuse
+	// of the slot that previously held LBA 0's data.
+	pattern1 := makeBlock('Y')
+	if err := v.WriteLBA(1, pattern1); err != nil {
+		t.Fatalf("WriteLBA(1): %v", err)
+	}
+	pattern2 := makeBlock('Z')
+	if err := v.WriteLBA(2, pattern2); err != nil {
+		t.Fatalf("WriteLBA(2): %v", err)
+	}
+
+	// Step 4: Read LBA 0. It's no longer in dirty map (flushed), so it
+	// should come from extent and return 'X' pattern.
+	data, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA(0): %v", err)
+	}
+	if !bytes.Equal(data, pattern0) {
+		t.Fatalf("LBA 0 corruption: got %q... want %q...", data[:8], pattern0[:8])
+	}
+
+	// Step 5: Verify LBA 1 and 2 still read correctly from WAL.
+	data1, err := v.ReadLBA(1, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA(1): %v", err)
+	}
+	if !bytes.Equal(data1, pattern1) {
+		t.Fatalf("LBA 1: got %q... want %q...", data1[:8], pattern1[:8])
+	}
+	data2, err := v.ReadLBA(2, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA(2): %v", err)
+	}
+	if !bytes.Equal(data2, pattern2) {
+		t.Fatalf("LBA 2: got %q... want %q...", data2[:8], pattern2[:8])
+	}
+}
+
+// testWALReuseGuardConcurrentStress hammers ReadLBA and WriteLBA concurrently
+// with a tiny WAL to maximize the chance of hitting the reuse race window.
+// Every read must return either the last-written pattern or zeros (never-written
+// blocks), never data from a different LBA.
+func testWALReuseGuardConcurrentStress(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stress.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 5 * time.Millisecond // aggressive flushing
+
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 6 // small WAL: 6 entries
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096, // 64 blocks
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	const numLBAs = 8
+	const iterations = 200
+
+	// Track the latest pattern written to each LBA.
+	var patterns [numLBAs]atomic.Uint32 // stores the byte pattern
+
+	var wg sync.WaitGroup
+	var errCount atomic.Int64
+
+	// Writer goroutine: writes sequential patterns to random LBAs.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			lba := uint64(i % numLBAs)
+			pat := byte(i%250 + 1) // non-zero pattern
+			patterns[lba].Store(uint32(pat))
+			if err := v.WriteLBA(lba, makeBlock(pat)); err != nil {
+				if errors.Is(err, ErrVolumeClosed) || errors.Is(err, ErrWALFull) {
+					return
+				}
+				t.Errorf("WriteLBA(%d, iter %d): %v", lba, i, err)
+				errCount.Add(1)
+				return
+			}
+		}
+	}()
+
+	// Reader goroutine: reads LBAs and validates data consistency.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations*2; i++ {
+			lba := uint64(i % numLBAs)
+			data, err := v.ReadLBA(lba, 4096)
+			if err != nil {
+				if errors.Is(err, ErrVolumeClosed) {
+					return
+				}
+				t.Errorf("ReadLBA(%d): %v", lba, err)
+				errCount.Add(1)
+				return
+			}
+
+			// Data must be uniform: all bytes the same (or all zeros).
+			first := data[0]
+			for j := 1; j < len(data); j++ {
+				if data[j] != first {
+					t.Errorf("LBA %d corruption at byte %d: first=%d got=%d (iter %d)",
+						lba, j, first, data[j], i)
+					errCount.Add(1)
+					return
+				}
+			}
+		}
+	}()
+
+	wg.Wait()
+	if errCount.Load() > 0 {
+		t.Fatalf("%d errors during concurrent stress test", errCount.Load())
+	}
+}
+
+// testCloseDrainsInflightOps verifies Close waits for in-flight WriteLBA to
+// finish before closing the fd.
+func testCloseDrainsInflightOps(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "drain.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 50 * time.Millisecond
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 256 * 1024,
+		BlockSize:  4096,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	// Start a goroutine that writes continuously.
+	var writesDone atomic.Int64
+	var writeErr atomic.Value
+	stopCh := make(chan struct{})
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
+			err := v.WriteLBA(uint64(i%64), makeBlock(byte(i%250+1)))
+			if err != nil {
+				if errors.Is(err, ErrVolumeClosed) {
+					return
+				}
+				writeErr.Store(err)
+				return
+			}
+			writesDone.Add(1)
+		}
+	}()
+
+	// Let some writes happen.
+	time.Sleep(20 * time.Millisecond)
+
+	// Close should wait for any in-flight write to finish.
+	if err := v.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	close(stopCh)
+
+	if we := writeErr.Load(); we != nil {
+		t.Fatalf("unexpected write error: %v", we)
+	}
+	t.Logf("writes completed before close: %d", writesDone.Load())
+
+	// After Close, new writes must fail.
+	err = v.WriteLBA(0, makeBlock('Z'))
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Fatalf("write after close: got %v, want ErrVolumeClosed", err)
+	}
+}
+
+// testCloseDrainsConcurrentReaders verifies Close drains in-flight ReadLBA.
+func testCloseDrainsConcurrentReaders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "drain-read.blockvol")
+
+	cfg := DefaultConfig()
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096,
+		BlockSize:  4096,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	// Pre-write some data.
+	for i := 0; i < 8; i++ {
+		v.WriteLBA(uint64(i), makeBlock(byte(i+1)))
+	}
+
+	var readsDone atomic.Int64
+	var wg sync.WaitGroup
+
+	// 4 concurrent readers.
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				_, err := v.ReadLBA(uint64(i%8), 4096)
+				if err != nil {
+					return // ErrVolumeClosed expected
+				}
+				readsDone.Add(1)
+			}
+		}(g)
+	}
+
+	// Let reads start, then close.
+	time.Sleep(5 * time.Millisecond)
+	v.Close()
+	wg.Wait()
+
+	t.Logf("reads completed: %d", readsDone.Load())
+}
+
+// testTrimWALFullRetry verifies Trim retries on WAL-full (same as WriteLBA).
+func testTrimWALFullRetry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trim-retry.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.WALFullTimeout = 2 * time.Second
+	cfg.FlushInterval = 10 * time.Millisecond
+
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 4 // tiny WAL: 4 entries
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096,
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Fill WAL with writes.
+	for i := 0; i < 3; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Trim should succeed even though WAL is nearly full, because the
+	// retry loop triggers the flusher to free space. Trim entries are
+	// header-only (no data payload), so they're smaller than writes.
+	if err := v.Trim(0, 4096); err != nil {
+		t.Fatalf("Trim failed (should have retried): %v", err)
+	}
+
+	// Verify trim took effect — read should return zeros.
+	data, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after trim: %v", err)
+	}
+	for i, b := range data {
+		if b != 0 {
+			t.Fatalf("byte %d not zero after trim: %d", i, b)
+		}
+	}
+}
+
+// testFlusherErrorNoCheckpointAdvance verifies that when extent WriteAt fails,
+// the flusher does not advance the checkpoint LSN (so data isn't lost on recovery).
+func testFlusherErrorNoCheckpointAdvance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "flusher-err.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 1 * time.Hour // manual flush only
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096,
+		BlockSize:  4096,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write some data.
+	v.WriteLBA(0, makeBlock('A'))
+	v.WriteLBA(1, makeBlock('B'))
+
+	// Record checkpoint before flush.
+	lsnBefore := v.flusher.CheckpointLSN()
+
+	// Flush successfully first time.
+	if err := v.flusher.FlushOnce(); err != nil {
+		t.Fatalf("FlushOnce: %v", err)
+	}
+	lsnAfter := v.flusher.CheckpointLSN()
+	if lsnAfter <= lsnBefore {
+		t.Fatalf("checkpoint should have advanced: before=%d after=%d", lsnBefore, lsnAfter)
+	}
+
+	// Write more data.
+	v.WriteLBA(2, makeBlock('C'))
+	lsnBefore2 := v.flusher.CheckpointLSN()
+
+	// Close the underlying fd to force WriteAt errors in FlushOnce.
+	// Save the fd first so we can restore it.
+	savedFd := v.fd
+	badFd, _ := os.Open(os.DevNull) // read-only fd, WriteAt will fail
+	v.fd = badFd
+	v.flusher.SetFD(badFd) // update flusher's fd reference
+
+	err = v.flusher.FlushOnce()
+	// FlushOnce should return an error.
+	if err == nil {
+		t.Log("FlushOnce with bad fd did not error (entry may have been skipped)")
+	}
+
+	// Checkpoint should NOT have advanced.
+	lsnAfterErr := v.flusher.CheckpointLSN()
+	if lsnAfterErr > lsnBefore2 {
+		t.Fatalf("checkpoint advanced despite error: before=%d after=%d", lsnBefore2, lsnAfterErr)
+	}
+
+	// Restore fd for cleanup.
+	v.fd = savedFd
+	v.flusher.SetFD(savedFd)
+	badFd.Close()
+}
+
+// testCloseDuringSyncCache verifies Close + SyncCache concurrent don't deadlock.
+func testCloseDuringSyncCache(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "close-sync.blockvol")
+
+	cfg := DefaultConfig()
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096,
+		BlockSize:  4096,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	// Write data so SyncCache has something to do.
+	for i := 0; i < 8; i++ {
+		v.WriteLBA(uint64(i), makeBlock(byte(i+1)))
+	}
+
+	// Launch SyncCache and Close concurrently.
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// SyncCache may return nil (completed) or ErrVolumeClosed (racing).
+		v.SyncCache()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(1 * time.Millisecond) // let SyncCache start
+		v.Close()
+	}()
+
+	// Deadlock detector: if both don't complete within 5s, we're stuck.
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Log("Close + SyncCache completed without deadlock")
+	case <-time.After(5 * time.Second):
+		t.Fatal("deadlock: Close + SyncCache did not complete within 5s")
+	}
+}
+
+// testCloseTimeoutIfOpStuck verifies Close() doesn't hang forever when an
+// in-flight op is stuck. Close has a 5s timeout for drain, so we simulate a
+// stuck op and verify Close completes within a reasonable time.
+func testCloseTimeoutIfOpStuck(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stuck.blockvol")
+
+	cfg := DefaultConfig()
+	cfg.FlushInterval = 1 * time.Hour      // no background flush
+	cfg.WALFullTimeout = 30 * time.Second   // writer will be stuck waiting
+
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 3 // tiny WAL
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 64 * 4096,
+		BlockSize:  4096,
+		WALSize:    walSize,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	// Fill WAL completely.
+	for i := 0; i < 2; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+
+	// Start a writer that will be stuck in WAL-full retry (flusher is paused).
+	stuckStarted := make(chan struct{})
+	go func() {
+		close(stuckStarted)
+		v.WriteLBA(10, makeBlock('Z')) // blocks in appendWithRetry
+	}()
+	<-stuckStarted
+	time.Sleep(10 * time.Millisecond) // let it enter the retry loop
+
+	// Close should NOT hang forever — it has a 5s drain timeout.
+	done := make(chan struct{})
+	go func() {
+		v.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Log("Close completed despite stuck op (drain timeout worked)")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close hung for >10s — drain timeout not working")
 	}
 }

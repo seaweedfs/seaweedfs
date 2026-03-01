@@ -9,6 +9,7 @@ const (
 	ScsiTestUnitReady  uint8 = 0x00
 	ScsiInquiry        uint8 = 0x12
 	ScsiModeSense6     uint8 = 0x1a
+	ScsiModeSense10    uint8 = 0x5a
 	ScsiReadCapacity10 uint8 = 0x25
 	ScsiRead10         uint8 = 0x28
 	ScsiWrite10        uint8 = 0x2a
@@ -19,6 +20,7 @@ const (
 	ScsiWrite16        uint8 = 0x8a
 	ScsiReadCapacity16 uint8 = 0x9e // SERVICE ACTION IN (16), SA=0x10
 	ScsiSyncCache16    uint8 = 0x91
+	ScsiWriteSame16    uint8 = 0x93
 )
 
 // Service action for READ CAPACITY (16)
@@ -95,6 +97,8 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 		return h.inquiry(cdb)
 	case ScsiModeSense6:
 		return h.modeSense6(cdb)
+	case ScsiModeSense10:
+		return h.modeSense10(cdb)
 	case ScsiReadCapacity10:
 		return h.readCapacity10()
 	case ScsiReadCapacity16:
@@ -119,6 +123,8 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 		return h.syncCache()
 	case ScsiUnmap:
 		return h.unmap(cdb, dataOut)
+	case ScsiWriteSame16:
+		return h.writeSame16(cdb, dataOut)
 	default:
 		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	}
@@ -180,10 +186,12 @@ func (h *SCSIHandler) inquiryVPD(pageCode uint8, allocLen uint16) SCSIResult {
 		data := []byte{
 			0x00,       // device type
 			0x00,       // page code
-			0x00, 0x03, // page length
+			0x00, 0x05, // page length
 			0x00, // supported pages: 0x00
 			0x80, //                  0x80 (serial)
 			0x83, //                  0x83 (device identification)
+			0xb0, //                  0xB0 (block limits)
+			0xb2, //                  0xB2 (logical block provisioning)
 		}
 		if int(allocLen) < len(data) {
 			data = data[:allocLen]
@@ -221,9 +229,90 @@ func (h *SCSIHandler) inquiryVPD(pageCode uint8, allocLen uint16) SCSIResult {
 		}
 		return SCSIResult{Status: SCSIStatusGood, Data: data}
 
+	case 0xb0: // Block Limits (SBC-4, Section 6.6.4)
+		return h.inquiryVPDB0(allocLen)
+
+	case 0xb2: // Logical Block Provisioning (SBC-4, Section 6.6.6)
+		return h.inquiryVPDB2(allocLen)
+
 	default:
 		return illegalRequest(ASCInvalidFieldInCDB, ASCQLuk)
 	}
+}
+
+// inquiryVPDB0 returns the Block Limits VPD page (0xB0).
+// Tells the kernel our maximum WRITE SAME, UNMAP, and transfer lengths.
+func (h *SCSIHandler) inquiryVPDB0(allocLen uint16) SCSIResult {
+	blockSize := h.dev.BlockSize()
+	totalBlocks := h.dev.VolumeSize() / uint64(blockSize)
+
+	// Cap WRITE SAME to the whole volume (no practical limit).
+	maxWS := totalBlocks
+	if maxWS > 0xFFFFFFFF {
+		maxWS = 0xFFFFFFFF
+	}
+
+	data := make([]byte, 64)
+	data[0] = 0x00 // device type
+	data[1] = 0xb0 // page code
+	binary.BigEndian.PutUint16(data[2:4], 0x003c) // page length = 60
+
+	// Byte 5: WSNZ (Write Same No Zero) = 0 — we accept zero-length WRITE SAME
+	// Bytes 6-7: Maximum compare and write length = 0 (not supported)
+
+	// Bytes 8-9: Optimal transfer length granularity = 1 block
+	binary.BigEndian.PutUint16(data[6:8], 1)
+
+	// Bytes 8-11: Maximum transfer length = 0 (no limit from our side)
+	// Bytes 12-15: Optimal transfer length = 128 blocks (512KB)
+	binary.BigEndian.PutUint32(data[12:16], 128)
+
+	// Bytes 20-23: Maximum prefetch length = 0
+	// Bytes 24-27: Maximum UNMAP LBA count
+	binary.BigEndian.PutUint32(data[24:28], uint32(maxWS))
+	// Bytes 28-31: Maximum UNMAP block descriptor count
+	binary.BigEndian.PutUint32(data[28:32], 256)
+	// Bytes 32-35: Optimal UNMAP granularity = 1 block
+	binary.BigEndian.PutUint32(data[32:36], 1)
+	// Bytes 36-39: UNMAP granularity alignment (bit 31 = UGAVALID)
+	// Not set — no alignment requirement.
+
+	// Bytes 40-47: Maximum WRITE SAME length (uint64)
+	binary.BigEndian.PutUint64(data[40:48], maxWS)
+
+	if int(allocLen) < len(data) {
+		data = data[:allocLen]
+	}
+	return SCSIResult{Status: SCSIStatusGood, Data: data}
+}
+
+// inquiryVPDB2 returns the Logical Block Provisioning VPD page (0xB2).
+// Tells the kernel what thin provisioning features we support.
+func (h *SCSIHandler) inquiryVPDB2(allocLen uint16) SCSIResult {
+	data := make([]byte, 8)
+	data[0] = 0x00 // device type
+	data[1] = 0xb2 // page code
+	binary.BigEndian.PutUint16(data[2:4], 0x0004) // page length = 4
+
+	// Byte 5: Provisioning type and flags
+	// Bits 7: Threshold exponent = 0
+	data[4] = 0x00
+
+	// Byte 5 (offset 5 in page):
+	// Bit 7: DP (descriptor present) = 0
+	// Bits 2-0: Provisioning type = 0x02 (thin provisioned)
+	data[5] = 0x02
+
+	// Byte 6: Provisioning group descriptor flags
+	// Bit 7: LBPU (Logical Block Provisioning UNMAP) = 1 — we support UNMAP
+	// Bit 6: LBPWS (LBP Write Same) = 1 — we support WRITE SAME with UNMAP bit
+	// Bit 5: LBPWS10 = 0 — we don't support WRITE SAME(10)
+	data[6] = 0xC0 // LBPU=1, LBPWS=1
+
+	if int(allocLen) < len(data) {
+		data = data[:allocLen]
+	}
+	return SCSIResult{Status: SCSIStatusGood, Data: data}
 }
 
 func (h *SCSIHandler) readCapacity10() SCSIResult {
@@ -275,6 +364,29 @@ func (h *SCSIHandler) modeSense6(cdb [16]byte) SCSIResult {
 	data[1] = 0x00 // Medium type: default
 	data[2] = 0x00 // Device-specific parameter (no write protect)
 	data[3] = 0x00 // Block descriptor length = 0
+
+	if int(allocLen) < len(data) {
+		data = data[:allocLen]
+	}
+	return SCSIResult{Status: SCSIStatusGood, Data: data}
+}
+
+func (h *SCSIHandler) modeSense10(cdb [16]byte) SCSIResult {
+	// MODE SENSE(10) — 8-byte header, no mode pages
+	allocLen := binary.BigEndian.Uint16(cdb[7:9])
+	if allocLen == 0 {
+		allocLen = 8
+	}
+
+	data := make([]byte, 8)
+	// Mode data length = 6 (8-byte header minus the 2-byte length field)
+	binary.BigEndian.PutUint16(data[0:2], 6)
+	data[2] = 0x00 // Medium type: default
+	data[3] = 0x00 // Device-specific parameter (no write protect)
+	data[4] = 0x00 // Reserved (LONGLBA=0)
+	data[5] = 0x00 // Reserved
+	// Block descriptor length = 0 (bytes 6-7)
+	binary.BigEndian.PutUint16(data[6:8], 0)
 
 	if int(allocLen) < len(data) {
 		data = data[:allocLen]
@@ -430,6 +542,80 @@ func (h *SCSIHandler) unmap(cdb [16]byte, dataOut []byte) SCSIResult {
 		descData = descData[16:]
 	}
 
+	return SCSIResult{Status: SCSIStatusGood}
+}
+
+// writeSame16 handles WRITE SAME(16) — SBC-4, Section 5.42.
+// If UNMAP bit is set, the range is trimmed (zeroed). Otherwise the single
+// logical block from dataOut is written repeatedly across the range.
+// NDOB (No Data-Out Buffer) means zero the range with no data payload.
+func (h *SCSIHandler) writeSame16(cdb [16]byte, dataOut []byte) SCSIResult {
+	lba := binary.BigEndian.Uint64(cdb[2:10])
+	numBlocks := binary.BigEndian.Uint32(cdb[10:14])
+	unmap := cdb[1]&0x08 != 0
+	ndob := cdb[1]&0x01 != 0
+
+	if numBlocks == 0 {
+		return SCSIResult{Status: SCSIStatusGood}
+	}
+
+	blockSize := h.dev.BlockSize()
+	totalBlocks := h.dev.VolumeSize() / uint64(blockSize)
+
+	if lba+uint64(numBlocks) > totalBlocks {
+		return illegalRequest(ASCLBAOutOfRange, ASCQLuk)
+	}
+
+	// UNMAP or NDOB: zero/trim the range.
+	if unmap || ndob {
+		if err := h.dev.Trim(lba, numBlocks*blockSize); err != nil {
+			return SCSIResult{
+				Status:    SCSIStatusCheckCond,
+				SenseKey:  SenseMediumError,
+				SenseASC:  0x0C,
+				SenseASCQ: 0x00,
+			}
+		}
+		return SCSIResult{Status: SCSIStatusGood}
+	}
+
+	// Normal WRITE SAME: replicate the single block across the range.
+	if uint32(len(dataOut)) < blockSize {
+		return illegalRequest(ASCInvalidFieldInCDB, ASCQLuk)
+	}
+	pattern := dataOut[:blockSize]
+
+	// Check if the pattern is all zeros — use Trim for efficiency.
+	allZero := true
+	for _, b := range pattern {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		if err := h.dev.Trim(lba, numBlocks*blockSize); err != nil {
+			return SCSIResult{
+				Status:    SCSIStatusCheckCond,
+				SenseKey:  SenseMediumError,
+				SenseASC:  0x0C,
+				SenseASCQ: 0x00,
+			}
+		}
+		return SCSIResult{Status: SCSIStatusGood}
+	}
+
+	// Non-zero pattern: write each block individually.
+	for i := uint32(0); i < numBlocks; i++ {
+		if err := h.dev.WriteAt(lba+uint64(i), pattern); err != nil {
+			return SCSIResult{
+				Status:    SCSIStatusCheckCond,
+				SenseKey:  SenseMediumError,
+				SenseASC:  0x0C,
+				SenseASCQ: 0x00,
+			}
+		}
+	}
 	return SCSIResult{Status: SCSIStatusGood}
 }
 

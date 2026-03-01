@@ -17,6 +17,10 @@ func TestWALWriter(t *testing.T) {
 		{name: "wal_writer_full", run: testWALWriterFull},
 		{name: "wal_writer_advance_tail_frees_space", run: testWALWriterAdvanceTailFreesSpace},
 		{name: "wal_writer_fill_no_flusher", run: testWALWriterFillNoFlusher},
+		// Phase 3 Task 1.5: WAL UsedFraction.
+		{name: "wal_fraction_empty", run: testWALFractionEmpty},
+		{name: "wal_fraction_after_writes", run: testWALFractionAfterWrites},
+		{name: "wal_fraction_after_advance_tail", run: testWALFractionAfterAdvanceTail},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,6 +211,74 @@ func testWALWriterAdvanceTailFreesSpace(t *testing.T) {
 	// Now entry 3 should succeed.
 	if _, err := w.Append(entry3); err != nil {
 		t.Fatalf("Append after AdvanceTail: %v", err)
+	}
+}
+
+// --- Phase 3 Task 1.5: WAL UsedFraction tests ---
+
+func testWALFractionEmpty(t *testing.T) {
+	walOffset := uint64(SuperblockSize)
+	walSize := uint64(64 * 1024)
+	fd, cleanup := createTestWAL(t, walOffset, walSize)
+	defer cleanup()
+
+	w := NewWALWriter(fd, walOffset, walSize, 0, 0)
+	frac := w.UsedFraction()
+	if frac != 0 {
+		t.Errorf("UsedFraction on empty WAL = %f, want 0", frac)
+	}
+}
+
+func testWALFractionAfterWrites(t *testing.T) {
+	walOffset := uint64(SuperblockSize)
+	walSize := uint64(64 * 1024)
+	fd, cleanup := createTestWAL(t, walOffset, walSize)
+	defer cleanup()
+
+	w := NewWALWriter(fd, walOffset, walSize, 0, 0)
+
+	entry := &WALEntry{LSN: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if _, err := w.Append(entry); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	frac := w.UsedFraction()
+	if frac <= 0 || frac > 1 {
+		t.Errorf("UsedFraction after write = %f, want (0, 1]", frac)
+	}
+
+	entrySize := float64(walEntryHeaderSize + 4096)
+	expected := entrySize / float64(walSize)
+	if diff := frac - expected; diff > 0.001 || diff < -0.001 {
+		t.Errorf("UsedFraction = %f, want ~%f", frac, expected)
+	}
+}
+
+func testWALFractionAfterAdvanceTail(t *testing.T) {
+	walOffset := uint64(SuperblockSize)
+	entrySize := uint64(walEntryHeaderSize + 4096)
+	walSize := entrySize * 4
+	fd, cleanup := createTestWAL(t, walOffset, walSize)
+	defer cleanup()
+
+	w := NewWALWriter(fd, walOffset, walSize, 0, 0)
+
+	// Write 2 entries.
+	for i := uint64(1); i <= 2; i++ {
+		entry := &WALEntry{LSN: i, Type: EntryTypeWrite, LBA: i, Length: 4096, Data: make([]byte, 4096)}
+		if _, err := w.Append(entry); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	fracBefore := w.UsedFraction()
+
+	// Advance tail past first entry.
+	w.AdvanceTail(entrySize)
+
+	fracAfter := w.UsedFraction()
+	if fracAfter >= fracBefore {
+		t.Errorf("UsedFraction should decrease after AdvanceTail: before=%f, after=%f", fracBefore, fracAfter)
 	}
 }
 

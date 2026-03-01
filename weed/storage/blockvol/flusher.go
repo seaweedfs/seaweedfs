@@ -3,6 +3,7 @@ package blockvol
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -24,6 +25,9 @@ type Flusher struct {
 	checkpointLSN  uint64 // last flushed LSN
 	checkpointTail uint64 // WAL physical tail after last flush
 
+	logger  *log.Logger
+	lastErr bool // true if last FlushOnce returned error
+
 	interval time.Duration
 	notifyCh chan struct{}
 	stopCh   chan struct{}
@@ -38,12 +42,16 @@ type FlusherConfig struct {
 	WAL         *WALWriter
 	DirtyMap    *DirtyMap
 	Interval    time.Duration // default 100ms
+	Logger      *log.Logger   // optional; defaults to log.Default()
 }
 
 // NewFlusher creates a flusher. Call Run() in a goroutine.
 func NewFlusher(cfg FlusherConfig) *Flusher {
 	if cfg.Interval == 0 {
 		cfg.Interval = 100 * time.Millisecond
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = log.Default()
 	}
 	return &Flusher{
 		fd:             cfg.FD,
@@ -54,6 +62,7 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 		walSize:        cfg.Super.WALSize,
 		blockSize:      cfg.Super.BlockSize,
 		extentStart:    cfg.Super.WALOffset + cfg.Super.WALSize,
+		logger:         cfg.Logger,
 		checkpointLSN:  cfg.Super.WALCheckpointLSN,
 		checkpointTail: 0,
 		interval:       cfg.Interval,
@@ -74,9 +83,23 @@ func (f *Flusher) Run() {
 		case <-f.stopCh:
 			return
 		case <-ticker.C:
-			f.FlushOnce()
+			if err := f.FlushOnce(); err != nil {
+				if !f.lastErr {
+					f.logger.Printf("flusher error: %v", err)
+				}
+				f.lastErr = true
+			} else {
+				f.lastErr = false
+			}
 		case <-f.notifyCh:
-			f.FlushOnce()
+			if err := f.FlushOnce(); err != nil {
+				if !f.lastErr {
+					f.logger.Printf("flusher error: %v", err)
+				}
+				f.lastErr = true
+			} else {
+				f.lastErr = false
+			}
 		}
 	}
 }
@@ -87,6 +110,12 @@ func (f *Flusher) Notify() {
 	case f.notifyCh <- struct{}{}:
 	default:
 	}
+}
+
+// NotifyUrgent wakes the flusher for an urgent flush (WAL pressure).
+// Phase 3 MVP: delegates to Notify(). Future: may use a priority channel.
+func (f *Flusher) NotifyUrgent() {
+	f.Notify()
 }
 
 // Stop shuts down the flusher. Safe to call multiple times.
@@ -126,6 +155,14 @@ func (f *Flusher) FlushOnce() error {
 			return fmt.Errorf("flusher: read WAL header at %d: %w", absWALOff, err)
 		}
 
+		// WAL reuse guard: validate LSN before trusting the entry.
+		// Between Snapshot() and this read, the WAL slot could have been
+		// reused (by a previous flush cycle advancing the tail + new writes).
+		entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
+		if entryLSN != e.Lsn {
+			continue // stale — WAL slot reused, skip this entry
+		}
+
 		// Parse entry type and length.
 		entryType := headerBuf[16] // Type at LSN(8)+Epoch(8)=16
 		dataLen := parseLength(headerBuf)
@@ -140,17 +177,22 @@ func (f *Flusher) FlushOnce() error {
 
 			entry, err := DecodeWALEntry(fullBuf)
 			if err != nil {
-				return fmt.Errorf("flusher: decode WAL entry: %w", err)
+				continue // corrupt or partially overwritten — skip
 			}
 
-			// Write data to extent region.
-			blocks := entry.Length / f.blockSize
-			for i := uint32(0); i < blocks; i++ {
-				blockLBA := entry.LBA + uint64(i)
-				extentOff := int64(f.extentStart + blockLBA*uint64(f.blockSize))
-				blockData := entry.Data[i*f.blockSize : (i+1)*f.blockSize]
+			// Write only this block's data to extent (not all blocks in the
+			// WAL entry). Other blocks may have been overwritten by newer
+			// writes and their dirty map entries point elsewhere.
+			if e.Lba < entry.LBA {
+				continue // LBA mismatch — stale entry
+			}
+			blockIdx := e.Lba - entry.LBA
+			dataStart := blockIdx * uint64(f.blockSize)
+			if dataStart+uint64(f.blockSize) <= uint64(len(entry.Data)) {
+				extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
+				blockData := entry.Data[dataStart : dataStart+uint64(f.blockSize)]
 				if _, err := f.fd.WriteAt(blockData, extentOff); err != nil {
-					return fmt.Errorf("flusher: write extent at LBA %d: %w", blockLBA, err)
+					return fmt.Errorf("flusher: write extent at LBA %d: %w", e.Lba, err)
 				}
 			}
 
@@ -230,6 +272,13 @@ func (f *Flusher) CheckpointLSN() uint64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.checkpointLSN
+}
+
+// SetFD replaces the file descriptor used for extent writes. Test-only.
+func (f *Flusher) SetFD(fd *os.File) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fd = fd
 }
 
 // parseLength extracts the Length field from a WAL entry header buffer.

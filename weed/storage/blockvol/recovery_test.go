@@ -29,9 +29,29 @@ func TestRecovery(t *testing.T) {
 }
 
 // simulateCrash closes the volume without syncing and returns the path.
+// simulateCrash stops background goroutines and closes the fd without a clean
+// shutdown. The caller is responsible for persisting the superblock AFTER
+// stopping the flusher (to avoid concurrent superblock writes).
+// For the common case, use simulateCrashWithSuper instead.
 func simulateCrash(v *BlockVol) string {
 	path := v.Path()
 	v.groupCommit.Stop()
+	v.flusher.Stop()
+	v.fd.Close()
+	return path
+}
+
+// simulateCrashWithSuper is the safe default: stops background goroutines,
+// writes the superblock with current WAL positions, then closes the fd.
+func simulateCrashWithSuper(v *BlockVol) string {
+	path := v.Path()
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+	v.super.WALHead = v.wal.LogicalHead()
+	v.super.WALTail = v.wal.LogicalTail()
+	v.fd.Seek(0, 0)
+	v.super.WriteTo(v.fd)
+	v.fd.Sync()
 	v.fd.Close()
 	return path
 }
@@ -70,14 +90,7 @@ func testRecoverOneEntry(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	// Update superblock with WAL state.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path := simulateCrash(v)
+	path := simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -117,13 +130,7 @@ func testRecoverManyEntries(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -158,6 +165,10 @@ func testRecoverTornWrite(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
+	// Stop background goroutines before manual superblock write.
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+
 	// Save superblock with correct WAL state.
 	v.super.WALHead = v.wal.LogicalHead()
 	v.super.WALTail = v.wal.LogicalTail()
@@ -172,7 +183,8 @@ func testRecoverTornWrite(t *testing.T) {
 	v.fd.WriteAt([]byte{0xFF, 0xFF}, corruptOff)
 	v.fd.Sync()
 
-	path := simulateCrash(v)
+	v.fd.Close()
+	path := v.Path()
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -240,14 +252,7 @@ func testRecoverAfterCheckpoint(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	// Update superblock.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path := simulateCrash(v)
+	path := simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -279,13 +284,7 @@ func testRecoverIdempotent(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path := simulateCrash(v)
+	path := simulateCrashWithSuper(v)
 
 	// First recovery.
 	v2, err := OpenBlockVol(path)
@@ -347,13 +346,7 @@ func testRecoverWALFull(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -391,13 +384,7 @@ func testRecoverBarrierOnly(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path := simulateCrash(v)
+	path := simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {

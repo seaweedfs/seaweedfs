@@ -22,6 +22,8 @@ func TestTarget(t *testing.T) {
 		{"add_remove_volume", testAddRemoveVolume},
 		{"multiple_connections", testMultipleConnections},
 		{"connect_no_volumes", testConnectNoVolumes},
+		// Phase 3 bug fix: P3-BUG-6 shutdown race.
+		{"close_rejects_late_conn", testCloseRejectsLateConn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -255,5 +257,48 @@ func testConnectNoVolumes(t *testing.T) {
 	resp, _ := ReadPDU(conn)
 	if resp.LoginStatusClass() != LoginStatusSuccess {
 		t.Fatal("discovery login should succeed without volumes")
+	}
+}
+
+// testCloseRejectsLateConn verifies that handleConn returns immediately
+// when ts.closed is already signaled. We call handleConn directly to
+// deterministically exercise the closed-check guard.
+func testCloseRejectsLateConn(t *testing.T) {
+	config := DefaultTargetConfig()
+	config.TargetName = testTargetName
+	logger := log.New(io.Discard, "", 0)
+	ts := NewTargetServer("127.0.0.1:0", config, logger)
+	ts.AddVolume(testTargetName, newMockDevice(256*4096))
+
+	// Close the target BEFORE passing a connection to handleConn.
+	// This simulates a conn accepted just before ln.Close() took effect.
+	close(ts.closed)
+
+	// Create a pipe to simulate a connection.
+	client, server := net.Pipe()
+	defer client.Close()
+
+	// Call handleConn directly. It must check ts.closed and return
+	// immediately without entering the session loop.
+	ts.sessions.Add(1)
+	done := make(chan struct{})
+	go func() {
+		ts.handleConn(server)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good — handleConn returned promptly.
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleConn did not return after ts.closed was signaled")
+	}
+
+	// The server-side conn should be closed by handleConn's defer.
+	// Verify by reading from client — should get EOF.
+	buf := make([]byte, 1)
+	_, err := client.Read(buf)
+	if err == nil {
+		t.Fatal("expected EOF on client after handleConn returned")
 	}
 }

@@ -172,13 +172,13 @@ func (c *DataOutCollector) Remaining() uint32 {
 }
 
 // BuildR2T creates an R2T PDU requesting more data from the initiator.
-func BuildR2T(itt, ttt uint32, r2tSN uint32, bufferOffset, desiredLen uint32, statSN, expCmdSN, maxCmdSN uint32) *PDU {
+// StatSN is NOT set here — txLoop assigns it (statSNCopy mode, no increment).
+func BuildR2T(itt, ttt uint32, r2tSN uint32, bufferOffset, desiredLen uint32, expCmdSN, maxCmdSN uint32) *PDU {
 	pdu := &PDU{}
 	pdu.SetOpcode(OpR2T)
 	pdu.SetOpSpecific1(FlagF) // always Final for R2T
 	pdu.SetInitiatorTaskTag(itt)
 	pdu.SetTargetTransferTag(ttt)
-	pdu.SetStatSN(statSN)
 	pdu.SetExpCmdSN(expCmdSN)
 	pdu.SetMaxCmdSN(maxCmdSN)
 	pdu.SetR2TSN(r2tSN)
@@ -189,25 +189,89 @@ func BuildR2T(itt, ttt uint32, r2tSN uint32, bufferOffset, desiredLen uint32, st
 
 // SendSCSIResponse sends a SCSI Response PDU with optional sense data.
 func SendSCSIResponse(w io.Writer, result SCSIResult, itt uint32, statSN *uint32, expCmdSN, maxCmdSN uint32) error {
+	pdu := BuildSCSIResponse(result, itt, expCmdSN, maxCmdSN)
+	pdu.SetStatSN(*statSN)
+	*statSN++
+	return WritePDU(w, pdu)
+}
+
+// BuildSCSIResponse creates a SCSI Response PDU without writing it.
+// StatSN is NOT set — the caller (or txLoop) assigns it.
+func BuildSCSIResponse(result SCSIResult, itt uint32, expCmdSN, maxCmdSN uint32) *PDU {
 	pdu := &PDU{}
 	pdu.SetOpcode(OpSCSIResp)
 	pdu.SetOpSpecific1(FlagF) // Final
 	pdu.SetSCSIResponse(ISCSIRespCompleted)
 	pdu.SetSCSIStatus(result.Status)
 	pdu.SetInitiatorTaskTag(itt)
-	pdu.SetStatSN(*statSN)
-	*statSN++
 	pdu.SetExpCmdSN(expCmdSN)
 	pdu.SetMaxCmdSN(maxCmdSN)
 
 	if result.Status == SCSIStatusCheckCond {
 		senseData := BuildSenseData(result.SenseKey, result.SenseASC, result.SenseASCQ)
-		// Sense data is wrapped in a 2-byte length prefix
 		pdu.DataSegment = make([]byte, 2+len(senseData))
 		pdu.DataSegment[0] = byte(len(senseData) >> 8)
 		pdu.DataSegment[1] = byte(len(senseData))
 		copy(pdu.DataSegment[2:], senseData)
 	}
 
-	return WritePDU(w, pdu)
+	return pdu
+}
+
+// BuildDataInPDUs splits data into Data-In PDUs and returns them.
+// StatSN is NOT set on the final PDU — the txLoop assigns it.
+// Intermediate PDUs (without S-bit) never carry StatSN.
+func (d *DataInWriter) BuildDataInPDUs(data []byte, itt uint32, expCmdSN, maxCmdSN uint32) []*PDU {
+	totalLen := uint32(len(data))
+	if totalLen == 0 {
+		pdu := &PDU{}
+		pdu.SetOpcode(OpSCSIDataIn)
+		pdu.SetOpSpecific1(FlagF | FlagS)
+		pdu.SetInitiatorTaskTag(itt)
+		pdu.SetTargetTransferTag(0xFFFFFFFF)
+		pdu.SetExpCmdSN(expCmdSN)
+		pdu.SetMaxCmdSN(maxCmdSN)
+		pdu.SetDataSN(0)
+		pdu.SetSCSIStatus(SCSIStatusGood)
+		return []*PDU{pdu}
+	}
+
+	var pdus []*PDU
+	var offset uint32
+	var dataSN uint32
+
+	for offset < totalLen {
+		segLen := d.maxSegLen
+		if offset+segLen > totalLen {
+			segLen = totalLen - offset
+		}
+		isFinal := (offset + segLen) >= totalLen
+
+		pdu := &PDU{}
+		pdu.SetOpcode(OpSCSIDataIn)
+		pdu.SetInitiatorTaskTag(itt)
+		pdu.SetTargetTransferTag(0xFFFFFFFF)
+		pdu.SetExpCmdSN(expCmdSN)
+		pdu.SetMaxCmdSN(maxCmdSN)
+		pdu.SetDataSN(dataSN)
+		pdu.SetBufferOffset(offset)
+
+		// Copy data segment (don't share slice with caller).
+		seg := make([]byte, segLen)
+		copy(seg, data[offset:offset+segLen])
+		pdu.DataSegment = seg
+
+		if isFinal {
+			pdu.SetOpSpecific1(FlagF | FlagS)
+			pdu.SetSCSIStatus(SCSIStatusGood)
+		} else {
+			pdu.SetOpSpecific1(0)
+		}
+
+		pdus = append(pdus, pdu)
+		dataSN++
+		offset += segLen
+	}
+
+	return pdus
 }

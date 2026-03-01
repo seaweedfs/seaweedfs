@@ -431,16 +431,21 @@ func testQAConcurrentWriteRead(t *testing.T) {
 func testQAWALFillAdvanceRefill(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wal_refill.blockvol")
-	// Small WAL: 128KB.
+	// Small WAL: 128KB. Short timeout so WAL-full returns quickly.
+	qaCfg := DefaultConfig()
+	qaCfg.WALFullTimeout = 10 * time.Millisecond
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: 1 * 1024 * 1024,
 		BlockSize:  4096,
 		WALSize:    128 * 1024,
-	})
+	}, qaCfg)
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
 	}
 	defer v.Close()
+
+	// Stop flusher so we can manually manage WAL tail.
+	v.flusher.Stop()
 
 	entrySize := uint64(walEntryHeaderSize + 4096) // ~4134 bytes per entry
 	maxEntries := 128 * 1024 / int(entrySize)       // ~31 entries
@@ -617,7 +622,7 @@ func testQAWriteReadAllLBAs(t *testing.T) {
 // testQADirtyMapRangeDuringDelete: Verify Range + Delete doesn't deadlock.
 // This tests the reviewer fix (snapshot-then-iterate pattern).
 func testQADirtyMapRangeDuringDelete(t *testing.T) {
-	dm := NewDirtyMap()
+	dm := NewDirtyMap(1)
 
 	// Populate 100 entries.
 	for i := uint64(0); i < 100; i++ {
@@ -699,11 +704,13 @@ func testQAOracleRandomOps(t *testing.T) {
 	const numBlocks = 64 // small volume for fast test
 	const volSize = numBlocks * blockSize
 
+	qaCfg := DefaultConfig()
+	qaCfg.WALFullTimeout = 10 * time.Millisecond
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: volSize,
 		BlockSize:  blockSize,
 		WALSize:    512 * 1024,
-	})
+	}, qaCfg)
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
 	}
@@ -1512,13 +1519,7 @@ func testQAFlushCheckpointPersists(t *testing.T) {
 	}
 
 	// Update superblock and crash.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	// Reopen — recovery should skip LSN <= checkpoint and replay 5-9.
 	v2, err := OpenBlockVol(path)
@@ -1545,15 +1546,20 @@ func testQAFlushCheckpointPersists(t *testing.T) {
 func testQAFlushWALReclaimThenWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "reclaim.blockvol")
+	qaCfg := DefaultConfig()
+	qaCfg.WALFullTimeout = 10 * time.Millisecond
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: 1 * 1024 * 1024,
 		BlockSize:  4096,
 		WALSize:    128 * 1024, // small WAL
-	})
+	}, qaCfg)
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
 	}
 	defer v.Close()
+
+	// Stop background flusher so we can manually manage WAL.
+	v.flusher.Stop()
 
 	entrySize := uint64(walEntryHeaderSize + 4096)
 	maxEntries := int(128 * 1024 / entrySize)
@@ -1713,13 +1719,7 @@ func testQARecoverTrimEntry(t *testing.T) {
 	}
 
 	// Persist superblock.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -1778,13 +1778,7 @@ func testQARecoverMixedWriteTrimBarrier(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -1872,13 +1866,7 @@ func testQARecoverAfterFlushThenCrash(t *testing.T) {
 	}
 
 	// Persist superblock.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -1927,13 +1915,7 @@ func testQARecoverOverwriteSameLBA(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -1979,15 +1961,8 @@ func testQARecoverCrashLoop(t *testing.T) {
 			t.Fatalf("iter %d SyncCache: %v", iter, err)
 		}
 
-		// Persist superblock state.
-		v.super.WALHead = v.wal.LogicalHead()
-		v.super.WALTail = v.wal.LogicalTail()
-		v.fd.Seek(0, 0)
-		v.super.WriteTo(v.fd)
-		v.fd.Sync()
-
 		// Crash and recover.
-		path = simulateCrash(v)
+		path = simulateCrashWithSuper(v)
 		v, err = OpenBlockVol(path)
 		if err != nil {
 			t.Fatalf("iter %d OpenBlockVol: %v", iter, err)
@@ -2030,6 +2005,10 @@ func testQARecoverCorruptMiddleEntry(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
+	// Stop background goroutines before manual superblock/WAL manipulation.
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+
 	v.super.WALHead = v.wal.LogicalHead()
 	v.super.WALTail = v.wal.LogicalTail()
 	v.fd.Seek(0, 0)
@@ -2043,7 +2022,8 @@ func testQARecoverCorruptMiddleEntry(t *testing.T) {
 	v.fd.WriteAt([]byte{0xFF}, corruptOff)
 	v.fd.Sync()
 
-	path = simulateCrash(v)
+	v.fd.Close()
+	path = v.Path()
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2106,13 +2086,7 @@ func testQARecoverMultiBlockWrite(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2207,13 +2181,7 @@ func testQARecoverOracleWithCrash(t *testing.T) {
 			t.Fatalf("iter %d SyncCache: %v", iter, err)
 		}
 
-		v.super.WALHead = v.wal.LogicalHead()
-		v.super.WALTail = v.wal.LogicalTail()
-		v.fd.Seek(0, 0)
-		v.super.WriteTo(v.fd)
-		v.fd.Sync()
-
-		path = simulateCrash(v)
+		path = simulateCrashWithSuper(v)
 
 		// Recover.
 		v, err = OpenBlockVol(path)
@@ -2298,7 +2266,8 @@ func testQALifecycleReadAfterClose(t *testing.T) {
 	}
 }
 
-// testQALifecycleSyncAfterClose: SyncCache after Close must return shutdown error.
+// testQALifecycleSyncAfterClose: SyncCache after Close must return an error
+// (ErrVolumeClosed from the closed guard, or ErrGroupCommitShutdown).
 func testQALifecycleSyncAfterClose(t *testing.T) {
 	v := createTestVol(t)
 	v.Close()
@@ -2307,8 +2276,8 @@ func testQALifecycleSyncAfterClose(t *testing.T) {
 	if err == nil {
 		t.Error("SyncCache after Close should fail")
 	}
-	if !errors.Is(err, ErrGroupCommitShutdown) {
-		t.Errorf("SyncCache after Close: got %v, want ErrGroupCommitShutdown", err)
+	if !errors.Is(err, ErrVolumeClosed) && !errors.Is(err, ErrGroupCommitShutdown) {
+		t.Errorf("SyncCache after Close: got %v, want ErrVolumeClosed or ErrGroupCommitShutdown", err)
 	}
 }
 
@@ -2586,20 +2555,25 @@ func testQACrashNoSyncDataLossOK(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	// Persist superblock.
+	// Stop background goroutines before manual superblock manipulation.
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+
+	// Persist superblock with current WAL state (before unsynced write).
 	v.super.WALHead = v.wal.LogicalHead()
 	v.super.WALTail = v.wal.LogicalTail()
 	v.fd.Seek(0, 0)
 	v.super.WriteTo(v.fd)
 	v.fd.Sync()
 
-	// Write block 1 WITHOUT sync.
+	// Write block 1 WITHOUT sync — this write's WAL head is NOT in the superblock.
 	if err := v.WriteLBA(1, makeBlock('U')); err != nil {
 		t.Fatalf("WriteLBA(unsynced): %v", err)
 	}
 
 	// Hard crash (no sync, no superblock update for block 1).
-	path = simulateCrash(v)
+	v.fd.Close()
+	path = v.Path()
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2662,13 +2636,7 @@ func testQACrashWithFlushThenCrash(t *testing.T) {
 	}
 
 	// Persist superblock with latest WAL state.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2725,13 +2693,7 @@ func testQACrashWALNearFull(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2798,13 +2760,7 @@ func testQACrashConcurrentWriters(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -2877,13 +2833,7 @@ func testQACrashTrimHeavy(t *testing.T) {
 			t.Fatalf("iter %d SyncCache: %v", iter, err)
 		}
 
-		v.super.WALHead = v.wal.LogicalHead()
-		v.super.WALTail = v.wal.LogicalTail()
-		v.fd.Seek(0, 0)
-		v.super.WriteTo(v.fd)
-		v.fd.Sync()
-
-		path = simulateCrash(v)
+		path = simulateCrashWithSuper(v)
 
 		v, err = OpenBlockVol(path)
 		if err != nil {
@@ -2955,13 +2905,7 @@ func testQACrashMultiBlockStress(t *testing.T) {
 			t.Fatalf("iter %d SyncCache: %v", iter, err)
 		}
 
-		v.super.WALHead = v.wal.LogicalHead()
-		v.super.WALTail = v.wal.LogicalTail()
-		v.fd.Seek(0, 0)
-		v.super.WriteTo(v.fd)
-		v.fd.Sync()
-
-		path = simulateCrash(v)
+		path = simulateCrashWithSuper(v)
 
 		v, err = OpenBlockVol(path)
 		if err != nil {
@@ -3005,12 +2949,7 @@ func testQACrashOverwriteStorm(t *testing.T) {
 			if errors.Is(err, ErrWALFull) {
 				// Need to persist what we have and cycle.
 				v.SyncCache()
-				v.super.WALHead = v.wal.LogicalHead()
-				v.super.WALTail = v.wal.LogicalTail()
-				v.fd.Seek(0, 0)
-				v.super.WriteTo(v.fd)
-				v.fd.Sync()
-				path = simulateCrash(v)
+				path = simulateCrashWithSuper(v)
 				v, err = OpenBlockVol(path)
 				if err != nil {
 					t.Fatalf("iter %d reopen: %v", iter, err)
@@ -3028,13 +2967,7 @@ func testQACrashOverwriteStorm(t *testing.T) {
 			t.Fatalf("iter %d SyncCache: %v", iter, err)
 		}
 
-		v.super.WALHead = v.wal.LogicalHead()
-		v.super.WALTail = v.wal.LogicalTail()
-		v.fd.Seek(0, 0)
-		v.super.WriteTo(v.fd)
-		v.fd.Sync()
-
-		path = simulateCrash(v)
+		path = simulateCrashWithSuper(v)
 
 		v, err = OpenBlockVol(path)
 		if err != nil {
@@ -3103,6 +3036,10 @@ func testQARecoverEntrySizeMismatchAtTail(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
+	// Stop background goroutines before manual superblock/WAL manipulation.
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+
 	v.super.WALHead = v.wal.LogicalHead()
 	v.super.WALTail = v.wal.LogicalTail()
 	v.fd.Seek(0, 0)
@@ -3118,7 +3055,8 @@ func testQARecoverEntrySizeMismatchAtTail(t *testing.T) {
 	v.fd.WriteAt(badSize[:], entrySizeOff)
 	v.fd.Sync()
 
-	path = simulateCrash(v)
+	v.fd.Close()
+	path = v.Path()
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3192,6 +3130,10 @@ func testQARecoverPartialPadding(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
+	// Stop background goroutines before manual superblock/WAL manipulation.
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+
 	v.super.WALHead = v.wal.LogicalHead()
 	v.super.WALTail = v.wal.LogicalTail()
 	v.fd.Seek(0, 0)
@@ -3205,7 +3147,8 @@ func testQARecoverPartialPadding(t *testing.T) {
 	v.fd.WriteAt(garbage, paddingOff)
 	v.fd.Sync()
 
-	path = simulateCrash(v)
+	v.fd.Close()
+	path = v.Path()
 
 	// Recovery should handle this — either skip corrupt padding and find
 	// entry 3, or stop at the corruption. Either way, no panic.
@@ -3258,13 +3201,7 @@ func testQARecoverTrimThenWriteSameLBA(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3310,13 +3247,7 @@ func testQARecoverWriteThenTrimSameLBA(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3371,13 +3302,7 @@ func testQARecoverBarrierOnlyFullWAL(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3669,13 +3594,7 @@ func testQAConcurrentFlushAndWrite(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Persist superblock and crash.
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3841,13 +3760,7 @@ func testQABlockSize512WALSmall(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	v.super.WALHead = v.wal.LogicalHead()
-	v.super.WALTail = v.wal.LogicalTail()
-	v.fd.Seek(0, 0)
-	v.super.WriteTo(v.fd)
-	v.fd.Sync()
-
-	path = simulateCrash(v)
+	path = simulateCrashWithSuper(v)
 
 	v2, err := OpenBlockVol(path)
 	if err != nil {

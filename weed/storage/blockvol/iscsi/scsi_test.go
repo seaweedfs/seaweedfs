@@ -108,6 +108,15 @@ func TestSCSI(t *testing.T) {
 		{"read_error", testReadError},
 		{"write_error", testWriteError},
 		{"read_capacity_16_invalid_sa", testReadCapacity16InvalidSA},
+		{"write_same_16_unmap", testWriteSame16Unmap},
+		{"write_same_16_ndob", testWriteSame16NDOB},
+		{"write_same_16_pattern", testWriteSame16Pattern},
+		{"write_same_16_zeros", testWriteSame16Zeros},
+		{"write_same_16_oob", testWriteSame16OOB},
+		{"write_same_16_zero_blocks", testWriteSame16ZeroBlocks},
+		{"mode_sense_10", testModeSense10},
+		{"vpd_b0_block_limits", testVPDB0BlockLimits},
+		{"vpd_b2_logical_block_prov", testVPDB2LogicalBlockProv},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,9 +194,15 @@ func testInquiryVPDSupportedPages(t *testing.T) {
 	if r.Data[1] != 0x00 {
 		t.Fatal("wrong page code")
 	}
-	// Should list pages 0x00, 0x80, 0x83
-	if len(r.Data) < 7 || r.Data[4] != 0x00 || r.Data[5] != 0x80 || r.Data[6] != 0x83 {
-		t.Fatalf("supported pages: %v", r.Data)
+	// Should list pages 0x00, 0x80, 0x83, 0xB0, 0xB2
+	want := []byte{0x00, 0x80, 0x83, 0xb0, 0xb2}
+	if len(r.Data) < 4+len(want) {
+		t.Fatalf("supported pages too short: %v", r.Data)
+	}
+	for i, p := range want {
+		if r.Data[4+i] != p {
+			t.Fatalf("page[%d]: got %02x, want %02x (data=%v)", i, r.Data[4+i], p, r.Data)
+		}
 	}
 }
 
@@ -676,6 +691,233 @@ func testWriteError(t *testing.T) {
 	r := h.HandleCommand(cdb, make([]byte, 4096))
 	if r.Status != SCSIStatusCheckCond {
 		t.Fatal("should fail")
+	}
+}
+
+// --- WRITE SAME(16) tests ---
+
+func testWriteSame16Unmap(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+
+	// Write data at LBA 10-14
+	for i := uint64(10); i < 15; i++ {
+		block := make([]byte, 4096)
+		block[0] = byte(i)
+		dev.blocks[i] = block
+	}
+
+	// WRITE SAME(16) with UNMAP bit: should trim LBA 10-14
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	cdb[1] = 0x08 // UNMAP bit
+	binary.BigEndian.PutUint64(cdb[2:10], 10)
+	binary.BigEndian.PutUint32(cdb[10:14], 5)
+
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	for i := uint64(10); i < 15; i++ {
+		if _, ok := dev.blocks[i]; ok {
+			t.Fatalf("block %d should be trimmed", i)
+		}
+	}
+}
+
+func testWriteSame16NDOB(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+
+	dev.blocks[20] = make([]byte, 4096)
+	dev.blocks[20][0] = 0xFF
+
+	// WRITE SAME(16) with NDOB bit (no data-out buffer): zero the range
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	cdb[1] = 0x01 // NDOB bit
+	binary.BigEndian.PutUint64(cdb[2:10], 20)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if _, ok := dev.blocks[20]; ok {
+		t.Fatal("block 20 should be trimmed")
+	}
+}
+
+func testWriteSame16Pattern(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+
+	// Write a non-zero pattern across 3 blocks
+	pattern := make([]byte, 4096)
+	pattern[0] = 0xAB
+	pattern[4095] = 0xCD
+
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	// No UNMAP, no NDOB — normal write same
+	binary.BigEndian.PutUint64(cdb[2:10], 30)
+	binary.BigEndian.PutUint32(cdb[10:14], 3)
+
+	r := h.HandleCommand(cdb, pattern)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	for i := uint64(30); i < 33; i++ {
+		if dev.blocks[i][0] != 0xAB {
+			t.Fatalf("block %d[0]: got %02x, want AB", i, dev.blocks[i][0])
+		}
+		if dev.blocks[i][4095] != 0xCD {
+			t.Fatalf("block %d[4095]: got %02x, want CD", i, dev.blocks[i][4095])
+		}
+	}
+}
+
+func testWriteSame16Zeros(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+
+	// Write data at LBA 40
+	dev.blocks[40] = make([]byte, 4096)
+	dev.blocks[40][0] = 0xFF
+
+	// WRITE SAME with all-zero pattern — should use Trim for efficiency
+	pattern := make([]byte, 4096)
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	binary.BigEndian.PutUint64(cdb[2:10], 40)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+
+	r := h.HandleCommand(cdb, pattern)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if _, ok := dev.blocks[40]; ok {
+		t.Fatal("block 40 should be trimmed (zero pattern)")
+	}
+}
+
+func testWriteSame16OOB(t *testing.T) {
+	dev := newMockDevice(10 * 4096) // 10 blocks
+	h := NewSCSIHandler(dev)
+
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	cdb[1] = 0x08 // UNMAP
+	binary.BigEndian.PutUint64(cdb[2:10], 8)
+	binary.BigEndian.PutUint32(cdb[10:14], 5) // 8+5 > 10
+
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusCheckCond {
+		t.Fatal("should fail for OOB")
+	}
+	if r.SenseASC != ASCLBAOutOfRange {
+		t.Fatalf("expected LBA_OUT_OF_RANGE, got ASC=%02x", r.SenseASC)
+	}
+}
+
+func testWriteSame16ZeroBlocks(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+
+	var cdb [16]byte
+	cdb[0] = ScsiWriteSame16
+	binary.BigEndian.PutUint64(cdb[2:10], 0)
+	binary.BigEndian.PutUint32(cdb[10:14], 0) // 0 blocks = no-op
+
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatal("zero-block write same should succeed")
+	}
+}
+
+func testModeSense10(t *testing.T) {
+	dev := newMockDevice(1024 * 1024)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiModeSense10
+	binary.BigEndian.PutUint16(cdb[7:9], 255) // alloc length
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if len(r.Data) != 8 {
+		t.Fatalf("mode sense(10) data: %d bytes, want 8", len(r.Data))
+	}
+	// Mode data length field (bytes 0-1) = 6
+	mdl := binary.BigEndian.Uint16(r.Data[0:2])
+	if mdl != 6 {
+		t.Fatalf("mode data length: %d, want 6", mdl)
+	}
+	// No write protect (byte 3, bit 7)
+	if r.Data[3]&0x80 != 0 {
+		t.Fatal("write protect set")
+	}
+	// Block descriptor length = 0 (bytes 6-7)
+	bdl := binary.BigEndian.Uint16(r.Data[6:8])
+	if bdl != 0 {
+		t.Fatalf("block descriptor length: %d, want 0", bdl)
+	}
+}
+
+func testVPDB0BlockLimits(t *testing.T) {
+	dev := newMockDevice(100 * 4096) // 100 blocks
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	cdb[1] = 0x01 // EVPD
+	cdb[2] = 0xb0 // Block Limits
+	binary.BigEndian.PutUint16(cdb[3:5], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if r.Data[1] != 0xb0 {
+		t.Fatalf("page code: %02x, want B0", r.Data[1])
+	}
+	// Page length (bytes 2-3) = 60
+	pgLen := binary.BigEndian.Uint16(r.Data[2:4])
+	if pgLen != 60 {
+		t.Fatalf("page length: %d, want 60", pgLen)
+	}
+	// Max WRITE SAME length (bytes 40-47) should be 100 (total blocks)
+	maxWS := binary.BigEndian.Uint64(r.Data[40:48])
+	if maxWS != 100 {
+		t.Fatalf("max WRITE SAME length: %d, want 100", maxWS)
+	}
+	// Max UNMAP LBA count (bytes 24-27) should be 100
+	maxUnmap := binary.BigEndian.Uint32(r.Data[24:28])
+	if maxUnmap != 100 {
+		t.Fatalf("max UNMAP LBA count: %d, want 100", maxUnmap)
+	}
+}
+
+func testVPDB2LogicalBlockProv(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	cdb[1] = 0x01 // EVPD
+	cdb[2] = 0xb2 // Logical Block Provisioning
+	binary.BigEndian.PutUint16(cdb[3:5], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if r.Data[1] != 0xb2 {
+		t.Fatalf("page code: %02x, want B2", r.Data[1])
+	}
+	// Provisioning type (byte 5, bits 2:0) = 0x02 (thin)
+	if r.Data[5]&0x07 != 0x02 {
+		t.Fatalf("provisioning type: %02x, want 02", r.Data[5]&0x07)
+	}
+	// LBPU=1 (byte 6, bit 7), LBPWS=1 (byte 6, bit 6)
+	if r.Data[6]&0xC0 != 0xC0 {
+		t.Fatalf("LBPU/LBPWS flags: %02x, want C0", r.Data[6]&0xC0)
 	}
 }
 

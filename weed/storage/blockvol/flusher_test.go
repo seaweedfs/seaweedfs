@@ -2,7 +2,10 @@ package blockvol
 
 import (
 	"bytes"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +20,10 @@ func TestFlusher(t *testing.T) {
 		{name: "flush_concurrent_writes", run: testFlushConcurrentWrites},
 		{name: "flush_frees_wal_space", run: testFlushFreesWALSpace},
 		{name: "flush_partial", run: testFlushPartial},
+		// Phase 3 Task 1.6: NotifyUrgent.
+		{name: "flusher_notify_urgent_triggers_flush", run: testFlusherNotifyUrgentTriggersFlush},
+		// Phase 3 bug fix: P3-BUG-4 error logging.
+		{name: "flusher_error_logged", run: testFlusherErrorLogged},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -258,4 +265,120 @@ func testFlushPartial(t *testing.T) {
 			t.Errorf("block %d: data mismatch after two flushes", i)
 		}
 	}
+}
+
+// --- Phase 3 Task 1.6: NotifyUrgent test ---
+
+func testFlusherNotifyUrgentTriggersFlush(t *testing.T) {
+	v, f := createTestVolWithFlusher(t)
+	defer v.Close()
+
+	data := makeBlock('U')
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	if v.dirtyMap.Len() != 1 {
+		t.Fatalf("dirty map len = %d, want 1", v.dirtyMap.Len())
+	}
+
+	// Start flusher in background with long interval.
+	go f.Run()
+	defer f.Stop()
+
+	// NotifyUrgent should trigger a flush.
+	f.NotifyUrgent()
+
+	// Wait for flush to complete.
+	deadline := time.After(2 * time.Second)
+	for {
+		if v.dirtyMap.Len() == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("NotifyUrgent did not trigger flush within 2s")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	got, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after urgent flush: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("data mismatch after urgent flush")
+	}
+}
+
+// testFlusherErrorLogged verifies that flusher I/O errors are logged
+// and that consecutive errors are deduplicated.
+func testFlusherErrorLogged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "errlog.blockvol")
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	// Write a block so dirty map has an entry.
+	if err := v.WriteLBA(0, makeBlock('E')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Create a flusher with a captured logger and a CLOSED fd to force error.
+	var logBuf strings.Builder
+	logger := log.New(&logBuf, "", 0)
+
+	closedFD, err := openAndClose(path)
+	if err != nil {
+		t.Fatalf("openAndClose: %v", err)
+	}
+
+	f := NewFlusher(FlusherConfig{
+		FD:       closedFD,
+		Super:    &v.super,
+		WAL:      v.wal,
+		DirtyMap: v.dirtyMap,
+		Interval: 1 * time.Hour,
+		Logger:   logger,
+	})
+
+	// Run flusher briefly — FlushOnce should error, and Run should log it.
+	go f.Run()
+	f.Notify()
+	time.Sleep(50 * time.Millisecond)
+	// Send another notify to test dedup.
+	f.Notify()
+	time.Sleep(50 * time.Millisecond)
+	f.Stop()
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "flusher error:") {
+		t.Fatalf("expected 'flusher error:' in log, got: %q", logged)
+	}
+
+	// Should only be logged once (dedup of consecutive errors).
+	count := strings.Count(logged, "flusher error:")
+	if count != 1 {
+		t.Errorf("expected 1 log line (dedup), got %d: %q", count, logged)
+	}
+
+	v.Close()
+}
+
+// openAndClose opens a file and immediately closes the fd, returning
+// the now-invalid *os.File for injection into flusher tests.
+func openAndClose(path string) (*os.File, error) {
+	fd, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	fd.Close()
+	return fd, nil
 }

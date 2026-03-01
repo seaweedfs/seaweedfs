@@ -74,6 +74,10 @@ type VolumeServerOptions struct {
 	ldbTimeout                  *int64
 	debug                       *bool
 	debugPort                   *int
+	// Block volume (iSCSI) options
+	blockListen    *string
+	blockDir       *string
+	blockIQNPrefix *string
 }
 
 func init() {
@@ -114,6 +118,9 @@ func init() {
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
 	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
+	v.blockListen = cmdVolume.Flag.String("block.listen", "0.0.0.0:3260", "iSCSI target listen address for block volumes")
+	v.blockDir = cmdVolume.Flag.String("block.dir", "", "directory containing .blk block volume files. Empty disables iSCSI block service.")
+	v.blockIQNPrefix = cmdVolume.Flag.String("block.iqn.prefix", "iqn.2024-01.com.seaweedfs:vol.", "IQN prefix for block volume iSCSI targets")
 }
 
 var cmdVolume = &Command{
@@ -301,6 +308,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	// starting the cluster http server
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
+	// Start block volume iSCSI service (disabled if block.dir is empty).
+	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix)
+
 	grace.OnReload(volumeServer.LoadNewVolumes)
 	grace.OnReload(volumeServer.Reload)
 
@@ -315,6 +325,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 			time.Sleep(time.Duration(*v.preStopSeconds) * time.Second)
 		}
 
+		blockService.Shutdown()
 		shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
 		stopChan <- true
 	})
@@ -324,6 +335,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		select {
 		case <-stopChan:
 		case <-ctx.Done():
+			blockService.Shutdown()
 			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
 		}
 	} else {
