@@ -356,8 +356,13 @@ func parseVolumeTags(tagsArg string, folderCount int) [][]string {
 		}
 	} else {
 		// Otherwise, assign tags to folders that have explicit entries
-		for i := 0; i < folderCount && i < len(tagEntries); i++ {
-			folderTags[i] = util.NormalizeTagList(strings.Split(tagEntries[i], ":"))
+		for i := 0; i < folderCount; i++ {
+			if i < len(tagEntries) {
+				folderTags[i] = util.NormalizeTagList(strings.Split(tagEntries[i], ":"))
+			} else {
+				// Initialize remaining folders with empty tag slice
+				folderTags[i] = []string{}
+			}
 		}
 	}
 	return folderTags
