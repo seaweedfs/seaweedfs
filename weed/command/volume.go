@@ -221,7 +221,11 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
 	}
 
-	folderTags := parseVolumeTags(*v.tags, len(v.folders))
+	var tagsArg string
+	if v.tags != nil {
+		tagsArg = *v.tags
+	}
+	folderTags := parseVolumeTags(tagsArg, len(v.folders))
 
 	// security related white list configuration
 	v.whiteList = util.StringSplit(volumeWhiteListOption, ",")
