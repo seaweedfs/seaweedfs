@@ -12,8 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding/placement"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
-	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
+	workerutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -350,26 +351,6 @@ func ParseCollectionFilter(filter string) map[string]bool {
 	return allowed
 }
 
-func normalizeTagList(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		item := strings.ToLower(strings.TrimSpace(value))
-		if item == "" {
-			continue
-		}
-		if _, found := seen[item]; found {
-			continue
-		}
-		seen[item] = struct{}{}
-		normalized = append(normalized, item)
-	}
-	return normalized
-}
-
 type ecDiskState struct {
 	baseAvailable      int64
 	reservedVolumes    int32
@@ -393,7 +374,7 @@ func newECPlacementPlanner(activeTopology *topology.ActiveTopology, preferredTag
 	disks := activeTopology.GetDisksWithEffectiveCapacity(topology.TaskTypeErasureCoding, "", 0)
 	candidates := diskInfosToCandidates(disks)
 	tagsByKey := collectDiskTags(disks)
-	normalizedPreferredTags := normalizeTagList(preferredTags)
+	normalizedPreferredTags := util.NormalizeTagList(preferredTags)
 	if len(candidates) == 0 {
 		return &ecPlacementPlanner{
 			activeTopology: activeTopology,
@@ -563,7 +544,7 @@ func collectDiskTags(disks []*topology.DiskInfo) map[string][]string {
 			continue
 		}
 		key := ecDiskKey(disk.NodeID, disk.DiskID)
-		tags := normalizeTagList(disk.DiskInfo.Tags)
+		tags := util.NormalizeTagList(disk.DiskInfo.Tags)
 		if len(tags) > 0 {
 			tagMap[key] = tags
 		}
@@ -668,7 +649,7 @@ func planECDestinations(planner *ecPlacementPlanner, metric *types.VolumeHealthM
 
 	for _, disk := range selectedDisks {
 		// Get the target server address
-		targetAddress, err := util.ResolveServerAddress(disk.NodeID, planner.activeTopology)
+		targetAddress, err := workerutil.ResolveServerAddress(disk.NodeID, planner.activeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve address for target server %s: %v", disk.NodeID, err)
 		}
@@ -772,7 +753,7 @@ func convertTaskSourcesToProtobuf(sources []topology.TaskSourceSpec, volumeID ui
 	var protobufSources []*worker_pb.TaskSource
 
 	for _, source := range sources {
-		serverAddress, err := util.ResolveServerAddress(source.ServerID, activeTopology)
+		serverAddress, err := workerutil.ResolveServerAddress(source.ServerID, activeTopology)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve address for source server %s: %v", source.ServerID, err)
 		}

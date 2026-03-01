@@ -348,29 +348,9 @@ func parseVolumeTags(tagsArg string, folderCount int) [][]string {
 	}
 	folderTags := make([][]string, folderCount)
 	for i := 0; i < folderCount && i < len(tagEntries); i++ {
-		folderTags[i] = normalizeTagList(strings.Split(tagEntries[i], ":"))
+		folderTags[i] = util.NormalizeTagList(strings.Split(tagEntries[i], ":"))
 	}
 	return folderTags
-}
-
-func normalizeTagList(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
-	normalized := make([]string, 0, len(tags))
-	seen := make(map[string]struct{}, len(tags))
-	for _, tag := range tags {
-		tag = strings.ToLower(strings.TrimSpace(tag))
-		if tag == "" {
-			continue
-		}
-		if _, exists := seen[tag]; exists {
-			continue
-		}
-		seen[tag] = struct{}{}
-		normalized = append(normalized, tag)
-	}
-	return normalized
 }
 
 func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {

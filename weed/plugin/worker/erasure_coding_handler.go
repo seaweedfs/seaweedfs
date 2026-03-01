@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -615,7 +616,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	if minIntervalSeconds < 0 {
 		minIntervalSeconds = 0
 	}
-	taskConfig.PreferredTags = normalizeTagList(readStringListConfig(values, "preferred_tags"))
+	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig:         taskConfig,
@@ -889,26 +890,6 @@ func normalizeStringList(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		item := strings.TrimSpace(value)
-		if item == "" {
-			continue
-		}
-		if _, found := seen[item]; found {
-			continue
-		}
-		seen[item] = struct{}{}
-		normalized = append(normalized, item)
-	}
-	return normalized
-}
-
-func normalizeTagList(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	normalized := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		item := strings.ToLower(strings.TrimSpace(value))
 		if item == "" {
 			continue
 		}
