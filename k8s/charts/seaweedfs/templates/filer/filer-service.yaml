@@ -17,7 +17,7 @@ metadata:
     {{- toYaml .Values.filer.annotations | nindent 4 }}
 {{- end }}
 spec:
-  clusterIP: None
+  type: {{ .Values.filer.service.type }}
   publishNotReadyAddresses: true
   ports:
   - name: "swfs-filer"

@@ -15,6 +15,7 @@ metadata:
     {{- toYaml .Values.sftp.annotations | nindent 4 }}
 {{- end }}
 spec:
+  type: {{ .Values.sftp.service.type }}
   internalTrafficPolicy: {{ .Values.sftp.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-sftp"
