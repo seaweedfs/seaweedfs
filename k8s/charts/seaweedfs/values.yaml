@@ -408,6 +408,10 @@ volume:
   # Volume server's data center name
   dataCenter: null
 
+  # Volume server's disk type [hdd|ssd|<tag>]
+  # Use "hdd" for hard drives, "ssd" for solid state drives, or a custom tag
+  diskType: null
+
   # Redirect moved or non-local volumes. (default proxy)
   readMode: proxy
 
