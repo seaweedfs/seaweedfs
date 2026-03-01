@@ -22,6 +22,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DiskTag struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DiskId        uint32                 `protobuf:"varint,1,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	Tags          []string               `protobuf:"bytes,2,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiskTag) Reset() {
+	*x = DiskTag{}
+	mi := &file_master_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiskTag) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiskTag) ProtoMessage() {}
+
+func (x *DiskTag) ProtoReflect() protoreflect.Message {
+	mi := &file_master_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiskTag.ProtoReflect.Descriptor instead.
+func (*DiskTag) Descriptor() ([]byte, []int) {
+	return file_master_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *DiskTag) GetDiskId() uint32 {
+	if x != nil {
+		return x.DiskId
+	}
+	return 0
+}
+
+func (x *DiskTag) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
 type Heartbeat struct {
 	state      protoimpl.MessageState      `protogen:"open.v1"`
 	Ip         string                      `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
@@ -48,13 +100,14 @@ type Heartbeat struct {
 	Id              string                             `protobuf:"bytes,22,opt,name=id,proto3" json:"id,omitempty"` // volume server id, independent of ip:port for stable identification
 	// state flags
 	State         *volume_server_pb.VolumeServerState `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
+	DiskTags      []*DiskTag                          `protobuf:"bytes,24,rep,name=disk_tags,json=diskTags,proto3" json:"disk_tags,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_master_proto_msgTypes[0]
+	mi := &file_master_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -66,7 +119,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[0]
+	mi := &file_master_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -79,7 +132,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{0}
+	return file_master_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Heartbeat) GetIp() string {
@@ -222,6 +275,13 @@ func (x *Heartbeat) GetState() *volume_server_pb.VolumeServerState {
 	return nil
 }
 
+func (x *Heartbeat) GetDiskTags() []*DiskTag {
+	if x != nil {
+		return x.DiskTags
+	}
+	return nil
+}
+
 type HeartbeatResponse struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	VolumeSizeLimit        uint64                 `protobuf:"varint,1,opt,name=volume_size_limit,json=volumeSizeLimit,proto3" json:"volume_size_limit,omitempty"`
@@ -237,7 +297,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_master_proto_msgTypes[1]
+	mi := &file_master_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -249,7 +309,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[1]
+	mi := &file_master_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -262,7 +322,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{1}
+	return file_master_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HeartbeatResponse) GetVolumeSizeLimit() uint64 {
@@ -338,7 +398,7 @@ type VolumeInformationMessage struct {
 
 func (x *VolumeInformationMessage) Reset() {
 	*x = VolumeInformationMessage{}
-	mi := &file_master_proto_msgTypes[2]
+	mi := &file_master_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -350,7 +410,7 @@ func (x *VolumeInformationMessage) String() string {
 func (*VolumeInformationMessage) ProtoMessage() {}
 
 func (x *VolumeInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[2]
+	mi := &file_master_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -363,7 +423,7 @@ func (x *VolumeInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeInformationMessage) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{2}
+	return file_master_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *VolumeInformationMessage) GetId() uint32 {
@@ -493,7 +553,7 @@ type VolumeShortInformationMessage struct {
 
 func (x *VolumeShortInformationMessage) Reset() {
 	*x = VolumeShortInformationMessage{}
-	mi := &file_master_proto_msgTypes[3]
+	mi := &file_master_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -505,7 +565,7 @@ func (x *VolumeShortInformationMessage) String() string {
 func (*VolumeShortInformationMessage) ProtoMessage() {}
 
 func (x *VolumeShortInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[3]
+	mi := &file_master_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -518,7 +578,7 @@ func (x *VolumeShortInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeShortInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeShortInformationMessage) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{3}
+	return file_master_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *VolumeShortInformationMessage) GetId() uint32 {
@@ -585,7 +645,7 @@ type VolumeEcShardInformationMessage struct {
 
 func (x *VolumeEcShardInformationMessage) Reset() {
 	*x = VolumeEcShardInformationMessage{}
-	mi := &file_master_proto_msgTypes[4]
+	mi := &file_master_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -597,7 +657,7 @@ func (x *VolumeEcShardInformationMessage) String() string {
 func (*VolumeEcShardInformationMessage) ProtoMessage() {}
 
 func (x *VolumeEcShardInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[4]
+	mi := &file_master_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -610,7 +670,7 @@ func (x *VolumeEcShardInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardInformationMessage) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{4}
+	return file_master_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *VolumeEcShardInformationMessage) GetId() uint32 {
@@ -673,7 +733,7 @@ type StorageBackend struct {
 
 func (x *StorageBackend) Reset() {
 	*x = StorageBackend{}
-	mi := &file_master_proto_msgTypes[5]
+	mi := &file_master_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +745,7 @@ func (x *StorageBackend) String() string {
 func (*StorageBackend) ProtoMessage() {}
 
 func (x *StorageBackend) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[5]
+	mi := &file_master_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +758,7 @@ func (x *StorageBackend) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageBackend.ProtoReflect.Descriptor instead.
 func (*StorageBackend) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{5}
+	return file_master_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *StorageBackend) GetType() string {
@@ -730,7 +790,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_master_proto_msgTypes[6]
+	mi := &file_master_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -742,7 +802,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[6]
+	mi := &file_master_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -755,7 +815,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{6}
+	return file_master_proto_rawDescGZIP(), []int{7}
 }
 
 type SuperBlockExtra struct {
@@ -767,7 +827,7 @@ type SuperBlockExtra struct {
 
 func (x *SuperBlockExtra) Reset() {
 	*x = SuperBlockExtra{}
-	mi := &file_master_proto_msgTypes[7]
+	mi := &file_master_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -779,7 +839,7 @@ func (x *SuperBlockExtra) String() string {
 func (*SuperBlockExtra) ProtoMessage() {}
 
 func (x *SuperBlockExtra) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[7]
+	mi := &file_master_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -792,7 +852,7 @@ func (x *SuperBlockExtra) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuperBlockExtra.ProtoReflect.Descriptor instead.
 func (*SuperBlockExtra) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{7}
+	return file_master_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SuperBlockExtra) GetErasureCoding() *SuperBlockExtra_ErasureCoding {
@@ -816,7 +876,7 @@ type KeepConnectedRequest struct {
 
 func (x *KeepConnectedRequest) Reset() {
 	*x = KeepConnectedRequest{}
-	mi := &file_master_proto_msgTypes[8]
+	mi := &file_master_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -828,7 +888,7 @@ func (x *KeepConnectedRequest) String() string {
 func (*KeepConnectedRequest) ProtoMessage() {}
 
 func (x *KeepConnectedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[8]
+	mi := &file_master_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -841,7 +901,7 @@ func (x *KeepConnectedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeepConnectedRequest.ProtoReflect.Descriptor instead.
 func (*KeepConnectedRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{8}
+	return file_master_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *KeepConnectedRequest) GetClientType() string {
@@ -903,7 +963,7 @@ type VolumeLocation struct {
 
 func (x *VolumeLocation) Reset() {
 	*x = VolumeLocation{}
-	mi := &file_master_proto_msgTypes[9]
+	mi := &file_master_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -915,7 +975,7 @@ func (x *VolumeLocation) String() string {
 func (*VolumeLocation) ProtoMessage() {}
 
 func (x *VolumeLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[9]
+	mi := &file_master_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -928,7 +988,7 @@ func (x *VolumeLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeLocation.ProtoReflect.Descriptor instead.
 func (*VolumeLocation) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{9}
+	return file_master_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *VolumeLocation) GetUrl() string {
@@ -1007,7 +1067,7 @@ type ClusterNodeUpdate struct {
 
 func (x *ClusterNodeUpdate) Reset() {
 	*x = ClusterNodeUpdate{}
-	mi := &file_master_proto_msgTypes[10]
+	mi := &file_master_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1019,7 +1079,7 @@ func (x *ClusterNodeUpdate) String() string {
 func (*ClusterNodeUpdate) ProtoMessage() {}
 
 func (x *ClusterNodeUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[10]
+	mi := &file_master_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1032,7 +1092,7 @@ func (x *ClusterNodeUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterNodeUpdate.ProtoReflect.Descriptor instead.
 func (*ClusterNodeUpdate) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{10}
+	return file_master_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ClusterNodeUpdate) GetNodeType() string {
@@ -1080,7 +1140,7 @@ type KeepConnectedResponse struct {
 
 func (x *KeepConnectedResponse) Reset() {
 	*x = KeepConnectedResponse{}
-	mi := &file_master_proto_msgTypes[11]
+	mi := &file_master_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1092,7 +1152,7 @@ func (x *KeepConnectedResponse) String() string {
 func (*KeepConnectedResponse) ProtoMessage() {}
 
 func (x *KeepConnectedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[11]
+	mi := &file_master_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1105,7 +1165,7 @@ func (x *KeepConnectedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeepConnectedResponse.ProtoReflect.Descriptor instead.
 func (*KeepConnectedResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{11}
+	return file_master_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *KeepConnectedResponse) GetVolumeLocation() *VolumeLocation {
@@ -1132,7 +1192,7 @@ type LookupVolumeRequest struct {
 
 func (x *LookupVolumeRequest) Reset() {
 	*x = LookupVolumeRequest{}
-	mi := &file_master_proto_msgTypes[12]
+	mi := &file_master_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1144,7 +1204,7 @@ func (x *LookupVolumeRequest) String() string {
 func (*LookupVolumeRequest) ProtoMessage() {}
 
 func (x *LookupVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[12]
+	mi := &file_master_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1157,7 +1217,7 @@ func (x *LookupVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupVolumeRequest.ProtoReflect.Descriptor instead.
 func (*LookupVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{12}
+	return file_master_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LookupVolumeRequest) GetVolumeOrFileIds() []string {
@@ -1183,7 +1243,7 @@ type LookupVolumeResponse struct {
 
 func (x *LookupVolumeResponse) Reset() {
 	*x = LookupVolumeResponse{}
-	mi := &file_master_proto_msgTypes[13]
+	mi := &file_master_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1195,7 +1255,7 @@ func (x *LookupVolumeResponse) String() string {
 func (*LookupVolumeResponse) ProtoMessage() {}
 
 func (x *LookupVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[13]
+	mi := &file_master_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1208,7 +1268,7 @@ func (x *LookupVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupVolumeResponse.ProtoReflect.Descriptor instead.
 func (*LookupVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{13}
+	return file_master_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *LookupVolumeResponse) GetVolumeIdLocations() []*LookupVolumeResponse_VolumeIdLocation {
@@ -1230,7 +1290,7 @@ type Location struct {
 
 func (x *Location) Reset() {
 	*x = Location{}
-	mi := &file_master_proto_msgTypes[14]
+	mi := &file_master_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1242,7 +1302,7 @@ func (x *Location) String() string {
 func (*Location) ProtoMessage() {}
 
 func (x *Location) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[14]
+	mi := &file_master_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1255,7 +1315,7 @@ func (x *Location) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Location.ProtoReflect.Descriptor instead.
 func (*Location) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{14}
+	return file_master_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Location) GetUrl() string {
@@ -1304,7 +1364,7 @@ type AssignRequest struct {
 
 func (x *AssignRequest) Reset() {
 	*x = AssignRequest{}
-	mi := &file_master_proto_msgTypes[15]
+	mi := &file_master_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1316,7 +1376,7 @@ func (x *AssignRequest) String() string {
 func (*AssignRequest) ProtoMessage() {}
 
 func (x *AssignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[15]
+	mi := &file_master_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1329,7 +1389,7 @@ func (x *AssignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignRequest.ProtoReflect.Descriptor instead.
 func (*AssignRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{15}
+	return file_master_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AssignRequest) GetCount() uint64 {
@@ -1419,7 +1479,7 @@ type VolumeGrowRequest struct {
 
 func (x *VolumeGrowRequest) Reset() {
 	*x = VolumeGrowRequest{}
-	mi := &file_master_proto_msgTypes[16]
+	mi := &file_master_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1431,7 +1491,7 @@ func (x *VolumeGrowRequest) String() string {
 func (*VolumeGrowRequest) ProtoMessage() {}
 
 func (x *VolumeGrowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[16]
+	mi := &file_master_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1444,7 +1504,7 @@ func (x *VolumeGrowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeGrowRequest.ProtoReflect.Descriptor instead.
 func (*VolumeGrowRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{16}
+	return file_master_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *VolumeGrowRequest) GetWritableVolumeCount() uint32 {
@@ -1524,7 +1584,7 @@ type AssignResponse struct {
 
 func (x *AssignResponse) Reset() {
 	*x = AssignResponse{}
-	mi := &file_master_proto_msgTypes[17]
+	mi := &file_master_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1596,7 @@ func (x *AssignResponse) String() string {
 func (*AssignResponse) ProtoMessage() {}
 
 func (x *AssignResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[17]
+	mi := &file_master_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1609,7 @@ func (x *AssignResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignResponse.ProtoReflect.Descriptor instead.
 func (*AssignResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{17}
+	return file_master_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AssignResponse) GetFid() string {
@@ -1606,7 +1666,7 @@ type StatisticsRequest struct {
 
 func (x *StatisticsRequest) Reset() {
 	*x = StatisticsRequest{}
-	mi := &file_master_proto_msgTypes[18]
+	mi := &file_master_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1618,7 +1678,7 @@ func (x *StatisticsRequest) String() string {
 func (*StatisticsRequest) ProtoMessage() {}
 
 func (x *StatisticsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[18]
+	mi := &file_master_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1631,7 +1691,7 @@ func (x *StatisticsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatisticsRequest.ProtoReflect.Descriptor instead.
 func (*StatisticsRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{18}
+	return file_master_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *StatisticsRequest) GetReplication() string {
@@ -1673,7 +1733,7 @@ type StatisticsResponse struct {
 
 func (x *StatisticsResponse) Reset() {
 	*x = StatisticsResponse{}
-	mi := &file_master_proto_msgTypes[19]
+	mi := &file_master_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1685,7 +1745,7 @@ func (x *StatisticsResponse) String() string {
 func (*StatisticsResponse) ProtoMessage() {}
 
 func (x *StatisticsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[19]
+	mi := &file_master_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1698,7 +1758,7 @@ func (x *StatisticsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatisticsResponse.ProtoReflect.Descriptor instead.
 func (*StatisticsResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{19}
+	return file_master_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *StatisticsResponse) GetTotalSize() uint64 {
@@ -1732,7 +1792,7 @@ type Collection struct {
 
 func (x *Collection) Reset() {
 	*x = Collection{}
-	mi := &file_master_proto_msgTypes[20]
+	mi := &file_master_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1744,7 +1804,7 @@ func (x *Collection) String() string {
 func (*Collection) ProtoMessage() {}
 
 func (x *Collection) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[20]
+	mi := &file_master_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1757,7 +1817,7 @@ func (x *Collection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Collection.ProtoReflect.Descriptor instead.
 func (*Collection) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{20}
+	return file_master_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Collection) GetName() string {
@@ -1777,7 +1837,7 @@ type CollectionListRequest struct {
 
 func (x *CollectionListRequest) Reset() {
 	*x = CollectionListRequest{}
-	mi := &file_master_proto_msgTypes[21]
+	mi := &file_master_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1789,7 +1849,7 @@ func (x *CollectionListRequest) String() string {
 func (*CollectionListRequest) ProtoMessage() {}
 
 func (x *CollectionListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[21]
+	mi := &file_master_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1802,7 +1862,7 @@ func (x *CollectionListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionListRequest.ProtoReflect.Descriptor instead.
 func (*CollectionListRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{21}
+	return file_master_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CollectionListRequest) GetIncludeNormalVolumes() bool {
@@ -1828,7 +1888,7 @@ type CollectionListResponse struct {
 
 func (x *CollectionListResponse) Reset() {
 	*x = CollectionListResponse{}
-	mi := &file_master_proto_msgTypes[22]
+	mi := &file_master_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1840,7 +1900,7 @@ func (x *CollectionListResponse) String() string {
 func (*CollectionListResponse) ProtoMessage() {}
 
 func (x *CollectionListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[22]
+	mi := &file_master_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1853,7 +1913,7 @@ func (x *CollectionListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionListResponse.ProtoReflect.Descriptor instead.
 func (*CollectionListResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{22}
+	return file_master_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CollectionListResponse) GetCollections() []*Collection {
@@ -1872,7 +1932,7 @@ type CollectionDeleteRequest struct {
 
 func (x *CollectionDeleteRequest) Reset() {
 	*x = CollectionDeleteRequest{}
-	mi := &file_master_proto_msgTypes[23]
+	mi := &file_master_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1884,7 +1944,7 @@ func (x *CollectionDeleteRequest) String() string {
 func (*CollectionDeleteRequest) ProtoMessage() {}
 
 func (x *CollectionDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[23]
+	mi := &file_master_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1897,7 +1957,7 @@ func (x *CollectionDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionDeleteRequest.ProtoReflect.Descriptor instead.
 func (*CollectionDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{23}
+	return file_master_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CollectionDeleteRequest) GetName() string {
@@ -1915,7 +1975,7 @@ type CollectionDeleteResponse struct {
 
 func (x *CollectionDeleteResponse) Reset() {
 	*x = CollectionDeleteResponse{}
-	mi := &file_master_proto_msgTypes[24]
+	mi := &file_master_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1927,7 +1987,7 @@ func (x *CollectionDeleteResponse) String() string {
 func (*CollectionDeleteResponse) ProtoMessage() {}
 
 func (x *CollectionDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[24]
+	mi := &file_master_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1940,7 +2000,7 @@ func (x *CollectionDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionDeleteResponse.ProtoReflect.Descriptor instead.
 func (*CollectionDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{24}
+	return file_master_proto_rawDescGZIP(), []int{25}
 }
 
 // volume related
@@ -1955,13 +2015,14 @@ type DiskInfo struct {
 	EcShardInfos      []*VolumeEcShardInformationMessage `protobuf:"bytes,7,rep,name=ec_shard_infos,json=ecShardInfos,proto3" json:"ec_shard_infos,omitempty"`
 	RemoteVolumeCount int64                              `protobuf:"varint,8,opt,name=remote_volume_count,json=remoteVolumeCount,proto3" json:"remote_volume_count,omitempty"`
 	DiskId            uint32                             `protobuf:"varint,9,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
+	Tags              []string                           `protobuf:"bytes,10,rep,name=tags,proto3" json:"tags,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *DiskInfo) Reset() {
 	*x = DiskInfo{}
-	mi := &file_master_proto_msgTypes[25]
+	mi := &file_master_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1973,7 +2034,7 @@ func (x *DiskInfo) String() string {
 func (*DiskInfo) ProtoMessage() {}
 
 func (x *DiskInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[25]
+	mi := &file_master_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1986,7 +2047,7 @@ func (x *DiskInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiskInfo.ProtoReflect.Descriptor instead.
 func (*DiskInfo) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{25}
+	return file_master_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DiskInfo) GetType() string {
@@ -2052,6 +2113,13 @@ func (x *DiskInfo) GetDiskId() uint32 {
 	return 0
 }
 
+func (x *DiskInfo) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
 type DataNodeInfo struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2064,7 +2132,7 @@ type DataNodeInfo struct {
 
 func (x *DataNodeInfo) Reset() {
 	*x = DataNodeInfo{}
-	mi := &file_master_proto_msgTypes[26]
+	mi := &file_master_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2076,7 +2144,7 @@ func (x *DataNodeInfo) String() string {
 func (*DataNodeInfo) ProtoMessage() {}
 
 func (x *DataNodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[26]
+	mi := &file_master_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2089,7 +2157,7 @@ func (x *DataNodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataNodeInfo.ProtoReflect.Descriptor instead.
 func (*DataNodeInfo) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{26}
+	return file_master_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DataNodeInfo) GetId() string {
@@ -2131,7 +2199,7 @@ type RackInfo struct {
 
 func (x *RackInfo) Reset() {
 	*x = RackInfo{}
-	mi := &file_master_proto_msgTypes[27]
+	mi := &file_master_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2143,7 +2211,7 @@ func (x *RackInfo) String() string {
 func (*RackInfo) ProtoMessage() {}
 
 func (x *RackInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[27]
+	mi := &file_master_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2156,7 +2224,7 @@ func (x *RackInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RackInfo.ProtoReflect.Descriptor instead.
 func (*RackInfo) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{27}
+	return file_master_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *RackInfo) GetId() string {
@@ -2191,7 +2259,7 @@ type DataCenterInfo struct {
 
 func (x *DataCenterInfo) Reset() {
 	*x = DataCenterInfo{}
-	mi := &file_master_proto_msgTypes[28]
+	mi := &file_master_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2203,7 +2271,7 @@ func (x *DataCenterInfo) String() string {
 func (*DataCenterInfo) ProtoMessage() {}
 
 func (x *DataCenterInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[28]
+	mi := &file_master_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2216,7 +2284,7 @@ func (x *DataCenterInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataCenterInfo.ProtoReflect.Descriptor instead.
 func (*DataCenterInfo) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{28}
+	return file_master_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *DataCenterInfo) GetId() string {
@@ -2251,7 +2319,7 @@ type TopologyInfo struct {
 
 func (x *TopologyInfo) Reset() {
 	*x = TopologyInfo{}
-	mi := &file_master_proto_msgTypes[29]
+	mi := &file_master_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2263,7 +2331,7 @@ func (x *TopologyInfo) String() string {
 func (*TopologyInfo) ProtoMessage() {}
 
 func (x *TopologyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[29]
+	mi := &file_master_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2276,7 +2344,7 @@ func (x *TopologyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopologyInfo.ProtoReflect.Descriptor instead.
 func (*TopologyInfo) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{29}
+	return file_master_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TopologyInfo) GetId() string {
@@ -2308,7 +2376,7 @@ type VolumeListRequest struct {
 
 func (x *VolumeListRequest) Reset() {
 	*x = VolumeListRequest{}
-	mi := &file_master_proto_msgTypes[30]
+	mi := &file_master_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2320,7 +2388,7 @@ func (x *VolumeListRequest) String() string {
 func (*VolumeListRequest) ProtoMessage() {}
 
 func (x *VolumeListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[30]
+	mi := &file_master_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2333,7 +2401,7 @@ func (x *VolumeListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeListRequest.ProtoReflect.Descriptor instead.
 func (*VolumeListRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{30}
+	return file_master_proto_rawDescGZIP(), []int{31}
 }
 
 type VolumeListResponse struct {
@@ -2346,7 +2414,7 @@ type VolumeListResponse struct {
 
 func (x *VolumeListResponse) Reset() {
 	*x = VolumeListResponse{}
-	mi := &file_master_proto_msgTypes[31]
+	mi := &file_master_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2358,7 +2426,7 @@ func (x *VolumeListResponse) String() string {
 func (*VolumeListResponse) ProtoMessage() {}
 
 func (x *VolumeListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[31]
+	mi := &file_master_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2371,7 +2439,7 @@ func (x *VolumeListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeListResponse.ProtoReflect.Descriptor instead.
 func (*VolumeListResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{31}
+	return file_master_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *VolumeListResponse) GetTopologyInfo() *TopologyInfo {
@@ -2397,7 +2465,7 @@ type LookupEcVolumeRequest struct {
 
 func (x *LookupEcVolumeRequest) Reset() {
 	*x = LookupEcVolumeRequest{}
-	mi := &file_master_proto_msgTypes[32]
+	mi := &file_master_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2409,7 +2477,7 @@ func (x *LookupEcVolumeRequest) String() string {
 func (*LookupEcVolumeRequest) ProtoMessage() {}
 
 func (x *LookupEcVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[32]
+	mi := &file_master_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2422,7 +2490,7 @@ func (x *LookupEcVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupEcVolumeRequest.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{32}
+	return file_master_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *LookupEcVolumeRequest) GetVolumeId() uint32 {
@@ -2442,7 +2510,7 @@ type LookupEcVolumeResponse struct {
 
 func (x *LookupEcVolumeResponse) Reset() {
 	*x = LookupEcVolumeResponse{}
-	mi := &file_master_proto_msgTypes[33]
+	mi := &file_master_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2454,7 +2522,7 @@ func (x *LookupEcVolumeResponse) String() string {
 func (*LookupEcVolumeResponse) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[33]
+	mi := &file_master_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2467,7 +2535,7 @@ func (x *LookupEcVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupEcVolumeResponse.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{33}
+	return file_master_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *LookupEcVolumeResponse) GetVolumeId() uint32 {
@@ -2495,7 +2563,7 @@ type VacuumVolumeRequest struct {
 
 func (x *VacuumVolumeRequest) Reset() {
 	*x = VacuumVolumeRequest{}
-	mi := &file_master_proto_msgTypes[34]
+	mi := &file_master_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2507,7 +2575,7 @@ func (x *VacuumVolumeRequest) String() string {
 func (*VacuumVolumeRequest) ProtoMessage() {}
 
 func (x *VacuumVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[34]
+	mi := &file_master_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2520,7 +2588,7 @@ func (x *VacuumVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumVolumeRequest.ProtoReflect.Descriptor instead.
 func (*VacuumVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{34}
+	return file_master_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *VacuumVolumeRequest) GetGarbageThreshold() float32 {
@@ -2552,7 +2620,7 @@ type VacuumVolumeResponse struct {
 
 func (x *VacuumVolumeResponse) Reset() {
 	*x = VacuumVolumeResponse{}
-	mi := &file_master_proto_msgTypes[35]
+	mi := &file_master_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2564,7 +2632,7 @@ func (x *VacuumVolumeResponse) String() string {
 func (*VacuumVolumeResponse) ProtoMessage() {}
 
 func (x *VacuumVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[35]
+	mi := &file_master_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2577,7 +2645,7 @@ func (x *VacuumVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumVolumeResponse.ProtoReflect.Descriptor instead.
 func (*VacuumVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{35}
+	return file_master_proto_rawDescGZIP(), []int{36}
 }
 
 type DisableVacuumRequest struct {
@@ -2588,7 +2656,7 @@ type DisableVacuumRequest struct {
 
 func (x *DisableVacuumRequest) Reset() {
 	*x = DisableVacuumRequest{}
-	mi := &file_master_proto_msgTypes[36]
+	mi := &file_master_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2600,7 +2668,7 @@ func (x *DisableVacuumRequest) String() string {
 func (*DisableVacuumRequest) ProtoMessage() {}
 
 func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[36]
+	mi := &file_master_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2613,7 +2681,7 @@ func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*DisableVacuumRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{36}
+	return file_master_proto_rawDescGZIP(), []int{37}
 }
 
 type DisableVacuumResponse struct {
@@ -2624,7 +2692,7 @@ type DisableVacuumResponse struct {
 
 func (x *DisableVacuumResponse) Reset() {
 	*x = DisableVacuumResponse{}
-	mi := &file_master_proto_msgTypes[37]
+	mi := &file_master_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2636,7 +2704,7 @@ func (x *DisableVacuumResponse) String() string {
 func (*DisableVacuumResponse) ProtoMessage() {}
 
 func (x *DisableVacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[37]
+	mi := &file_master_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2649,7 +2717,7 @@ func (x *DisableVacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableVacuumResponse.ProtoReflect.Descriptor instead.
 func (*DisableVacuumResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{37}
+	return file_master_proto_rawDescGZIP(), []int{38}
 }
 
 type EnableVacuumRequest struct {
@@ -2660,7 +2728,7 @@ type EnableVacuumRequest struct {
 
 func (x *EnableVacuumRequest) Reset() {
 	*x = EnableVacuumRequest{}
-	mi := &file_master_proto_msgTypes[38]
+	mi := &file_master_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2672,7 +2740,7 @@ func (x *EnableVacuumRequest) String() string {
 func (*EnableVacuumRequest) ProtoMessage() {}
 
 func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[38]
+	mi := &file_master_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2685,7 +2753,7 @@ func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*EnableVacuumRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{38}
+	return file_master_proto_rawDescGZIP(), []int{39}
 }
 
 type EnableVacuumResponse struct {
@@ -2696,7 +2764,7 @@ type EnableVacuumResponse struct {
 
 func (x *EnableVacuumResponse) Reset() {
 	*x = EnableVacuumResponse{}
-	mi := &file_master_proto_msgTypes[39]
+	mi := &file_master_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2708,7 +2776,7 @@ func (x *EnableVacuumResponse) String() string {
 func (*EnableVacuumResponse) ProtoMessage() {}
 
 func (x *EnableVacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[39]
+	mi := &file_master_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2721,7 +2789,7 @@ func (x *EnableVacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableVacuumResponse.ProtoReflect.Descriptor instead.
 func (*EnableVacuumResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{39}
+	return file_master_proto_rawDescGZIP(), []int{40}
 }
 
 type VolumeMarkReadonlyRequest struct {
@@ -2741,7 +2809,7 @@ type VolumeMarkReadonlyRequest struct {
 
 func (x *VolumeMarkReadonlyRequest) Reset() {
 	*x = VolumeMarkReadonlyRequest{}
-	mi := &file_master_proto_msgTypes[40]
+	mi := &file_master_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2753,7 +2821,7 @@ func (x *VolumeMarkReadonlyRequest) String() string {
 func (*VolumeMarkReadonlyRequest) ProtoMessage() {}
 
 func (x *VolumeMarkReadonlyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[40]
+	mi := &file_master_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2766,7 +2834,7 @@ func (x *VolumeMarkReadonlyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeMarkReadonlyRequest.ProtoReflect.Descriptor instead.
 func (*VolumeMarkReadonlyRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{40}
+	return file_master_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *VolumeMarkReadonlyRequest) GetIp() string {
@@ -2840,7 +2908,7 @@ type VolumeMarkReadonlyResponse struct {
 
 func (x *VolumeMarkReadonlyResponse) Reset() {
 	*x = VolumeMarkReadonlyResponse{}
-	mi := &file_master_proto_msgTypes[41]
+	mi := &file_master_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2852,7 +2920,7 @@ func (x *VolumeMarkReadonlyResponse) String() string {
 func (*VolumeMarkReadonlyResponse) ProtoMessage() {}
 
 func (x *VolumeMarkReadonlyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[41]
+	mi := &file_master_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2865,7 +2933,7 @@ func (x *VolumeMarkReadonlyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeMarkReadonlyResponse.ProtoReflect.Descriptor instead.
 func (*VolumeMarkReadonlyResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{41}
+	return file_master_proto_rawDescGZIP(), []int{42}
 }
 
 type GetMasterConfigurationRequest struct {
@@ -2876,7 +2944,7 @@ type GetMasterConfigurationRequest struct {
 
 func (x *GetMasterConfigurationRequest) Reset() {
 	*x = GetMasterConfigurationRequest{}
-	mi := &file_master_proto_msgTypes[42]
+	mi := &file_master_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2888,7 +2956,7 @@ func (x *GetMasterConfigurationRequest) String() string {
 func (*GetMasterConfigurationRequest) ProtoMessage() {}
 
 func (x *GetMasterConfigurationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[42]
+	mi := &file_master_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2901,7 +2969,7 @@ func (x *GetMasterConfigurationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMasterConfigurationRequest.ProtoReflect.Descriptor instead.
 func (*GetMasterConfigurationRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{42}
+	return file_master_proto_rawDescGZIP(), []int{43}
 }
 
 type GetMasterConfigurationResponse struct {
@@ -2919,7 +2987,7 @@ type GetMasterConfigurationResponse struct {
 
 func (x *GetMasterConfigurationResponse) Reset() {
 	*x = GetMasterConfigurationResponse{}
-	mi := &file_master_proto_msgTypes[43]
+	mi := &file_master_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2931,7 +2999,7 @@ func (x *GetMasterConfigurationResponse) String() string {
 func (*GetMasterConfigurationResponse) ProtoMessage() {}
 
 func (x *GetMasterConfigurationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[43]
+	mi := &file_master_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2944,7 +3012,7 @@ func (x *GetMasterConfigurationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMasterConfigurationResponse.ProtoReflect.Descriptor instead.
 func (*GetMasterConfigurationResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{43}
+	return file_master_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *GetMasterConfigurationResponse) GetMetricsAddress() string {
@@ -3007,7 +3075,7 @@ type ListClusterNodesRequest struct {
 
 func (x *ListClusterNodesRequest) Reset() {
 	*x = ListClusterNodesRequest{}
-	mi := &file_master_proto_msgTypes[44]
+	mi := &file_master_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3019,7 +3087,7 @@ func (x *ListClusterNodesRequest) String() string {
 func (*ListClusterNodesRequest) ProtoMessage() {}
 
 func (x *ListClusterNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[44]
+	mi := &file_master_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3032,7 +3100,7 @@ func (x *ListClusterNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClusterNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{44}
+	return file_master_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ListClusterNodesRequest) GetClientType() string {
@@ -3065,7 +3133,7 @@ type ListClusterNodesResponse struct {
 
 func (x *ListClusterNodesResponse) Reset() {
 	*x = ListClusterNodesResponse{}
-	mi := &file_master_proto_msgTypes[45]
+	mi := &file_master_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3077,7 +3145,7 @@ func (x *ListClusterNodesResponse) String() string {
 func (*ListClusterNodesResponse) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[45]
+	mi := &file_master_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3090,7 +3158,7 @@ func (x *ListClusterNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClusterNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{45}
+	return file_master_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ListClusterNodesResponse) GetClusterNodes() []*ListClusterNodesResponse_ClusterNode {
@@ -3113,7 +3181,7 @@ type LeaseAdminTokenRequest struct {
 
 func (x *LeaseAdminTokenRequest) Reset() {
 	*x = LeaseAdminTokenRequest{}
-	mi := &file_master_proto_msgTypes[46]
+	mi := &file_master_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3125,7 +3193,7 @@ func (x *LeaseAdminTokenRequest) String() string {
 func (*LeaseAdminTokenRequest) ProtoMessage() {}
 
 func (x *LeaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[46]
+	mi := &file_master_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3138,7 +3206,7 @@ func (x *LeaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseAdminTokenRequest.ProtoReflect.Descriptor instead.
 func (*LeaseAdminTokenRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{46}
+	return file_master_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *LeaseAdminTokenRequest) GetPreviousToken() int64 {
@@ -3186,7 +3254,7 @@ type LeaseAdminTokenResponse struct {
 
 func (x *LeaseAdminTokenResponse) Reset() {
 	*x = LeaseAdminTokenResponse{}
-	mi := &file_master_proto_msgTypes[47]
+	mi := &file_master_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3198,7 +3266,7 @@ func (x *LeaseAdminTokenResponse) String() string {
 func (*LeaseAdminTokenResponse) ProtoMessage() {}
 
 func (x *LeaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[47]
+	mi := &file_master_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3211,7 +3279,7 @@ func (x *LeaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseAdminTokenResponse.ProtoReflect.Descriptor instead.
 func (*LeaseAdminTokenResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{47}
+	return file_master_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *LeaseAdminTokenResponse) GetToken() int64 {
@@ -3239,7 +3307,7 @@ type ReleaseAdminTokenRequest struct {
 
 func (x *ReleaseAdminTokenRequest) Reset() {
 	*x = ReleaseAdminTokenRequest{}
-	mi := &file_master_proto_msgTypes[48]
+	mi := &file_master_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3251,7 +3319,7 @@ func (x *ReleaseAdminTokenRequest) String() string {
 func (*ReleaseAdminTokenRequest) ProtoMessage() {}
 
 func (x *ReleaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[48]
+	mi := &file_master_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3264,7 +3332,7 @@ func (x *ReleaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseAdminTokenRequest.ProtoReflect.Descriptor instead.
 func (*ReleaseAdminTokenRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{48}
+	return file_master_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ReleaseAdminTokenRequest) GetPreviousToken() int64 {
@@ -3296,7 +3364,7 @@ type ReleaseAdminTokenResponse struct {
 
 func (x *ReleaseAdminTokenResponse) Reset() {
 	*x = ReleaseAdminTokenResponse{}
-	mi := &file_master_proto_msgTypes[49]
+	mi := &file_master_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3308,7 +3376,7 @@ func (x *ReleaseAdminTokenResponse) String() string {
 func (*ReleaseAdminTokenResponse) ProtoMessage() {}
 
 func (x *ReleaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[49]
+	mi := &file_master_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3321,7 +3389,7 @@ func (x *ReleaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseAdminTokenResponse.ProtoReflect.Descriptor instead.
 func (*ReleaseAdminTokenResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{49}
+	return file_master_proto_rawDescGZIP(), []int{50}
 }
 
 type PingRequest struct {
@@ -3334,7 +3402,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_master_proto_msgTypes[50]
+	mi := &file_master_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3346,7 +3414,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[50]
+	mi := &file_master_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3359,7 +3427,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{50}
+	return file_master_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *PingRequest) GetTarget() string {
@@ -3387,7 +3455,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_master_proto_msgTypes[51]
+	mi := &file_master_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3399,7 +3467,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[51]
+	mi := &file_master_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3412,7 +3480,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{51}
+	return file_master_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *PingResponse) GetStartTimeNs() int64 {
@@ -3447,7 +3515,7 @@ type RaftAddServerRequest struct {
 
 func (x *RaftAddServerRequest) Reset() {
 	*x = RaftAddServerRequest{}
-	mi := &file_master_proto_msgTypes[52]
+	mi := &file_master_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3459,7 +3527,7 @@ func (x *RaftAddServerRequest) String() string {
 func (*RaftAddServerRequest) ProtoMessage() {}
 
 func (x *RaftAddServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[52]
+	mi := &file_master_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3472,7 +3540,7 @@ func (x *RaftAddServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftAddServerRequest.ProtoReflect.Descriptor instead.
 func (*RaftAddServerRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{52}
+	return file_master_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *RaftAddServerRequest) GetId() string {
@@ -3504,7 +3572,7 @@ type RaftAddServerResponse struct {
 
 func (x *RaftAddServerResponse) Reset() {
 	*x = RaftAddServerResponse{}
-	mi := &file_master_proto_msgTypes[53]
+	mi := &file_master_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3516,7 +3584,7 @@ func (x *RaftAddServerResponse) String() string {
 func (*RaftAddServerResponse) ProtoMessage() {}
 
 func (x *RaftAddServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[53]
+	mi := &file_master_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3529,7 +3597,7 @@ func (x *RaftAddServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftAddServerResponse.ProtoReflect.Descriptor instead.
 func (*RaftAddServerResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{53}
+	return file_master_proto_rawDescGZIP(), []int{54}
 }
 
 type RaftRemoveServerRequest struct {
@@ -3542,7 +3610,7 @@ type RaftRemoveServerRequest struct {
 
 func (x *RaftRemoveServerRequest) Reset() {
 	*x = RaftRemoveServerRequest{}
-	mi := &file_master_proto_msgTypes[54]
+	mi := &file_master_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3554,7 +3622,7 @@ func (x *RaftRemoveServerRequest) String() string {
 func (*RaftRemoveServerRequest) ProtoMessage() {}
 
 func (x *RaftRemoveServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[54]
+	mi := &file_master_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3567,7 +3635,7 @@ func (x *RaftRemoveServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftRemoveServerRequest.ProtoReflect.Descriptor instead.
 func (*RaftRemoveServerRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{54}
+	return file_master_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *RaftRemoveServerRequest) GetId() string {
@@ -3592,7 +3660,7 @@ type RaftRemoveServerResponse struct {
 
 func (x *RaftRemoveServerResponse) Reset() {
 	*x = RaftRemoveServerResponse{}
-	mi := &file_master_proto_msgTypes[55]
+	mi := &file_master_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3604,7 +3672,7 @@ func (x *RaftRemoveServerResponse) String() string {
 func (*RaftRemoveServerResponse) ProtoMessage() {}
 
 func (x *RaftRemoveServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[55]
+	mi := &file_master_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3617,7 +3685,7 @@ func (x *RaftRemoveServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftRemoveServerResponse.ProtoReflect.Descriptor instead.
 func (*RaftRemoveServerResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{55}
+	return file_master_proto_rawDescGZIP(), []int{56}
 }
 
 type RaftListClusterServersRequest struct {
@@ -3628,7 +3696,7 @@ type RaftListClusterServersRequest struct {
 
 func (x *RaftListClusterServersRequest) Reset() {
 	*x = RaftListClusterServersRequest{}
-	mi := &file_master_proto_msgTypes[56]
+	mi := &file_master_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3640,7 +3708,7 @@ func (x *RaftListClusterServersRequest) String() string {
 func (*RaftListClusterServersRequest) ProtoMessage() {}
 
 func (x *RaftListClusterServersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[56]
+	mi := &file_master_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3653,7 +3721,7 @@ func (x *RaftListClusterServersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftListClusterServersRequest.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{56}
+	return file_master_proto_rawDescGZIP(), []int{57}
 }
 
 type RaftListClusterServersResponse struct {
@@ -3665,7 +3733,7 @@ type RaftListClusterServersResponse struct {
 
 func (x *RaftListClusterServersResponse) Reset() {
 	*x = RaftListClusterServersResponse{}
-	mi := &file_master_proto_msgTypes[57]
+	mi := &file_master_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3677,7 +3745,7 @@ func (x *RaftListClusterServersResponse) String() string {
 func (*RaftListClusterServersResponse) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[57]
+	mi := &file_master_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3690,7 +3758,7 @@ func (x *RaftListClusterServersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftListClusterServersResponse.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{57}
+	return file_master_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *RaftListClusterServersResponse) GetClusterServers() []*RaftListClusterServersResponse_ClusterServers {
@@ -3710,7 +3778,7 @@ type RaftLeadershipTransferRequest struct {
 
 func (x *RaftLeadershipTransferRequest) Reset() {
 	*x = RaftLeadershipTransferRequest{}
-	mi := &file_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3722,7 +3790,7 @@ func (x *RaftLeadershipTransferRequest) String() string {
 func (*RaftLeadershipTransferRequest) ProtoMessage() {}
 
 func (x *RaftLeadershipTransferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3735,7 +3803,7 @@ func (x *RaftLeadershipTransferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftLeadershipTransferRequest.ProtoReflect.Descriptor instead.
 func (*RaftLeadershipTransferRequest) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{58}
+	return file_master_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *RaftLeadershipTransferRequest) GetTargetId() string {
@@ -3762,7 +3830,7 @@ type RaftLeadershipTransferResponse struct {
 
 func (x *RaftLeadershipTransferResponse) Reset() {
 	*x = RaftLeadershipTransferResponse{}
-	mi := &file_master_proto_msgTypes[59]
+	mi := &file_master_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3774,7 +3842,7 @@ func (x *RaftLeadershipTransferResponse) String() string {
 func (*RaftLeadershipTransferResponse) ProtoMessage() {}
 
 func (x *RaftLeadershipTransferResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[59]
+	mi := &file_master_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3787,7 +3855,7 @@ func (x *RaftLeadershipTransferResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftLeadershipTransferResponse.ProtoReflect.Descriptor instead.
 func (*RaftLeadershipTransferResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{59}
+	return file_master_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *RaftLeadershipTransferResponse) GetPreviousLeader() string {
@@ -3812,7 +3880,7 @@ type VolumeGrowResponse struct {
 
 func (x *VolumeGrowResponse) Reset() {
 	*x = VolumeGrowResponse{}
-	mi := &file_master_proto_msgTypes[60]
+	mi := &file_master_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3824,7 +3892,7 @@ func (x *VolumeGrowResponse) String() string {
 func (*VolumeGrowResponse) ProtoMessage() {}
 
 func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[60]
+	mi := &file_master_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3837,7 +3905,7 @@ func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeGrowResponse.ProtoReflect.Descriptor instead.
 func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{60}
+	return file_master_proto_rawDescGZIP(), []int{61}
 }
 
 type SuperBlockExtra_ErasureCoding struct {
@@ -3851,7 +3919,7 @@ type SuperBlockExtra_ErasureCoding struct {
 
 func (x *SuperBlockExtra_ErasureCoding) Reset() {
 	*x = SuperBlockExtra_ErasureCoding{}
-	mi := &file_master_proto_msgTypes[63]
+	mi := &file_master_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3863,7 +3931,7 @@ func (x *SuperBlockExtra_ErasureCoding) String() string {
 func (*SuperBlockExtra_ErasureCoding) ProtoMessage() {}
 
 func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[63]
+	mi := &file_master_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3876,7 +3944,7 @@ func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuperBlockExtra_ErasureCoding.ProtoReflect.Descriptor instead.
 func (*SuperBlockExtra_ErasureCoding) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{7, 0}
+	return file_master_proto_rawDescGZIP(), []int{8, 0}
 }
 
 func (x *SuperBlockExtra_ErasureCoding) GetData() uint32 {
@@ -3912,7 +3980,7 @@ type LookupVolumeResponse_VolumeIdLocation struct {
 
 func (x *LookupVolumeResponse_VolumeIdLocation) Reset() {
 	*x = LookupVolumeResponse_VolumeIdLocation{}
-	mi := &file_master_proto_msgTypes[64]
+	mi := &file_master_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3924,7 +3992,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) String() string {
 func (*LookupVolumeResponse_VolumeIdLocation) ProtoMessage() {}
 
 func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[64]
+	mi := &file_master_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3937,7 +4005,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use LookupVolumeResponse_VolumeIdLocation.ProtoReflect.Descriptor instead.
 func (*LookupVolumeResponse_VolumeIdLocation) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{13, 0}
+	return file_master_proto_rawDescGZIP(), []int{14, 0}
 }
 
 func (x *LookupVolumeResponse_VolumeIdLocation) GetVolumeOrFileId() string {
@@ -3978,7 +4046,7 @@ type LookupEcVolumeResponse_EcShardIdLocation struct {
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) Reset() {
 	*x = LookupEcVolumeResponse_EcShardIdLocation{}
-	mi := &file_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3990,7 +4058,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) String() string {
 func (*LookupEcVolumeResponse_EcShardIdLocation) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4003,7 +4071,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.M
 
 // Deprecated: Use LookupEcVolumeResponse_EcShardIdLocation.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeResponse_EcShardIdLocation) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{33, 0}
+	return file_master_proto_rawDescGZIP(), []int{34, 0}
 }
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) GetShardId() uint32 {
@@ -4033,7 +4101,7 @@ type ListClusterNodesResponse_ClusterNode struct {
 
 func (x *ListClusterNodesResponse_ClusterNode) Reset() {
 	*x = ListClusterNodesResponse_ClusterNode{}
-	mi := &file_master_proto_msgTypes[70]
+	mi := &file_master_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4045,7 +4113,7 @@ func (x *ListClusterNodesResponse_ClusterNode) String() string {
 func (*ListClusterNodesResponse_ClusterNode) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[70]
+	mi := &file_master_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4058,7 +4126,7 @@ func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use ListClusterNodesResponse_ClusterNode.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesResponse_ClusterNode) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{45, 0}
+	return file_master_proto_rawDescGZIP(), []int{46, 0}
 }
 
 func (x *ListClusterNodesResponse_ClusterNode) GetAddress() string {
@@ -4108,7 +4176,7 @@ type RaftListClusterServersResponse_ClusterServers struct {
 
 func (x *RaftListClusterServersResponse_ClusterServers) Reset() {
 	*x = RaftListClusterServersResponse_ClusterServers{}
-	mi := &file_master_proto_msgTypes[71]
+	mi := &file_master_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4120,7 +4188,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) String() string {
 func (*RaftListClusterServersResponse_ClusterServers) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protoreflect.Message {
-	mi := &file_master_proto_msgTypes[71]
+	mi := &file_master_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4133,7 +4201,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protorefl
 
 // Deprecated: Use RaftListClusterServersResponse_ClusterServers.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersResponse_ClusterServers) Descriptor() ([]byte, []int) {
-	return file_master_proto_rawDescGZIP(), []int{57, 0}
+	return file_master_proto_rawDescGZIP(), []int{58, 0}
 }
 
 func (x *RaftListClusterServersResponse_ClusterServers) GetId() string {
@@ -4168,7 +4236,10 @@ var File_master_proto protoreflect.FileDescriptor
 
 const file_master_proto_rawDesc = "" +
 	"\n" +
-	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\x8b\b\n" +
+	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"6\n" +
+	"\aDiskTag\x12\x17\n" +
+	"\adisk_id\x18\x01 \x01(\rR\x06diskId\x12\x12\n" +
+	"\x04tags\x18\x02 \x03(\tR\x04tags\"\xbc\b\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -4195,7 +4266,8 @@ const file_master_proto_rawDesc = "" +
 	"\tgrpc_port\x18\x14 \x01(\rR\bgrpcPort\x12%\n" +
 	"\x0elocation_uuids\x18\x15 \x03(\tR\rlocationUuids\x12\x0e\n" +
 	"\x02id\x18\x16 \x01(\tR\x02id\x129\n" +
-	"\x05state\x18\x17 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\x1aB\n" +
+	"\x05state\x18\x17 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\x12/\n" +
+	"\tdisk_tags\x18\x18 \x03(\v2\x12.master_pb.DiskTagR\bdiskTags\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\xcd\x02\n" +
@@ -4376,7 +4448,7 @@ const file_master_proto_rawDesc = "" +
 	"\vcollections\x18\x01 \x03(\v2\x15.master_pb.CollectionR\vcollections\"-\n" +
 	"\x17CollectionDeleteRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"\x1a\n" +
-	"\x18CollectionDeleteResponse\"\xaa\x03\n" +
+	"\x18CollectionDeleteResponse\"\xbe\x03\n" +
 	"\bDiskInfo\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12!\n" +
 	"\fvolume_count\x18\x02 \x01(\x03R\vvolumeCount\x12(\n" +
@@ -4386,7 +4458,9 @@ const file_master_proto_rawDesc = "" +
 	"\fvolume_infos\x18\x06 \x03(\v2#.master_pb.VolumeInformationMessageR\vvolumeInfos\x12P\n" +
 	"\x0eec_shard_infos\x18\a \x03(\v2*.master_pb.VolumeEcShardInformationMessageR\fecShardInfos\x12.\n" +
 	"\x13remote_volume_count\x18\b \x01(\x03R\x11remoteVolumeCount\x12\x17\n" +
-	"\adisk_id\x18\t \x01(\rR\x06diskId\"\xee\x01\n" +
+	"\adisk_id\x18\t \x01(\rR\x06diskId\x12\x12\n" +
+	"\x04tags\x18\n" +
+	" \x03(\tR\x04tags\"\xee\x01\n" +
 	"\fDataNodeInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12D\n" +
 	"\tdiskInfos\x18\x02 \x03(\v2&.master_pb.DataNodeInfo.DiskInfosEntryR\tdiskInfos\x12\x1b\n" +
@@ -4570,173 +4644,175 @@ func file_master_proto_rawDescGZIP() []byte {
 	return file_master_proto_rawDescData
 }
 
-var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
+var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 73)
 var file_master_proto_goTypes = []any{
-	(*Heartbeat)(nil),                             // 0: master_pb.Heartbeat
-	(*HeartbeatResponse)(nil),                     // 1: master_pb.HeartbeatResponse
-	(*VolumeInformationMessage)(nil),              // 2: master_pb.VolumeInformationMessage
-	(*VolumeShortInformationMessage)(nil),         // 3: master_pb.VolumeShortInformationMessage
-	(*VolumeEcShardInformationMessage)(nil),       // 4: master_pb.VolumeEcShardInformationMessage
-	(*StorageBackend)(nil),                        // 5: master_pb.StorageBackend
-	(*Empty)(nil),                                 // 6: master_pb.Empty
-	(*SuperBlockExtra)(nil),                       // 7: master_pb.SuperBlockExtra
-	(*KeepConnectedRequest)(nil),                  // 8: master_pb.KeepConnectedRequest
-	(*VolumeLocation)(nil),                        // 9: master_pb.VolumeLocation
-	(*ClusterNodeUpdate)(nil),                     // 10: master_pb.ClusterNodeUpdate
-	(*KeepConnectedResponse)(nil),                 // 11: master_pb.KeepConnectedResponse
-	(*LookupVolumeRequest)(nil),                   // 12: master_pb.LookupVolumeRequest
-	(*LookupVolumeResponse)(nil),                  // 13: master_pb.LookupVolumeResponse
-	(*Location)(nil),                              // 14: master_pb.Location
-	(*AssignRequest)(nil),                         // 15: master_pb.AssignRequest
-	(*VolumeGrowRequest)(nil),                     // 16: master_pb.VolumeGrowRequest
-	(*AssignResponse)(nil),                        // 17: master_pb.AssignResponse
-	(*StatisticsRequest)(nil),                     // 18: master_pb.StatisticsRequest
-	(*StatisticsResponse)(nil),                    // 19: master_pb.StatisticsResponse
-	(*Collection)(nil),                            // 20: master_pb.Collection
-	(*CollectionListRequest)(nil),                 // 21: master_pb.CollectionListRequest
-	(*CollectionListResponse)(nil),                // 22: master_pb.CollectionListResponse
-	(*CollectionDeleteRequest)(nil),               // 23: master_pb.CollectionDeleteRequest
-	(*CollectionDeleteResponse)(nil),              // 24: master_pb.CollectionDeleteResponse
-	(*DiskInfo)(nil),                              // 25: master_pb.DiskInfo
-	(*DataNodeInfo)(nil),                          // 26: master_pb.DataNodeInfo
-	(*RackInfo)(nil),                              // 27: master_pb.RackInfo
-	(*DataCenterInfo)(nil),                        // 28: master_pb.DataCenterInfo
-	(*TopologyInfo)(nil),                          // 29: master_pb.TopologyInfo
-	(*VolumeListRequest)(nil),                     // 30: master_pb.VolumeListRequest
-	(*VolumeListResponse)(nil),                    // 31: master_pb.VolumeListResponse
-	(*LookupEcVolumeRequest)(nil),                 // 32: master_pb.LookupEcVolumeRequest
-	(*LookupEcVolumeResponse)(nil),                // 33: master_pb.LookupEcVolumeResponse
-	(*VacuumVolumeRequest)(nil),                   // 34: master_pb.VacuumVolumeRequest
-	(*VacuumVolumeResponse)(nil),                  // 35: master_pb.VacuumVolumeResponse
-	(*DisableVacuumRequest)(nil),                  // 36: master_pb.DisableVacuumRequest
-	(*DisableVacuumResponse)(nil),                 // 37: master_pb.DisableVacuumResponse
-	(*EnableVacuumRequest)(nil),                   // 38: master_pb.EnableVacuumRequest
-	(*EnableVacuumResponse)(nil),                  // 39: master_pb.EnableVacuumResponse
-	(*VolumeMarkReadonlyRequest)(nil),             // 40: master_pb.VolumeMarkReadonlyRequest
-	(*VolumeMarkReadonlyResponse)(nil),            // 41: master_pb.VolumeMarkReadonlyResponse
-	(*GetMasterConfigurationRequest)(nil),         // 42: master_pb.GetMasterConfigurationRequest
-	(*GetMasterConfigurationResponse)(nil),        // 43: master_pb.GetMasterConfigurationResponse
-	(*ListClusterNodesRequest)(nil),               // 44: master_pb.ListClusterNodesRequest
-	(*ListClusterNodesResponse)(nil),              // 45: master_pb.ListClusterNodesResponse
-	(*LeaseAdminTokenRequest)(nil),                // 46: master_pb.LeaseAdminTokenRequest
-	(*LeaseAdminTokenResponse)(nil),               // 47: master_pb.LeaseAdminTokenResponse
-	(*ReleaseAdminTokenRequest)(nil),              // 48: master_pb.ReleaseAdminTokenRequest
-	(*ReleaseAdminTokenResponse)(nil),             // 49: master_pb.ReleaseAdminTokenResponse
-	(*PingRequest)(nil),                           // 50: master_pb.PingRequest
-	(*PingResponse)(nil),                          // 51: master_pb.PingResponse
-	(*RaftAddServerRequest)(nil),                  // 52: master_pb.RaftAddServerRequest
-	(*RaftAddServerResponse)(nil),                 // 53: master_pb.RaftAddServerResponse
-	(*RaftRemoveServerRequest)(nil),               // 54: master_pb.RaftRemoveServerRequest
-	(*RaftRemoveServerResponse)(nil),              // 55: master_pb.RaftRemoveServerResponse
-	(*RaftListClusterServersRequest)(nil),         // 56: master_pb.RaftListClusterServersRequest
-	(*RaftListClusterServersResponse)(nil),        // 57: master_pb.RaftListClusterServersResponse
-	(*RaftLeadershipTransferRequest)(nil),         // 58: master_pb.RaftLeadershipTransferRequest
-	(*RaftLeadershipTransferResponse)(nil),        // 59: master_pb.RaftLeadershipTransferResponse
-	(*VolumeGrowResponse)(nil),                    // 60: master_pb.VolumeGrowResponse
-	nil,                                           // 61: master_pb.Heartbeat.MaxVolumeCountsEntry
-	nil,                                           // 62: master_pb.StorageBackend.PropertiesEntry
-	(*SuperBlockExtra_ErasureCoding)(nil),         // 63: master_pb.SuperBlockExtra.ErasureCoding
-	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 64: master_pb.LookupVolumeResponse.VolumeIdLocation
-	nil, // 65: master_pb.DataNodeInfo.DiskInfosEntry
-	nil, // 66: master_pb.RackInfo.DiskInfosEntry
-	nil, // 67: master_pb.DataCenterInfo.DiskInfosEntry
-	nil, // 68: master_pb.TopologyInfo.DiskInfosEntry
-	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 69: master_pb.LookupEcVolumeResponse.EcShardIdLocation
-	(*ListClusterNodesResponse_ClusterNode)(nil),          // 70: master_pb.ListClusterNodesResponse.ClusterNode
-	(*RaftListClusterServersResponse_ClusterServers)(nil), // 71: master_pb.RaftListClusterServersResponse.ClusterServers
-	(*volume_server_pb.VolumeServerState)(nil),            // 72: volume_server_pb.VolumeServerState
+	(*DiskTag)(nil),                               // 0: master_pb.DiskTag
+	(*Heartbeat)(nil),                             // 1: master_pb.Heartbeat
+	(*HeartbeatResponse)(nil),                     // 2: master_pb.HeartbeatResponse
+	(*VolumeInformationMessage)(nil),              // 3: master_pb.VolumeInformationMessage
+	(*VolumeShortInformationMessage)(nil),         // 4: master_pb.VolumeShortInformationMessage
+	(*VolumeEcShardInformationMessage)(nil),       // 5: master_pb.VolumeEcShardInformationMessage
+	(*StorageBackend)(nil),                        // 6: master_pb.StorageBackend
+	(*Empty)(nil),                                 // 7: master_pb.Empty
+	(*SuperBlockExtra)(nil),                       // 8: master_pb.SuperBlockExtra
+	(*KeepConnectedRequest)(nil),                  // 9: master_pb.KeepConnectedRequest
+	(*VolumeLocation)(nil),                        // 10: master_pb.VolumeLocation
+	(*ClusterNodeUpdate)(nil),                     // 11: master_pb.ClusterNodeUpdate
+	(*KeepConnectedResponse)(nil),                 // 12: master_pb.KeepConnectedResponse
+	(*LookupVolumeRequest)(nil),                   // 13: master_pb.LookupVolumeRequest
+	(*LookupVolumeResponse)(nil),                  // 14: master_pb.LookupVolumeResponse
+	(*Location)(nil),                              // 15: master_pb.Location
+	(*AssignRequest)(nil),                         // 16: master_pb.AssignRequest
+	(*VolumeGrowRequest)(nil),                     // 17: master_pb.VolumeGrowRequest
+	(*AssignResponse)(nil),                        // 18: master_pb.AssignResponse
+	(*StatisticsRequest)(nil),                     // 19: master_pb.StatisticsRequest
+	(*StatisticsResponse)(nil),                    // 20: master_pb.StatisticsResponse
+	(*Collection)(nil),                            // 21: master_pb.Collection
+	(*CollectionListRequest)(nil),                 // 22: master_pb.CollectionListRequest
+	(*CollectionListResponse)(nil),                // 23: master_pb.CollectionListResponse
+	(*CollectionDeleteRequest)(nil),               // 24: master_pb.CollectionDeleteRequest
+	(*CollectionDeleteResponse)(nil),              // 25: master_pb.CollectionDeleteResponse
+	(*DiskInfo)(nil),                              // 26: master_pb.DiskInfo
+	(*DataNodeInfo)(nil),                          // 27: master_pb.DataNodeInfo
+	(*RackInfo)(nil),                              // 28: master_pb.RackInfo
+	(*DataCenterInfo)(nil),                        // 29: master_pb.DataCenterInfo
+	(*TopologyInfo)(nil),                          // 30: master_pb.TopologyInfo
+	(*VolumeListRequest)(nil),                     // 31: master_pb.VolumeListRequest
+	(*VolumeListResponse)(nil),                    // 32: master_pb.VolumeListResponse
+	(*LookupEcVolumeRequest)(nil),                 // 33: master_pb.LookupEcVolumeRequest
+	(*LookupEcVolumeResponse)(nil),                // 34: master_pb.LookupEcVolumeResponse
+	(*VacuumVolumeRequest)(nil),                   // 35: master_pb.VacuumVolumeRequest
+	(*VacuumVolumeResponse)(nil),                  // 36: master_pb.VacuumVolumeResponse
+	(*DisableVacuumRequest)(nil),                  // 37: master_pb.DisableVacuumRequest
+	(*DisableVacuumResponse)(nil),                 // 38: master_pb.DisableVacuumResponse
+	(*EnableVacuumRequest)(nil),                   // 39: master_pb.EnableVacuumRequest
+	(*EnableVacuumResponse)(nil),                  // 40: master_pb.EnableVacuumResponse
+	(*VolumeMarkReadonlyRequest)(nil),             // 41: master_pb.VolumeMarkReadonlyRequest
+	(*VolumeMarkReadonlyResponse)(nil),            // 42: master_pb.VolumeMarkReadonlyResponse
+	(*GetMasterConfigurationRequest)(nil),         // 43: master_pb.GetMasterConfigurationRequest
+	(*GetMasterConfigurationResponse)(nil),        // 44: master_pb.GetMasterConfigurationResponse
+	(*ListClusterNodesRequest)(nil),               // 45: master_pb.ListClusterNodesRequest
+	(*ListClusterNodesResponse)(nil),              // 46: master_pb.ListClusterNodesResponse
+	(*LeaseAdminTokenRequest)(nil),                // 47: master_pb.LeaseAdminTokenRequest
+	(*LeaseAdminTokenResponse)(nil),               // 48: master_pb.LeaseAdminTokenResponse
+	(*ReleaseAdminTokenRequest)(nil),              // 49: master_pb.ReleaseAdminTokenRequest
+	(*ReleaseAdminTokenResponse)(nil),             // 50: master_pb.ReleaseAdminTokenResponse
+	(*PingRequest)(nil),                           // 51: master_pb.PingRequest
+	(*PingResponse)(nil),                          // 52: master_pb.PingResponse
+	(*RaftAddServerRequest)(nil),                  // 53: master_pb.RaftAddServerRequest
+	(*RaftAddServerResponse)(nil),                 // 54: master_pb.RaftAddServerResponse
+	(*RaftRemoveServerRequest)(nil),               // 55: master_pb.RaftRemoveServerRequest
+	(*RaftRemoveServerResponse)(nil),              // 56: master_pb.RaftRemoveServerResponse
+	(*RaftListClusterServersRequest)(nil),         // 57: master_pb.RaftListClusterServersRequest
+	(*RaftListClusterServersResponse)(nil),        // 58: master_pb.RaftListClusterServersResponse
+	(*RaftLeadershipTransferRequest)(nil),         // 59: master_pb.RaftLeadershipTransferRequest
+	(*RaftLeadershipTransferResponse)(nil),        // 60: master_pb.RaftLeadershipTransferResponse
+	(*VolumeGrowResponse)(nil),                    // 61: master_pb.VolumeGrowResponse
+	nil,                                           // 62: master_pb.Heartbeat.MaxVolumeCountsEntry
+	nil,                                           // 63: master_pb.StorageBackend.PropertiesEntry
+	(*SuperBlockExtra_ErasureCoding)(nil),         // 64: master_pb.SuperBlockExtra.ErasureCoding
+	(*LookupVolumeResponse_VolumeIdLocation)(nil), // 65: master_pb.LookupVolumeResponse.VolumeIdLocation
+	nil, // 66: master_pb.DataNodeInfo.DiskInfosEntry
+	nil, // 67: master_pb.RackInfo.DiskInfosEntry
+	nil, // 68: master_pb.DataCenterInfo.DiskInfosEntry
+	nil, // 69: master_pb.TopologyInfo.DiskInfosEntry
+	(*LookupEcVolumeResponse_EcShardIdLocation)(nil),      // 70: master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	(*ListClusterNodesResponse_ClusterNode)(nil),          // 71: master_pb.ListClusterNodesResponse.ClusterNode
+	(*RaftListClusterServersResponse_ClusterServers)(nil), // 72: master_pb.RaftListClusterServersResponse.ClusterServers
+	(*volume_server_pb.VolumeServerState)(nil),            // 73: volume_server_pb.VolumeServerState
 }
 var file_master_proto_depIdxs = []int32{
-	2,  // 0: master_pb.Heartbeat.volumes:type_name -> master_pb.VolumeInformationMessage
-	3,  // 1: master_pb.Heartbeat.new_volumes:type_name -> master_pb.VolumeShortInformationMessage
-	3,  // 2: master_pb.Heartbeat.deleted_volumes:type_name -> master_pb.VolumeShortInformationMessage
-	4,  // 3: master_pb.Heartbeat.ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
-	4,  // 4: master_pb.Heartbeat.new_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
-	4,  // 5: master_pb.Heartbeat.deleted_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
-	61, // 6: master_pb.Heartbeat.max_volume_counts:type_name -> master_pb.Heartbeat.MaxVolumeCountsEntry
-	72, // 7: master_pb.Heartbeat.state:type_name -> volume_server_pb.VolumeServerState
-	5,  // 8: master_pb.HeartbeatResponse.storage_backends:type_name -> master_pb.StorageBackend
-	62, // 9: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
-	63, // 10: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
-	9,  // 11: master_pb.KeepConnectedResponse.volume_location:type_name -> master_pb.VolumeLocation
-	10, // 12: master_pb.KeepConnectedResponse.cluster_node_update:type_name -> master_pb.ClusterNodeUpdate
-	64, // 13: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
-	14, // 14: master_pb.AssignResponse.replicas:type_name -> master_pb.Location
-	14, // 15: master_pb.AssignResponse.location:type_name -> master_pb.Location
-	20, // 16: master_pb.CollectionListResponse.collections:type_name -> master_pb.Collection
-	2,  // 17: master_pb.DiskInfo.volume_infos:type_name -> master_pb.VolumeInformationMessage
-	4,  // 18: master_pb.DiskInfo.ec_shard_infos:type_name -> master_pb.VolumeEcShardInformationMessage
-	65, // 19: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
-	26, // 20: master_pb.RackInfo.data_node_infos:type_name -> master_pb.DataNodeInfo
-	66, // 21: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
-	27, // 22: master_pb.DataCenterInfo.rack_infos:type_name -> master_pb.RackInfo
-	67, // 23: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
-	28, // 24: master_pb.TopologyInfo.data_center_infos:type_name -> master_pb.DataCenterInfo
-	68, // 25: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
-	29, // 26: master_pb.VolumeListResponse.topology_info:type_name -> master_pb.TopologyInfo
-	69, // 27: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
-	5,  // 28: master_pb.GetMasterConfigurationResponse.storage_backends:type_name -> master_pb.StorageBackend
-	70, // 29: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
-	71, // 30: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
-	14, // 31: master_pb.LookupVolumeResponse.VolumeIdLocation.locations:type_name -> master_pb.Location
-	25, // 32: master_pb.DataNodeInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	25, // 33: master_pb.RackInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	25, // 34: master_pb.DataCenterInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	25, // 35: master_pb.TopologyInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
-	14, // 36: master_pb.LookupEcVolumeResponse.EcShardIdLocation.locations:type_name -> master_pb.Location
-	0,  // 37: master_pb.Seaweed.SendHeartbeat:input_type -> master_pb.Heartbeat
-	8,  // 38: master_pb.Seaweed.KeepConnected:input_type -> master_pb.KeepConnectedRequest
-	12, // 39: master_pb.Seaweed.LookupVolume:input_type -> master_pb.LookupVolumeRequest
-	15, // 40: master_pb.Seaweed.Assign:input_type -> master_pb.AssignRequest
-	15, // 41: master_pb.Seaweed.StreamAssign:input_type -> master_pb.AssignRequest
-	18, // 42: master_pb.Seaweed.Statistics:input_type -> master_pb.StatisticsRequest
-	21, // 43: master_pb.Seaweed.CollectionList:input_type -> master_pb.CollectionListRequest
-	23, // 44: master_pb.Seaweed.CollectionDelete:input_type -> master_pb.CollectionDeleteRequest
-	30, // 45: master_pb.Seaweed.VolumeList:input_type -> master_pb.VolumeListRequest
-	32, // 46: master_pb.Seaweed.LookupEcVolume:input_type -> master_pb.LookupEcVolumeRequest
-	34, // 47: master_pb.Seaweed.VacuumVolume:input_type -> master_pb.VacuumVolumeRequest
-	36, // 48: master_pb.Seaweed.DisableVacuum:input_type -> master_pb.DisableVacuumRequest
-	38, // 49: master_pb.Seaweed.EnableVacuum:input_type -> master_pb.EnableVacuumRequest
-	40, // 50: master_pb.Seaweed.VolumeMarkReadonly:input_type -> master_pb.VolumeMarkReadonlyRequest
-	42, // 51: master_pb.Seaweed.GetMasterConfiguration:input_type -> master_pb.GetMasterConfigurationRequest
-	44, // 52: master_pb.Seaweed.ListClusterNodes:input_type -> master_pb.ListClusterNodesRequest
-	46, // 53: master_pb.Seaweed.LeaseAdminToken:input_type -> master_pb.LeaseAdminTokenRequest
-	48, // 54: master_pb.Seaweed.ReleaseAdminToken:input_type -> master_pb.ReleaseAdminTokenRequest
-	50, // 55: master_pb.Seaweed.Ping:input_type -> master_pb.PingRequest
-	56, // 56: master_pb.Seaweed.RaftListClusterServers:input_type -> master_pb.RaftListClusterServersRequest
-	52, // 57: master_pb.Seaweed.RaftAddServer:input_type -> master_pb.RaftAddServerRequest
-	54, // 58: master_pb.Seaweed.RaftRemoveServer:input_type -> master_pb.RaftRemoveServerRequest
-	58, // 59: master_pb.Seaweed.RaftLeadershipTransfer:input_type -> master_pb.RaftLeadershipTransferRequest
-	16, // 60: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
-	1,  // 61: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
-	11, // 62: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
-	13, // 63: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
-	17, // 64: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
-	17, // 65: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
-	19, // 66: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
-	22, // 67: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
-	24, // 68: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
-	31, // 69: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
-	33, // 70: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
-	35, // 71: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
-	37, // 72: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
-	39, // 73: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
-	41, // 74: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
-	43, // 75: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
-	45, // 76: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
-	47, // 77: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
-	49, // 78: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
-	51, // 79: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
-	57, // 80: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
-	53, // 81: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
-	55, // 82: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
-	59, // 83: master_pb.Seaweed.RaftLeadershipTransfer:output_type -> master_pb.RaftLeadershipTransferResponse
-	60, // 84: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
-	61, // [61:85] is the sub-list for method output_type
-	37, // [37:61] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	3,  // 0: master_pb.Heartbeat.volumes:type_name -> master_pb.VolumeInformationMessage
+	4,  // 1: master_pb.Heartbeat.new_volumes:type_name -> master_pb.VolumeShortInformationMessage
+	4,  // 2: master_pb.Heartbeat.deleted_volumes:type_name -> master_pb.VolumeShortInformationMessage
+	5,  // 3: master_pb.Heartbeat.ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
+	5,  // 4: master_pb.Heartbeat.new_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
+	5,  // 5: master_pb.Heartbeat.deleted_ec_shards:type_name -> master_pb.VolumeEcShardInformationMessage
+	62, // 6: master_pb.Heartbeat.max_volume_counts:type_name -> master_pb.Heartbeat.MaxVolumeCountsEntry
+	73, // 7: master_pb.Heartbeat.state:type_name -> volume_server_pb.VolumeServerState
+	0,  // 8: master_pb.Heartbeat.disk_tags:type_name -> master_pb.DiskTag
+	6,  // 9: master_pb.HeartbeatResponse.storage_backends:type_name -> master_pb.StorageBackend
+	63, // 10: master_pb.StorageBackend.properties:type_name -> master_pb.StorageBackend.PropertiesEntry
+	64, // 11: master_pb.SuperBlockExtra.erasure_coding:type_name -> master_pb.SuperBlockExtra.ErasureCoding
+	10, // 12: master_pb.KeepConnectedResponse.volume_location:type_name -> master_pb.VolumeLocation
+	11, // 13: master_pb.KeepConnectedResponse.cluster_node_update:type_name -> master_pb.ClusterNodeUpdate
+	65, // 14: master_pb.LookupVolumeResponse.volume_id_locations:type_name -> master_pb.LookupVolumeResponse.VolumeIdLocation
+	15, // 15: master_pb.AssignResponse.replicas:type_name -> master_pb.Location
+	15, // 16: master_pb.AssignResponse.location:type_name -> master_pb.Location
+	21, // 17: master_pb.CollectionListResponse.collections:type_name -> master_pb.Collection
+	3,  // 18: master_pb.DiskInfo.volume_infos:type_name -> master_pb.VolumeInformationMessage
+	5,  // 19: master_pb.DiskInfo.ec_shard_infos:type_name -> master_pb.VolumeEcShardInformationMessage
+	66, // 20: master_pb.DataNodeInfo.diskInfos:type_name -> master_pb.DataNodeInfo.DiskInfosEntry
+	27, // 21: master_pb.RackInfo.data_node_infos:type_name -> master_pb.DataNodeInfo
+	67, // 22: master_pb.RackInfo.diskInfos:type_name -> master_pb.RackInfo.DiskInfosEntry
+	28, // 23: master_pb.DataCenterInfo.rack_infos:type_name -> master_pb.RackInfo
+	68, // 24: master_pb.DataCenterInfo.diskInfos:type_name -> master_pb.DataCenterInfo.DiskInfosEntry
+	29, // 25: master_pb.TopologyInfo.data_center_infos:type_name -> master_pb.DataCenterInfo
+	69, // 26: master_pb.TopologyInfo.diskInfos:type_name -> master_pb.TopologyInfo.DiskInfosEntry
+	30, // 27: master_pb.VolumeListResponse.topology_info:type_name -> master_pb.TopologyInfo
+	70, // 28: master_pb.LookupEcVolumeResponse.shard_id_locations:type_name -> master_pb.LookupEcVolumeResponse.EcShardIdLocation
+	6,  // 29: master_pb.GetMasterConfigurationResponse.storage_backends:type_name -> master_pb.StorageBackend
+	71, // 30: master_pb.ListClusterNodesResponse.cluster_nodes:type_name -> master_pb.ListClusterNodesResponse.ClusterNode
+	72, // 31: master_pb.RaftListClusterServersResponse.cluster_servers:type_name -> master_pb.RaftListClusterServersResponse.ClusterServers
+	15, // 32: master_pb.LookupVolumeResponse.VolumeIdLocation.locations:type_name -> master_pb.Location
+	26, // 33: master_pb.DataNodeInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	26, // 34: master_pb.RackInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	26, // 35: master_pb.DataCenterInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	26, // 36: master_pb.TopologyInfo.DiskInfosEntry.value:type_name -> master_pb.DiskInfo
+	15, // 37: master_pb.LookupEcVolumeResponse.EcShardIdLocation.locations:type_name -> master_pb.Location
+	1,  // 38: master_pb.Seaweed.SendHeartbeat:input_type -> master_pb.Heartbeat
+	9,  // 39: master_pb.Seaweed.KeepConnected:input_type -> master_pb.KeepConnectedRequest
+	13, // 40: master_pb.Seaweed.LookupVolume:input_type -> master_pb.LookupVolumeRequest
+	16, // 41: master_pb.Seaweed.Assign:input_type -> master_pb.AssignRequest
+	16, // 42: master_pb.Seaweed.StreamAssign:input_type -> master_pb.AssignRequest
+	19, // 43: master_pb.Seaweed.Statistics:input_type -> master_pb.StatisticsRequest
+	22, // 44: master_pb.Seaweed.CollectionList:input_type -> master_pb.CollectionListRequest
+	24, // 45: master_pb.Seaweed.CollectionDelete:input_type -> master_pb.CollectionDeleteRequest
+	31, // 46: master_pb.Seaweed.VolumeList:input_type -> master_pb.VolumeListRequest
+	33, // 47: master_pb.Seaweed.LookupEcVolume:input_type -> master_pb.LookupEcVolumeRequest
+	35, // 48: master_pb.Seaweed.VacuumVolume:input_type -> master_pb.VacuumVolumeRequest
+	37, // 49: master_pb.Seaweed.DisableVacuum:input_type -> master_pb.DisableVacuumRequest
+	39, // 50: master_pb.Seaweed.EnableVacuum:input_type -> master_pb.EnableVacuumRequest
+	41, // 51: master_pb.Seaweed.VolumeMarkReadonly:input_type -> master_pb.VolumeMarkReadonlyRequest
+	43, // 52: master_pb.Seaweed.GetMasterConfiguration:input_type -> master_pb.GetMasterConfigurationRequest
+	45, // 53: master_pb.Seaweed.ListClusterNodes:input_type -> master_pb.ListClusterNodesRequest
+	47, // 54: master_pb.Seaweed.LeaseAdminToken:input_type -> master_pb.LeaseAdminTokenRequest
+	49, // 55: master_pb.Seaweed.ReleaseAdminToken:input_type -> master_pb.ReleaseAdminTokenRequest
+	51, // 56: master_pb.Seaweed.Ping:input_type -> master_pb.PingRequest
+	57, // 57: master_pb.Seaweed.RaftListClusterServers:input_type -> master_pb.RaftListClusterServersRequest
+	53, // 58: master_pb.Seaweed.RaftAddServer:input_type -> master_pb.RaftAddServerRequest
+	55, // 59: master_pb.Seaweed.RaftRemoveServer:input_type -> master_pb.RaftRemoveServerRequest
+	59, // 60: master_pb.Seaweed.RaftLeadershipTransfer:input_type -> master_pb.RaftLeadershipTransferRequest
+	17, // 61: master_pb.Seaweed.VolumeGrow:input_type -> master_pb.VolumeGrowRequest
+	2,  // 62: master_pb.Seaweed.SendHeartbeat:output_type -> master_pb.HeartbeatResponse
+	12, // 63: master_pb.Seaweed.KeepConnected:output_type -> master_pb.KeepConnectedResponse
+	14, // 64: master_pb.Seaweed.LookupVolume:output_type -> master_pb.LookupVolumeResponse
+	18, // 65: master_pb.Seaweed.Assign:output_type -> master_pb.AssignResponse
+	18, // 66: master_pb.Seaweed.StreamAssign:output_type -> master_pb.AssignResponse
+	20, // 67: master_pb.Seaweed.Statistics:output_type -> master_pb.StatisticsResponse
+	23, // 68: master_pb.Seaweed.CollectionList:output_type -> master_pb.CollectionListResponse
+	25, // 69: master_pb.Seaweed.CollectionDelete:output_type -> master_pb.CollectionDeleteResponse
+	32, // 70: master_pb.Seaweed.VolumeList:output_type -> master_pb.VolumeListResponse
+	34, // 71: master_pb.Seaweed.LookupEcVolume:output_type -> master_pb.LookupEcVolumeResponse
+	36, // 72: master_pb.Seaweed.VacuumVolume:output_type -> master_pb.VacuumVolumeResponse
+	38, // 73: master_pb.Seaweed.DisableVacuum:output_type -> master_pb.DisableVacuumResponse
+	40, // 74: master_pb.Seaweed.EnableVacuum:output_type -> master_pb.EnableVacuumResponse
+	42, // 75: master_pb.Seaweed.VolumeMarkReadonly:output_type -> master_pb.VolumeMarkReadonlyResponse
+	44, // 76: master_pb.Seaweed.GetMasterConfiguration:output_type -> master_pb.GetMasterConfigurationResponse
+	46, // 77: master_pb.Seaweed.ListClusterNodes:output_type -> master_pb.ListClusterNodesResponse
+	48, // 78: master_pb.Seaweed.LeaseAdminToken:output_type -> master_pb.LeaseAdminTokenResponse
+	50, // 79: master_pb.Seaweed.ReleaseAdminToken:output_type -> master_pb.ReleaseAdminTokenResponse
+	52, // 80: master_pb.Seaweed.Ping:output_type -> master_pb.PingResponse
+	58, // 81: master_pb.Seaweed.RaftListClusterServers:output_type -> master_pb.RaftListClusterServersResponse
+	54, // 82: master_pb.Seaweed.RaftAddServer:output_type -> master_pb.RaftAddServerResponse
+	56, // 83: master_pb.Seaweed.RaftRemoveServer:output_type -> master_pb.RaftRemoveServerResponse
+	60, // 84: master_pb.Seaweed.RaftLeadershipTransfer:output_type -> master_pb.RaftLeadershipTransferResponse
+	61, // 85: master_pb.Seaweed.VolumeGrow:output_type -> master_pb.VolumeGrowResponse
+	62, // [62:86] is the sub-list for method output_type
+	38, // [38:62] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_master_proto_init() }
@@ -4750,7 +4826,7 @@ func file_master_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_master_proto_rawDesc), len(file_master_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   72,
+			NumMessages:   73,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
