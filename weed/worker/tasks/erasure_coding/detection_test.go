@@ -64,18 +64,23 @@ func TestPlanECDestinationsUsesPlanner(t *testing.T) {
 }
 
 func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
-	tagsByNodeDisk := map[int]map[int][]string{
-		1: {
-			0: {"fast"},
-		},
-		2: {
-			0: {"fast"},
-		},
-		3: {
-			0: {"slow"},
-		},
+	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
+	topo := activeTopology.GetTopologyInfo()
+	for _, dc := range topo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for k, node := range rack.DataNodeInfos {
+				for diskType := range node.DiskInfos {
+					if k < 2 {
+						node.DiskInfos[diskType].Tags = []string{"fast"}
+					} else {
+						node.DiskInfos[diskType].Tags = []string{"slow"}
+					}
+				}
+			}
+		}
 	}
-	activeTopology := buildActiveTopologyWithDiskTags(t, 3, []string{"hdd"}, 10, 0, tagsByNodeDisk)
+	require.NoError(t, activeTopology.UpdateTopology(topo))
+
 	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
 	require.NotNil(t, planner)
 
@@ -90,12 +95,21 @@ func TestECPlacementPlannerPrefersTaggedDisks(t *testing.T) {
 }
 
 func TestECPlacementPlannerFallsBackWhenTagsInsufficient(t *testing.T) {
-	tagsByNodeDisk := map[int]map[int][]string{
-		1: {
-			0: {"fast"},
-		},
+	activeTopology := buildActiveTopology(t, 3, []string{"hdd"}, 10, 0)
+	topo := activeTopology.GetTopologyInfo()
+	for _, dc := range topo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for i, node := range rack.DataNodeInfos {
+				for diskType := range node.DiskInfos {
+					if i == 0 {
+						node.DiskInfos[diskType].Tags = []string{"fast"}
+					}
+				}
+			}
+		}
 	}
-	activeTopology := buildActiveTopologyWithDiskTags(t, 3, []string{"hdd"}, 10, 0, tagsByNodeDisk)
+	require.NoError(t, activeTopology.UpdateTopology(topo))
+
 	planner := newECPlacementPlanner(activeTopology, []string{"fast"})
 	require.NotNil(t, planner)
 
@@ -170,10 +184,6 @@ func buildVolumeMetricsForIDs(count int) []*types.VolumeHealthMetrics {
 }
 
 func buildActiveTopology(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount, usedVolumeCount int64) *topology.ActiveTopology {
-	return buildActiveTopologyWithDiskTags(t, nodeCount, diskTypes, maxVolumeCount, usedVolumeCount, nil)
-}
-
-func buildActiveTopologyWithDiskTags(t *testing.T, nodeCount int, diskTypes []string, maxVolumeCount, usedVolumeCount int64, tagsByNodeDisk map[int]map[int][]string) *topology.ActiveTopology {
 	t.Helper()
 	activeTopology := topology.NewActiveTopology(10)
 
@@ -193,19 +203,11 @@ func buildActiveTopologyWithDiskTags(t *testing.T, nodeCount int, diskTypes []st
 					DiskId:     uint32(diskIndex),
 				})
 			}
-			var tags []string
-			if nodeTags, ok := tagsByNodeDisk[i]; ok {
-				if diskTags, ok := nodeTags[diskIndex]; ok {
-					tags = append([]string(nil), diskTags...)
-				}
-			}
-
 			diskInfos[diskType] = &master_pb.DiskInfo{
 				DiskId:         uint32(diskIndex),
 				VolumeCount:    used,
 				MaxVolumeCount: maxVolumeCount,
 				VolumeInfos:    volumeInfos,
-				Tags:           tags,
 			}
 		}
 
