@@ -46,68 +46,68 @@ func TestReverseProxySignatureVerification(t *testing.T) {
 }`
 
 	tests := []struct {
-		name             string
-		externalUrl      string // s3.externalUrl config for the backend
-		clientScheme     string // scheme the client uses for signing
-		clientHost       string // host the client signs against
-		proxyForwardsHost bool  // whether proxy sets X-Forwarded-Host
-		expectSuccess    bool
+		name              string
+		externalUrl       string // s3.externalUrl config for the backend
+		clientScheme      string // scheme the client uses for signing
+		clientHost        string // host the client signs against
+		proxyForwardsHost bool   // whether proxy sets X-Forwarded-Host
+		expectSuccess     bool
 	}{
 		{
-			name:             "non-standard port, externalUrl matches proxy address",
-			externalUrl:      "", // filled dynamically with proxy address
-			clientScheme:     "http",
-			clientHost:       "", // filled dynamically
+			name:              "non-standard port, externalUrl matches proxy address",
+			externalUrl:       "", // filled dynamically with proxy address
+			clientScheme:      "http",
+			clientHost:        "", // filled dynamically
 			proxyForwardsHost: true,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 		{
-			name:             "externalUrl with non-standard port, client signs against external host",
-			externalUrl:      "http://api.example.com:9000",
-			clientScheme:     "http",
-			clientHost:       "api.example.com:9000",
+			name:              "externalUrl with non-standard port, client signs against external host",
+			externalUrl:       "http://api.example.com:9000",
+			clientScheme:      "http",
+			clientHost:        "api.example.com:9000",
 			proxyForwardsHost: true,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 		{
-			name:             "externalUrl with HTTPS default port stripped, client signs without port",
-			externalUrl:      "https://api.example.com:443",
-			clientScheme:     "https",
-			clientHost:       "api.example.com",
+			name:              "externalUrl with HTTPS default port stripped, client signs without port",
+			externalUrl:       "https://api.example.com:443",
+			clientScheme:      "https",
+			clientHost:        "api.example.com",
 			proxyForwardsHost: true,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 		{
-			name:             "externalUrl with HTTP default port stripped, client signs without port",
-			externalUrl:      "http://api.example.com:80",
-			clientScheme:     "http",
-			clientHost:       "api.example.com",
+			name:              "externalUrl with HTTP default port stripped, client signs without port",
+			externalUrl:       "http://api.example.com:80",
+			clientScheme:      "http",
+			clientHost:        "api.example.com",
 			proxyForwardsHost: true,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 		{
-			name:             "proxy forwards X-Forwarded-Host correctly, no externalUrl needed",
-			externalUrl:      "",
-			clientScheme:     "http",
-			clientHost:       "api.example.com:9000",
+			name:              "proxy forwards X-Forwarded-Host correctly, no externalUrl needed",
+			externalUrl:       "",
+			clientScheme:      "http",
+			clientHost:        "api.example.com:9000",
 			proxyForwardsHost: true,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 		{
-			name:             "proxy without X-Forwarded-Host, no externalUrl: host mismatch",
-			externalUrl:      "",
-			clientScheme:     "http",
-			clientHost:       "api.example.com:9000",
+			name:              "proxy without X-Forwarded-Host, no externalUrl: host mismatch",
+			externalUrl:       "",
+			clientScheme:      "http",
+			clientHost:        "api.example.com:9000",
 			proxyForwardsHost: false,
-			expectSuccess:    false,
+			expectSuccess:     false,
 		},
 		{
-			name:             "proxy without X-Forwarded-Host, externalUrl saves the day",
-			externalUrl:      "http://api.example.com:9000",
-			clientScheme:     "http",
-			clientHost:       "api.example.com:9000",
+			name:              "proxy without X-Forwarded-Host, externalUrl saves the day",
+			externalUrl:       "http://api.example.com:9000",
+			clientScheme:      "http",
+			clientHost:        "api.example.com:9000",
 			proxyForwardsHost: false,
-			expectSuccess:    true,
+			expectSuccess:     true,
 		},
 	}
 

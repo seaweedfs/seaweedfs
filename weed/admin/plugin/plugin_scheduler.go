@@ -175,7 +175,8 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 	r.schedulerMu.Unlock()
 
 	states := make([]SchedulerJobTypeState, 0, len(jobTypes))
-	for _, jobType := range jobTypes {
+	for _, jobTypeInfo := range jobTypes {
+		jobType := jobTypeInfo.JobType
 		state := SchedulerJobTypeState{
 			JobType:           jobType,
 			DetectionInFlight: detectionInFlight[jobType],
@@ -187,6 +188,7 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 		}
 
 		policy, enabled, loadErr := r.loadSchedulerPolicy(jobType)
+
 		if loadErr != nil {
 			state.PolicyError = loadErr.Error()
 		} else {

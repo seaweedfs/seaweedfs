@@ -209,11 +209,11 @@ func TestExternalUrlSignatureVerification(t *testing.T) {
 	secretKey := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
 	tests := []struct {
-		name           string
-		clientUrl      string // URL the client signs against
-		backendHost    string // Host header SeaweedFS sees (from proxy)
-		externalUrl    string // s3.externalUrl config
-		expectSuccess  bool
+		name          string
+		clientUrl     string // URL the client signs against
+		backendHost   string // Host header SeaweedFS sees (from proxy)
+		externalUrl   string // s3.externalUrl config
+		expectSuccess bool
 	}{
 		{
 			name:          "non-standard port with externalUrl",

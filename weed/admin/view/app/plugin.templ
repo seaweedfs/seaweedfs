@@ -683,6 +683,25 @@ templ Plugin(page string) {
                 return 'configuration';
             }
 
+            // Parse a job type item (string or object) into a safe object shape
+            function parseJobTypeItem(item) {
+                var jobType = '';
+                var displayName = '';
+                
+                if (typeof item === 'string') {
+                    jobType = String(item || '').trim();
+                    displayName = jobType;
+                } else if (item && typeof item === 'object') {
+                    jobType = String(item.job_type || item.jobType || '').trim();
+                    displayName = String(item.display_name || item.displayName || jobType || '').trim();
+                    if (!displayName) {
+                        displayName = jobType;
+                    }
+                }
+                
+                return { jobType: jobType, displayName: displayName };
+            }
+
             function topTabKeyForJobType(jobType) {
                 var normalized = String(jobType || '').trim();
                 if (!normalized) {
@@ -706,7 +725,8 @@ templ Plugin(page string) {
                 }
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    if (String(jobTypes[i] || '').trim() === normalized) {
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    if (item.jobType === normalized) {
                         return true;
                     }
                 }
@@ -728,7 +748,8 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                var firstItem = parseJobTypeItem(state.jobTypes[0]);
+                state.selectedJobType = firstItem.jobType;
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -749,7 +770,8 @@ templ Plugin(page string) {
 
                 if (state.activeTopTab === 'overview') {
                     if (!state.selectedJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                        state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                        var item = parseJobTypeItem(state.jobTypes[0]);
+                        state.selectedJobType = item.jobType;
                     }
                     return;
                 }
@@ -758,7 +780,8 @@ templ Plugin(page string) {
                     topTabJobType = state.selectedJobType;
                 }
                 if (!topTabJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                    topTabJobType = String(state.jobTypes[0] || '').trim();
+                    var item = parseJobTypeItem(state.jobTypes[0]);
+                    topTabJobType = item.jobType;
                 }
                 if (!topTabJobType) {
                     state.activeTopTab = 'overview';
@@ -784,14 +807,17 @@ templ Plugin(page string) {
 
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    var jobType = String(jobTypes[i] || '').trim();
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    var jobType = item.jobType;
+                    var displayName = item.displayName;
+                    
                     if (!jobType) {
                         continue;
                     }
                     html += '' +
                         '<li class="nav-item">' +
                         '<button type="button" class="nav-link" data-plugin-top-tab="' + escapeHtml(topTabKeyForJobType(jobType)) + '">' +
-                        escapeHtml(jobType) +
+                        escapeHtml(displayName) +
                         '</button>' +
                         '</li>';
                 }
@@ -1267,7 +1293,8 @@ templ Plugin(page string) {
                 var jobTypes = [];
 
                 for (var k = 0; k < known.length; k++) {
-                    var knownType = String(known[k] || '').trim();
+                    var item = parseJobTypeItem(known[k]);
+                    var knownType = item && item.jobType ? String(item.jobType).trim() : '';
                     if (!knownType || seen[knownType]) {
                         continue;
                     }

@@ -44,6 +44,7 @@ func (h *VolumeBalanceHandler) Capability() *plugin_pb.JobTypeCapability {
 		MaxExecutionConcurrency: 1,
 		DisplayName:             "Volume Balance",
 		Description:             "Moves volumes between servers to reduce skew in volume distribution",
+		Weight:                  50,
 	}
 }
 

@@ -17,7 +17,7 @@ heartbeat/load reporting, detection, and execution.
 
 Behavior:
   - Use -jobType to choose one or more plugin job handlers (comma-separated list)
-  - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
+  - Use -workingDir to persist worker.id for stable worker identity across restarts
   - Use -metricsPort/-metricsIp to expose /health, /ready, and /metrics
 
 Examples:

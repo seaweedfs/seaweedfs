@@ -29,6 +29,10 @@ type Task interface {
 	// Progress
 	GetProgress() float64
 	SetProgressCallback(func(float64, string))
+
+	// Working Directory
+	SetWorkingDir(string)
+	GetWorkingDir() string
 }
 
 // TaskWithLogging extends Task with logging capabilities
@@ -131,6 +135,7 @@ type UnifiedBaseTask struct {
 	logger           Logger
 	cancelled        bool
 	currentStage     string
+	workingDir       string
 }
 
 // NewBaseTask creates a new base task
@@ -205,4 +210,14 @@ func (t *UnifiedBaseTask) SetLogger(logger Logger) {
 // GetLogger returns the task logger
 func (t *UnifiedBaseTask) GetLogger() Logger {
 	return t.logger
+}
+
+// SetWorkingDir sets the task working directory
+func (t *UnifiedBaseTask) SetWorkingDir(workingDir string) {
+	t.workingDir = workingDir
+}
+
+// GetWorkingDir returns the task working directory
+func (t *UnifiedBaseTask) GetWorkingDir() string {
+	return t.workingDir
 }

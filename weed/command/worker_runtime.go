@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,6 +19,7 @@ import (
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"google.golang.org/grpc"
 )
 
@@ -130,31 +130,11 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 }
 
 func resolvePluginWorkerID(explicitID string, workingDir string) (string, error) {
-	id := strings.TrimSpace(explicitID)
-	if id != "" {
-		return id, nil
+	if explicitID != "" {
+		return explicitID, nil
 	}
-
-	workingDir = strings.TrimSpace(workingDir)
-	if workingDir == "" {
-		return "", nil
-	}
-	if err := os.MkdirAll(workingDir, 0755); err != nil {
-		return "", err
-	}
-
-	workerIDPath := filepath.Join(workingDir, "plugin.worker.id")
-	if data, err := os.ReadFile(workerIDPath); err == nil {
-		if persisted := strings.TrimSpace(string(data)); persisted != "" {
-			return persisted, nil
-		}
-	}
-
-	generated := fmt.Sprintf("plugin-%d", time.Now().UnixNano())
-	if err := os.WriteFile(workerIDPath, []byte(generated+"\n"), 0644); err != nil {
-		return "", err
-	}
-	return generated, nil
+	// Use the same ID generation/loading logic as the standard worker
+	return worker.GenerateOrLoadWorkerID(workingDir)
 }
 
 // buildPluginWorkerHandler constructs the JobHandler for the given job type.
