@@ -3,7 +3,6 @@ package filer
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
@@ -87,7 +86,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			Attr: Attr{
 				Mtime:    mtime,
 				Crtime:   mtime,
-				Mode:     0644 | os.FileMode(0),
+				Mode:     0644,
 				FileSize: uint64(remoteEntry.RemoteSize),
 			},
 			Remote: remoteEntry,
