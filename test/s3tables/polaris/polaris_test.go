@@ -25,9 +25,10 @@ type polarisSession struct {
 }
 
 type polarisTableSetup struct {
-	namespace string
-	table     string
-	s3Client  *s3.Client
+	namespace     string
+	table         string
+	dataKeyPrefix string
+	s3Client      *s3.Client
 }
 
 type polarisCatalogClient struct {
@@ -156,7 +157,7 @@ func TestPolarisIntegration(t *testing.T) {
 	defer cancel()
 	defer cleanup()
 
-	objectKey := fmt.Sprintf("%s/%s/data/hello-%d.txt", setup.namespace, setup.table, time.Now().UnixNano())
+	objectKey := fmt.Sprintf("%s/hello-%d.txt", setup.dataKeyPrefix, time.Now().UnixNano())
 	payload := []byte("polaris")
 
 	if _, err := setup.s3Client.PutObject(ctx, &s3.PutObjectInput{
@@ -218,7 +219,7 @@ func TestPolarisTableIntegration(t *testing.T) {
 	defer cancel()
 	defer cleanup()
 
-	objectKey := fmt.Sprintf("%s/%s/data/part-%d.parquet", setup.namespace, setup.table, time.Now().UnixNano())
+	objectKey := fmt.Sprintf("%s/part-%d.parquet", setup.dataKeyPrefix, time.Now().UnixNano())
 	createResp, err := setup.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(session.bucketName),
 		Key:    aws.String(objectKey),
@@ -472,6 +473,10 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 	if err != nil {
 		t.Fatalf("Extract vended credentials failed: %v", err)
 	}
+	dataKeyPrefix, err := s3URIToKeyPrefix(dataPrefix, session.bucketName)
+	if err != nil {
+		t.Fatalf("Invalid data prefix %s: %v", dataPrefix, err)
+	}
 
 	s3Client, err := newS3Client(ctx, endpoint, region, creds, pathStyle)
 	if err != nil {
@@ -490,9 +495,10 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 	}
 
 	return &polarisTableSetup{
-		namespace: namespace,
-		table:     table,
-		s3Client:  s3Client,
+		namespace:     namespace,
+		table:         table,
+		dataKeyPrefix: dataKeyPrefix,
+		s3Client:      s3Client,
 	}, cleanup
 }
 
@@ -783,4 +789,17 @@ func lookupValue(config map[string]string, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func s3URIToKeyPrefix(uri, bucket string) (string, error) {
+	prefix := "s3://" + bucket + "/"
+	if !strings.HasPrefix(uri, prefix) {
+		return "", fmt.Errorf("uri %q does not match bucket %q", uri, bucket)
+	}
+	keyPrefix := strings.TrimPrefix(uri, prefix)
+	keyPrefix = strings.TrimPrefix(keyPrefix, "/")
+	if keyPrefix == "" {
+		return "", fmt.Errorf("empty key prefix in uri %q", uri)
+	}
+	return keyPrefix, nil
 }
