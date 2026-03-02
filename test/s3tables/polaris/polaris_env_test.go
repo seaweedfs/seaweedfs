@@ -213,7 +213,7 @@ func (env *TestEnvironment) StartPolaris(t *testing.T) {
 	t.Helper()
 
 	containerName := fmt.Sprintf("seaweed-polaris-%d", time.Now().UnixNano())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
