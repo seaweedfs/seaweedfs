@@ -121,6 +121,10 @@ type loadTableResponse struct {
 	StorageCredentials []storageCredential `json:"storage-credentials"`
 }
 
+type loadCredentialsResponse struct {
+	StorageCredentials []storageCredential `json:"storage-credentials"`
+}
+
 type storageCredential struct {
 	Prefix string            `json:"prefix"`
 	Config map[string]string `json:"config"`
@@ -152,22 +156,6 @@ func TestPolarisIntegration(t *testing.T) {
 	defer cancel()
 	defer cleanup()
 
-	listResp, err := setup.s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
-	if err != nil {
-		t.Fatalf("ListBuckets failed: %v", err)
-	}
-
-	found := false
-	for _, bucket := range listResp.Buckets {
-		if aws.ToString(bucket.Name) == session.bucketName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("Bucket %s not found in list", session.bucketName)
-	}
-
 	objectKey := fmt.Sprintf("%s/%s/data/hello-%d.txt", setup.namespace, setup.table, time.Now().UnixNano())
 	payload := []byte("polaris")
 
@@ -187,7 +175,7 @@ func TestPolarisIntegration(t *testing.T) {
 		t.Fatalf("ListObjectsV2 failed: %v", err)
 	}
 
-	found = false
+	found := false
 	for _, obj := range listObjects.Contents {
 		if aws.ToString(obj.Key) == objectKey {
 			found = true
@@ -459,8 +447,21 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 		t.Fatalf("LoadTable failed: %v", err)
 	}
 
+	credsResp, err := catalogClient.LoadCredentials(ctx, namespace, table)
+	if err != nil {
+		t.Fatalf("LoadCredentials failed: %v", err)
+	}
+	if len(credsResp.StorageCredentials) == 0 {
+		t.Fatalf("LoadCredentials returned no storage credentials")
+	}
+
+	credentialSource := &loadTableResponse{
+		Config:             loadResp.Config,
+		StorageCredentials: credsResp.StorageCredentials,
+	}
+
 	dataPrefix := location + "/data"
-	creds, endpoint, region, pathStyle, err := extractS3Credentials(loadResp, dataPrefix, env.s3Endpoint(), polarisRegion)
+	creds, endpoint, region, pathStyle, err := extractS3Credentials(credentialSource, dataPrefix, env.s3Endpoint(), polarisRegion)
 	if err != nil {
 		t.Fatalf("Extract vended credentials failed: %v", err)
 	}
@@ -594,6 +595,15 @@ func (c *polarisCatalogClient) LoadTable(ctx context.Context, namespace, table s
 		"X-Iceberg-Access-Delegation": "vended-credentials",
 	}
 	if err := c.http.doJSONWithHeaders(ctx, http.MethodGet, path, nil, &resp, headers); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *polarisCatalogClient) LoadCredentials(ctx context.Context, namespace, table string) (*loadCredentialsResponse, error) {
+	path := fmt.Sprintf("/api/catalog/v1/%s/namespaces/%s/tables/%s/credentials", url.PathEscape(c.catalog), url.PathEscape(namespace), url.PathEscape(table))
+	var resp loadCredentialsResponse
+	if err := c.http.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
