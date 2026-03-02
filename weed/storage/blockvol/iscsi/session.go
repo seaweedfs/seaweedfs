@@ -89,8 +89,10 @@ func NewSession(conn net.Conn, config TargetConfig, resolver TargetResolver, dev
 		txDone:     make(chan struct{}),
 		logger:     logger,
 	}
-	s.expCmdSN.Store(1)
-	s.maxCmdSN.Store(32) // window of 32 commands
+	// Per RFC 7143 Section 4.2.2: Login CmdSN is not used for ordering.
+	// The first post-login SCSI command from the Linux initiator uses CmdSN=0.
+	s.expCmdSN.Store(0)
+	s.maxCmdSN.Store(31) // window of 32 commands [0, 31]
 	return s
 }
 

@@ -233,6 +233,19 @@ func (r *ReplicaReceiver) applyEntry(payload []byte) error {
 	r.receivedLSN = entry.LSN
 	r.cond.Broadcast()
 
+	// Update vol.nextLSN so Status().WALHeadLSN reflects replicated state.
+	// CAS loop: only advance, never regress.
+	for {
+		cur := r.vol.nextLSN.Load()
+		next := entry.LSN + 1
+		if next <= cur {
+			break
+		}
+		if r.vol.nextLSN.CompareAndSwap(cur, next) {
+			break
+		}
+	}
+
 	return nil
 }
 

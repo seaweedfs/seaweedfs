@@ -240,7 +240,7 @@ func testQARXTXSCSICmdDuringDataOut(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(0x100)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(3)
+	cmd.SetCmdSN(1)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0) // LBA 0
@@ -311,7 +311,7 @@ func testQARXTXNOPResponseTiming(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(0x300)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0) // LBA 0
@@ -475,7 +475,7 @@ func testQARXTXStatSNAfterErrorResponse(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagR)
 	cmd.SetInitiatorTaskTag(0x6001)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	cmd.SetCDB(cdb)
 	if err := WritePDU(env.clientConn, cmd); err != nil {
 		t.Fatal(err)

@@ -163,7 +163,7 @@ func testLoginAndRead(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagR) // Final + Read
 	cmd.SetInitiatorTaskTag(1)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	cmd.SetExpStatSN(2)
 
 	var cdb [16]byte
@@ -202,7 +202,7 @@ func testLoginAndWrite(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW) // Final + Write
 	cmd.SetInitiatorTaskTag(1)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
@@ -270,7 +270,7 @@ func testLogout(t *testing.T) {
 	logout.SetOpcode(OpLogoutReq)
 	logout.SetOpSpecific1(FlagF)
 	logout.SetInitiatorTaskTag(0xAAAA)
-	logout.SetCmdSN(2)
+	logout.SetCmdSN(0)
 
 	if err := WritePDU(env.clientConn, logout); err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func testDiscoverySession(t *testing.T) {
 	textParams := NewParams()
 	textParams.Set("SendTargets", "All")
 	textReq := makeTextReq(textParams)
-	textReq.SetCmdSN(2)
+	textReq.SetCmdSN(0)
 
 	if err := WritePDU(env.clientConn, textReq); err != nil {
 		t.Fatal(err)
@@ -518,7 +518,7 @@ func testRXTXWriteWithR2T(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW) // no immediate data
 	cmd.SetInitiatorTaskTag(1)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
@@ -767,7 +767,7 @@ func testRXTXShutdownClean(t *testing.T) {
 	logout.SetOpcode(OpLogoutReq)
 	logout.SetOpSpecific1(FlagF)
 	logout.SetInitiatorTaskTag(1)
-	logout.SetCmdSN(2)
+	logout.SetCmdSN(0)
 	WritePDU(env.clientConn, logout)
 
 	// Read logout response.
@@ -869,7 +869,7 @@ func testRXTXR2TStatSNFresh(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(1)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
@@ -1053,7 +1053,7 @@ func testRXTXPendingQueueOverflow(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(0xAAAA)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0)
@@ -1109,7 +1109,7 @@ func testRXTXDataOutTimeout(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(0xBEEF)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0)

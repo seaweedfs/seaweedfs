@@ -32,7 +32,7 @@ func TestBugPendingQueueUnbounded(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(0xAAAA)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0)

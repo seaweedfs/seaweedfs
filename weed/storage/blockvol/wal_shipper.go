@@ -72,10 +72,15 @@ func (s *WALShipper) Ship(entry *WALEntry) error {
 		return nil
 	}
 
+	// Set a write deadline so we don't block for the full TCP
+	// retransmission timeout (~120s) if the replica is dead.
+	s.dataConn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	if err := WriteFrame(s.dataConn, MsgWALEntry, encoded); err != nil {
+		s.dataConn.SetWriteDeadline(time.Time{}) // clear deadline
 		s.markDegraded()
 		return nil
 	}
+	s.dataConn.SetWriteDeadline(time.Time{}) // clear deadline
 
 	s.shippedLSN.Store(entry.LSN)
 	return nil

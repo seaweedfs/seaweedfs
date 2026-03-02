@@ -99,7 +99,7 @@ func qaSessionDefault(t *testing.T) (net.Conn, chan error) {
 func qaLoginNormal(t *testing.T, conn net.Conn) uint32 {
 	t.Helper()
 	doLogin(t, conn)
-	return 2 // doLogin uses CmdSN=1, next is 2
+	return 0 // Login CmdSN not used for ordering; first SCSI CmdSN is 0
 }
 
 // qaLoginDiscovery performs a discovery login.
@@ -260,7 +260,7 @@ func testQA_PDU(t *testing.T) {
 		nop := &PDU{}
 		nop.SetOpcode(OpNOPOut)
 		nop.SetInitiatorTaskTag(0x9999)
-		nop.SetCmdSN(2)
+		nop.SetCmdSN(0)
 		if err := WritePDU(conn, nop); err != nil {
 			t.Fatal(err)
 		}
@@ -439,7 +439,7 @@ func testQA_Login(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagR)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(96)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		var cdb [16]byte
 		cdb[0] = ScsiInquiry
 		binary.BigEndian.PutUint16(cdb[3:5], 96)
@@ -462,7 +462,7 @@ func testQA_Login(t *testing.T) {
 		params.Set("InitiatorName", testInitiatorName)
 		params.Set("TargetName", testTargetName)
 		req := makeLoginReq(StageSecurityNeg, StageFullFeature, true, params)
-		req.SetCmdSN(2)
+		req.SetCmdSN(0)
 
 		if err := WritePDU(conn, req); err != nil {
 			t.Fatal(err)
@@ -620,7 +620,7 @@ func testQA_Discovery(t *testing.T) {
 		params := NewParams()
 		params.Set("SendTargets", "All")
 		req := makeTextReq(params)
-		req.SetCmdSN(2)
+		req.SetCmdSN(0)
 
 		if err := WritePDU(conn, req); err != nil {
 			t.Fatal(err)
@@ -991,7 +991,7 @@ func testQA_DataIO(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagR)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(8 * 4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		if err := WritePDU(client, cmd); err != nil {
 			t.Fatal(err)
@@ -1066,7 +1066,7 @@ func testQA_DataIO(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagW)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		cmd.DataSegment = writeData // immediate data when disabled
 
@@ -1096,10 +1096,28 @@ func testQA_Session(t *testing.T) {
 		conn, _ := qaSessionDefault(t)
 		qaLoginNormal(t, conn)
 
-		// Send command with stale CmdSN=0 (ExpCmdSN starts at 1, advanced to 2 after login)
 		var cdb [16]byte
 		cdb[0] = ScsiTestUnitReady
 
+		// First consume CmdSN=0 (valid, advances ExpCmdSN to 1)
+		cmd0 := &PDU{}
+		cmd0.SetOpcode(OpSCSICmd)
+		cmd0.SetOpSpecific1(FlagF)
+		cmd0.SetInitiatorTaskTag(0x9999)
+		cmd0.SetCmdSN(0)
+		cmd0.SetCDB(cdb)
+		if err := WritePDU(conn, cmd0); err != nil {
+			t.Fatal(err)
+		}
+		resp0, err := ReadPDU(conn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp0.InitiatorTaskTag() != 0x9999 {
+			t.Fatalf("expected response for ITT 0x9999, got 0x%x", resp0.InitiatorTaskTag())
+		}
+
+		// Now send stale CmdSN=0 (ExpCmdSN is now 1, so 0 is out of window)
 		cmd := &PDU{}
 		cmd.SetOpcode(OpSCSICmd)
 		cmd.SetOpSpecific1(FlagF)
@@ -1115,13 +1133,13 @@ func testQA_Session(t *testing.T) {
 		cmd2.SetOpcode(OpSCSICmd)
 		cmd2.SetOpSpecific1(FlagF)
 		cmd2.SetInitiatorTaskTag(0xBBBB)
-		cmd2.SetCmdSN(2)
+		cmd2.SetCmdSN(1)
 		cmd2.SetCDB(cdb)
 		if err := WritePDU(conn, cmd2); err != nil {
 			t.Fatal(err)
 		}
 
-		// Should get response only for the valid command
+		// Should get response only for the valid command (stale one dropped)
 		resp, err := ReadPDU(conn)
 		if err != nil {
 			t.Fatal(err)
@@ -1139,7 +1157,7 @@ func testQA_Session(t *testing.T) {
 		var cdb [16]byte
 		cdb[0] = ScsiTestUnitReady
 
-		// MaxCmdSN starts at 32. Send CmdSN=100 (way out of window)
+		// MaxCmdSN starts at 31. Send CmdSN=100 (way out of window)
 		cmd := &PDU{}
 		cmd.SetOpcode(OpSCSICmd)
 		cmd.SetOpSpecific1(FlagF)
@@ -1155,7 +1173,7 @@ func testQA_Session(t *testing.T) {
 		cmd2.SetOpcode(OpSCSICmd)
 		cmd2.SetOpSpecific1(FlagF)
 		cmd2.SetInitiatorTaskTag(0xDDDD)
-		cmd2.SetCmdSN(2)
+		cmd2.SetCmdSN(0)
 		cmd2.SetCDB(cdb)
 		if err := WritePDU(conn, cmd2); err != nil {
 			t.Fatal(err)
@@ -1219,7 +1237,7 @@ func testQA_Session(t *testing.T) {
 		nop.SetOpcode(OpNOPOut)
 		nop.SetOpSpecific1(FlagF)
 		nop.SetInitiatorTaskTag(0xFFFFFFFF)
-		nop.SetCmdSN(2)
+		nop.SetCmdSN(0)
 
 		if err := WritePDU(conn, nop); err != nil {
 			t.Fatal(err)
@@ -1243,7 +1261,7 @@ func testQA_Session(t *testing.T) {
 		logout.SetOpcode(OpLogoutReq)
 		logout.SetOpSpecific1(FlagF)
 		logout.SetInitiatorTaskTag(0x9876)
-		logout.SetCmdSN(2)
+		logout.SetCmdSN(0)
 
 		if err := WritePDU(conn, logout); err != nil {
 			t.Fatal(err)
@@ -1315,7 +1333,7 @@ func testQA_Session(t *testing.T) {
 				cmd.SetOpSpecific1(FlagF | FlagW)
 				cmd.SetInitiatorTaskTag(2)
 				cmd.SetExpectedDataTransferLength(4096)
-				cmd.SetCmdSN(2)
+				cmd.SetCmdSN(0)
 				cmd.SetCDB(wCDB)
 				cmd.DataSegment = data
 				if err := WritePDU(conn, cmd); err != nil {
@@ -1344,7 +1362,7 @@ func testQA_Session(t *testing.T) {
 				cmd2.SetOpSpecific1(FlagF | FlagR)
 				cmd2.SetInitiatorTaskTag(3)
 				cmd2.SetExpectedDataTransferLength(4096)
-				cmd2.SetCmdSN(3)
+				cmd2.SetCmdSN(1)
 				cmd2.SetCDB(rCDB)
 				if err := WritePDU(conn, cmd2); err != nil {
 					errs <- fmt.Errorf("session %d write read cmd: %w", id, err)
@@ -1401,7 +1419,7 @@ func testQA_Session(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagR)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(64 * 4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		if err := WritePDU(client, cmd); err != nil {
 			t.Fatal(err)
@@ -1447,7 +1465,7 @@ func testQA_Session(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagW)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(64 * 4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		if err := WritePDU(client, cmd); err != nil {
 			t.Fatal(err)
@@ -1504,7 +1522,7 @@ func testQA_Session(t *testing.T) {
 			logout.SetOpcode(OpLogoutReq)
 			logout.SetOpSpecific1(FlagF)
 			logout.SetInitiatorTaskTag(1)
-			logout.SetCmdSN(2)
+			logout.SetCmdSN(0)
 			if err := WritePDU(conn, logout); err != nil {
 				conn.Close()
 				t.Fatalf("cycle %d: logout write: %v", i, err)
@@ -1617,7 +1635,7 @@ func testQA_Target(t *testing.T) {
 		cmd.SetOpcode(OpSCSICmd)
 		cmd.SetOpSpecific1(FlagF)
 		cmd.SetInitiatorTaskTag(2)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		WritePDU(conn, cmd)
 		resp, _ = ReadPDU(conn)
@@ -1634,7 +1652,7 @@ func testQA_Target(t *testing.T) {
 		cmd2.SetOpcode(OpSCSICmd)
 		cmd2.SetOpSpecific1(FlagF)
 		cmd2.SetInitiatorTaskTag(3)
-		cmd2.SetCmdSN(3)
+		cmd2.SetCmdSN(1)
 		cmd2.SetCDB(cdb)
 		WritePDU(conn, cmd2)
 		resp2, err := ReadPDU(conn)
@@ -1772,7 +1790,7 @@ func testQA_Integration(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagW)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(wCDB)
 		cmd.DataSegment = data
 		WritePDU(conn1, cmd)
@@ -1807,7 +1825,7 @@ func testQA_Integration(t *testing.T) {
 		cmd2.SetOpSpecific1(FlagF | FlagR)
 		cmd2.SetInitiatorTaskTag(2)
 		cmd2.SetExpectedDataTransferLength(4096)
-		cmd2.SetCmdSN(2)
+		cmd2.SetCmdSN(0)
 		cmd2.SetCDB(rCDB)
 		WritePDU(conn2, cmd2)
 		rResp, _ := ReadPDU(conn2)
@@ -1994,7 +2012,7 @@ func testQA_Integration(t *testing.T) {
 				cmd.SetOpSpecific1(FlagF | FlagW)
 				cmd.SetInitiatorTaskTag(2)
 				cmd.SetExpectedDataTransferLength(4 * 4096)
-				cmd.SetCmdSN(2)
+				cmd.SetCmdSN(0)
 				cmd.SetCDB(wCDB)
 				cmd.DataSegment = data
 				WritePDU(conn, cmd)
@@ -2015,7 +2033,7 @@ func testQA_Integration(t *testing.T) {
 				cmd2.SetOpSpecific1(FlagF | FlagR)
 				cmd2.SetInitiatorTaskTag(3)
 				cmd2.SetExpectedDataTransferLength(4 * 4096)
-				cmd2.SetCmdSN(3)
+				cmd2.SetCmdSN(1)
 				cmd2.SetCDB(rCDB)
 				WritePDU(conn, cmd2)
 
@@ -2076,7 +2094,7 @@ func testQA_Integration(t *testing.T) {
 		textParams := NewParams()
 		textParams.Set("SendTargets", "All")
 		textReq := makeTextReq(textParams)
-		textReq.SetCmdSN(2)
+		textReq.SetCmdSN(0)
 		WritePDU(conn1, textReq)
 		textResp, _ := ReadPDU(conn1)
 		if textResp.Opcode() != OpTextResp {
@@ -2117,7 +2135,7 @@ func testQA_Integration(t *testing.T) {
 		cmd.SetOpSpecific1(FlagF | FlagW)
 		cmd.SetInitiatorTaskTag(2)
 		cmd.SetExpectedDataTransferLength(4096)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(wCDB)
 		cmd.DataSegment = data
 		WritePDU(conn2, cmd)
@@ -2171,7 +2189,7 @@ func testQA_Integration(t *testing.T) {
 		cmd.SetOpcode(OpSCSICmd)
 		cmd.SetOpSpecific1(FlagF)
 		cmd.SetInitiatorTaskTag(2)
-		cmd.SetCmdSN(2)
+		cmd.SetCmdSN(0)
 		cmd.SetCDB(cdb)
 		if err := WritePDU(conn, cmd); err != nil {
 			t.Fatal(err)

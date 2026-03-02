@@ -26,6 +26,11 @@ func main() {
 	iqn := flag.String("iqn", "iqn.2024.com.seaweedfs:vol1", "target IQN")
 	create := flag.Bool("create", false, "create a new volume file")
 	size := flag.String("size", "1G", "volume size (e.g., 1G, 100M) -- used with -create")
+	adminAddr := flag.String("admin", "", "HTTP admin listen address (e.g. 127.0.0.1:8080; empty = disabled)")
+	adminToken := flag.String("admin-token", "", "optional admin auth token (empty = no auth)")
+	replicaData := flag.String("replica-data", "", "replica receiver data listen address (e.g. :9001; empty = disabled)")
+	replicaCtrl := flag.String("replica-ctrl", "", "replica receiver ctrl listen address (e.g. :9002; empty = disabled)")
+	rebuildListen := flag.String("rebuild-listen", "", "rebuild server listen address (e.g. :9003; empty = disabled)")
 	flag.Parse()
 
 	if *volPath == "" {
@@ -65,6 +70,33 @@ func main() {
 	info := vol.Info()
 	logger.Printf("volume: %d bytes, block=%d, healthy=%v",
 		info.VolumeSize, info.BlockSize, info.Healthy)
+
+	// Start replica receiver if configured (replica nodes listen for WAL entries)
+	if *replicaData != "" && *replicaCtrl != "" {
+		if err := vol.StartReplicaReceiver(*replicaData, *replicaCtrl); err != nil {
+			log.Fatalf("start replica receiver: %v", err)
+		}
+		logger.Printf("replica receiver: data=%s ctrl=%s", *replicaData, *replicaCtrl)
+	}
+
+	// Start rebuild server if configured
+	if *rebuildListen != "" {
+		if err := vol.StartRebuildServer(*rebuildListen); err != nil {
+			log.Fatalf("start rebuild server: %v", err)
+		}
+		logger.Printf("rebuild server: %s", *rebuildListen)
+	}
+
+	// Start admin HTTP server if configured
+	if *adminAddr != "" {
+		adm := newAdminServer(vol, *adminToken, logger)
+		ln, err := startAdminServer(*adminAddr, adm)
+		if err != nil {
+			log.Fatalf("start admin server: %v", err)
+		}
+		defer ln.Close()
+		logger.Printf("admin server: %s", ln.Addr())
+	}
 
 	// Create adapter
 	adapter := &blockVolAdapter{vol: vol}
@@ -109,7 +141,9 @@ func (a *blockVolAdapter) WriteAt(lba uint64, data []byte) error {
 func (a *blockVolAdapter) Trim(lba uint64, length uint32) error {
 	return a.vol.Trim(lba, length)
 }
-func (a *blockVolAdapter) SyncCache() error  { return a.vol.SyncCache() }
+func (a *blockVolAdapter) SyncCache() error {
+	return a.vol.SyncCache()
+}
 func (a *blockVolAdapter) BlockSize() uint32  { return a.vol.Info().BlockSize }
 func (a *blockVolAdapter) VolumeSize() uint64 { return a.vol.Info().VolumeSize }
 func (a *blockVolAdapter) IsHealthy() bool    { return a.vol.Info().Healthy }

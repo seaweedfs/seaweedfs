@@ -47,6 +47,9 @@ func HandleAssignment(vol *BlockVol, newEpoch uint64, newRole Role, leaseTTL tim
 	case current == RoleNone && newRole == RolePrimary:
 		return promote(vol, newEpoch, leaseTTL)
 	case current == RoleNone && newRole == RoleReplica:
+		if err := vol.SetEpoch(newEpoch); err != nil {
+			return fmt.Errorf("assign replica: set epoch: %w", err)
+		}
 		vol.SetMasterEpoch(newEpoch)
 		return vol.SetRole(RoleReplica)
 	default:

@@ -115,7 +115,7 @@ func testDiscoveryViaTarget(t *testing.T) {
 	textParams := NewParams()
 	textParams.Set("SendTargets", "All")
 	textReq := makeTextReq(textParams)
-	textReq.SetCmdSN(2)
+	textReq.SetCmdSN(0)
 	WritePDU(conn, textReq)
 
 	resp, err := ReadPDU(conn)
@@ -139,7 +139,7 @@ func testTargetLoginReadWrite(t *testing.T) {
 	cmd.SetOpSpecific1(FlagF | FlagW)
 	cmd.SetInitiatorTaskTag(1)
 	cmd.SetExpectedDataTransferLength(4096)
-	cmd.SetCmdSN(2)
+	cmd.SetCmdSN(0)
 	var cdb [16]byte
 	cdb[0] = ScsiWrite10
 	binary.BigEndian.PutUint32(cdb[2:6], 0)
@@ -163,7 +163,7 @@ func testTargetLoginReadWrite(t *testing.T) {
 	cmd2.SetOpSpecific1(FlagF | FlagR)
 	cmd2.SetInitiatorTaskTag(2)
 	cmd2.SetExpectedDataTransferLength(4096)
-	cmd2.SetCmdSN(3)
+	cmd2.SetCmdSN(1)
 	var cdb2 [16]byte
 	cdb2[0] = ScsiRead10
 	binary.BigEndian.PutUint32(cdb2[2:6], 0)
