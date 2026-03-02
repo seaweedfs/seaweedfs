@@ -114,7 +114,17 @@ spec:
                   optional: true
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) (.Values.global.extraEnvironmentVars | default dict) (.Values.filer.extraEnvironmentVars | default dict) }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.filer.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.filer.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}

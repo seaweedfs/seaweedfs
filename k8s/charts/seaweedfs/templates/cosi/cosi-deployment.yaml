@@ -96,7 +96,17 @@ spec:
             - name: WEED_GRPC_CA
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
-            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) (.Values.global.extraEnvironmentVars | default dict) (.Values.cosi.extraEnvironmentVars | default dict) }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.cosi.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.cosi.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}

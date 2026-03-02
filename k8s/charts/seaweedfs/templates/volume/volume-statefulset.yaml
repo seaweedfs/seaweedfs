@@ -118,7 +118,17 @@ spec:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" $ }}"
-            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) ($.Values.global.extraEnvironmentVars | default dict) ($volume.extraEnvironmentVars | default dict) }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- if $.Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := $.Values.global.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
+            {{- if $volume.extraEnvironmentVars }}
+            {{- range $key, $value := $volume.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}

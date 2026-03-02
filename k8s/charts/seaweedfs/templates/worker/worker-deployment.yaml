@@ -93,7 +93,17 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) (.Values.global.extraEnvironmentVars | default dict) (.Values.worker.extraEnvironmentVars | default dict) }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- if .Values.global.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.worker.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.worker.extraEnvironmentVars }}
+            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
+            {{- end }}
+            {{- end }}
             {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
