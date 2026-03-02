@@ -32,6 +32,7 @@ type Options struct {
 	SendTimeout            time.Duration
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	LockManager            LockManager
 }
 
 // JobTypeInfo contains metadata about a plugin job type.
@@ -52,6 +53,7 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
 	nextDetectionAt   map[string]time.Time
@@ -146,6 +148,7 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
@@ -378,6 +381,13 @@ func (r *Plugin) IsConfigured() bool {
 
 func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
+}
+
+func (r *Plugin) acquireAdminLock(reason string) (func(), error) {
+	if r == nil || r.lockManager == nil {
+		return func() {}, nil
+	}
+	return r.lockManager.Acquire(reason)
 }
 
 // RunDetectionWithReport requests one detector worker and returns proposals with request metadata.

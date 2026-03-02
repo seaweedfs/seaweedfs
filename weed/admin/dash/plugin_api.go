@@ -413,6 +413,14 @@ func (s *AdminServer) RunPluginJobTypeAPI(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "jobType is required")
 		return
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detect+execute %s", jobType))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 
 	var req struct {
 		ClusterContext json.RawMessage `json:"cluster_context"`

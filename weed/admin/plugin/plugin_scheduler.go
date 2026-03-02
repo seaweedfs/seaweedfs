@@ -319,6 +319,21 @@ func (r *Plugin) pruneDetectorLeases(activeJobTypes map[string]struct{}) {
 func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 	defer r.finishDetection(jobType)
 
+	releaseLock, lockErr := r.acquireAdminLock(fmt.Sprintf("plugin scheduled detection %s", jobType))
+	if lockErr != nil {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection aborted: failed to acquire lock: %v", lockErr),
+			Stage:      "failed",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		return
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+
 	start := time.Now().UTC()
 	r.appendActivity(JobActivity{
 		JobType:    jobType,
