@@ -100,6 +100,11 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 	return bs
 }
 
+// Store returns the underlying BlockVolumeStore.
+func (bs *BlockService) Store() *storage.BlockVolumeStore {
+	return bs.blockStore
+}
+
 // Shutdown gracefully stops the iSCSI target and closes all block volumes.
 func (bs *BlockService) Shutdown() {
 	if bs == nil {
