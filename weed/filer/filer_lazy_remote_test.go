@@ -258,28 +258,6 @@ func TestMaybeLazyFetchFromRemote_CreateEntryFailureReturnsInMemoryEntry(t *test
 }
 
 func TestMaybeLazyFetchFromRemote_LongestPrefixMount(t *testing.T) {
-	const storageType = "stub_lazy_lp"
-
-	calls := make(map[string]string) // bucket -> called
-	mu := sync.Mutex{}
-
-	type captureClient struct {
-		stubRemoteClient
-		bucket string
-	}
-	makeCaptureStub := func(bucket string) remote_storage.RemoteStorageClient {
-		return &struct {
-			stubRemoteClient
-		}{
-			stubRemoteClient: stubRemoteClient{
-				statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: int64(len(bucket))},
-			},
-		}
-	}
-	_ = makeCaptureStub
-	_ = calls
-	_ = mu
-
 	// Register maker for the root mount
 	const typeRoot = "stub_lp_root"
 	stubRoot := &stubRemoteClient{statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 10}}
@@ -317,16 +295,42 @@ func TestMaybeLazyFetchFromRemote_LongestPrefixMount(t *testing.T) {
 	assert.Equal(t, int64(20), entryPrefix.Remote.RemoteSize, "nested mount should win (longest prefix)")
 }
 
+type countingRemoteClient struct {
+	stubRemoteClient
+	statCalls int
+}
+
+func (c *countingRemoteClient) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	c.statCalls++
+	return c.stubRemoteClient.StatFile(loc)
+}
+
 func TestMaybeLazyFetchFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
+	const storageType = "stub_lazy_guard"
+	countingStub := &countingRemoteClient{
+		stubRemoteClient: stubRemoteClient{
+			statResult: &filer_pb.RemoteEntry{RemoteMtime: 1, RemoteSize: 1},
+		},
+	}
+	defer registerStubMaker(t, storageType, countingStub)()
+
+	conf := &remote_pb.RemoteConf{Name: "guardstore", Type: storageType}
 	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "guardstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, rs)
 
-	// With the guard context set, maybeLazyFetchFromRemote should return nil immediately.
 	guardCtx := context.WithValue(context.Background(), lazyFetchContextKey{}, true)
 	entry, err := f.maybeLazyFetchFromRemote(guardCtx, "/buckets/mybucket/file.txt")
 	require.NoError(t, err)
 	assert.Nil(t, entry)
+	assert.Equal(t, 0, countingStub.statCalls, "guard should prevent StatFile from being called")
 }
 
 func TestFindEntry_LazyFetchOnMiss(t *testing.T) {

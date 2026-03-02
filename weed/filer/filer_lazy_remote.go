@@ -63,7 +63,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		Path:   remotePath,
 	}
 
-	type result struct {
+	type lazyFetchResult struct {
 		entry *Entry
 	}
 
@@ -77,7 +77,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			} else {
 				glog.Warningf("maybeLazyFetchFromRemote: stat %s failed: %v", p, statErr)
 			}
-			return result{nil}, nil
+			return lazyFetchResult{nil}, nil
 		}
 
 		mtime := time.Unix(remoteEntry.RemoteMtime, 0)
@@ -95,16 +95,14 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		saveErr := f.CreateEntry(innerCtx, entry, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
-			// Availability over consistency: return the in-memory entry for this
-			// request but allow the next lookup to retry the filer write.
 			lazyFetchGroup.Forget(key)
 		}
 
-		return result{entry}, nil
+		return lazyFetchResult{entry}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return val.(result).entry, nil
+	return val.(lazyFetchResult).entry, nil
 }
