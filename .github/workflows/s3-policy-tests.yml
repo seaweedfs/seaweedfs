@@ -70,7 +70,7 @@ jobs:
 
       - name: Upload test results on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: policy-unit-test-results
           path: |
@@ -178,7 +178,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-policy-variables-test-logs
           path: /tmp/weed_policy_test_server.log
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-policy-enforcement-logs-${{ matrix.test-case }}
           path: /tmp/weed_policy_enforcement_${{ matrix.test-case }}.log
@@ -386,7 +386,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: trusted-proxy-test-logs
           path: /tmp/weed_proxy_test.log
