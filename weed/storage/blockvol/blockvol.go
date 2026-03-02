@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -41,6 +42,10 @@ type BlockVol struct {
 	closed         atomic.Bool
 	opsOutstanding atomic.Int64 // in-flight Read/Write/Trim/SyncCache ops
 	opsDrained     chan struct{}
+
+	// Replication fields (Phase 4A CP2).
+	shipper  *WALShipper
+	replRecv *ReplicaReceiver
 
 	// Fencing fields (Phase 4A).
 	epoch        atomic.Uint64 // current persisted epoch
@@ -253,6 +258,12 @@ func (v *BlockVol) appendWithRetry(entry *WALEntry) (uint64, error) {
 	if v.closed.Load() {
 		return 0, ErrVolumeClosed
 	}
+
+	// Ship to replica if configured (fire-and-forget).
+	if v.shipper != nil {
+		v.shipper.Ship(entry)
+	}
+
 	return walOff, nil
 }
 
@@ -505,10 +516,58 @@ func (v *BlockVol) SyncCache() error {
 	return v.groupCommit.Submit()
 }
 
+// SetReplicaAddr configures the replica endpoint and creates a WAL shipper
+// with distributed group commit. Must be called before any writes.
+func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
+	v.shipper = NewWALShipper(dataAddr, ctrlAddr, func() uint64 {
+		return v.epoch.Load()
+	})
+
+	// Replace the group committer's sync function with a distributed version.
+	v.groupCommit.Stop()
+	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
+		SyncFunc:      MakeDistributedSync(v.fd.Sync, v.shipper, v),
+		MaxDelay:      v.config.GroupCommitMaxDelay,
+		MaxBatch:      v.config.GroupCommitMaxBatch,
+		LowWatermark:  v.config.GroupCommitLowWatermark,
+		OnDegraded:    func() { v.healthy.Store(false) },
+		PostSyncCheck: v.writeGate,
+	})
+	go v.groupCommit.Run()
+}
+
+// StartReplicaReceiver starts listening for replicated WAL entries from a primary.
+func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string) error {
+	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr)
+	if err != nil {
+		return err
+	}
+	v.replRecv = recv
+	recv.Serve()
+	return nil
+}
+
+// degradeReplica marks the shipper as degraded and logs a warning.
+func (v *BlockVol) degradeReplica(err error) {
+	if v.shipper != nil {
+		v.shipper.degraded.Store(true)
+	}
+	log.Printf("blockvol: replica degraded: %v", err)
+}
+
 // Close shuts down the block volume and closes the file.
-// Shutdown order: drain in-flight ops → group committer → flusher → final flush → close fd.
+// Shutdown order: shipper → replica receiver → drain ops → group committer → flusher → final flush → close fd.
 func (v *BlockVol) Close() error {
 	v.closed.Store(true)
+
+	// Stop shipper first: no more Ship calls.
+	if v.shipper != nil {
+		v.shipper.Stop()
+	}
+	// Stop replica receiver: no more barrier waits.
+	if v.replRecv != nil {
+		v.replRecv.Stop()
+	}
 
 	// Drain in-flight ops: beginOp checks closed and returns ErrVolumeClosed,
 	// so no new ops can start. Wait for existing ones to finish (max 5s).

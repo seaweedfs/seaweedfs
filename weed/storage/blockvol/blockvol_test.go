@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,6 +93,40 @@ func TestBlockVol(t *testing.T) {
 		{name: "blockvol_gotcha_a_lease_expired", run: testBlockvolGotchaALeaseExpired},
 		// Phase 4A CP1: P3-BUG-9 dirty map.
 		{name: "dirty_map_power_of_2_panics", run: testDirtyMapPowerOf2Panics},
+		// Phase 4A CP2: Replication wire protocol.
+		{name: "frame_roundtrip", run: testFrameRoundtrip},
+		{name: "frame_large_payload", run: testFrameLargePayload},
+		// Phase 4A CP2: WAL shipper.
+		{name: "ship_single_entry", run: testShipSingleEntry},
+		{name: "ship_batch", run: testShipBatch},
+		{name: "ship_epoch_mismatch_dropped", run: testShipEpochMismatchDropped},
+		{name: "ship_degraded_on_error", run: testShipDegradedOnError},
+		{name: "ship_no_replica_noop", run: testShipNoReplicaNoop},
+		// Phase 4A CP2: Replica apply.
+		{name: "replica_apply_entry", run: testReplicaApplyEntry},
+		{name: "replica_reject_stale_epoch", run: testReplicaRejectStaleEpoch},
+		{name: "replica_apply_updates_dirty_map", run: testReplicaApplyUpdatesDirtyMap},
+		{name: "replica_reject_duplicate_lsn", run: testReplicaRejectDuplicateLSN},
+		{name: "replica_flusher_works", run: testReplicaFlusherWorks},
+		// Phase 4A CP2: Replica barrier.
+		{name: "barrier_already_received", run: testBarrierAlreadyReceived},
+		{name: "barrier_wait_for_entries", run: testBarrierWaitForEntries},
+		{name: "barrier_timeout", run: testBarrierTimeout},
+		{name: "barrier_epoch_mismatch_fast_fail", run: testBarrierEpochMismatchFastFail},
+		{name: "barrier_concurrent_append", run: testBarrierConcurrentAppend},
+		// Phase 4A CP2: Distributed group commit.
+		{name: "dist_commit_both_pass", run: testDistCommitBothPass},
+		{name: "dist_commit_local_fail", run: testDistCommitLocalFail},
+		{name: "dist_commit_remote_fail_degrades", run: testDistCommitRemoteFailDegrades},
+		{name: "dist_commit_no_replica", run: testDistCommitNoReplica},
+		// Phase 4A CP2: BlockVol integration.
+		{name: "blockvol_write_with_replica", run: testBlockvolWriteWithReplica},
+		{name: "blockvol_no_replica_compat", run: testBlockvolNoReplicaCompat},
+		// Phase 4A CP2 bug fixes.
+		{name: "replica_reject_future_epoch", run: testReplicaRejectFutureEpoch},
+		{name: "replica_reject_lsn_gap", run: testReplicaRejectLSNGap},
+		{name: "barrier_fsync_failed_status", run: testBarrierFsyncFailedStatus},
+		{name: "barrier_configurable_timeout", run: testBarrierConfigurableTimeout},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2112,3 +2149,1070 @@ func testDirtyMapPowerOf2Panics(t *testing.T) {
 	}()
 	NewDirtyMap(3) // should panic
 }
+
+// =============================================================================
+// Phase 4A CP2: Replication wire protocol tests
+// =============================================================================
+
+func testFrameRoundtrip(t *testing.T) {
+	// Test frame write + read roundtrip with various payloads.
+	tests := []struct {
+		msgType byte
+		payload []byte
+	}{
+		{MsgWALEntry, []byte("hello")},
+		{MsgBarrierReq, EncodeBarrierRequest(BarrierRequest{Vid: 1, LSN: 42, Epoch: 7})},
+		{MsgBarrierResp, []byte{BarrierOK}},
+		{0xFF, []byte{}}, // empty payload
+	}
+	for _, tc := range tests {
+		var buf bytes.Buffer
+		if err := WriteFrame(&buf, tc.msgType, tc.payload); err != nil {
+			t.Fatalf("WriteFrame: %v", err)
+		}
+		gotType, gotPayload, err := ReadFrame(&buf)
+		if err != nil {
+			t.Fatalf("ReadFrame: %v", err)
+		}
+		if gotType != tc.msgType {
+			t.Errorf("type: got 0x%02x, want 0x%02x", gotType, tc.msgType)
+		}
+		if !bytes.Equal(gotPayload, tc.payload) {
+			t.Errorf("payload mismatch")
+		}
+	}
+}
+
+func testFrameLargePayload(t *testing.T) {
+	payload := make([]byte, 1024*1024) // 1MB
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+	var buf bytes.Buffer
+	if err := WriteFrame(&buf, MsgWALEntry, payload); err != nil {
+		t.Fatalf("WriteFrame: %v", err)
+	}
+	gotType, gotPayload, err := ReadFrame(&buf)
+	if err != nil {
+		t.Fatalf("ReadFrame: %v", err)
+	}
+	if gotType != MsgWALEntry {
+		t.Errorf("type: got 0x%02x, want 0x%02x", gotType, MsgWALEntry)
+	}
+	if !bytes.Equal(gotPayload, payload) {
+		t.Error("large payload mismatch")
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2: WAL shipper tests
+// =============================================================================
+
+// mockDataServer starts a TCP server that reads frames and collects them.
+func mockDataServer(t *testing.T) (addr string, frames *[][]byte, done chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	collected := &[][]byte{}
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			_, payload, err := ReadFrame(conn)
+			if err != nil {
+				return
+			}
+			*collected = append(*collected, payload)
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	return ln.Addr().String(), collected, doneCh
+}
+
+// mockCtrlServer starts a TCP server that reads barrier requests and responds OK.
+func mockCtrlServer(t *testing.T, respStatus byte) (addr string, done chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			msgType, _, err := ReadFrame(conn)
+			if err != nil {
+				return
+			}
+			if msgType == MsgBarrierReq {
+				WriteFrame(conn, MsgBarrierResp, []byte{respStatus})
+			}
+		}
+	}()
+	t.Cleanup(func() { ln.Close() })
+	return ln.Addr().String(), doneCh
+}
+
+func testShipSingleEntry(t *testing.T) {
+	dataAddr, frames, done := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	epoch := uint64(1)
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+	defer s.Stop()
+
+	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if err := s.Ship(entry); err != nil {
+		t.Fatalf("Ship: %v", err)
+	}
+
+	if s.ShippedLSN() != 1 {
+		t.Errorf("ShippedLSN: got %d, want 1", s.ShippedLSN())
+	}
+
+	s.Stop()
+	<-done
+
+	if len(*frames) != 1 {
+		t.Fatalf("frames: got %d, want 1", len(*frames))
+	}
+	decoded, err := DecodeWALEntry((*frames)[0])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if decoded.LSN != 1 {
+		t.Errorf("LSN: got %d, want 1", decoded.LSN)
+	}
+}
+
+func testShipBatch(t *testing.T) {
+	dataAddr, frames, done := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	epoch := uint64(1)
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+	defer s.Stop()
+
+	for i := uint64(1); i <= 5; i++ {
+		entry := &WALEntry{LSN: i, Epoch: 1, Type: EntryTypeTrim, LBA: i, Length: 4096}
+		if err := s.Ship(entry); err != nil {
+			t.Fatalf("Ship(%d): %v", i, err)
+		}
+	}
+
+	if s.ShippedLSN() != 5 {
+		t.Errorf("ShippedLSN: got %d, want 5", s.ShippedLSN())
+	}
+
+	s.Stop()
+	<-done
+
+	if len(*frames) != 5 {
+		t.Fatalf("frames: got %d, want 5", len(*frames))
+	}
+}
+
+func testShipEpochMismatchDropped(t *testing.T) {
+	// Use a real server so connections work, but verify no frames arrive.
+	dataAddr, frames, done := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	epoch := uint64(2) // shipper epoch is 2
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+
+	// First ship a valid entry to establish connection.
+	validEntry := &WALEntry{LSN: 1, Epoch: 2, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	if err := s.Ship(validEntry); err != nil {
+		t.Fatalf("Ship valid: %v", err)
+	}
+
+	// Now ship an entry with old epoch 1 — should be silently dropped.
+	staleEntry := &WALEntry{LSN: 2, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if err := s.Ship(staleEntry); err != nil {
+		t.Fatalf("Ship stale: %v", err)
+	}
+
+	// ShippedLSN should be 1 (only the valid entry).
+	if s.ShippedLSN() != 1 {
+		t.Errorf("ShippedLSN should be 1, got %d", s.ShippedLSN())
+	}
+
+	s.Stop()
+	<-done
+
+	// Only the valid entry should have been shipped.
+	if len(*frames) != 1 {
+		t.Errorf("frames: got %d, want 1 (stale entry should be dropped)", len(*frames))
+	}
+}
+
+func testShipDegradedOnError(t *testing.T) {
+	// Start a server that immediately closes the connection.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		conn.Close() // close immediately — writes will fail
+	}()
+	defer ln.Close()
+
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+	epoch := uint64(1)
+	s := NewWALShipper(ln.Addr().String(), ctrlAddr, func() uint64 { return epoch })
+	defer s.Stop()
+
+	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	// Ship may succeed on first write (kernel buffer) or fail. Keep shipping until degraded.
+	for i := 0; i < 10; i++ {
+		entry.LSN = uint64(i + 1)
+		s.Ship(entry)
+		if s.IsDegraded() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !s.IsDegraded() {
+		t.Error("expected shipper to be degraded after write error")
+	}
+
+	// Subsequent Ship calls should be no-ops.
+	entry.LSN = 100
+	if err := s.Ship(entry); err != nil {
+		t.Fatalf("Ship after degraded: %v", err)
+	}
+
+	// Barrier should return ErrReplicaDegraded.
+	if err := s.Barrier(100); !errors.Is(err, ErrReplicaDegraded) {
+		t.Errorf("Barrier after degraded: got %v, want ErrReplicaDegraded", err)
+	}
+}
+
+func testShipNoReplicaNoop(t *testing.T) {
+	// A nil shipper should not be called, but test that a stopped shipper is safe.
+	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 })
+	s.Stop()
+
+	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if err := s.Ship(entry); err != nil {
+		t.Fatalf("Ship after stop: %v", err)
+	}
+	if err := s.Barrier(1); !errors.Is(err, ErrShipperStopped) {
+		t.Errorf("Barrier after stop: got %v, want ErrShipperStopped", err)
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2: Replica apply tests
+// =============================================================================
+
+func createReplicaVolPair(t *testing.T) (primary *BlockVol, replica *BlockVol) {
+	t.Helper()
+	pDir := t.TempDir()
+	rDir := t.TempDir()
+	opts := CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	}
+	p, err := CreateBlockVol(filepath.Join(pDir, "primary.blockvol"), opts)
+	if err != nil {
+		t.Fatalf("CreateBlockVol primary: %v", err)
+	}
+	r, err := CreateBlockVol(filepath.Join(rDir, "replica.blockvol"), opts)
+	if err != nil {
+		p.Close()
+		t.Fatalf("CreateBlockVol replica: %v", err)
+	}
+	return p, r
+}
+
+func testReplicaApplyEntry(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Connect to data port and send a WAL entry.
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	data := makeBlock('X')
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: data}
+	encoded, _ := entry.Encode()
+	if err := WriteFrame(conn, MsgWALEntry, encoded); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for apply.
+	deadline := time.After(2 * time.Second)
+	for {
+		if recv.ReceivedLSN() >= 1 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for entry to be applied")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	if recv.ReceivedLSN() != 1 {
+		t.Errorf("ReceivedLSN: got %d, want 1", recv.ReceivedLSN())
+	}
+}
+
+func testReplicaRejectStaleEpoch(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+	replica.epoch.Store(5) // replica at epoch 5
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Entry with epoch 3 (stale) — should be rejected.
+	entry := &WALEntry{LSN: 1, Epoch: 3, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	encoded, _ := entry.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded)
+
+	// Give it time to process.
+	time.Sleep(50 * time.Millisecond)
+
+	if recv.ReceivedLSN() != 0 {
+		t.Errorf("ReceivedLSN should be 0 (stale entry rejected), got %d", recv.ReceivedLSN())
+	}
+}
+
+func testReplicaApplyUpdatesDirtyMap(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	data := makeBlock('D')
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeWrite, LBA: 5, Length: 4096, Data: data}
+	encoded, _ := entry.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded)
+
+	// Wait for apply.
+	deadline := time.After(2 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Check dirty map has an entry for LBA 5.
+	_, lsn, _, ok := replica.dirtyMap.Get(5)
+	if !ok {
+		t.Fatal("dirty map: LBA 5 not found")
+	}
+	if lsn != 1 {
+		t.Errorf("dirty map LSN: got %d, want 1", lsn)
+	}
+}
+
+func testReplicaRejectDuplicateLSN(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Send LSN=1.
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	encoded, _ := entry.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded)
+
+	deadline := time.After(2 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Send duplicate LSN=1 — should be skipped.
+	WriteFrame(conn, MsgWALEntry, encoded)
+	time.Sleep(50 * time.Millisecond)
+
+	// ReceivedLSN should still be 1.
+	if recv.ReceivedLSN() != 1 {
+		t.Errorf("ReceivedLSN after dup: got %d, want 1", recv.ReceivedLSN())
+	}
+}
+
+func testReplicaFlusherWorks(t *testing.T) {
+	// Verify the replica vol's flusher can flush replicated entries.
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	data := makeBlock('F')
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: data}
+	encoded, _ := entry.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded)
+
+	deadline := time.After(2 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Trigger flusher and verify data is readable from replica.
+	replica.flusher.FlushOnce()
+
+	got, err := replica.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("flushed data mismatch on replica")
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2: Replica barrier tests
+// =============================================================================
+
+func testBarrierAlreadyReceived(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Send an entry first.
+	dataConn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataConn.Close()
+
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	encoded, _ := entry.Encode()
+	WriteFrame(dataConn, MsgWALEntry, encoded)
+
+	deadline := time.After(2 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Now send a barrier for LSN=1 — should succeed immediately.
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := EncodeBarrierRequest(BarrierRequest{LSN: 1, Epoch: 0})
+	WriteFrame(ctrlConn, MsgBarrierReq, req)
+
+	msgType, payload, err := ReadFrame(ctrlConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgType != MsgBarrierResp {
+		t.Fatalf("unexpected msg type 0x%02x", msgType)
+	}
+	if payload[0] != BarrierOK {
+		t.Errorf("barrier status: got %d, want BarrierOK", payload[0])
+	}
+}
+
+func testBarrierWaitForEntries(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Send barrier BEFORE the entry arrives.
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	barrierDone := make(chan byte, 1)
+	go func() {
+		req := EncodeBarrierRequest(BarrierRequest{LSN: 1, Epoch: 0})
+		WriteFrame(ctrlConn, MsgBarrierReq, req)
+		_, payload, err := ReadFrame(ctrlConn)
+		if err != nil {
+			barrierDone <- 0xFF
+			return
+		}
+		barrierDone <- payload[0]
+	}()
+
+	// Wait a bit, then send the entry.
+	time.Sleep(50 * time.Millisecond)
+
+	dataConn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataConn.Close()
+
+	entry := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	encoded, _ := entry.Encode()
+	WriteFrame(dataConn, MsgWALEntry, encoded)
+
+	select {
+	case status := <-barrierDone:
+		if status != BarrierOK {
+			t.Errorf("barrier status: got %d, want BarrierOK", status)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("barrier did not complete")
+	}
+}
+
+func testBarrierTimeout(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.barrierTimeout = 100 * time.Millisecond // fast timeout for test
+	recv.Serve()
+	defer recv.Stop()
+
+	// Send barrier for LSN=999 that will never arrive.
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := EncodeBarrierRequest(BarrierRequest{LSN: 999, Epoch: 0})
+	WriteFrame(ctrlConn, MsgBarrierReq, req)
+
+	start := time.Now()
+	_, payload, err := ReadFrame(ctrlConn)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload[0] != BarrierTimeout {
+		t.Errorf("barrier status: got %d, want BarrierTimeout", payload[0])
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("barrier timeout took %v, expected ~100ms", elapsed)
+	}
+}
+
+func testBarrierEpochMismatchFastFail(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+	replica.epoch.Store(5)
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Barrier with epoch=3 (mismatch with replica epoch=5).
+	req := EncodeBarrierRequest(BarrierRequest{LSN: 1, Epoch: 3})
+	WriteFrame(ctrlConn, MsgBarrierReq, req)
+
+	start := time.Now()
+	_, payload, err := ReadFrame(ctrlConn)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload[0] != BarrierEpochMismatch {
+		t.Errorf("barrier status: got %d, want BarrierEpochMismatch", payload[0])
+	}
+	// Should be fast — no waiting.
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("epoch mismatch took %v, expected fast fail", elapsed)
+	}
+}
+
+func testBarrierConcurrentAppend(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Start barrier waiting for LSN=10.
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	barrierDone := make(chan byte, 1)
+	go func() {
+		req := EncodeBarrierRequest(BarrierRequest{LSN: 10, Epoch: 0})
+		WriteFrame(ctrlConn, MsgBarrierReq, req)
+		_, payload, err := ReadFrame(ctrlConn)
+		if err != nil {
+			barrierDone <- 0xFF
+			return
+		}
+		barrierDone <- payload[0]
+	}()
+
+	// Stream 10 entries concurrently.
+	dataConn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dataConn.Close()
+
+	for i := uint64(1); i <= 10; i++ {
+		entry := &WALEntry{LSN: i, Epoch: 0, Type: EntryTypeTrim, LBA: i, Length: 4096}
+		encoded, _ := entry.Encode()
+		WriteFrame(dataConn, MsgWALEntry, encoded)
+	}
+
+	select {
+	case status := <-barrierDone:
+		if status != BarrierOK {
+			t.Errorf("barrier status: got %d, want BarrierOK", status)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("barrier did not complete")
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2: Distributed group commit tests
+// =============================================================================
+
+func testDistCommitBothPass(t *testing.T) {
+	syncCalled := atomic.Bool{}
+	walSync := func() error {
+		syncCalled.Store(true)
+		return nil
+	}
+
+	// Mock shipper with barrier that succeeds.
+	dataAddr, _, _ := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	v := createTestVol(t)
+	defer v.Close()
+
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	defer shipper.Stop()
+
+	distSync := MakeDistributedSync(walSync, shipper, v)
+	if err := distSync(); err != nil {
+		t.Fatalf("distSync: %v", err)
+	}
+	if !syncCalled.Load() {
+		t.Error("local walSync was not called")
+	}
+}
+
+func testDistCommitLocalFail(t *testing.T) {
+	walSync := func() error {
+		return fmt.Errorf("disk error")
+	}
+
+	dataAddr, _, _ := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	v := createTestVol(t)
+	defer v.Close()
+
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	defer shipper.Stop()
+
+	distSync := MakeDistributedSync(walSync, shipper, v)
+	err := distSync()
+	if err == nil {
+		t.Fatal("expected error from local sync failure")
+	}
+}
+
+func testDistCommitRemoteFailDegrades(t *testing.T) {
+	walSync := func() error { return nil }
+
+	dataAddr, _, _ := mockDataServer(t)
+	// Control server that returns epoch mismatch.
+	ctrlAddr, _ := mockCtrlServer(t, BarrierEpochMismatch)
+
+	v := createTestVol(t)
+	defer v.Close()
+
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	defer shipper.Stop()
+
+	// Set shipper on vol so degradeReplica can mark it degraded.
+	v.shipper = shipper
+
+	distSync := MakeDistributedSync(walSync, shipper, v)
+	// Should NOT return error (local succeeded, remote degraded).
+	if err := distSync(); err != nil {
+		t.Fatalf("distSync should not fail on remote error: %v", err)
+	}
+
+	if !shipper.IsDegraded() {
+		t.Error("shipper should be degraded after barrier failure")
+	}
+
+	// Second call should fall back to local-only.
+	if err := distSync(); err != nil {
+		t.Fatalf("distSync local-only: %v", err)
+	}
+}
+
+func testDistCommitNoReplica(t *testing.T) {
+	syncCalled := atomic.Bool{}
+	walSync := func() error {
+		syncCalled.Store(true)
+		return nil
+	}
+
+	v := createTestVol(t)
+	defer v.Close()
+
+	// nil shipper — local-only mode.
+	distSync := MakeDistributedSync(walSync, nil, v)
+	if err := distSync(); err != nil {
+		t.Fatalf("distSync: %v", err)
+	}
+	if !syncCalled.Load() {
+		t.Error("local walSync was not called")
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2: BlockVol integration tests
+// =============================================================================
+
+func testBlockvolWriteWithReplica(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	// Start replica receiver.
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Configure primary to ship to replica.
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+
+	// Write data on primary.
+	data := makeBlock('R')
+	if err := primary.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Wait for replica to receive.
+	deadline := time.After(5 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for replica")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Flush replica and read back.
+	replica.flusher.FlushOnce()
+	got, err := replica.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("replica ReadLBA: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("replica data mismatch")
+	}
+}
+
+func testBlockvolNoReplicaCompat(t *testing.T) {
+	// Verify that a BlockVol without replica works identically to Phase 3.
+	v := createTestVol(t)
+	defer v.Close()
+
+	data := makeBlock('N')
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	got, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Error("data mismatch in no-replica mode")
+	}
+
+	// Verify shipper is nil.
+	if v.shipper != nil {
+		t.Error("shipper should be nil without SetReplicaAddr")
+	}
+}
+
+// =============================================================================
+// Phase 4A CP2 bug fix tests
+// =============================================================================
+
+func testReplicaRejectFutureEpoch(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+	replica.epoch.Store(3) // replica at epoch 3
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Entry with epoch 5 (future) — must be rejected. Replicas must NOT
+	// accept epoch bumps from WAL stream; only master can change epoch.
+	entry := &WALEntry{LSN: 1, Epoch: 5, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	encoded, _ := entry.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if recv.ReceivedLSN() != 0 {
+		t.Errorf("ReceivedLSN should be 0 (future epoch rejected), got %d", recv.ReceivedLSN())
+	}
+}
+
+func testReplicaRejectLSNGap(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	conn, err := net.Dial("tcp", recv.DataAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// Send LSN=1 — should succeed.
+	entry1 := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeTrim, LBA: 0, Length: 4096}
+	encoded1, _ := entry1.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded1)
+
+	deadline := time.After(2 * time.Second)
+	for recv.ReceivedLSN() < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for LSN 1")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Send LSN=3 (gap — skips LSN=2) — must be rejected.
+	entry3 := &WALEntry{LSN: 3, Epoch: 0, Type: EntryTypeTrim, LBA: 1, Length: 4096}
+	encoded3, _ := entry3.Encode()
+	WriteFrame(conn, MsgWALEntry, encoded3)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if recv.ReceivedLSN() != 1 {
+		t.Errorf("ReceivedLSN should be 1 (gap rejected), got %d", recv.ReceivedLSN())
+	}
+}
+
+func testBarrierFsyncFailedStatus(t *testing.T) {
+	// Verify BarrierFsyncFailed is a distinct status code.
+	if BarrierFsyncFailed == BarrierTimeout {
+		t.Error("BarrierFsyncFailed should be distinct from BarrierTimeout")
+	}
+	if BarrierFsyncFailed == BarrierOK {
+		t.Error("BarrierFsyncFailed should be distinct from BarrierOK")
+	}
+	if BarrierFsyncFailed != 0x03 {
+		t.Errorf("BarrierFsyncFailed: got 0x%02x, want 0x03", BarrierFsyncFailed)
+	}
+}
+
+func testBarrierConfigurableTimeout(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Set a very short timeout.
+	recv.barrierTimeout = 50 * time.Millisecond
+	recv.Serve()
+	defer recv.Stop()
+
+	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctrlConn.Close()
+	ctrlConn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	req := EncodeBarrierRequest(BarrierRequest{LSN: 999, Epoch: 0})
+	start := time.Now()
+	WriteFrame(ctrlConn, MsgBarrierReq, req)
+
+	_, payload, err := ReadFrame(ctrlConn)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload[0] != BarrierTimeout {
+		t.Errorf("barrier status: got %d, want BarrierTimeout", payload[0])
+	}
+	// Should complete quickly — well under 1s.
+	if elapsed > 1*time.Second {
+		t.Errorf("configurable timeout took %v, expected ~50ms", elapsed)
+	}
+}
+
+// Suppress unused import warnings.
+var _ = fmt.Sprintf
+var _ io.Reader
+var _ net.Conn
