@@ -65,7 +65,6 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		entry *Entry
 	}
 
-	innerCtx := context.WithValue(ctx, lazyFetchContextKey{}, true)
 	key := string(p)
 	val, err, _ := f.lazyFetchGroup.Do(key, func() (interface{}, error) {
 		remoteEntry, statErr := client.StatFile(objectLoc)
@@ -94,7 +93,8 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			Remote: remoteEntry,
 		}
 
-		saveErr := f.CreateEntry(innerCtx, entry, false, false, nil, true, f.MaxFilenameLength)
+		persistCtx := context.WithValue(context.Background(), lazyFetchContextKey{}, true)
+		saveErr := f.CreateEntry(persistCtx, entry, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
 			f.lazyFetchGroup.Forget(key)
