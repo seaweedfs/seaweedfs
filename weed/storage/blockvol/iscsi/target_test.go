@@ -186,7 +186,7 @@ func testGracefulShutdown(t *testing.T) {
 	conn := dialTarget(t, addr)
 	loginToTarget(t, conn)
 
-	// Close the target — should shut down cleanly
+	// Close the target -- should shut down cleanly
 	ts.Close()
 
 	// Connection should be dropped
@@ -289,13 +289,13 @@ func testCloseRejectsLateConn(t *testing.T) {
 
 	select {
 	case <-done:
-		// Good — handleConn returned promptly.
+		// Good -- handleConn returned promptly.
 	case <-time.After(2 * time.Second):
 		t.Fatal("handleConn did not return after ts.closed was signaled")
 	}
 
 	// The server-side conn should be closed by handleConn's defer.
-	// Verify by reading from client — should get EOF.
+	// Verify by reading from client -- should get EOF.
 	buf := make([]byte, 1)
 	_, err := client.Read(buf)
 	if err == nil {

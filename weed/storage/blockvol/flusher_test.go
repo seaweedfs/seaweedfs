@@ -349,7 +349,7 @@ func testFlusherErrorLogged(t *testing.T) {
 		Logger:   logger,
 	})
 
-	// Run flusher briefly — FlushOnce should error, and Run should log it.
+	// Run flusher briefly -- FlushOnce should error, and Run should log it.
 	go f.Run()
 	f.Notify()
 	time.Sleep(50 * time.Millisecond)

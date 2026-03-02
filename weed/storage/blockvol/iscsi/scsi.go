@@ -257,7 +257,7 @@ func (h *SCSIHandler) inquiryVPDB0(allocLen uint16) SCSIResult {
 	data[1] = 0xb0 // page code
 	binary.BigEndian.PutUint16(data[2:4], 0x003c) // page length = 60
 
-	// Byte 5: WSNZ (Write Same No Zero) = 0 — we accept zero-length WRITE SAME
+	// Byte 5: WSNZ (Write Same No Zero) = 0 -- we accept zero-length WRITE SAME
 	// Bytes 6-7: Maximum compare and write length = 0 (not supported)
 
 	// Bytes 8-9: Optimal transfer length granularity = 1 block
@@ -275,7 +275,7 @@ func (h *SCSIHandler) inquiryVPDB0(allocLen uint16) SCSIResult {
 	// Bytes 32-35: Optimal UNMAP granularity = 1 block
 	binary.BigEndian.PutUint32(data[32:36], 1)
 	// Bytes 36-39: UNMAP granularity alignment (bit 31 = UGAVALID)
-	// Not set — no alignment requirement.
+	// Not set -- no alignment requirement.
 
 	// Bytes 40-47: Maximum WRITE SAME length (uint64)
 	binary.BigEndian.PutUint64(data[40:48], maxWS)
@@ -304,9 +304,9 @@ func (h *SCSIHandler) inquiryVPDB2(allocLen uint16) SCSIResult {
 	data[5] = 0x02
 
 	// Byte 6: Provisioning group descriptor flags
-	// Bit 7: LBPU (Logical Block Provisioning UNMAP) = 1 — we support UNMAP
-	// Bit 6: LBPWS (LBP Write Same) = 1 — we support WRITE SAME with UNMAP bit
-	// Bit 5: LBPWS10 = 0 — we don't support WRITE SAME(10)
+	// Bit 7: LBPU (Logical Block Provisioning UNMAP) = 1 -- we support UNMAP
+	// Bit 6: LBPWS (LBP Write Same) = 1 -- we support WRITE SAME with UNMAP bit
+	// Bit 5: LBPWS10 = 0 -- we don't support WRITE SAME(10)
 	data[6] = 0xC0 // LBPU=1, LBPWS=1
 
 	if int(allocLen) < len(data) {
@@ -353,7 +353,7 @@ func (h *SCSIHandler) readCapacity16(cdb [16]byte) SCSIResult {
 }
 
 func (h *SCSIHandler) modeSense6(cdb [16]byte) SCSIResult {
-	// Minimal MODE SENSE(6) response — no mode pages
+	// Minimal MODE SENSE(6) response -- no mode pages
 	allocLen := cdb[4]
 	if allocLen == 0 {
 		allocLen = 4
@@ -372,7 +372,7 @@ func (h *SCSIHandler) modeSense6(cdb [16]byte) SCSIResult {
 }
 
 func (h *SCSIHandler) modeSense10(cdb [16]byte) SCSIResult {
-	// MODE SENSE(10) — 8-byte header, no mode pages
+	// MODE SENSE(10) -- 8-byte header, no mode pages
 	allocLen := binary.BigEndian.Uint16(cdb[7:9])
 	if allocLen == 0 {
 		allocLen = 8
@@ -545,7 +545,7 @@ func (h *SCSIHandler) unmap(cdb [16]byte, dataOut []byte) SCSIResult {
 	return SCSIResult{Status: SCSIStatusGood}
 }
 
-// writeSame16 handles WRITE SAME(16) — SBC-4, Section 5.42.
+// writeSame16 handles WRITE SAME(16) -- SBC-4, Section 5.42.
 // If UNMAP bit is set, the range is trimmed (zeroed). Otherwise the single
 // logical block from dataOut is written repeatedly across the range.
 // NDOB (No Data-Out Buffer) means zero the range with no data payload.
@@ -585,7 +585,7 @@ func (h *SCSIHandler) writeSame16(cdb [16]byte, dataOut []byte) SCSIResult {
 	}
 	pattern := dataOut[:blockSize]
 
-	// Check if the pattern is all zeros — use Trim for efficiency.
+	// Check if the pattern is all zeros -- use Trim for efficiency.
 	allZero := true
 	for _, b := range pattern {
 		if b != 0 {

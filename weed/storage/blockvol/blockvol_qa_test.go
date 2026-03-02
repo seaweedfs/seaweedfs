@@ -1,6 +1,6 @@
 package blockvol
 
-// QA adversarial tests — written by QA Manager (separate from dev team's unit tests).
+// QA adversarial tests -- written by QA Manager (separate from dev team's unit tests).
 // Attack vectors: boundary conditions, multi-block I/O, trim semantics,
 // concurrency, oracle pattern, corruption injection, lifecycle edge cases.
 
@@ -69,7 +69,7 @@ func testQAMultiBlockWriteReadMiddle(t *testing.T) {
 		t.Fatalf("WriteLBA: %v", err)
 	}
 
-	// Read only block at LBA 6 (the middle one — should be 'B')
+	// Read only block at LBA 6 (the middle one -- should be 'B')
 	got, err := v.ReadLBA(6, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(6): %v", err)
@@ -78,7 +78,7 @@ func testQAMultiBlockWriteReadMiddle(t *testing.T) {
 		t.Errorf("middle block: got %q..., want all 'B'", got[:8])
 	}
 
-	// Read only block at LBA 7 (last — should be 'C')
+	// Read only block at LBA 7 (last -- should be 'C')
 	got, err = v.ReadLBA(7, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(7): %v", err)
@@ -99,7 +99,7 @@ func testQAMultiBlockWriteReadMiddle(t *testing.T) {
 
 // --- Trim semantics ---
 
-// testQATrimThenReadZeros: Write a block, trim it, read back — must get zeros.
+// testQATrimThenReadZeros: Write a block, trim it, read back -- must get zeros.
 func testQATrimThenReadZeros(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
@@ -123,7 +123,7 @@ func testQATrimThenReadZeros(t *testing.T) {
 		t.Fatalf("Trim: %v", err)
 	}
 
-	// Read after trim — must be zeros (from extent, which was never written).
+	// Read after trim -- must be zeros (from extent, which was never written).
 	got, err = v.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA after trim: %v", err)
@@ -223,7 +223,7 @@ func testQAOverwriteWider(t *testing.T) {
 		t.Fatalf("WriteLBA 2-block: %v", err)
 	}
 
-	// Read LBA 0 — should be 'X' (not 'A').
+	// Read LBA 0 -- should be 'X' (not 'A').
 	got, err := v.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(0): %v", err)
@@ -232,7 +232,7 @@ func testQAOverwriteWider(t *testing.T) {
 		t.Error("LBA 0 should be 'X' after wider overwrite")
 	}
 
-	// Read LBA 1 — should be 'Y'.
+	// Read LBA 1 -- should be 'Y'.
 	got, err = v.ReadLBA(1, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(1): %v", err)
@@ -278,7 +278,7 @@ func testQAOverwriteNarrower(t *testing.T) {
 		t.Fatalf("ReadLBA(1): %v", err)
 	}
 	if !bytes.Equal(got, makeBlock('B')) {
-		t.Error("LBA 1 should still be 'B' — narrower overwrite shouldn't touch it")
+		t.Error("LBA 1 should still be 'B' -- narrower overwrite shouldn't touch it")
 	}
 }
 
@@ -467,7 +467,7 @@ func testQAWALFillAdvanceRefill(t *testing.T) {
 	halfEntries := uint64(lastOK/2+1) * entrySize
 	v.wal.AdvanceTail(halfEntries)
 
-	// Write more — should succeed now.
+	// Write more -- should succeed now.
 	for i := 0; i < 5; i++ {
 		if err := v.WriteLBA(uint64(i), makeBlock(byte('a'+i))); err != nil {
 			t.Fatalf("write after tail advance %d: %v", i, err)
@@ -554,7 +554,7 @@ func testQAValidateWriteZeroLength(t *testing.T) {
 	// This should arguably be rejected, but current code may allow it.
 	// If it's allowed, at least it shouldn't crash.
 	if err != nil {
-		// Good — zero-length writes rejected.
+		// Good -- zero-length writes rejected.
 		return
 	}
 	// If allowed, WriteLBA with empty data should be caught by WAL entry validation.
@@ -888,7 +888,7 @@ func TestQAWALWriterEdgeCases(t *testing.T) {
 		walSize := entrySize + uint64(walEntryHeaderSize) - 5
 		// gap = walSize - entrySize = walEntryHeaderSize - 5 = 33 bytes
 		// free after wrap = walSize - gap = entrySize = 102 bytes
-		// entrySize = 102. free == entrySize → fits with logical tracking (uses >, not <)
+		// entrySize = 102. free == entrySize -> fits with logical tracking (uses >, not <)
 
 		fd, cleanup := createTestWAL(t, walOffset, walSize)
 		defer cleanup()
@@ -932,7 +932,7 @@ func TestQAWALWriterEdgeCases(t *testing.T) {
 			t.Fatalf("first append: %v", err)
 		}
 
-		// Write second entry — pushes head to 2*entrySize = 204.
+		// Write second entry -- pushes head to 2*entrySize = 204.
 		entry2 := &WALEntry{LSN: 2, Type: EntryTypeWrite, LBA: 1, Length: 64, Data: make([]byte, 64)}
 		if _, err := w.Append(entry2); err != nil {
 			t.Fatalf("second append: %v", err)
@@ -942,8 +942,8 @@ func TestQAWALWriterEdgeCases(t *testing.T) {
 		w.AdvanceTail(entrySize * 2)
 
 		// remaining = walSize - 204 = 30 bytes (< walEntryHeaderSize=38)
-		// → padding uses zero-fill path, head wraps to 0
-		// → free = tail - head = 204 - 0 = 204 > 102 → fits!
+		// -> padding uses zero-fill path, head wraps to 0
+		// -> free = tail - head = 204 - 0 = 204 > 102 -> fits!
 		entry3 := &WALEntry{LSN: 3, Type: EntryTypeWrite, LBA: 2, Length: 64, Data: make([]byte, 64)}
 		off, err := w.Append(entry3)
 		if err != nil {
@@ -994,11 +994,11 @@ func TestQAWALEntryEdgeCases(t *testing.T) {
 	})
 
 	t.Run("unknown_entry_type_encode", func(t *testing.T) {
-		// Type 0x99 is not recognized — Encode should still work
+		// Type 0x99 is not recognized -- Encode should still work
 		// (only WRITE/TRIM/BARRIER have special validation).
 		entry := &WALEntry{LSN: 1, Type: 0x99, LBA: 0}
 		_, err := entry.Encode()
-		// Unknown type with no data — may or may not error.
+		// Unknown type with no data -- may or may not error.
 		// Just verify no panic.
 		_ = err
 	})
@@ -1012,7 +1012,7 @@ func min(a, b int) int {
 }
 
 // ============================================================================
-// QA Adversarial Tests — Tasks 1.7 (GroupCommitter), 1.8 (Flusher), 1.9 (Recovery)
+// QA Adversarial Tests -- Tasks 1.7 (GroupCommitter), 1.8 (Flusher), 1.9 (Recovery)
 // ============================================================================
 
 // --- Task 1.7: GroupCommitter adversarial tests ---
@@ -1046,7 +1046,7 @@ func testQAGCDoubleStop(t *testing.T) {
 
 	gc.Stop()
 
-	// Second stop — must not panic or deadlock.
+	// Second stop -- must not panic or deadlock.
 	done := make(chan struct{})
 	go func() {
 		gc.Stop()
@@ -1062,7 +1062,7 @@ func testQAGCDoubleStop(t *testing.T) {
 }
 
 // testQAGCSubmitStormDuringStop: Many goroutines Submit() while Stop() is called.
-// All must either succeed or get ErrGroupCommitShutdown — no panics, no deadlocks.
+// All must either succeed or get ErrGroupCommitShutdown -- no panics, no deadlocks.
 //
 // BUG QA-002: There is a race between drainPending() and close(gc.done) in Run().
 // Goroutines that pass the gc.done double-check AFTER drainPending() releases gc.mu
@@ -1070,9 +1070,9 @@ func testQAGCDoubleStop(t *testing.T) {
 // causing a permanent hang on <-ch in Submit().
 //
 // Race sequence:
-//   1. Run(): drainPending() → gc.mu.Lock → take pending → gc.mu.Unlock → send errors
+//   1. Run(): drainPending() -> gc.mu.Lock -> take pending -> gc.mu.Unlock -> send errors
 //   2. Submit(): passes first select<-gc.done (not closed yet)
-//   3. Submit(): gc.mu.Lock → passes second select<-gc.done → append ch → gc.mu.Unlock
+//   3. Submit(): gc.mu.Lock -> passes second select<-gc.done -> append ch -> gc.mu.Unlock
 //   4. Run(): close(gc.done) ← too late, ch already enqueued with no consumer
 //   5. Submit(): <-ch blocks forever
 func testQAGCSubmitStormDuringStop(t *testing.T) {
@@ -1120,7 +1120,7 @@ func testQAGCSubmitStormDuringStop(t *testing.T) {
 		// All goroutines exited cleanly.
 	case <-time.After(5 * time.Second):
 		// QA-002: Submit() goroutines stuck waiting for response after Stop().
-		t.Fatal("BUG QA-002: Submit() goroutines deadlocked during Stop() — " +
+		t.Fatal("BUG QA-002: Submit() goroutines deadlocked during Stop() -- " +
 			"drainPending/close(done) race allows enqueue after drain")
 	}
 
@@ -1208,7 +1208,7 @@ func testQAGCMaxBatchExact(t *testing.T) {
 	const maxBatch = 8
 	gc := NewGroupCommitter(GroupCommitterConfig{
 		SyncFunc: func() error { return nil },
-		MaxDelay: 10 * time.Second, // very long — should NOT wait
+		MaxDelay: 10 * time.Second, // very long -- should NOT wait
 		MaxBatch: maxBatch,
 	})
 	go gc.Run()
@@ -1231,7 +1231,7 @@ func testQAGCMaxBatchExact(t *testing.T) {
 
 	select {
 	case <-done:
-		// Good — completed quickly.
+		// Good -- completed quickly.
 	case <-time.After(3 * time.Second):
 		t.Fatal("maxBatch exact count did not trigger immediate flush")
 	}
@@ -1314,7 +1314,7 @@ func testQAFlushEmptyDirtyMap(t *testing.T) {
 	v, f := createTestVolWithFlusher(t)
 	defer v.Close()
 
-	// No writes — flush should not error or change anything.
+	// No writes -- flush should not error or change anything.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce on empty: %v", err)
 	}
@@ -1334,7 +1334,7 @@ func testQAFlushOverwriteDuringFlush(t *testing.T) {
 		t.Fatalf("WriteLBA(A): %v", err)
 	}
 
-	// Flush — moves 'A' to extent.
+	// Flush -- moves 'A' to extent.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 1: %v", err)
 	}
@@ -1353,7 +1353,7 @@ func testQAFlushOverwriteDuringFlush(t *testing.T) {
 		t.Error("before second flush: should read 'B' from WAL")
 	}
 
-	// Flush again — moves 'B' to extent.
+	// Flush again -- moves 'B' to extent.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 2: %v", err)
 	}
@@ -1379,7 +1379,7 @@ func testQAFlushTrimZerosExtent(t *testing.T) {
 		t.Fatalf("WriteLBA: %v", err)
 	}
 
-	// Flush — 'X' goes to extent.
+	// Flush -- 'X' goes to extent.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 1: %v", err)
 	}
@@ -1398,7 +1398,7 @@ func testQAFlushTrimZerosExtent(t *testing.T) {
 		t.Fatalf("Trim: %v", err)
 	}
 
-	// Read from dirty map (TRIM entry) — should return zeros.
+	// Read from dirty map (TRIM entry) -- should return zeros.
 	got, err = v.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA after trim: %v", err)
@@ -1407,7 +1407,7 @@ func testQAFlushTrimZerosExtent(t *testing.T) {
 		t.Error("after trim: dirty map read should return zeros")
 	}
 
-	// Flush again — flusher zeros the extent.
+	// Flush again -- flusher zeros the extent.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 2: %v", err)
 	}
@@ -1417,7 +1417,7 @@ func testQAFlushTrimZerosExtent(t *testing.T) {
 		t.Errorf("dirty map should be empty after flush, got %d", v.dirtyMap.Len())
 	}
 
-	// Read from extent — should be zeros (flusher zeroed it).
+	// Read from extent -- should be zeros (flusher zeroed it).
 	got, err = v.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA after trim flush: %v", err)
@@ -1453,7 +1453,7 @@ func testQAFlushPreservesNewerWrites(t *testing.T) {
 		t.Fatalf("WriteLBA(B): %v", err)
 	}
 
-	// Now flush again — flusher should see the new entry for LBA 0.
+	// Now flush again -- flusher should see the new entry for LBA 0.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 2: %v", err)
 	}
@@ -1521,7 +1521,7 @@ func testQAFlushCheckpointPersists(t *testing.T) {
 	// Update superblock and crash.
 	path = simulateCrashWithSuper(v)
 
-	// Reopen — recovery should skip LSN <= checkpoint and replay 5-9.
+	// Reopen -- recovery should skip LSN <= checkpoint and replay 5-9.
 	v2, err := OpenBlockVol(path)
 	if err != nil {
 		t.Fatalf("OpenBlockVol: %v", err)
@@ -1582,7 +1582,7 @@ func testQAFlushWALReclaimThenWrite(t *testing.T) {
 		}
 	}
 
-	// Flush — reclaim all WAL space.
+	// Flush -- reclaim all WAL space.
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
@@ -1594,7 +1594,7 @@ func testQAFlushWALReclaimThenWrite(t *testing.T) {
 		t.Fatalf("FlushOnce: %v", err)
 	}
 
-	// WAL should be empty now. Write again — should succeed.
+	// WAL should be empty now. Write again -- should succeed.
 	for i := 0; i < 5; i++ {
 		if err := v.WriteLBA(uint64(i), makeBlock(byte('a'+i))); err != nil {
 			t.Fatalf("write after reclaim %d: %v", i, err)
@@ -1655,7 +1655,7 @@ func testQAFlusherStopIdempotent(t *testing.T) {
 	go f.Run()
 	f.Stop()
 
-	// Second stop — must not panic or deadlock.
+	// Second stop -- must not panic or deadlock.
 	done := make(chan struct{})
 	go func() {
 		f.Stop()
@@ -1795,7 +1795,7 @@ func testQARecoverMixedWriteTrimBarrier(t *testing.T) {
 		t.Error("LBA 0 should be 'A'")
 	}
 
-	// LBA 1: trimmed — zeros.
+	// LBA 1: trimmed -- zeros.
 	got, err = v2.ReadLBA(1, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(1): %v", err)
@@ -1932,7 +1932,7 @@ func testQARecoverOverwriteSameLBA(t *testing.T) {
 	}
 }
 
-// testQARecoverCrashLoop: Write, sync, crash, recover — 20 iterations.
+// testQARecoverCrashLoop: Write, sync, crash, recover -- 20 iterations.
 // Each iteration writes new data and verifies previous data survived.
 func testQARecoverCrashLoop(t *testing.T) {
 	dir := t.TempDir()
@@ -2107,8 +2107,8 @@ func testQARecoverMultiBlockWrite(t *testing.T) {
 }
 
 // testQARecoverOracleWithCrash: Oracle pattern with periodic crash+recover.
-// This is the most valuable adversarial test — it exercises the full
-// write→sync→crash→recover→verify cycle with random operations.
+// This is the most valuable adversarial test -- it exercises the full
+// write->sync->crash->recover->verify cycle with random operations.
 func testQARecoverOracleWithCrash(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "oracle_crash.blockvol")
@@ -2210,7 +2210,7 @@ func testQARecoverOracleWithCrash(t *testing.T) {
 }
 
 // ============================================================================
-// QA Adversarial Tests — Tasks 1.10 (Lifecycle), 1.11 (Crash Stress)
+// QA Adversarial Tests -- Tasks 1.10 (Lifecycle), 1.11 (Crash Stress)
 // ============================================================================
 
 // --- Task 1.10: Lifecycle adversarial tests ---
@@ -2241,7 +2241,7 @@ func testQALifecycleWriteAfterClose(t *testing.T) {
 	v := createTestVol(t)
 	v.Close()
 
-	// Write after close — fd is closed, should get an error, never a panic.
+	// Write after close -- fd is closed, should get an error, never a panic.
 	err := v.WriteLBA(0, makeBlock('X'))
 	if err == nil {
 		t.Error("WriteLBA after Close should fail")
@@ -2259,7 +2259,7 @@ func testQALifecycleReadAfterClose(t *testing.T) {
 
 	v.Close()
 
-	// Read after close — fd is closed, should error, not panic.
+	// Read after close -- fd is closed, should error, not panic.
 	_, err := v.ReadLBA(0, 4096)
 	if err == nil {
 		t.Error("ReadLBA after Close should fail")
@@ -2281,7 +2281,7 @@ func testQALifecycleSyncAfterClose(t *testing.T) {
 	}
 }
 
-// testQALifecycleCloseDrainsDirty: Close does a final flush — dirty map should
+// testQALifecycleCloseDrainsDirty: Close does a final flush -- dirty map should
 // be empty and data should be in extent region. Reopen should find blocks in
 // extent (not WAL) and dirty map should be empty.
 func testQALifecycleCloseDrainsDirty(t *testing.T) {
@@ -2303,12 +2303,12 @@ func testQALifecycleCloseDrainsDirty(t *testing.T) {
 		}
 	}
 
-	// Close — should flush all dirty blocks to extent.
+	// Close -- should flush all dirty blocks to extent.
 	if err := v.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Reopen — recovery should find nothing in WAL (all flushed).
+	// Reopen -- recovery should find nothing in WAL (all flushed).
 	v2, err := OpenBlockVol(path)
 	if err != nil {
 		t.Fatalf("OpenBlockVol: %v", err)
@@ -2333,7 +2333,7 @@ func testQALifecycleCloseDrainsDirty(t *testing.T) {
 	}
 }
 
-// testQALifecycleMultiCycleAccumulate: Write→sync→close→reopen→write more, 5 cycles.
+// testQALifecycleMultiCycleAccumulate: Write->sync->close->reopen->write more, 5 cycles.
 // Each cycle adds new blocks. Verify all accumulated blocks survive.
 func testQALifecycleMultiCycleAccumulate(t *testing.T) {
 	dir := t.TempDir()
@@ -2413,7 +2413,7 @@ func testQALifecycleCloseWithBackgroundFlusher(t *testing.T) {
 	// Wait a bit to let the flusher potentially run.
 	time.Sleep(150 * time.Millisecond)
 
-	// Close — must coordinate with flusher goroutine.
+	// Close -- must coordinate with flusher goroutine.
 	if err := v.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -2493,7 +2493,7 @@ func testQALifecycleOpenCloseRapid(t *testing.T) {
 		}
 	}
 
-	// Final open — verify data survived 20 open/close cycles.
+	// Final open -- verify data survived 20 open/close cycles.
 	v, err = OpenBlockVol(path)
 	if err != nil {
 		t.Fatalf("final open: %v", err)
@@ -2532,7 +2532,7 @@ func TestQACrashStress(t *testing.T) {
 }
 
 // testQACrashNoSyncDataLossOK: Write WITHOUT SyncCache, crash, recover.
-// Un-synced data MAY be lost — this is correct behavior, not a bug.
+// Un-synced data MAY be lost -- this is correct behavior, not a bug.
 // The key invariant: volume must open without error and previously synced
 // data must survive.
 func testQACrashNoSyncDataLossOK(t *testing.T) {
@@ -2566,7 +2566,7 @@ func testQACrashNoSyncDataLossOK(t *testing.T) {
 	v.super.WriteTo(v.fd)
 	v.fd.Sync()
 
-	// Write block 1 WITHOUT sync — this write's WAL head is NOT in the superblock.
+	// Write block 1 WITHOUT sync -- this write's WAL head is NOT in the superblock.
 	if err := v.WriteLBA(1, makeBlock('U')); err != nil {
 		t.Fatalf("WriteLBA(unsynced): %v", err)
 	}
@@ -2590,7 +2590,7 @@ func testQACrashNoSyncDataLossOK(t *testing.T) {
 		t.Error("synced block 0 should survive crash")
 	}
 
-	// Un-synced block 1: may or may not be there — both are correct.
+	// Un-synced block 1: may or may not be there -- both are correct.
 	// Just verify we can read without error.
 	_, err = v2.ReadLBA(1, 4096)
 	if err != nil {
@@ -2988,7 +2988,7 @@ func testQACrashOverwriteStorm(t *testing.T) {
 }
 
 // ============================================================================
-// QA Adversarial Tests — Round 4 (Architect-directed edge cases)
+// QA Adversarial Tests -- Round 4 (Architect-directed edge cases)
 // ============================================================================
 
 // --- WAL / Recovery Edge Cases ---
@@ -3075,7 +3075,7 @@ func testQARecoverEntrySizeMismatchAtTail(t *testing.T) {
 		}
 	}
 
-	// Entry 3 (corrupt) should NOT be recovered — read returns zeros.
+	// Entry 3 (corrupt) should NOT be recovered -- read returns zeros.
 	got, err := v2.ReadLBA(2, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(2): %v", err)
@@ -3121,7 +3121,7 @@ func testQARecoverPartialPadding(t *testing.T) {
 	// Advance tail past entry 1 so we have room to wrap.
 	v.wal.AdvanceTail(entrySize)
 
-	// Write entry 3 — this should trigger padding (50 bytes) at end and wrap to 0.
+	// Write entry 3 -- this should trigger padding (50 bytes) at end and wrap to 0.
 	if err := v.WriteLBA(2, makeBlock('C')); err != nil {
 		t.Fatalf("WriteLBA(2) after wrap: %v", err)
 	}
@@ -3150,7 +3150,7 @@ func testQARecoverPartialPadding(t *testing.T) {
 	v.fd.Close()
 	path = v.Path()
 
-	// Recovery should handle this — either skip corrupt padding and find
+	// Recovery should handle this -- either skip corrupt padding and find
 	// entry 3, or stop at the corruption. Either way, no panic.
 	v2, err := OpenBlockVol(path)
 	if err != nil {
@@ -3255,7 +3255,7 @@ func testQARecoverWriteThenTrimSameLBA(t *testing.T) {
 	}
 	defer v2.Close()
 
-	// TRIM is latest — should return zeros.
+	// TRIM is latest -- should return zeros.
 	got, err := v2.ReadLBA(7, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA(7): %v", err)
@@ -3310,7 +3310,7 @@ func testQARecoverBarrierOnlyFullWAL(t *testing.T) {
 	}
 	defer v2.Close()
 
-	// No data changes from barriers — read should return zeros.
+	// No data changes from barriers -- read should return zeros.
 	got, err := v2.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA: %v", err)
@@ -3352,7 +3352,7 @@ func testQAFlushInterleavedOverwrite(t *testing.T) {
 		t.Fatalf("WriteLBA(A): %v", err)
 	}
 
-	// Flush — moves 'A' to extent, removes dirty entry for LSN 1.
+	// Flush -- moves 'A' to extent, removes dirty entry for LSN 1.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 1: %v", err)
 	}
@@ -3373,7 +3373,7 @@ func testQAFlushInterleavedOverwrite(t *testing.T) {
 		t.Fatal("LBA 0 should be in dirty map")
 	}
 
-	// Flush — snapshot captures LSN 3. After flush, extent has 'C'.
+	// Flush -- snapshot captures LSN 3. After flush, extent has 'C'.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 2: %v", err)
 	}
@@ -3429,12 +3429,12 @@ func testQAFlushPartialWALWrap(t *testing.T) {
 		}
 	}
 
-	// Flush — moves all to extent, advances tail.
+	// Flush -- moves all to extent, advances tail.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 1: %v", err)
 	}
 
-	// Write more — these will wrap around in the WAL.
+	// Write more -- these will wrap around in the WAL.
 	for i := 0; i < firstBatch; i++ {
 		lba := uint64(firstBatch + i)
 		if lba >= 256 { // stay within volume
@@ -3448,7 +3448,7 @@ func testQAFlushPartialWALWrap(t *testing.T) {
 		}
 	}
 
-	// Flush again — should handle wrapped entries correctly.
+	// Flush again -- should handle wrapped entries correctly.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce 2: %v", err)
 	}
@@ -3498,7 +3498,7 @@ func testQAFlushTrimMixedWrite(t *testing.T) {
 		t.Fatalf("Trim(3): %v", err)
 	}
 
-	// Flush — should write data for 0,2,4 and zeros for 1,3.
+	// Flush -- should write data for 0,2,4 and zeros for 1,3.
 	if err := f.FlushOnce(); err != nil {
 		t.Fatalf("FlushOnce: %v", err)
 	}
@@ -3652,7 +3652,7 @@ func testQACloseWhileSyncCacheWaits(t *testing.T) {
 
 	select {
 	case err := <-closeDone:
-		// Close may return nil or an error from final flush — both are OK.
+		// Close may return nil or an error from final flush -- both are OK.
 		_ = err
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close deadlocked")
@@ -3680,12 +3680,12 @@ func testQACloseWithPendingDirtyMap(t *testing.T) {
 		}
 	}
 
-	// Close — should stop group committer, stop flusher, do final flush.
+	// Close -- should stop group committer, stop flusher, do final flush.
 	if err := v.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Reopen — verify dirty map is empty (all data in extent).
+	// Reopen -- verify dirty map is empty (all data in extent).
 	v2, err := OpenBlockVol(path)
 	if err != nil {
 		t.Fatalf("OpenBlockVol: %v", err)
@@ -3783,7 +3783,7 @@ func testQAWALSizeMinHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tiny_wal.blockvol")
 
-	// WAL = walEntryHeaderSize + 1 byte — can't fit any entry with data.
+	// WAL = walEntryHeaderSize + 1 byte -- can't fit any entry with data.
 	walSize := uint64(walEntryHeaderSize + 1)
 
 	v, err := CreateBlockVol(path, CreateOptions{

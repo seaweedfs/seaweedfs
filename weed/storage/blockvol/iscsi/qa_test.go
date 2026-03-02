@@ -411,7 +411,7 @@ func testQA_Login(t *testing.T) {
 		// Send SCSI Command during login phase -> rejected
 		conn, _ := qaSessionDefault(t)
 
-		// Don't login — send a SCSI command directly
+		// Don't login -- send a SCSI command directly
 		cmd := &PDU{}
 		cmd.SetOpcode(OpSCSICmd)
 		cmd.SetOpSpecific1(FlagF | FlagR)
@@ -881,7 +881,7 @@ func testQA_DataIO(t *testing.T) {
 		cmd.SetCmdSN(cmdSN)
 		cmd.SetCDB(cdb)
 		// With default config: ImmediateData=true, InitialR2T=true
-		// No immediate data sent — let R2T drive everything
+		// No immediate data sent -- let R2T drive everything
 		if err := WritePDU(conn, cmd); err != nil {
 			t.Fatal(err)
 		}

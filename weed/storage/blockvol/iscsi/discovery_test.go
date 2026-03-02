@@ -168,7 +168,7 @@ func testMultipleTargets(t *testing.T) {
 	body := string(resp.DataSegment)
 	// The response uses EncodeDiscoveryTargets internally via the params,
 	// but since Params doesn't allow duplicate keys, the last one wins.
-	// This is a known limitation — for multi-target discovery, we use
+	// This is a known limitation -- for multi-target discovery, we use
 	// EncodeDiscoveryTargets directly. Let's verify at least the last target.
 	if !strings.Contains(body, "TargetName=") {
 		t.Fatal("no TargetName in response")

@@ -110,7 +110,7 @@ func RecoverWAL(fd *os.File, sb *Superblock, dirtyMap *DirtyMap) (RecoveryResult
 			// Decode and validate CRC.
 			entry, err := DecodeWALEntry(fullBuf)
 			if err != nil {
-				// CRC failure or corrupt entry — stop here (torn write).
+				// CRC failure or corrupt entry -- stop here (torn write).
 				result.TornEntries++
 				break
 			}

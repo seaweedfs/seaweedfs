@@ -197,7 +197,7 @@ func (ln *LoginNegotiator) HandleLoginPDU(req *PDU, resolver TargetResolver) *PD
 		// ISID
 		ln.isid = req.ISID()
 
-		// We don't implement CHAP — declare AuthMethod=None
+		// We don't implement CHAP -- declare AuthMethod=None
 		respParams.Set("AuthMethod", "None")
 
 		if transit {

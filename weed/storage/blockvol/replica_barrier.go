@@ -86,7 +86,7 @@ func (r *ReplicaReceiver) handleBarrier(req BarrierRequest) BarrierResponse {
 		default:
 		}
 
-		// Block on cond.Wait — woken by applyEntry or timeout goroutine.
+		// Block on cond.Wait -- woken by applyEntry or timeout goroutine.
 		r.cond.Wait()
 	}
 	r.mu.Unlock()

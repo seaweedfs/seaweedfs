@@ -129,7 +129,7 @@ func (gc *GroupCommitter) Run() {
 		}
 
 		// Perform fsync with panic recovery. A panic in syncFunc must
-		// not leave waiters hung — notify them and drain stragglers.
+		// not leave waiters hung --notify them and drain stragglers.
 		err := gc.callSyncFunc()
 		gc.syncCount.Add(1)
 		if err == nil && gc.postSyncCheck != nil {

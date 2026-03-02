@@ -378,13 +378,13 @@ func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64, expectedLSN uint6
 
 	// WAL reuse guard: validate LSN before trusting the entry.
 	// If the flusher reclaimed this slot and a new write reused it,
-	// the LSN will differ — fall back to extent read.
+	// the LSN will differ --fall back to extent read.
 	entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
 	if entryLSN != expectedLSN {
-		return nil, true, nil // stale — WAL slot reused
+		return nil, true, nil // stale --WAL slot reused
 	}
 
-	// Check entry type first — TRIM has no data payload, so Length is
+	// Check entry type first --TRIM has no data payload, so Length is
 	// metadata (trim extent), not a data size to allocate.
 	entryType := headerBuf[16] // Type is at offset LSN(8) + Epoch(8) = 16
 	if entryType == EntryTypeTrim {
@@ -392,14 +392,14 @@ func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64, expectedLSN uint6
 		return make([]byte, v.super.BlockSize), false, nil
 	}
 	if entryType != EntryTypeWrite {
-		// Unexpected type at a supposedly valid offset — treat as stale.
+		// Unexpected type at a supposedly valid offset --treat as stale.
 		return nil, true, nil
 	}
 
 	// Parse and validate the data Length field before allocating (WRITE only).
 	dataLen := v.parseDataLength(headerBuf)
 	if uint64(dataLen) > v.super.WALSize || uint64(dataLen) > maxWALEntryDataLen {
-		// LSN matched but length is corrupt — real data integrity error.
+		// LSN matched but length is corrupt --real data integrity error.
 		return nil, false, fmt.Errorf("readBlockFromWAL: corrupt entry length %d exceeds WAL size %d", dataLen, v.super.WALSize)
 	}
 
@@ -411,17 +411,17 @@ func (v *BlockVol) readBlockFromWAL(walOff uint64, lba uint64, expectedLSN uint6
 
 	entry, err := DecodeWALEntry(fullBuf)
 	if err != nil {
-		// LSN matched but CRC failed — real corruption.
+		// LSN matched but CRC failed --real corruption.
 		return nil, false, fmt.Errorf("readBlockFromWAL: decode: %w", err)
 	}
 
 	// Final guard: verify the entry actually covers this LBA.
 	if lba < entry.LBA {
-		return nil, true, nil // stale — different entry at same offset
+		return nil, true, nil // stale --different entry at same offset
 	}
 	blockOffset := (lba - entry.LBA) * uint64(v.super.BlockSize)
 	if blockOffset+uint64(v.super.BlockSize) > uint64(len(entry.Data)) {
-		return nil, true, nil // stale — LBA out of range
+		return nil, true, nil // stale --LBA out of range
 	}
 
 	block := make([]byte, v.super.BlockSize)
@@ -582,6 +582,30 @@ func (v *BlockVol) degradeReplica(err error) {
 		v.shipper.degraded.Store(true)
 	}
 	log.Printf("blockvol: replica degraded: %v", err)
+}
+
+// BlockVolumeStatus contains block volume state for heartbeat reporting.
+type BlockVolumeStatus struct {
+	Epoch         uint64
+	WALHeadLSN    uint64
+	Role          Role
+	CheckpointLSN uint64
+	HasLease      bool
+}
+
+// Status returns the current block volume status for heartbeat reporting.
+func (v *BlockVol) Status() BlockVolumeStatus {
+	var cpLSN uint64
+	if v.flusher != nil {
+		cpLSN = v.flusher.CheckpointLSN()
+	}
+	return BlockVolumeStatus{
+		Epoch:         v.epoch.Load(),
+		WALHeadLSN:    v.nextLSN.Load() - 1,
+		Role:          v.Role(),
+		CheckpointLSN: cpLSN,
+		HasLease:      v.lease.IsValid(),
+	}
 }
 
 // Close shuts down the block volume and closes the file.

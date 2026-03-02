@@ -11,7 +11,7 @@ func HandleTextRequest(req *PDU, targets []DiscoveryTarget) *PDU {
 
 	params, err := ParseParams(req.DataSegment)
 	if err != nil {
-		// Malformed — return empty response
+		// Malformed -- return empty response
 		return resp
 	}
 

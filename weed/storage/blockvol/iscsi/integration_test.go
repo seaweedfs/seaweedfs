@@ -229,7 +229,7 @@ func testMultiBlockWriteRead(t *testing.T) {
 
 	resp2 := sendSCSICmd(t, conn, rCDB, 3, true, false, nil, uint32(dataLen))
 
-	// May be split across multiple Data-In PDUs — reassemble
+	// May be split across multiple Data-In PDUs -- reassemble
 	var readData []byte
 	readData = append(readData, resp2.DataSegment...)
 
@@ -360,7 +360,7 @@ func testWriteAtBoundary(t *testing.T) {
 		t.Fatal("boundary write failed")
 	}
 
-	// Write past end — should fail
+	// Write past end -- should fail
 	var wCDB2 [16]byte
 	wCDB2[0] = iscsi.ScsiWrite10
 	binary.BigEndian.PutUint32(wCDB2[2:6], 1024) // out of bounds
@@ -396,7 +396,7 @@ func testUnmapIntegration(t *testing.T) {
 		t.Fatalf("unmap failed: %d", resp.SCSIStatus())
 	}
 
-	// Read back — should be zeros
+	// Read back -- should be zeros
 	var rCDB [16]byte
 	rCDB[0] = iscsi.ScsiRead10
 	binary.BigEndian.PutUint32(rCDB[2:6], 5)

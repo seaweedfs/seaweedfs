@@ -9,6 +9,7 @@ import (
 var (
 	ErrInvalidAssignment = errors.New("blockvol: invalid assignment transition")
 	ErrDrainTimeout      = errors.New("blockvol: drain timeout waiting for in-flight ops")
+	ErrEpochRegression   = errors.New("blockvol: epoch regression")
 )
 
 const defaultDrainTimeout = 10 * time.Second
@@ -56,6 +57,9 @@ func HandleAssignment(vol *BlockVol, newEpoch uint64, newRole Role, leaseTTL tim
 // promote transitions Replica/None -> Primary.
 // Order matters: epoch durable BEFORE writes possible.
 func promote(vol *BlockVol, newEpoch uint64, leaseTTL time.Duration) error {
+	if newEpoch < vol.Epoch() {
+		return fmt.Errorf("%w: new %d < current %d", ErrEpochRegression, newEpoch, vol.Epoch())
+	}
 	if err := vol.SetEpoch(newEpoch); err != nil {
 		return fmt.Errorf("promote: set epoch: %w", err)
 	}
@@ -70,7 +74,12 @@ func promote(vol *BlockVol, newEpoch uint64, leaseTTL time.Duration) error {
 // demote transitions Primary -> Draining -> Stale.
 // Revokes lease first, drains in-flight ops, then persists new epoch.
 func demote(vol *BlockVol, newEpoch uint64) error {
-	// Revoke lease — writeGate blocks new writes immediately.
+	// Guard epoch monotonicity before any state changes.
+	if newEpoch < vol.Epoch() {
+		return fmt.Errorf("%w: new %d < current %d", ErrEpochRegression, newEpoch, vol.Epoch())
+	}
+
+	// Revoke lease --writeGate blocks new writes immediately.
 	vol.lease.Revoke()
 
 	// Transition to Draining.

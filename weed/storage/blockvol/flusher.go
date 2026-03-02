@@ -160,7 +160,7 @@ func (f *Flusher) FlushOnce() error {
 		// reused (by a previous flush cycle advancing the tail + new writes).
 		entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
 		if entryLSN != e.Lsn {
-			continue // stale — WAL slot reused, skip this entry
+			continue // stale --WAL slot reused, skip this entry
 		}
 
 		// Parse entry type and length.
@@ -177,14 +177,14 @@ func (f *Flusher) FlushOnce() error {
 
 			entry, err := DecodeWALEntry(fullBuf)
 			if err != nil {
-				continue // corrupt or partially overwritten — skip
+				continue // corrupt or partially overwritten --skip
 			}
 
 			// Write only this block's data to extent (not all blocks in the
 			// WAL entry). Other blocks may have been overwritten by newer
 			// writes and their dirty map entries point elsewhere.
 			if e.Lba < entry.LBA {
-				continue // LBA mismatch — stale entry
+				continue // LBA mismatch --stale entry
 			}
 			blockIdx := e.Lba - entry.LBA
 			dataStart := blockIdx * uint64(f.blockSize)

@@ -120,8 +120,8 @@ func createReplicaPair(t *testing.T) (primary, replica *BlockVol) {
 // --- QA-4A-CP2-1: Frame Protocol Adversarial ---
 
 func testQAFrameMaxPayloadBoundary(t *testing.T) {
-	// Payload exactly at maxFramePayload → should succeed.
-	// Payload at maxFramePayload+1 → ReadFrame must return ErrFrameTooLarge.
+	// Payload exactly at maxFramePayload -> should succeed.
+	// Payload at maxFramePayload+1 -> ReadFrame must return ErrFrameTooLarge.
 
 	// Test at boundary: we can't allocate 256MB in a test, but we can test
 	// the ReadFrame parser with a crafted header.
@@ -144,7 +144,7 @@ func testQAFrameMaxPayloadBoundary(t *testing.T) {
 	hdr[0] = MsgWALEntry
 	bigEndianPut32(hdr[1:5], uint32(maxFramePayload))
 	buf.Write(hdr)
-	// No payload data → ReadFrame should return io.ErrUnexpectedEOF (not ErrFrameTooLarge).
+	// No payload data -> ReadFrame should return io.ErrUnexpectedEOF (not ErrFrameTooLarge).
 	_, _, err = ReadFrame(&buf)
 	if errors.Is(err, ErrFrameTooLarge) {
 		t.Error("payload exactly at maxFramePayload should not be rejected as too large")
@@ -156,7 +156,7 @@ func testQAFrameMaxPayloadBoundary(t *testing.T) {
 }
 
 func testQAFrameTruncatedHeader(t *testing.T) {
-	// Only 3 bytes (< 5 byte header) → ReadFrame must return error.
+	// Only 3 bytes (< 5 byte header) -> ReadFrame must return error.
 	buf := bytes.NewReader([]byte{0x01, 0x00, 0x00})
 	_, _, err := ReadFrame(buf)
 	if err == nil {
@@ -209,7 +209,7 @@ func testQAFrameZeroPayload(t *testing.T) {
 func testQAFrameConcurrentWrites(t *testing.T) {
 	// Multiple goroutines writing frames to the same connection.
 	// Frames must not interleave (each frame readable as a complete unit).
-	// This relies on the WALShipper's mutex — test at the connection level.
+	// This relies on the WALShipper's mutex -- test at the connection level.
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
@@ -304,7 +304,7 @@ func testQAShipperBarrierAfterDegraded(t *testing.T) {
 }
 
 func testQAShipperStaleEpochNoShippedLSN(t *testing.T) {
-	// Ship with epoch != current → entry silently dropped, shippedLSN unchanged.
+	// Ship with epoch != current -> entry silently dropped, shippedLSN unchanged.
 	currentEpoch := uint64(5)
 	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return currentEpoch })
 
@@ -333,14 +333,14 @@ func testQAShipperDegradedPermanent(t *testing.T) {
 			if err != nil {
 				return
 			}
-			conn.Close() // immediately close → Ship will get write error
+			conn.Close() // immediately close -> Ship will get write error
 		}
 	}()
 
 	s := NewWALShipper(ln.Addr().String(), ln.Addr().String(), func() uint64 { return 1 })
 	defer s.Stop()
 
-	// Ship triggers connection → immediate close → write error → degraded.
+	// Ship triggers connection -> immediate close -> write error -> degraded.
 	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('D')}
 	_ = s.Ship(entry) // first attempt may or may not degrade
 	_ = s.Ship(entry) // second attempt more likely to hit closed conn
@@ -359,7 +359,7 @@ func testQAShipperDegradedPermanent(t *testing.T) {
 	}
 	lsnAfter := s.ShippedLSN()
 	if lsnAfter > lsnBefore {
-		t.Errorf("ShippedLSN advanced from %d to %d after degradation — should not ship when degraded", lsnBefore, lsnAfter)
+		t.Errorf("ShippedLSN advanced from %d to %d after degradation -- should not ship when degraded", lsnBefore, lsnAfter)
 	}
 
 	// Barrier must immediately return ErrReplicaDegraded.
@@ -370,7 +370,7 @@ func testQAShipperDegradedPermanent(t *testing.T) {
 }
 
 func testQAShipperConcurrentShipStop(t *testing.T) {
-	// Ship and Stop from concurrent goroutines → no deadlock, no panic.
+	// Ship and Stop from concurrent goroutines -> no deadlock, no panic.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -423,10 +423,10 @@ func testQAShipperConcurrentShipStop(t *testing.T) {
 
 func testQAReceiverOutOfOrderLSN(t *testing.T) {
 	// Tests contiguity enforcement:
-	// 1. Contiguous LSN=1..5 → all applied
-	// 2. Duplicate LSN=3 → skipped
-	// 3. Gap LSN=7 (skipping 6) → rejected
-	// 4. Correct next LSN=6 → accepted
+	// 1. Contiguous LSN=1..5 -> all applied
+	// 2. Duplicate LSN=3 -> skipped
+	// 3. Gap LSN=7 (skipping 6) -> rejected
+	// 4. Correct next LSN=6 -> accepted
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 5 * time.Millisecond
@@ -455,7 +455,7 @@ func testQAReceiverOutOfOrderLSN(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Case 1: Contiguous LSN=1..5 → all applied.
+	// Case 1: Contiguous LSN=1..5 -> all applied.
 	for lsn := uint64(1); lsn <= 5; lsn++ {
 		entry := &WALEntry{LSN: lsn, Epoch: 1, Type: EntryTypeWrite, LBA: lsn - 1, Length: 4096, Data: makeBlock(byte('A' + lsn))}
 		encoded, _ := entry.Encode()
@@ -468,7 +468,7 @@ func testQAReceiverOutOfOrderLSN(t *testing.T) {
 		t.Fatalf("ReceivedLSN = %d after LSN 1-5, want 5", recv.ReceivedLSN())
 	}
 
-	// Case 2: Duplicate LSN=3 → skipped.
+	// Case 2: Duplicate LSN=3 -> skipped.
 	entry3 := &WALEntry{LSN: 3, Epoch: 1, Type: EntryTypeWrite, LBA: 2, Length: 4096, Data: makeBlock('Z')}
 	encoded3, _ := entry3.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encoded3); err != nil {
@@ -479,7 +479,7 @@ func testQAReceiverOutOfOrderLSN(t *testing.T) {
 		t.Errorf("ReceivedLSN = %d after duplicate LSN=3, want 5", recv.ReceivedLSN())
 	}
 
-	// Case 3: Gap LSN=7 (skips 6) → rejected by contiguity check.
+	// Case 3: Gap LSN=7 (skips 6) -> rejected by contiguity check.
 	entry7 := &WALEntry{LSN: 7, Epoch: 1, Type: EntryTypeWrite, LBA: 6, Length: 4096, Data: makeBlock('G')}
 	encoded7, _ := entry7.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encoded7); err != nil {
@@ -490,7 +490,7 @@ func testQAReceiverOutOfOrderLSN(t *testing.T) {
 		t.Errorf("ReceivedLSN = %d after gap LSN=7, want 5 (gap must be rejected)", recv.ReceivedLSN())
 	}
 
-	// Case 4: Correct next LSN=6 → accepted.
+	// Case 4: Correct next LSN=6 -> accepted.
 	entry6 := &WALEntry{LSN: 6, Epoch: 1, Type: EntryTypeWrite, LBA: 5, Length: 4096, Data: makeBlock('F')}
 	encoded6, _ := entry6.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encoded6); err != nil {
@@ -550,7 +550,7 @@ func testQAReceiverConcurrentDataConns(t *testing.T) {
 		t.Errorf("ReceivedLSN = %d after 40 contiguous entries, want 40", got)
 	}
 
-	// Second connection sending a duplicate LSN=5 → must be skipped.
+	// Second connection sending a duplicate LSN=5 -> must be skipped.
 	conn2, err := net.Dial("tcp", recv.DataAddr())
 	if err != nil {
 		t.Fatalf("dial conn2: %v", err)
@@ -571,7 +571,7 @@ func testQAReceiverConcurrentDataConns(t *testing.T) {
 
 func testQAReceiverFutureEpochRejected(t *testing.T) {
 	// R1 fix: replica must reject entries with epoch > local (not just <).
-	// A future epoch in the WAL stream is a protocol violation — only master
+	// A future epoch in the WAL stream is a protocol violation -- only master
 	// can bump epochs via SetEpoch.
 	dir := t.TempDir()
 	cfg := DefaultConfig()
@@ -601,7 +601,7 @@ func testQAReceiverFutureEpochRejected(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Send entry with stale epoch=3 → rejected.
+	// Send entry with stale epoch=3 -> rejected.
 	stale := &WALEntry{LSN: 1, Epoch: 3, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('S')}
 	encodedStale, _ := stale.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encodedStale); err != nil {
@@ -612,7 +612,7 @@ func testQAReceiverFutureEpochRejected(t *testing.T) {
 		t.Errorf("ReceivedLSN = %d after stale epoch entry, want 0", recv.ReceivedLSN())
 	}
 
-	// Send entry with future epoch=10 → also rejected (R1 fix).
+	// Send entry with future epoch=10 -> also rejected (R1 fix).
 	future := &WALEntry{LSN: 1, Epoch: 10, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('F')}
 	encodedFuture, _ := future.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encodedFuture); err != nil {
@@ -623,7 +623,7 @@ func testQAReceiverFutureEpochRejected(t *testing.T) {
 		t.Errorf("ReceivedLSN = %d after future epoch entry, want 0 (future epoch must be rejected)", recv.ReceivedLSN())
 	}
 
-	// Send entry with correct epoch=5 → accepted.
+	// Send entry with correct epoch=5 -> accepted.
 	correct := &WALEntry{LSN: 1, Epoch: 5, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('C')}
 	encodedCorrect, _ := correct.Encode()
 	if err := WriteFrame(conn, MsgWALEntry, encodedCorrect); err != nil {
@@ -636,7 +636,7 @@ func testQAReceiverFutureEpochRejected(t *testing.T) {
 }
 
 func testQAReceiverBarrierEpochMismatch(t *testing.T) {
-	// Barrier with wrong epoch → immediate BarrierEpochMismatch (no wait).
+	// Barrier with wrong epoch -> immediate BarrierEpochMismatch (no wait).
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 100 * time.Millisecond
@@ -665,7 +665,7 @@ func testQAReceiverBarrierEpochMismatch(t *testing.T) {
 	}
 	defer ctrlConn.Close()
 
-	// Barrier with stale epoch=3 → immediate EpochMismatch.
+	// Barrier with stale epoch=3 -> immediate EpochMismatch.
 	req := EncodeBarrierRequest(BarrierRequest{LSN: 1, Epoch: 3})
 	start := time.Now()
 	if err := WriteFrame(ctrlConn, MsgBarrierReq, req); err != nil {
@@ -686,7 +686,7 @@ func testQAReceiverBarrierEpochMismatch(t *testing.T) {
 		t.Errorf("epoch mismatch barrier took %v, expected immediate response", elapsed)
 	}
 
-	// Barrier with future epoch=99 → also immediate EpochMismatch.
+	// Barrier with future epoch=99 -> also immediate EpochMismatch.
 	req2 := EncodeBarrierRequest(BarrierRequest{LSN: 1, Epoch: 99})
 	if err := WriteFrame(ctrlConn, MsgBarrierReq, req2); err != nil {
 		t.Fatalf("send barrier future: %v", err)
@@ -703,7 +703,7 @@ func testQAReceiverBarrierEpochMismatch(t *testing.T) {
 }
 
 func testQAReceiverBarrierBeforeEntries(t *testing.T) {
-	// Barrier arrives BEFORE data entries → must wait, then succeed when entries arrive.
+	// Barrier arrives BEFORE data entries -> must wait, then succeed when entries arrive.
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 5 * time.Millisecond
@@ -751,7 +751,7 @@ func testQAReceiverBarrierBeforeEntries(t *testing.T) {
 	case resp := <-barrierDone:
 		t.Fatalf("barrier returned immediately with status %d, expected it to wait", resp.Status)
 	case <-time.After(50 * time.Millisecond):
-		// Good — barrier is waiting.
+		// Good -- barrier is waiting.
 	}
 
 	// Now send entries LSN=1,2,3.
@@ -781,7 +781,7 @@ func testQAReceiverBarrierBeforeEntries(t *testing.T) {
 }
 
 func testQAReceiverBarrierTimeoutNoEntries(t *testing.T) {
-	// Barrier for LSN=999 with no entries → must timeout (not hang forever).
+	// Barrier for LSN=999 with no entries -> must timeout (not hang forever).
 	// Uses short configurable barrierTimeout for fast test.
 	dir := t.TempDir()
 	cfg := DefaultConfig()
@@ -834,7 +834,7 @@ func testQAReceiverBarrierTimeoutNoEntries(t *testing.T) {
 }
 
 func testQAReceiverStopUnblocksBarrier(t *testing.T) {
-	// Barrier waiting for entries → Stop called → barrier must return (not hang).
+	// Barrier waiting for entries -> Stop called -> barrier must return (not hang).
 	dir := t.TempDir()
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 100 * time.Millisecond
@@ -877,8 +877,8 @@ func testQAReceiverStopUnblocksBarrier(t *testing.T) {
 	ctrlConn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, payload, err := ReadFrame(ctrlConn)
 	if err != nil {
-		// Connection closed by Stop → also acceptable.
-		t.Logf("barrier read after Stop: %v (connection closed — acceptable)", err)
+		// Connection closed by Stop -> also acceptable.
+		t.Logf("barrier read after Stop: %v (connection closed -- acceptable)", err)
 		return
 	}
 	if payload[0] != BarrierTimeout {
@@ -889,7 +889,7 @@ func testQAReceiverStopUnblocksBarrier(t *testing.T) {
 // --- QA-4A-CP2-4: DistributedSync Adversarial ---
 
 func testQADSyncLocalFailReturnsError(t *testing.T) {
-	// Local fsync fails → must return error regardless of remote result.
+	// Local fsync fails -> must return error regardless of remote result.
 	localErr := errors.New("disk on fire")
 
 	vol := &BlockVol{}
@@ -897,7 +897,7 @@ func testQADSyncLocalFailReturnsError(t *testing.T) {
 
 	syncFn := MakeDistributedSync(
 		func() error { return localErr },
-		nil, // no shipper → local only
+		nil, // no shipper -> local only
 		vol,
 	)
 
@@ -908,7 +908,7 @@ func testQADSyncLocalFailReturnsError(t *testing.T) {
 }
 
 func testQADSyncRemoteFailDegrades(t *testing.T) {
-	// Remote barrier fails → local succeeded → must return nil + degrade shipper.
+	// Remote barrier fails -> local succeeded -> must return nil + degrade shipper.
 	primary, replica := createReplicaPair(t)
 	defer primary.Close()
 	defer replica.Close()
@@ -929,9 +929,9 @@ func testQADSyncRemoteFailDegrades(t *testing.T) {
 	}
 	primary.shipper.ctrlMu.Unlock()
 
-	// SyncCache triggers distributed sync → barrier fails → degrade.
+	// SyncCache triggers distributed sync -> barrier fails -> degrade.
 	err := primary.SyncCache()
-	// Should succeed (local fsync succeeded, remote degraded — returned nil).
+	// Should succeed (local fsync succeeded, remote degraded -- returned nil).
 	if err != nil {
 		t.Errorf("SyncCache after replica stop: got %v, want nil (local succeeded, remote should degrade silently)", err)
 	}
@@ -943,7 +943,7 @@ func testQADSyncRemoteFailDegrades(t *testing.T) {
 }
 
 func testQADSyncBothFail(t *testing.T) {
-	// Both local and remote fail → must return local error.
+	// Both local and remote fail -> must return local error.
 	localErr := errors.New("local disk fail")
 
 	vol := &BlockVol{}
@@ -1011,14 +1011,14 @@ func testQADSyncParallelExecution(t *testing.T) {
 
 	// Verify local fsync actually ran (not skipped).
 	if localStart.Load() == 0 {
-		t.Error("local fsync was never called — distributed sync may have fallen back to local-only")
+		t.Error("local fsync was never called -- distributed sync may have fallen back to local-only")
 	}
 }
 
 // --- QA-4A-CP2-5: End-to-end Adversarial ---
 
 func testQAE2EReplicaDataMatchesPrimary(t *testing.T) {
-	// Write N blocks on primary → verify replica has identical data via ReadLBA.
+	// Write N blocks on primary -> verify replica has identical data via ReadLBA.
 	primary, replica := createReplicaPair(t)
 	defer primary.Close()
 	defer replica.Close()
@@ -1059,7 +1059,7 @@ func testQAE2EReplicaDataMatchesPrimary(t *testing.T) {
 }
 
 func testQAE2EClosePrimaryDuringShip(t *testing.T) {
-	// Close primary while writes + shipping in progress → no hang, no panic.
+	// Close primary while writes + shipping in progress -> no hang, no panic.
 	primary, replica := createReplicaPair(t)
 	defer replica.Close()
 
@@ -1072,7 +1072,7 @@ func testQAE2EClosePrimaryDuringShip(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			err := primary.WriteLBA(uint64(i%256), makeBlock(byte('W')))
 			if err != nil {
-				return // closed or WAL full — expected
+				return // closed or WAL full -- expected
 			}
 		}
 	}()

@@ -228,7 +228,7 @@ func (w *WALWriter) ScanFrom(fd *os.File, walOffset uint64,
 
 		// Need at least a header to proceed.
 		if remaining < uint64(walEntryHeaderSize) {
-			// Too small for a header — skip padding at end of region.
+			// Too small for a header -- skip padding at end of region.
 			pos += remaining
 			continue
 		}
@@ -272,7 +272,7 @@ func (w *WALWriter) ScanFrom(fd *os.File, walOffset uint64,
 
 		entry, err := DecodeWALEntry(fullBuf)
 		if err != nil {
-			// CRC failure — stop scanning (torn write).
+			// CRC failure -- stop scanning (torn write).
 			return nil
 		}
 

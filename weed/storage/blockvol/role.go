@@ -81,7 +81,7 @@ func (v *BlockVol) SetRole(r Role) error {
 			}
 			return nil
 		}
-		// CAS failed — another goroutine changed the role; retry.
+		// CAS failed -- another goroutine changed the role; retry.
 	}
 }
 

@@ -207,7 +207,7 @@ func testQAEpochSetDuringWrite(t *testing.T) {
 		t.Fatal("epoch_set_during_write hung for 10s")
 	}
 
-	// Close and reopen — verify no corruption and epoch in expected range.
+	// Close and reopen -- verify no corruption and epoch in expected range.
 	path := v.Path()
 	v.Close()
 
@@ -266,7 +266,7 @@ func testQAEpochMaxUint64(t *testing.T) {
 }
 
 func testQAEpochReopenAfterConcurrentSets(t *testing.T) {
-	// BUG-4A-3: concurrent SetEpoch → close → reopen → verify no corruption.
+	// BUG-4A-3: concurrent SetEpoch -> close -> reopen -> verify no corruption.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "epoch_reopen.blockvol")
 
@@ -336,20 +336,20 @@ func testQAEpochReopenAfterConcurrentSets(t *testing.T) {
 // --- QA-4A-2: Lease Adversarial ---
 
 func testQALeaseGrantZeroTTL(t *testing.T) {
-	// BUG-4A-5: Grant(0) stores time.Now() — immediately expired.
+	// BUG-4A-5: Grant(0) stores time.Now() -- immediately expired.
 	var l Lease
 	l.Grant(0)
 	if l.IsValid() {
 		t.Error("Grant(0): IsValid() = true, want false (immediately expired)")
 	}
 
-	// Grant(1ns) — may or may not be valid, but must not panic.
+	// Grant(1ns) -- may or may not be valid, but must not panic.
 	l.Grant(time.Nanosecond)
 	_ = l.IsValid() // just verify no panic
 }
 
 func testQALeaseGrantNegativeTTL(t *testing.T) {
-	// BUG-4A-5: Grant(-1s) stores past time — always expired.
+	// BUG-4A-5: Grant(-1s) stores past time -- always expired.
 	var l Lease
 	l.Grant(-1 * time.Second)
 	if l.IsValid() {
@@ -507,7 +507,7 @@ func testQARoleConcurrentTransitions(t *testing.T) {
 	v := createFencedVol(t)
 	defer v.Close()
 
-	// Get to Stale: Primary → Draining → Stale.
+	// Get to Stale: Primary -> Draining -> Stale.
 	if err := v.SetRole(RoleDraining); err != nil {
 		t.Fatalf("SetRole(Draining): %v", err)
 	}
@@ -536,10 +536,10 @@ func testQARoleConcurrentTransitions(t *testing.T) {
 		errA, errB, finalRole)
 
 	if errA == nil && errB == nil {
-		t.Error("BUG-4A-2 REGRESSION: both transitions succeeded — CAS not working")
+		t.Error("BUG-4A-2 REGRESSION: both transitions succeeded -- CAS not working")
 	}
 	if errA != nil && errB != nil {
-		t.Error("both transitions failed — unexpected, at least one should succeed")
+		t.Error("both transitions failed -- unexpected, at least one should succeed")
 	}
 	if finalRole != RoleRebuilding && finalRole != RoleReplica {
 		t.Errorf("final role = %s, want Rebuilding or Replica", finalRole)
@@ -555,7 +555,7 @@ func testQARoleRapidCycle100x(t *testing.T) {
 		callbackCount.Add(1)
 	})
 
-	// Full cycle: Primary→Draining→Stale→Rebuilding→Replica→Primary
+	// Full cycle: Primary->Draining->Stale->Rebuilding->Replica->Primary
 	cycle := []Role{RoleDraining, RoleStale, RoleRebuilding, RoleReplica, RolePrimary}
 
 	const rounds = 100
@@ -589,7 +589,7 @@ func testQARoleCallbackPanicRecovery(t *testing.T) {
 		panic("callback panic!")
 	})
 
-	// SetRole(Draining) — callback panics but safeCallback recovers it.
+	// SetRole(Draining) -- callback panics but safeCallback recovers it.
 	// SetRole should return nil (CAS succeeded), not propagate the panic.
 	err := v.SetRole(RoleDraining)
 	if err != nil {
@@ -657,7 +657,7 @@ func testQARoleUnknownValue(t *testing.T) {
 		t.Errorf("writeGate with role=255: got %v, want ErrNotPrimary", err)
 	}
 
-	// SetRole(Primary) from unknown role — not in transition table.
+	// SetRole(Primary) from unknown role -- not in transition table.
 	err = v.SetRole(RolePrimary)
 	if !errors.Is(err, ErrInvalidRoleTransition) {
 		t.Errorf("SetRole(Primary) from role=255: got %v, want ErrInvalidRoleTransition", err)
@@ -740,7 +740,7 @@ func testQAGateEpochBumpDuringWrite(t *testing.T) {
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: 1 * 1024 * 1024,
 		BlockSize:  4096,
-		WALSize:    1 * 1024 * 1024, // 1MB WAL — plenty of room
+		WALSize:    1 * 1024 * 1024, // 1MB WAL -- plenty of room
 	}, cfg)
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
@@ -794,7 +794,7 @@ func testQAGateEpochBumpDuringWrite(t *testing.T) {
 		t.Fatal("gate_epoch_bump_during_write hung for 10s")
 	}
 
-	// After bump, both epochs are 2 — writes must succeed.
+	// After bump, both epochs are 2 -- writes must succeed.
 	if v.Epoch() != 2 {
 		t.Errorf("Epoch() = %d after bump, want 2", v.Epoch())
 	}
@@ -807,7 +807,7 @@ func testQAGateLeaseExpireDuringWrite(t *testing.T) {
 	v := createFencedVol(t)
 	defer v.Close()
 
-	// Short lease — write in a loop that spans the expiry window.
+	// Short lease -- write in a loop that spans the expiry window.
 	v.lease.Grant(10 * time.Millisecond)
 
 	var succeeded, expired int
@@ -833,10 +833,10 @@ loop:
 	t.Logf("lease expire: %d succeeded, %d expired (out of %d)", succeeded, expired, i)
 
 	if expired == 0 {
-		t.Error("no writes expired — lease didn't expire in time?")
+		t.Error("no writes expired -- lease didn't expire in time?")
 	}
 	if succeeded == 0 {
-		t.Error("no writes succeeded — lease expired immediately?")
+		t.Error("no writes succeeded -- lease expired immediately?")
 	}
 
 	// Verify monotonicity: once expired, no more successes.
@@ -939,7 +939,7 @@ func testQAGateGotchaA(t *testing.T) {
 	// Grant a short lease.
 	v.lease.Grant(50 * time.Millisecond)
 
-	// Write data (succeeds — lease still valid).
+	// Write data (succeeds -- lease still valid).
 	if err := v.WriteLBA(0, makeBlock('G')); err != nil {
 		t.Fatalf("WriteLBA: %v", err)
 	}
@@ -947,7 +947,7 @@ func testQAGateGotchaA(t *testing.T) {
 	// Wait for lease to expire.
 	time.Sleep(100 * time.Millisecond)
 
-	// SyncCache must fail — PostSyncCheck calls writeGate, which checks lease.
+	// SyncCache must fail -- PostSyncCheck calls writeGate, which checks lease.
 	err := v.SyncCache()
 	if !errors.Is(err, ErrLeaseExpired) {
 		t.Errorf("SyncCache after lease expiry: got %v, want ErrLeaseExpired (Gotcha A)", err)
@@ -991,7 +991,7 @@ func testQAFencingFullCycle(t *testing.T) {
 		}
 	}
 
-	// Primary → Draining — writes should fail.
+	// Primary -> Draining -- writes should fail.
 	if err := v.SetRole(RoleDraining); err != nil {
 		t.Fatalf("SetRole(Draining): %v", err)
 	}
@@ -999,7 +999,7 @@ func testQAFencingFullCycle(t *testing.T) {
 		t.Errorf("write as Draining: got %v, want ErrNotPrimary", err)
 	}
 
-	// Draining → Stale — writes rejected.
+	// Draining -> Stale -- writes rejected.
 	if err := v.SetRole(RoleStale); err != nil {
 		t.Fatalf("SetRole(Stale): %v", err)
 	}
@@ -1007,7 +1007,7 @@ func testQAFencingFullCycle(t *testing.T) {
 		t.Errorf("write as Stale: got %v, want ErrNotPrimary", err)
 	}
 
-	// Bump epoch, transition through Rebuilding → Replica.
+	// Bump epoch, transition through Rebuilding -> Replica.
 	if err := v.SetEpoch(2); err != nil {
 		t.Fatalf("SetEpoch(2): %v", err)
 	}
@@ -1027,7 +1027,7 @@ func testQAFencingFullCycle(t *testing.T) {
 		t.Errorf("write as Replica: got %v, want ErrNotPrimary", err)
 	}
 
-	// Replica → Primary with fresh lease — writes succeed again.
+	// Replica -> Primary with fresh lease -- writes succeed again.
 	if err := v.SetRole(RolePrimary); err != nil {
 		t.Fatalf("SetRole(Primary): %v", err)
 	}
@@ -1047,7 +1047,7 @@ func testQAFencingFullCycle(t *testing.T) {
 			t.Errorf("final LBA %d: data[0] = %c, want %c", i, data[0], byte('A'+i%26))
 		}
 	}
-	t.Log("full cycle: Primary→Draining→Stale→Rebuilding→Replica→Primary complete")
+	t.Log("full cycle: Primary->Draining->Stale->Rebuilding->Replica->Primary complete")
 }
 
 func testQAFencingWritesRejectedAfterDemotion(t *testing.T) {
@@ -1062,7 +1062,7 @@ func testQAFencingWritesRejectedAfterDemotion(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	// Revoke lease → ErrLeaseExpired.
+	// Revoke lease -> ErrLeaseExpired.
 	v.lease.Revoke()
 	err := v.WriteLBA(1, makeBlock('X'))
 	if !errors.Is(err, ErrLeaseExpired) {
@@ -1072,7 +1072,7 @@ func testQAFencingWritesRejectedAfterDemotion(t *testing.T) {
 	// Re-grant lease for role checks, then demote.
 	v.lease.Grant(10 * time.Second)
 
-	// Primary → Draining → ErrNotPrimary.
+	// Primary -> Draining -> ErrNotPrimary.
 	if err := v.SetRole(RoleDraining); err != nil {
 		t.Fatalf("SetRole(Draining): %v", err)
 	}
@@ -1081,7 +1081,7 @@ func testQAFencingWritesRejectedAfterDemotion(t *testing.T) {
 		t.Errorf("after Draining: got %v, want ErrNotPrimary", err)
 	}
 
-	// Draining → Stale → ErrNotPrimary.
+	// Draining -> Stale -> ErrNotPrimary.
 	if err := v.SetRole(RoleStale); err != nil {
 		t.Fatalf("SetRole(Stale): %v", err)
 	}
@@ -1150,11 +1150,11 @@ func testQAFencingReadAlwaysWorks(t *testing.T) {
 	}
 	verifyReads("Replica")
 
-	// Expired lease — reads still work.
+	// Expired lease -- reads still work.
 	v.lease.Revoke()
 	verifyReads("expired_lease")
 
-	// Stale epoch — reads still work.
+	// Stale epoch -- reads still work.
 	v.SetMasterEpoch(999)
 	verifyReads("stale_epoch")
 

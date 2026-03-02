@@ -37,7 +37,7 @@ func MakeDistributedSync(walSync func() error, shipper *WALShipper, vol *BlockVo
 			return localErr
 		}
 		if remoteErr != nil {
-			// Local succeeded, replica failed — degrade but don't fail the client.
+			// Local succeeded, replica failed --degrade but don't fail the client.
 			vol.degradeReplica(remoteErr)
 			return nil
 		}

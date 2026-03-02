@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sw-block-attach.sh — Discover and attach a SeaweedFS block volume via iSCSI
+# sw-block-attach.sh -- Discover and attach a SeaweedFS block volume via iSCSI
 #
 # Prerequisites:
 #   - Linux host with iscsiadm (open-iscsi) installed

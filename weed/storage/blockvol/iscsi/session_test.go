@@ -285,7 +285,7 @@ func testLogout(t *testing.T) {
 	}
 
 	// After logout, the connection should be closed by the target.
-	// Verify by trying to read — should get EOF.
+	// Verify by trying to read -- should get EOF.
 	_, err = ReadPDU(env.clientConn)
 	if err == nil {
 		t.Fatal("expected EOF after logout")
@@ -512,7 +512,7 @@ func testRXTXWriteWithR2T(t *testing.T) {
 	env := setupSession(t)
 	doLogin(t, env.clientConn)
 
-	// Write without immediate data — should trigger R2T + Data-Out.
+	// Write without immediate data -- should trigger R2T + Data-Out.
 	cmd := &PDU{}
 	cmd.SetOpcode(OpSCSICmd)
 	cmd.SetOpSpecific1(FlagF | FlagW) // no immediate data
@@ -794,7 +794,7 @@ func testRXTXConnDropReader(t *testing.T) {
 	env := setupSession(t)
 	doLogin(t, env.clientConn)
 
-	// Close client conn — reader should detect EOF.
+	// Close client conn -- reader should detect EOF.
 	env.clientConn.Close()
 
 	select {
@@ -829,7 +829,7 @@ func testRXTXConnDropWriter(t *testing.T) {
 	// Session should exit.
 	select {
 	case <-done:
-		// Good — session exited.
+		// Good -- session exited.
 	case <-time.After(2 * time.Second):
 		t.Fatal("session did not exit after server-side close")
 	}
@@ -843,7 +843,7 @@ func testRXTXR2TStatSNFresh(t *testing.T) {
 	env := setupSession(t)
 	doLogin(t, env.clientConn)
 
-	// Send a NOP-Out (immediate) — its NOP-In response will consume one StatSN.
+	// Send a NOP-Out (immediate) -- its NOP-In response will consume one StatSN.
 	nop := &PDU{}
 	nop.SetOpcode(OpNOPOut)
 	nop.SetOpSpecific1(FlagF)
@@ -881,7 +881,7 @@ func testRXTXR2TStatSNFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Read R2T — its StatSN should be nopStatSN+1 (fresh, not stale).
+	// Read R2T -- its StatSN should be nopStatSN+1 (fresh, not stale).
 	r2t, err := ReadPDU(env.clientConn)
 	if err != nil {
 		t.Fatal(err)
@@ -910,7 +910,7 @@ func testRXTXR2TStatSNFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Read SCSI response — its StatSN should be nopStatSN+1 (R2T didn't increment).
+	// Read SCSI response -- its StatSN should be nopStatSN+1 (R2T didn't increment).
 	resp, err := ReadPDU(env.clientConn)
 	if err != nil {
 		t.Fatal(err)
@@ -941,7 +941,7 @@ func testRXTXTxErrorExitsClean(t *testing.T) {
 
 	doLogin(t, client)
 
-	// Close the server side — this makes txLoop's WritePDU fail.
+	// Close the server side -- this makes txLoop's WritePDU fail.
 	server.Close()
 
 	// Send something from client side so rxLoop dispatches and enqueues a response.
@@ -965,9 +965,9 @@ func testRXTXTxErrorExitsClean(t *testing.T) {
 	// Verify txDone is closed (no goroutine leak).
 	select {
 	case <-sess.txDone:
-		// Good — txLoop exited.
+		// Good -- txLoop exited.
 	default:
-		t.Fatal("txDone not closed — txLoop may be leaked")
+		t.Fatal("txDone not closed -- txLoop may be leaked")
 	}
 
 	client.Close()
@@ -994,7 +994,7 @@ func testRXTXLoginPhaseReject(t *testing.T) {
 		client.Close()
 	}()
 
-	// Send a TextReq before login — should get a Reject (inline, not buffered).
+	// Send a TextReq before login -- should get a Reject (inline, not buffered).
 	textParams := NewParams()
 	textParams.Set("SendTargets", "All")
 	textReq := makeTextReq(textParams)
@@ -1087,7 +1087,7 @@ func testRXTXPendingQueueOverflow(t *testing.T) {
 	// Session should exit with an error (pending queue overflow).
 	select {
 	case <-env.done:
-		// Good — session exited.
+		// Good -- session exited.
 	case <-time.After(3 * time.Second):
 		t.Fatal("session did not exit after pending overflow")
 	}
@@ -1134,6 +1134,6 @@ func testRXTXDataOutTimeout(t *testing.T) {
 	case err := <-env.done:
 		t.Logf("session exited: %v", err)
 	case <-time.After(3 * time.Second):
-		t.Fatal("session did not time out — DataOutTimeout not working")
+		t.Fatal("session did not time out -- DataOutTimeout not working")
 	}
 }

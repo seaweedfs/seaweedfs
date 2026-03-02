@@ -165,7 +165,7 @@ func testDataPadding(t *testing.T) {
 
 func testOpcodeAccessors(t *testing.T) {
 	p := &PDU{}
-	// Set immediate first, then opcode — verify no interference
+	// Set immediate first, then opcode -- verify no interference
 	p.SetImmediate(true)
 	p.SetOpcode(OpLoginReq)
 	if p.Opcode() != OpLoginReq {
@@ -411,7 +411,7 @@ func testOpcodeName(t *testing.T) {
 }
 
 func testReadTruncatedBHS(t *testing.T) {
-	// Only 20 bytes — not enough for BHS
+	// Only 20 bytes -- not enough for BHS
 	buf := bytes.NewReader(make([]byte, 20))
 	_, err := ReadPDU(buf)
 	if err == nil {

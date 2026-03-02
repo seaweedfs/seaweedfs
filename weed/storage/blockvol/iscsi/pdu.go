@@ -11,7 +11,7 @@ import (
 // RFC 7143, Section 12.1
 const BHSLength = 48
 
-// Opcode constants — initiator opcodes (RFC 7143, Section 12.1.1)
+// Opcode constants -- initiator opcodes (RFC 7143, Section 12.1.1)
 const (
 	OpNOPOut        uint8 = 0x00
 	OpSCSICmd       uint8 = 0x01

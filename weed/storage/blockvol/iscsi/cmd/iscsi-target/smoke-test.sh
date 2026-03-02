@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-test.sh — iscsiadm smoke test for SeaweedFS iSCSI target
+# smoke-test.sh -- iscsiadm smoke test for SeaweedFS iSCSI target
 #
 # Prerequisites:
 #   - Linux host with iscsiadm (open-iscsi) installed
@@ -122,7 +122,7 @@ log "Login OK"
 sleep 2
 ISCSI_DEV=$(iscsiadm -m session -P 3 2>/dev/null | grep "Attached scsi disk" | awk '{print $4}' | head -1)
 if [[ -z "$ISCSI_DEV" ]]; then
-    warn "Could not determine attached device — trying /dev/sdb"
+    warn "Could not determine attached device -- trying /dev/sdb"
     ISCSI_DEV="sdb"
 fi
 DEV_PATH="/dev/$ISCSI_DEV"
@@ -158,7 +158,7 @@ rm -f /tmp/iscsi-smoke-pattern /tmp/iscsi-smoke-readback
 # -------------------------------------------------------
 log "Creating ext4 filesystem..."
 mkfs.ext4 -F -q "$DEV_PATH" || {
-    warn "mkfs.ext4 failed — skipping filesystem tests"
+    warn "mkfs.ext4 failed -- skipping filesystem tests"
     # Still consider the test a pass if dd worked
     log "SMOKE TEST PASSED (dd only, mkfs skipped)"
     exit 0

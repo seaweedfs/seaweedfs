@@ -40,7 +40,7 @@ func TestBugCollectDataOutNoTimeout(t *testing.T) {
 	binary.BigEndian.PutUint32(cdb[2:6], 0) // LBA 0
 	binary.BigEndian.PutUint16(cdb[7:9], 1) // 1 block
 	cmd.SetCDB(cdb)
-	// No DataSegment — forces R2T.
+	// No DataSegment -- forces R2T.
 
 	if err := WritePDU(env.clientConn, cmd); err != nil {
 		t.Fatalf("WritePDU: %v", err)
@@ -56,7 +56,7 @@ func TestBugCollectDataOutNoTimeout(t *testing.T) {
 	}
 
 	// DO NOT send Data-Out. The session should time out and close.
-	// Currently it blocks forever in collectDataOut → ReadPDU(s.conn).
+	// Currently it blocks forever in collectDataOut -> ReadPDU(s.conn).
 
 	select {
 	case err := <-env.done:

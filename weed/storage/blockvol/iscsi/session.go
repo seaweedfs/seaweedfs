@@ -370,7 +370,7 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	isRead := flags&FlagR != 0
 	expectedLen := pdu.ExpectedDataTransferLength()
 
-	// Handle write commands — collect data
+	// Handle write commands -- collect data
 	var dataOut []byte
 	if isWrite && expectedLen > 0 {
 		collector := NewDataOutCollector(expectedLen)

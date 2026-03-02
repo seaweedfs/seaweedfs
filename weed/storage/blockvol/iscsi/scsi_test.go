@@ -759,7 +759,7 @@ func testWriteSame16Pattern(t *testing.T) {
 
 	var cdb [16]byte
 	cdb[0] = ScsiWriteSame16
-	// No UNMAP, no NDOB — normal write same
+	// No UNMAP, no NDOB -- normal write same
 	binary.BigEndian.PutUint64(cdb[2:10], 30)
 	binary.BigEndian.PutUint32(cdb[10:14], 3)
 
@@ -785,7 +785,7 @@ func testWriteSame16Zeros(t *testing.T) {
 	dev.blocks[40] = make([]byte, 4096)
 	dev.blocks[40][0] = 0xFF
 
-	// WRITE SAME with all-zero pattern — should use Trim for efficiency
+	// WRITE SAME with all-zero pattern -- should use Trim for efficiency
 	pattern := make([]byte, 4096)
 	var cdb [16]byte
 	cdb[0] = ScsiWriteSame16

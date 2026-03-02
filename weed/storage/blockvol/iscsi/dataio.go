@@ -33,7 +33,7 @@ func NewDataInWriter(maxSegLen uint32) *DataInWriter {
 func (d *DataInWriter) WriteDataIn(w io.Writer, data []byte, itt uint32, expCmdSN, maxCmdSN uint32, statSN *uint32) (int, error) {
 	totalLen := uint32(len(data))
 	if totalLen == 0 {
-		// Zero-length read — send single Data-In with S-bit, no data
+		// Zero-length read -- send single Data-In with S-bit, no data
 		pdu := &PDU{}
 		pdu.SetOpcode(OpSCSIDataIn)
 		pdu.SetOpSpecific1(FlagF | FlagS) // Final + Status
@@ -172,7 +172,7 @@ func (c *DataOutCollector) Remaining() uint32 {
 }
 
 // BuildR2T creates an R2T PDU requesting more data from the initiator.
-// StatSN is NOT set here — txLoop assigns it (statSNCopy mode, no increment).
+// StatSN is NOT set here -- txLoop assigns it (statSNCopy mode, no increment).
 func BuildR2T(itt, ttt uint32, r2tSN uint32, bufferOffset, desiredLen uint32, expCmdSN, maxCmdSN uint32) *PDU {
 	pdu := &PDU{}
 	pdu.SetOpcode(OpR2T)
@@ -196,7 +196,7 @@ func SendSCSIResponse(w io.Writer, result SCSIResult, itt uint32, statSN *uint32
 }
 
 // BuildSCSIResponse creates a SCSI Response PDU without writing it.
-// StatSN is NOT set — the caller (or txLoop) assigns it.
+// StatSN is NOT set -- the caller (or txLoop) assigns it.
 func BuildSCSIResponse(result SCSIResult, itt uint32, expCmdSN, maxCmdSN uint32) *PDU {
 	pdu := &PDU{}
 	pdu.SetOpcode(OpSCSIResp)
@@ -219,7 +219,7 @@ func BuildSCSIResponse(result SCSIResult, itt uint32, expCmdSN, maxCmdSN uint32)
 }
 
 // BuildDataInPDUs splits data into Data-In PDUs and returns them.
-// StatSN is NOT set on the final PDU — the txLoop assigns it.
+// StatSN is NOT set on the final PDU -- the txLoop assigns it.
 // Intermediate PDUs (without S-bit) never carry StatSN.
 func (d *DataInWriter) BuildDataInPDUs(data []byte, itt uint32, expCmdSN, maxCmdSN uint32) []*PDU {
 	totalLen := uint32(len(data))

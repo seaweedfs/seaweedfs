@@ -163,6 +163,30 @@ func TestBlockVol(t *testing.T) {
 		// Phase 4A CP3: Lifecycle tests.
 		{name: "blockvol_full_lifecycle", run: testBlockvolFullLifecycle},
 		{name: "blockvol_rebuild_lifecycle", run: testBlockvolRebuildLifecycle},
+		// Phase 4A CP4a: Assignment sequence tests.
+		{name: "seq_fresh_to_primary", run: testSeqFreshToPrimary},
+		{name: "seq_fresh_to_replica_to_primary", run: testSeqFreshToReplicaToPrimary},
+		{name: "seq_promote_demote_cycle", run: testSeqPromoteDemoteCycle},
+		{name: "seq_lease_refresh_keeps_alive", run: testSeqLeaseRefreshKeepsAlive},
+		{name: "seq_epoch_bump_on_refresh", run: testSeqEpochBumpOnRefresh},
+		{name: "seq_demote_then_rebuild_from_peer", run: testSeqDemoteThenRebuildFromPeer},
+		{name: "seq_rapid_epoch_bumps", run: testSeqRapidEpochBumps},
+		{name: "seq_concurrent_refresh_and_write", run: testSeqConcurrentRefreshAndWrite},
+		// Phase 4A CP4a: Failover sequence tests.
+		{name: "failover_lease_expiry_then_promote", run: testFailoverLeaseExpiryThenPromote},
+		{name: "failover_dead_zone_verified", run: testFailoverDeadZoneVerified},
+		{name: "failover_write_during_demotion_drains", run: testFailoverWriteDuringDemotionDrains},
+		{name: "failover_rebuild_after_promotion", run: testFailoverRebuildAfterPromotion},
+		{name: "failover_double_failover", run: testFailoverDoubleFailover},
+		// Phase 4A CP4a: Edge case + adversarial tests.
+		{name: "adversarial_stale_epoch_assignment", run: testAdversarialStaleEpochAssignment},
+		{name: "adversarial_assignment_wrong_role_transition", run: testAdversarialAssignmentWrongRoleTransition},
+		{name: "adversarial_concurrent_assignments", run: testAdversarialConcurrentAssignments},
+		{name: "adversarial_promote_during_rebuild", run: testAdversarialPromoteDuringRebuild},
+		{name: "adversarial_zero_ttl_lease", run: testAdversarialZeroTTLLease},
+		// Phase 4A CP4a: Status tests.
+		{name: "status_primary_with_lease", run: testStatusPrimaryWithLease},
+		{name: "status_stale_no_lease", run: testStatusStaleNoLease},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -539,7 +563,7 @@ func testLifecycleCreateCloseReopen(t *testing.T) {
 		t.Fatalf("ReadLBA: %v", err)
 	}
 	if !bytes.Equal(got, data) {
-		t.Error("data not durable after create→write→sync→close→reopen")
+		t.Error("data not durable after create->write->sync->close->reopen")
 	}
 }
 
@@ -566,7 +590,7 @@ func testLifecycleCloseFlushes(t *testing.T) {
 		t.Fatalf("SyncCache: %v", err)
 	}
 
-	// Close does a final flush — dirty map should be drained.
+	// Close does a final flush --dirty map should be drained.
 	if err := v.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -620,7 +644,7 @@ func testLifecycleWriteSyncCloseReopen(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wsco.blockvol")
 
-	// Cycle: create → write → sync → close → reopen → write → sync → close → verify.
+	// Cycle: create -> write -> sync -> close -> reopen -> write -> sync -> close -> verify.
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: 1 * 1024 * 1024,
 		BlockSize:  4096,
@@ -656,7 +680,7 @@ func testLifecycleWriteSyncCloseReopen(t *testing.T) {
 	}
 	v2.Close()
 
-	// Final reopen — verify.
+	// Final reopen --verify.
 	v3, err := OpenBlockVol(path)
 	if err != nil {
 		t.Fatalf("OpenBlockVol round 3: %v", err)
@@ -688,7 +712,7 @@ func testCrashStress100(t *testing.T) {
 	)
 
 	// Oracle: tracks the expected state of each block.
-	oracle := make(map[uint64]byte) // lba → fill byte (0 = zeros/trimmed)
+	oracle := make(map[uint64]byte) // lba -> fill byte (0 = zeros/trimmed)
 
 	// Short WALFullTimeout for stress test to avoid long retries.
 	stressCfg := DefaultConfig()
@@ -1247,7 +1271,7 @@ func testTrimLargeLengthReadReturnsZero(t *testing.T) {
 		t.Fatal("data mismatch before trim")
 	}
 
-	// Trim with a length larger than WAL size — should still work.
+	// Trim with a length larger than WAL size --should still work.
 	// The trim Length is metadata (trim extent), not a data allocation.
 	if err := v.Trim(0, 4096); err != nil {
 		t.Fatalf("Trim: %v", err)
@@ -1264,7 +1288,7 @@ func testTrimLargeLengthReadReturnsZero(t *testing.T) {
 }
 
 // testWriteAfterClose verifies that WriteLBA, ReadLBA, Trim, and SyncCache
-// return ErrVolumeClosed after Close() — no panic, no write to closed fd.
+// return ErrVolumeClosed after Close() --no panic, no write to closed fd.
 func testWriteAfterClose(t *testing.T) {
 	v := createTestVol(t)
 	v.Close()
@@ -1595,7 +1619,7 @@ func testTrimWALFullRetry(t *testing.T) {
 		t.Fatalf("Trim failed (should have retried): %v", err)
 	}
 
-	// Verify trim took effect — read should return zeros.
+	// Verify trim took effect --read should return zeros.
 	data, err := v.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("ReadLBA after trim: %v", err)
@@ -1760,7 +1784,7 @@ func testCloseTimeoutIfOpStuck(t *testing.T) {
 	<-stuckStarted
 	time.Sleep(10 * time.Millisecond) // let it enter the retry loop
 
-	// Close should NOT hang forever — it has a 5s drain timeout.
+	// Close should NOT hang forever --it has a 5s drain timeout.
 	done := make(chan struct{})
 	go func() {
 		v.Close()
@@ -1771,7 +1795,7 @@ func testCloseTimeoutIfOpStuck(t *testing.T) {
 	case <-done:
 		t.Log("Close completed despite stuck op (drain timeout worked)")
 	case <-time.After(10 * time.Second):
-		t.Fatal("Close hung for >10s — drain timeout not working")
+		t.Fatal("Close hung for >10s --drain timeout not working")
 	}
 }
 
@@ -2069,7 +2093,7 @@ func testGateLeaseExpired(t *testing.T) {
 	v.SetRole(RolePrimary)
 	v.SetEpoch(1)
 	v.SetMasterEpoch(1)
-	// No lease granted — should be expired.
+	// No lease granted --should be expired.
 
 	err := v.WriteLBA(0, makeBlock('A'))
 	if !errors.Is(err, ErrLeaseExpired) {
@@ -2117,7 +2141,7 @@ func testBlockvolWriteGateIntegration(t *testing.T) {
 		t.Fatal("data mismatch")
 	}
 
-	// Demote to draining — writes should fail.
+	// Demote to draining --writes should fail.
 	v.SetRole(RoleDraining)
 	err = v.WriteLBA(2, makeBlock('D'))
 	if !errors.Is(err, ErrNotPrimary) {
@@ -2374,7 +2398,7 @@ func testShipEpochMismatchDropped(t *testing.T) {
 		t.Fatalf("Ship valid: %v", err)
 	}
 
-	// Now ship an entry with old epoch 1 — should be silently dropped.
+	// Now ship an entry with old epoch 1 --should be silently dropped.
 	staleEntry := &WALEntry{LSN: 2, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
 	if err := s.Ship(staleEntry); err != nil {
 		t.Fatalf("Ship stale: %v", err)
@@ -2405,7 +2429,7 @@ func testShipDegradedOnError(t *testing.T) {
 		if err != nil {
 			return
 		}
-		conn.Close() // close immediately — writes will fail
+		conn.Close() // close immediately --writes will fail
 	}()
 	defer ln.Close()
 
@@ -2544,7 +2568,7 @@ func testReplicaRejectStaleEpoch(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Entry with epoch 3 (stale) — should be rejected.
+	// Entry with epoch 3 (stale) --should be rejected.
 	entry := &WALEntry{LSN: 1, Epoch: 3, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
 	encoded, _ := entry.Encode()
 	WriteFrame(conn, MsgWALEntry, encoded)
@@ -2634,7 +2658,7 @@ func testReplicaRejectDuplicateLSN(t *testing.T) {
 		}
 	}
 
-	// Send duplicate LSN=1 — should be skipped.
+	// Send duplicate LSN=1 --should be skipped.
 	WriteFrame(conn, MsgWALEntry, encoded)
 	time.Sleep(50 * time.Millisecond)
 
@@ -2727,7 +2751,7 @@ func testBarrierAlreadyReceived(t *testing.T) {
 		}
 	}
 
-	// Now send a barrier for LSN=1 — should succeed immediately.
+	// Now send a barrier for LSN=1 --should succeed immediately.
 	ctrlConn, err := net.Dial("tcp", recv.CtrlAddr())
 	if err != nil {
 		t.Fatal(err)
@@ -2876,7 +2900,7 @@ func testBarrierEpochMismatchFastFail(t *testing.T) {
 	if payload[0] != BarrierEpochMismatch {
 		t.Errorf("barrier status: got %d, want BarrierEpochMismatch", payload[0])
 	}
-	// Should be fast — no waiting.
+	// Should be fast --no waiting.
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("epoch mismatch took %v, expected fast fail", elapsed)
 	}
@@ -3030,7 +3054,7 @@ func testDistCommitNoReplica(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
 
-	// nil shipper — local-only mode.
+	// nil shipper --local-only mode.
 	distSync := MakeDistributedSync(walSync, nil, v)
 	if err := distSync(); err != nil {
 		t.Fatalf("distSync: %v", err)
@@ -3138,7 +3162,7 @@ func testReplicaRejectFutureEpoch(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Entry with epoch 5 (future) — must be rejected. Replicas must NOT
+	// Entry with epoch 5 (future) --must be rejected. Replicas must NOT
 	// accept epoch bumps from WAL stream; only master can change epoch.
 	entry := &WALEntry{LSN: 1, Epoch: 5, Type: EntryTypeTrim, LBA: 0, Length: 4096}
 	encoded, _ := entry.Encode()
@@ -3169,7 +3193,7 @@ func testReplicaRejectLSNGap(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Send LSN=1 — should succeed.
+	// Send LSN=1 --should succeed.
 	entry1 := &WALEntry{LSN: 1, Epoch: 0, Type: EntryTypeTrim, LBA: 0, Length: 4096}
 	encoded1, _ := entry1.Encode()
 	WriteFrame(conn, MsgWALEntry, encoded1)
@@ -3184,7 +3208,7 @@ func testReplicaRejectLSNGap(t *testing.T) {
 		}
 	}
 
-	// Send LSN=3 (gap — skips LSN=2) — must be rejected.
+	// Send LSN=3 (gap --skips LSN=2) --must be rejected.
 	entry3 := &WALEntry{LSN: 3, Epoch: 0, Type: EntryTypeTrim, LBA: 1, Length: 4096}
 	encoded3, _ := entry3.Encode()
 	WriteFrame(conn, MsgWALEntry, encoded3)
@@ -3242,7 +3266,7 @@ func testBarrierConfigurableTimeout(t *testing.T) {
 	if payload[0] != BarrierTimeout {
 		t.Errorf("barrier status: got %d, want BarrierTimeout", payload[0])
 	}
-	// Should complete quickly — well under 1s.
+	// Should complete quickly --well under 1s.
 	if elapsed > 1*time.Second {
 		t.Errorf("configurable timeout took %v, expected ~50ms", elapsed)
 	}
@@ -3323,7 +3347,7 @@ func testWALScanWrapPadding(t *testing.T) {
 	v, err := CreateBlockVol(path, CreateOptions{
 		VolumeSize: 64 * 1024, // 64KB
 		BlockSize:  4096,
-		WALSize:    4096 * 4, // 16KB WAL — very small, forces wrapping
+		WALSize:    4096 * 4, // 16KB WAL --very small, forces wrapping
 	})
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
@@ -3358,7 +3382,7 @@ func testWALScanWrapPadding(t *testing.T) {
 }
 
 func testWALScanEntryCrossesEnd(t *testing.T) {
-	// Similar to wrap padding — an entry that would span WAL end triggers padding.
+	// Similar to wrap padding --an entry that would span WAL end triggers padding.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.blockvol")
 	v, err := CreateBlockVol(path, CreateOptions{
@@ -3453,7 +3477,7 @@ func testPromoteRejectsNonReplica(t *testing.T) {
 	v2.HandleAssignment(2, RoleStale, 0)
 	err = v2.HandleAssignment(3, RolePrimary, 30*time.Second)
 	if !errors.Is(err, ErrInvalidAssignment) {
-		t.Errorf("expected ErrInvalidAssignment for Stale→Primary, got: %v", err)
+		t.Errorf("expected ErrInvalidAssignment for Stale->Primary, got: %v", err)
 	}
 }
 
@@ -3561,7 +3585,7 @@ func testAssignmentInvalidTransition(t *testing.T) {
 	v := setupReplica(t)
 	defer v.Close()
 
-	// Replica → Stale is invalid.
+	// Replica -> Stale is invalid.
 	err := v.HandleAssignment(2, RoleStale, 0)
 	if !errors.Is(err, ErrInvalidAssignment) {
 		t.Errorf("expected ErrInvalidAssignment, got: %v", err)
@@ -3666,7 +3690,7 @@ func testRebuildServerWALRecycled(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Request from LSN=1, but checkpoint is past that → WAL_RECYCLED.
+	// Request from LSN=1, but checkpoint is past that -> WAL_RECYCLED.
 	req := RebuildRequest{Type: RebuildWALCatchUp, FromLSN: 1, Epoch: v.Epoch()}
 	WriteFrame(conn, MsgRebuildReq, EncodeRebuildRequest(req))
 
@@ -3768,7 +3792,7 @@ func testRebuildServerEpochMismatch(t *testing.T) {
 func setupRebuilding(t *testing.T, epoch uint64) *BlockVol {
 	t.Helper()
 	v := createTestVol(t)
-	// Path: None → Primary → Stale → Rebuilding
+	// Path: None -> Primary -> Stale -> Rebuilding
 	if err := v.HandleAssignment(epoch, RolePrimary, 30*time.Second); err != nil {
 		t.Fatalf("setup rebuilding: promote: %v", err)
 	}
@@ -3855,7 +3879,7 @@ func testRebuildFallbackFullExtent(t *testing.T) {
 	stale := setupRebuilding(t, primary.Epoch())
 	defer stale.Close()
 
-	// Request catch-up from LSN=1, which is recycled → falls back to full extent.
+	// Request catch-up from LSN=1, which is recycled -> falls back to full extent.
 	if err := StartRebuild(stale, srv.Addr(), 1, primary.Epoch()); err != nil {
 		t.Fatalf("StartRebuild (fallback): %v", err)
 	}
@@ -3951,7 +3975,7 @@ func testRebuildFullExtentResetsDirtyMap(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func testSplitBrainDeadZone(t *testing.T) {
-	// After demote (old primary), before promote (new primary) — no node accepts writes.
+	// After demote (old primary), before promote (new primary) --no node accepts writes.
 	oldPrimary := setupPrimary(t)
 	defer oldPrimary.Close()
 	newReplica := setupReplica(t)
@@ -3967,7 +3991,7 @@ func testSplitBrainDeadZone(t *testing.T) {
 		t.Error("old primary should reject writes after demotion")
 	}
 
-	// New replica hasn't been promoted yet — can't write.
+	// New replica hasn't been promoted yet --can't write.
 	if err := newReplica.WriteLBA(0, makeBlock('B')); err == nil {
 		t.Error("replica should reject writes before promotion")
 	}
@@ -4008,7 +4032,7 @@ func testSplitBrainNoSelfPromotion(t *testing.T) {
 	v.HandleAssignment(1, RoleReplica, 0)
 
 	// Try direct SetRole without going through HandleAssignment.
-	// This should work because SetRole itself is valid (Replica→Primary),
+	// This should work because SetRole itself is valid (Replica->Primary),
 	// but without setting epoch/lease, writes will fail.
 	if err := v.SetRole(RolePrimary); err != nil {
 		t.Fatalf("SetRole: %v", err)
@@ -4125,6 +4149,778 @@ func testBlockvolRebuildLifecycle(t *testing.T) {
 	}
 	if data[0] != 'S' {
 		t.Errorf("block 1: got %c, want S", data[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4A CP4a: SimulatedMaster helper
+// ---------------------------------------------------------------------------
+
+// SimulatedMaster drives HandleAssignment sequences for testing.
+// Not a real server -- just a struct with methods that call
+// HandleAssignment() directly.
+//
+// NOT thread-safe: do not call SimulatedMaster methods from multiple
+// goroutines concurrently. For concurrent tests, use HandleAssignment
+// directly with explicit epoch values.
+type SimulatedMaster struct {
+	epoch    uint64
+	leaseTTL time.Duration
+}
+
+func NewSimulatedMaster(leaseTTL time.Duration) *SimulatedMaster {
+	return &SimulatedMaster{epoch: 0, leaseTTL: leaseTTL}
+}
+
+// GrantPrimary promotes a volume to Primary at the next epoch.
+func (m *SimulatedMaster) GrantPrimary(vol *BlockVol) error {
+	m.epoch++
+	return vol.HandleAssignment(m.epoch, RolePrimary, m.leaseTTL)
+}
+
+// Demote transitions a Primary to Stale at the next epoch.
+func (m *SimulatedMaster) Demote(vol *BlockVol) error {
+	m.epoch++
+	return vol.HandleAssignment(m.epoch, RoleStale, 0)
+}
+
+// RefreshLease sends same role + epoch to refresh the lease.
+func (m *SimulatedMaster) RefreshLease(vol *BlockVol) error {
+	return vol.HandleAssignment(m.epoch, vol.Role(), m.leaseTTL)
+}
+
+// PromoteReplica orchestrates: demote old primary, promote replica.
+// Returns the new epoch used.
+func (m *SimulatedMaster) PromoteReplica(oldPrimary, newPrimary *BlockVol) (uint64, error) {
+	m.epoch++
+	if err := oldPrimary.HandleAssignment(m.epoch, RoleStale, 0); err != nil {
+		return m.epoch, fmt.Errorf("demote old primary: %w", err)
+	}
+	if err := newPrimary.HandleAssignment(m.epoch, RolePrimary, m.leaseTTL); err != nil {
+		return m.epoch, fmt.Errorf("promote new primary: %w", err)
+	}
+	return m.epoch, nil
+}
+
+// InitiateRebuild transitions a Stale volume to Rebuilding.
+func (m *SimulatedMaster) InitiateRebuild(vol *BlockVol) error {
+	return vol.HandleAssignment(m.epoch, RoleRebuilding, 0)
+}
+
+// AssignReplica assigns a volume as Replica at the current epoch.
+func (m *SimulatedMaster) AssignReplica(vol *BlockVol) error {
+	m.epoch++
+	return vol.HandleAssignment(m.epoch, RoleReplica, 0)
+}
+
+// BumpEpoch increments the epoch and refreshes the primary lease.
+func (m *SimulatedMaster) BumpEpoch(vol *BlockVol) error {
+	m.epoch++
+	return vol.HandleAssignment(m.epoch, vol.Role(), m.leaseTTL)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4A CP4a: Assignment sequence tests (Task 2)
+// ---------------------------------------------------------------------------
+
+func testSeqFreshToPrimary(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	if v.Role() != RolePrimary {
+		t.Errorf("role: got %s, want Primary", v.Role())
+	}
+	if err := v.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Errorf("write after grant: %v", err)
+	}
+}
+
+func testSeqFreshToReplicaToPrimary(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.AssignReplica(v); err != nil {
+		t.Fatalf("AssignReplica: %v", err)
+	}
+	if v.Role() != RoleReplica {
+		t.Errorf("role: got %s, want Replica", v.Role())
+	}
+	// Replica can't write.
+	if err := v.WriteLBA(0, makeBlock('A')); err == nil {
+		t.Error("replica should reject writes")
+	}
+	// Promote to primary at bumped epoch.
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	if v.Role() != RolePrimary {
+		t.Errorf("role: got %s, want Primary", v.Role())
+	}
+	if err := v.WriteLBA(0, makeBlock('B')); err != nil {
+		t.Errorf("write after promote: %v", err)
+	}
+}
+
+func testSeqPromoteDemoteCycle(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+
+	// None -> Primary(e=1)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	if err := v.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Errorf("write at Primary e=1: %v", err)
+	}
+
+	// Primary(e=1) -> Stale(e=2)
+	if err := master.Demote(v); err != nil {
+		t.Fatalf("Demote: %v", err)
+	}
+	if v.Role() != RoleStale {
+		t.Errorf("role: got %s, want Stale", v.Role())
+	}
+	if err := v.WriteLBA(0, makeBlock('B')); err == nil {
+		t.Error("stale should reject writes")
+	}
+
+	// Stale -> Rebuilding
+	if err := master.InitiateRebuild(v); err != nil {
+		t.Fatalf("InitiateRebuild: %v", err)
+	}
+	if v.Role() != RoleRebuilding {
+		t.Errorf("role: got %s, want Rebuilding", v.Role())
+	}
+
+	// Rebuilding -> Replica (simulating rebuild completion via SetRole)
+	if err := v.SetRole(RoleReplica); err != nil {
+		t.Fatalf("SetRole Replica: %v", err)
+	}
+
+	// Replica -> Primary(e=3)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary after rebuild: %v", err)
+	}
+	if v.Epoch() != 3 {
+		t.Errorf("epoch: got %d, want 3", v.Epoch())
+	}
+	if err := v.WriteLBA(0, makeBlock('C')); err != nil {
+		t.Errorf("write at Primary e=3: %v", err)
+	}
+}
+
+func testSeqLeaseRefreshKeepsAlive(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(500 * time.Millisecond)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if err := master.RefreshLease(v); err != nil {
+			t.Fatalf("RefreshLease %d: %v", i, err)
+		}
+		if err := v.WriteLBA(0, makeBlock(byte('A'+i))); err != nil {
+			t.Errorf("write after refresh %d: %v", i, err)
+		}
+	}
+}
+
+func testSeqEpochBumpOnRefresh(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	if v.Epoch() != 1 {
+		t.Fatalf("epoch: got %d, want 1", v.Epoch())
+	}
+
+	// Bump epoch via refresh.
+	if err := master.BumpEpoch(v); err != nil {
+		t.Fatalf("BumpEpoch: %v", err)
+	}
+	if v.Epoch() != 2 {
+		t.Errorf("epoch: got %d, want 2", v.Epoch())
+	}
+	if err := v.WriteLBA(0, makeBlock('X')); err != nil {
+		t.Errorf("write after epoch bump: %v", err)
+	}
+}
+
+func testSeqDemoteThenRebuildFromPeer(t *testing.T) {
+	// Primary A writes data, demoted; B rebuilds from A, promoted, reads data.
+	a := createTestVol(t)
+	defer a.Close()
+	b := createTestVol(t)
+	defer b.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+
+	// A becomes primary, writes data.
+	if err := master.GrantPrimary(a); err != nil {
+		t.Fatalf("GrantPrimary(A): %v", err)
+	}
+	if err := a.WriteLBA(0, makeBlock('D')); err != nil {
+		t.Fatalf("A write: %v", err)
+	}
+	if err := a.WriteLBA(1, makeBlock('E')); err != nil {
+		t.Fatalf("A write: %v", err)
+	}
+
+	// Start rebuild server on A.
+	if err := a.StartRebuildServer("127.0.0.1:0"); err != nil {
+		t.Fatalf("StartRebuildServer: %v", err)
+	}
+	defer a.StopRebuildServer()
+	rebuildAddr := a.rebuildServer.Addr()
+
+	// Demote A.
+	if err := master.Demote(a); err != nil {
+		t.Fatalf("Demote(A): %v", err)
+	}
+
+	// B: None -> Primary -> Stale -> Rebuilding
+	bEpoch := master.epoch
+	if err := b.HandleAssignment(bEpoch, RolePrimary, 30*time.Second); err != nil {
+		t.Fatalf("B promote: %v", err)
+	}
+	if err := b.HandleAssignment(bEpoch, RoleStale, 0); err != nil {
+		t.Fatalf("B demote: %v", err)
+	}
+	if err := b.HandleAssignment(bEpoch, RoleRebuilding, 0); err != nil {
+		t.Fatalf("B set rebuilding: %v", err)
+	}
+
+	// Rebuild B from A. Note: A's epoch is master.epoch (after demote).
+	// Rebuild server checks its own epoch which is a.Epoch().
+	if err := StartRebuild(b, rebuildAddr, 1, a.Epoch()); err != nil {
+		t.Fatalf("StartRebuild: %v", err)
+	}
+
+	// B should now be Replica.
+	if b.Role() != RoleReplica {
+		t.Errorf("B role: got %s, want Replica", b.Role())
+	}
+
+	// Promote B.
+	master.epoch++
+	if err := b.HandleAssignment(master.epoch, RolePrimary, 30*time.Second); err != nil {
+		t.Fatalf("promote B: %v", err)
+	}
+
+	// Verify data.
+	data, err := b.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("B ReadLBA(0): %v", err)
+	}
+	if data[0] != 'D' {
+		t.Errorf("block 0: got %c, want D", data[0])
+	}
+	data, err = b.ReadLBA(1, 4096)
+	if err != nil {
+		t.Fatalf("B ReadLBA(1): %v", err)
+	}
+	if data[0] != 'E' {
+		t.Errorf("block 1: got %c, want E", data[0])
+	}
+}
+
+func testSeqRapidEpochBumps(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+
+	for i := 0; i < 10; i++ {
+		if err := master.BumpEpoch(v); err != nil {
+			t.Fatalf("BumpEpoch %d: %v", i, err)
+		}
+	}
+
+	if v.Epoch() != 11 { // 1 initial + 10 bumps
+		t.Errorf("epoch: got %d, want 11", v.Epoch())
+	}
+	if v.Role() != RolePrimary {
+		t.Errorf("role: got %s, want Primary", v.Role())
+	}
+	if err := v.WriteLBA(0, makeBlock('Z')); err != nil {
+		t.Errorf("write after rapid bumps: %v", err)
+	}
+}
+
+func testSeqConcurrentRefreshAndWrite(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 200)
+
+	// Writer goroutine.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if err := v.WriteLBA(0, makeBlock(byte('A'+i%26))); err != nil {
+				errCh <- fmt.Errorf("write %d: %w", i, err)
+				return
+			}
+		}
+	}()
+
+	// Refresh goroutine.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			// Use HandleAssignment directly to avoid SimulatedMaster mutex issues.
+			v.HandleAssignment(master.epoch, RolePrimary, master.leaseTTL)
+		}
+	}()
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("concurrent error: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4A CP4a: Failover sequence tests (Task 3)
+// ---------------------------------------------------------------------------
+
+func testFailoverLeaseExpiryThenPromote(t *testing.T) {
+	a := createTestVol(t)
+	defer a.Close()
+	b := createTestVol(t)
+	defer b.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(a); err != nil {
+		t.Fatalf("GrantPrimary(A): %v", err)
+	}
+
+	// Revoke lease to simulate expiry without wall-clock dependency.
+	a.lease.Revoke()
+
+	if err := a.WriteLBA(0, makeBlock('A')); err == nil {
+		t.Error("expected write to fail after lease expiry")
+	}
+
+	// Promote B as new primary.
+	master.epoch++
+	if err := b.HandleAssignment(master.epoch, RolePrimary, 30*time.Second); err != nil {
+		t.Fatalf("promote B: %v", err)
+	}
+	if err := b.WriteLBA(0, makeBlock('B')); err != nil {
+		t.Errorf("new primary write: %v", err)
+	}
+}
+
+func testFailoverDeadZoneVerified(t *testing.T) {
+	a := createTestVol(t)
+	defer a.Close()
+	b := createTestVol(t)
+	defer b.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+
+	// A is primary, B is replica --both have roles assigned (not RoleNone).
+	if err := master.GrantPrimary(a); err != nil {
+		t.Fatalf("GrantPrimary(A): %v", err)
+	}
+	if err := master.AssignReplica(b); err != nil {
+		t.Fatalf("AssignReplica(B): %v", err)
+	}
+
+	// Demote A.
+	if err := master.Demote(a); err != nil {
+		t.Fatalf("Demote(A): %v", err)
+	}
+
+	// Dead zone: both should reject writes. A is Stale, B is Replica.
+	if err := a.WriteLBA(0, makeBlock('A')); err == nil {
+		t.Error("old primary (Stale) should reject writes in dead zone")
+	}
+	if err := b.WriteLBA(0, makeBlock('B')); err == nil {
+		t.Error("replica should reject writes before promotion")
+	}
+
+	// Promote B --writes succeed now.
+	if err := b.HandleAssignment(master.epoch, RolePrimary, 30*time.Second); err != nil {
+		t.Fatalf("promote B: %v", err)
+	}
+	if err := b.WriteLBA(0, makeBlock('C')); err != nil {
+		t.Errorf("new primary write after promotion: %v", err)
+	}
+}
+
+func testFailoverWriteDuringDemotionDrains(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	v.drainTimeout = 2 * time.Second
+
+	// Simulate an in-flight op.
+	v.beginOp()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- master.Demote(v)
+	}()
+	<-started
+
+	// The demote should be waiting for drain.
+	time.Sleep(30 * time.Millisecond)
+	v.endOp() // release the in-flight op
+
+	err := <-done
+	if err != nil {
+		t.Fatalf("Demote: %v", err)
+	}
+	if v.Role() != RoleStale {
+		t.Errorf("role: got %s, want Stale", v.Role())
+	}
+}
+
+func testFailoverRebuildAfterPromotion(t *testing.T) {
+	a := createTestVol(t)
+	defer a.Close()
+	b := createTestVol(t)
+	defer b.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+
+	// A is primary, writes data.
+	if err := master.GrantPrimary(a); err != nil {
+		t.Fatalf("GrantPrimary(A): %v", err)
+	}
+	if err := a.WriteLBA(0, makeBlock('F')); err != nil {
+		t.Fatalf("A write: %v", err)
+	}
+
+	// B becomes replica then promoted.
+	if err := master.AssignReplica(b); err != nil {
+		t.Fatalf("AssignReplica(B): %v", err)
+	}
+
+	// Demote A, promote B.
+	_, err := master.PromoteReplica(a, b)
+	if err != nil {
+		t.Fatalf("PromoteReplica: %v", err)
+	}
+
+	// B writes more data.
+	if err := b.WriteLBA(1, makeBlock('G')); err != nil {
+		t.Fatalf("B write: %v", err)
+	}
+
+	// Start rebuild server on B (new primary).
+	if err := b.StartRebuildServer("127.0.0.1:0"); err != nil {
+		t.Fatalf("StartRebuildServer: %v", err)
+	}
+	defer b.StopRebuildServer()
+
+	// Rebuild A from B.
+	if err := master.InitiateRebuild(a); err != nil {
+		t.Fatalf("InitiateRebuild(A): %v", err)
+	}
+	if err := StartRebuild(a, b.rebuildServer.Addr(), 1, b.Epoch()); err != nil {
+		t.Fatalf("StartRebuild: %v", err)
+	}
+
+	// A should now be Replica.
+	if a.Role() != RoleReplica {
+		t.Errorf("A role: got %s, want Replica", a.Role())
+	}
+
+	// Verify A has B's data.
+	data, err := a.ReadLBA(1, 4096)
+	if err != nil {
+		t.Fatalf("A ReadLBA(1): %v", err)
+	}
+	if data[0] != 'G' {
+		t.Errorf("block 1: got %c, want G", data[0])
+	}
+}
+
+func testFailoverDoubleFailover(t *testing.T) {
+	a := createTestVol(t)
+	defer a.Close()
+	b := createTestVol(t)
+	defer b.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+
+	// A primary, writes.
+	if err := master.GrantPrimary(a); err != nil {
+		t.Fatalf("GrantPrimary(A): %v", err)
+	}
+	if err := a.WriteLBA(0, makeBlock('1')); err != nil {
+		t.Fatalf("A write: %v", err)
+	}
+
+	// B replica.
+	if err := master.AssignReplica(b); err != nil {
+		t.Fatalf("AssignReplica(B): %v", err)
+	}
+
+	// Failover 1: A -> B.
+	_, err := master.PromoteReplica(a, b)
+	if err != nil {
+		t.Fatalf("PromoteReplica A->B: %v", err)
+	}
+	if err := b.WriteLBA(1, makeBlock('2')); err != nil {
+		t.Fatalf("B write: %v", err)
+	}
+
+	// Rebuild A as replica of B.
+	if err := b.StartRebuildServer("127.0.0.1:0"); err != nil {
+		t.Fatalf("StartRebuildServer(B): %v", err)
+	}
+	if err := master.InitiateRebuild(a); err != nil {
+		t.Fatalf("InitiateRebuild(A): %v", err)
+	}
+	if err := StartRebuild(a, b.rebuildServer.Addr(), 1, b.Epoch()); err != nil {
+		t.Fatalf("StartRebuild A from B: %v", err)
+	}
+	b.StopRebuildServer()
+
+	// Failover 2: B -> A (full circle).
+	_, err = master.PromoteReplica(b, a)
+	if err != nil {
+		t.Fatalf("PromoteReplica B->A: %v", err)
+	}
+
+	// A is primary again. Verify data integrity.
+	if a.Role() != RolePrimary {
+		t.Errorf("A role: got %s, want Primary", a.Role())
+	}
+	if err := a.WriteLBA(2, makeBlock('3')); err != nil {
+		t.Errorf("A write after double failover: %v", err)
+	}
+
+	// Read back all three blocks.
+	for lba, expected := range map[uint64]byte{0: '1', 1: '2', 2: '3'} {
+		data, err := a.ReadLBA(lba, 4096)
+		if err != nil {
+			t.Fatalf("ReadLBA(%d): %v", lba, err)
+		}
+		if data[0] != expected {
+			t.Errorf("block %d: got %c, want %c", lba, data[0], expected)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4A CP4a: Edge case + adversarial tests (Task 4)
+// ---------------------------------------------------------------------------
+
+func testAdversarialStaleEpochAssignment(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	// Bump to epoch 3.
+	master.BumpEpoch(v)
+	master.BumpEpoch(v)
+
+	// Send assignment with stale epoch (1 < 3). HandleAssignment's
+	// same-role path only updates epoch if newEpoch > current, so this
+	// should be a no-op (no error, epoch unchanged).
+	if err := v.HandleAssignment(1, RolePrimary, 30*time.Second); err != nil {
+		t.Fatalf("stale epoch assignment: %v", err)
+	}
+	if v.Epoch() != 3 {
+		t.Errorf("epoch should remain 3, got %d", v.Epoch())
+	}
+}
+
+func testAdversarialAssignmentWrongRoleTransition(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	// Set to Replica.
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.AssignReplica(v); err != nil {
+		t.Fatalf("AssignReplica: %v", err)
+	}
+
+	// Replica -> Stale (invalid).
+	err := v.HandleAssignment(2, RoleStale, 0)
+	if !errors.Is(err, ErrInvalidAssignment) {
+		t.Errorf("Replica->Stale: expected ErrInvalidAssignment, got %v", err)
+	}
+
+	// Set up a Stale volume.
+	v2 := createTestVol(t)
+	defer v2.Close()
+	v2.HandleAssignment(1, RolePrimary, 30*time.Second)
+	v2.HandleAssignment(2, RoleStale, 0)
+
+	// Stale -> Primary (invalid: must go through Rebuilding -> Replica first).
+	err = v2.HandleAssignment(3, RolePrimary, 30*time.Second)
+	if !errors.Is(err, ErrInvalidAssignment) {
+		t.Errorf("Stale->Primary: expected ErrInvalidAssignment, got %v", err)
+	}
+}
+
+func testAdversarialConcurrentAssignments(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+
+	// 10 goroutines refreshing with different epoch bumps.
+	var wg sync.WaitGroup
+	var maxEpoch atomic.Uint64
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(epoch uint64) {
+			defer wg.Done()
+			v.HandleAssignment(epoch, RolePrimary, 30*time.Second)
+			// Track the highest epoch we successfully sent.
+			for {
+				cur := maxEpoch.Load()
+				if epoch <= cur || maxEpoch.CompareAndSwap(cur, epoch) {
+					break
+				}
+			}
+		}(uint64(i + 2)) // epochs 2..11
+	}
+	wg.Wait()
+
+	// Final state should be consistent: role is Primary.
+	if v.Role() != RolePrimary {
+		t.Errorf("role: got %s, want Primary", v.Role())
+	}
+	// Epoch should be the highest seen (they're all same-role refreshes).
+	if v.Epoch() < 2 {
+		t.Errorf("epoch should be >= 2, got %d", v.Epoch())
+	}
+}
+
+func testAdversarialPromoteDuringRebuild(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	// None -> Primary -> Stale -> Rebuilding
+	v.HandleAssignment(1, RolePrimary, 30*time.Second)
+	v.HandleAssignment(2, RoleStale, 0)
+	v.HandleAssignment(2, RoleRebuilding, 0)
+
+	// Try to promote directly from Rebuilding -> Primary (invalid).
+	err := v.HandleAssignment(3, RolePrimary, 30*time.Second)
+	if !errors.Is(err, ErrInvalidAssignment) {
+		t.Errorf("Rebuilding->Primary: expected ErrInvalidAssignment, got %v", err)
+	}
+	if v.Role() != RoleRebuilding {
+		t.Errorf("role: got %s, want Rebuilding", v.Role())
+	}
+}
+
+func testAdversarialZeroTTLLease(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	// Grant with zero TTL.
+	if err := v.HandleAssignment(1, RolePrimary, 0); err != nil {
+		t.Fatalf("HandleAssignment: %v", err)
+	}
+	if v.Role() != RolePrimary {
+		t.Errorf("role: got %s, want Primary", v.Role())
+	}
+	// Write should fail immediately --lease is already expired.
+	if err := v.WriteLBA(0, makeBlock('X')); err == nil {
+		t.Error("expected write to fail with zero TTL lease")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4A CP4a: Status tests (Task 5)
+// ---------------------------------------------------------------------------
+
+func testStatusPrimaryWithLease(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+
+	// Write a block to advance WAL head LSN.
+	if err := v.WriteLBA(0, makeBlock('S')); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	st := v.Status()
+	if st.Epoch != 1 {
+		t.Errorf("Epoch: got %d, want 1", st.Epoch)
+	}
+	if st.Role != RolePrimary {
+		t.Errorf("Role: got %s, want Primary", st.Role)
+	}
+	if !st.HasLease {
+		t.Error("HasLease: got false, want true")
+	}
+	if st.WALHeadLSN < 1 {
+		t.Errorf("WALHeadLSN: got %d, want >= 1", st.WALHeadLSN)
+	}
+}
+
+func testStatusStaleNoLease(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	master := NewSimulatedMaster(30 * time.Second)
+	if err := master.GrantPrimary(v); err != nil {
+		t.Fatalf("GrantPrimary: %v", err)
+	}
+	if err := master.Demote(v); err != nil {
+		t.Fatalf("Demote: %v", err)
+	}
+
+	st := v.Status()
+	if st.Role != RoleStale {
+		t.Errorf("Role: got %s, want Stale", st.Role)
+	}
+	if st.HasLease {
+		t.Error("HasLease: got true, want false")
+	}
+	if st.Epoch != 2 {
+		t.Errorf("Epoch: got %d, want 2", st.Epoch)
 	}
 }
 

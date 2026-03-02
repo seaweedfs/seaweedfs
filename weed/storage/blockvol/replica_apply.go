@@ -186,7 +186,7 @@ func (r *ReplicaReceiver) handleDataConn(conn net.Conn) {
 }
 
 // applyEntry decodes and applies a single WAL entry to the local volume.
-// The entire apply (LSN check → WAL append → dirty map → receivedLSN update)
+// The entire apply (LSN check -> WAL append -> dirty map -> receivedLSN update)
 // is serialized under mu to prevent TOCTOU races between concurrent entries.
 func (r *ReplicaReceiver) applyEntry(payload []byte) error {
 	entry, err := DecodeWALEntry(payload)

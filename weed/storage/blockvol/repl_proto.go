@@ -87,11 +87,11 @@ func ReadFrame(r io.Reader) (msgType byte, payload []byte, err error) {
 
 // Rebuild message types (on rebuild channel).
 const (
-	MsgRebuildReq    byte = 0x10 // client → server
-	MsgRebuildEntry  byte = 0x11 // server → client: WAL entry
-	MsgRebuildExtent byte = 0x12 // server → client: extent chunk
-	MsgRebuildDone   byte = 0x13 // server → client: stream complete
-	MsgRebuildError  byte = 0x14 // server → client: error
+	MsgRebuildReq    byte = 0x10 // client -> server
+	MsgRebuildEntry  byte = 0x11 // server -> client: WAL entry
+	MsgRebuildExtent byte = 0x12 // server -> client: extent chunk
+	MsgRebuildDone   byte = 0x13 // server -> client: stream complete
+	MsgRebuildError  byte = 0x14 // server -> client: error
 )
 
 // Rebuild request types.

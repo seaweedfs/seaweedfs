@@ -146,7 +146,7 @@ func (s *RebuildServer) handleWALCatchUp(conn net.Conn, req RebuildRequest) {
 }
 
 func (s *RebuildServer) handleFullExtent(conn net.Conn) {
-	// Capture snapshot LSN before streaming — client will use this
+	// Capture snapshot LSN before streaming -- client will use this
 	// for a second catch-up scan to capture writes during copy.
 	snapshotLSN := s.vol.nextLSN.Load()
 
