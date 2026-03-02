@@ -90,8 +90,8 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- if .Values.s3.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.s3.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) (.Values.global.extraEnvironmentVars | default dict) (.Values.s3.extraEnvironmentVars | default dict) }}
+            {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -99,18 +99,6 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           command:
             - "/bin/sh"

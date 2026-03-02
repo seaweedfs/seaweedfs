@@ -96,8 +96,8 @@ spec:
             - name: WEED_GRPC_CA
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
-            {{- if .Values.cosi.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.cosi.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := mergeOverwrite (dict) (.Values.global.extraEnvironmentVars | default dict) (.Values.cosi.extraEnvironmentVars | default dict) }}
+            {{- range $key, $value := $mergedExtraEnvironmentVars }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -105,18 +105,6 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           volumeMounts:
             - mountPath: /var/lib/cosi
