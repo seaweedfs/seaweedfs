@@ -23,6 +23,10 @@ const (
 	maxAdminScriptOutputBytes = 16 * 1024
 )
 
+const defaultAdminScript = `volume.balance -apply
+volume.fix.replication -apply
+volume.deleteEmpty -quietFor=24h -apply`
+
 var adminScriptTokenRegex = regexp.MustCompile(`'.*?'|".*?"|\S+`)
 
 type AdminScriptHandler struct {
@@ -78,7 +82,7 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"script": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAdminScript},
 				},
 			},
 		},
