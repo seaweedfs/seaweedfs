@@ -30,7 +30,7 @@ func TestStoreAddBlockVolume(t *testing.T) {
 	bs := NewBlockVolumeStore()
 	defer bs.Close()
 
-	vol, err := bs.AddBlockVolume(path)
+	vol, err := bs.AddBlockVolume(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestStoreAddBlockVolume(t *testing.T) {
 	}
 
 	// Duplicate add should fail.
-	_, err = bs.AddBlockVolume(path)
+	_, err = bs.AddBlockVolume(path, "")
 	if err == nil {
 		t.Fatal("expected error on duplicate add")
 	}
@@ -64,7 +64,7 @@ func TestStoreRemoveBlockVolume(t *testing.T) {
 	bs := NewBlockVolumeStore()
 	defer bs.Close()
 
-	if _, err := bs.AddBlockVolume(path); err != nil {
+	if _, err := bs.AddBlockVolume(path, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,10 +90,10 @@ func TestStoreCloseAllBlockVolumes(t *testing.T) {
 
 	bs := NewBlockVolumeStore()
 
-	if _, err := bs.AddBlockVolume(path1); err != nil {
+	if _, err := bs.AddBlockVolume(path1, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bs.AddBlockVolume(path2); err != nil {
+	if _, err := bs.AddBlockVolume(path2, ""); err != nil {
 		t.Fatal(err)
 	}
 

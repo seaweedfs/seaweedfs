@@ -55,7 +55,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 			continue
 		}
 		path := filepath.Join(blockDir, entry.Name())
-		vol, err := bs.blockStore.AddBlockVolume(path)
+		vol, err := bs.blockStore.AddBlockVolume(path, "")
 		if err != nil {
 			// Auto-initialize raw files (e.g. created via truncate).
 			info, serr := entry.Info()
@@ -70,7 +70,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 					continue
 				}
 				created.Close()
-				vol, err = bs.blockStore.AddBlockVolume(path)
+				vol, err = bs.blockStore.AddBlockVolume(path, "")
 				if err != nil {
 					glog.Warningf("block service: skip %s after auto-create: %v", path, err)
 					continue
