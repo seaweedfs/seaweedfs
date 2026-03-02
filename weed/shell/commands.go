@@ -71,6 +71,9 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
+	if ce.noLock {
+		return nil
+	}
 	if ce.locker.IsLocked() {
 		return nil
 	}
@@ -78,6 +81,13 @@ func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
 	return fmt.Errorf("need to run \"lock\" first to continue")
 
+}
+
+func (ce *CommandEnv) SetNoLock(noLock bool) {
+	if ce == nil {
+		return
+	}
+	ce.noLock = noLock
 }
 
 func (ce *CommandEnv) isLocked() bool {
