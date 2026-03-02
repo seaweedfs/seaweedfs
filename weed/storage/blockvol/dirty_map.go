@@ -28,6 +28,9 @@ func NewDirtyMap(numShards int) *DirtyMap {
 	if numShards <= 0 {
 		numShards = 1
 	}
+	if numShards&(numShards-1) != 0 {
+		panic("blockvol: NewDirtyMap numShards must be power of 2")
+	}
 	shards := make([]dirtyShard, numShards)
 	for i := range shards {
 		shards[i].m = make(map[uint64]dirtyEntry)

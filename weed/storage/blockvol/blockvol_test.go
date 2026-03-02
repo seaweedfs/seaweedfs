@@ -67,6 +67,29 @@ func TestBlockVol(t *testing.T) {
 		{name: "close_during_sync_cache", run: testCloseDuringSyncCache},
 		// Review finding: Close timeout if op stuck.
 		{name: "close_timeout_if_op_stuck", run: testCloseTimeoutIfOpStuck},
+		// Phase 4A CP1: Epoch tests.
+		{name: "epoch_persist_roundtrip", run: testEpochPersistRoundtrip},
+		{name: "epoch_in_wal_entry", run: testEpochInWALEntry},
+		{name: "epoch_survives_recovery", run: testEpochSurvivesRecovery},
+		// Phase 4A CP1: Lease tests.
+		{name: "lease_grant_valid", run: testLeaseGrantValid},
+		{name: "lease_expired_rejects", run: testLeaseExpiredRejects},
+		{name: "lease_revoke", run: testLeaseRevoke},
+		// Phase 4A CP1: Role tests.
+		{name: "role_transitions_valid", run: testRoleTransitionsValid},
+		{name: "role_transitions_invalid", run: testRoleTransitionsInvalid},
+		{name: "role_primary_callback", run: testRolePrimaryCallback},
+		{name: "role_stale_callback", run: testRoleStaleCallback},
+		// Phase 4A CP1: Write gate tests.
+		{name: "gate_primary_ok", run: testGatePrimaryOK},
+		{name: "gate_not_primary", run: testGateNotPrimary},
+		{name: "gate_stale_epoch", run: testGateStaleEpoch},
+		{name: "gate_lease_expired", run: testGateLeaseExpired},
+		{name: "gate_trim_rejected", run: testGateTrimRejected},
+		{name: "blockvol_write_gate_integration", run: testBlockvolWriteGateIntegration},
+		{name: "blockvol_gotcha_a_lease_expired", run: testBlockvolGotchaALeaseExpired},
+		// Phase 4A CP1: P3-BUG-9 dirty map.
+		{name: "dirty_map_power_of_2_panics", run: testDirtyMapPowerOf2Panics},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1677,4 +1700,415 @@ func testCloseTimeoutIfOpStuck(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close hung for >10s — drain timeout not working")
 	}
+}
+
+// --- Phase 4A CP1: Epoch tests ---
+
+func testEpochPersistRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "epoch.blockvol")
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	if v.Epoch() != 0 {
+		t.Fatalf("initial epoch = %d, want 0", v.Epoch())
+	}
+
+	if err := v.SetEpoch(42); err != nil {
+		t.Fatalf("SetEpoch: %v", err)
+	}
+	if v.Epoch() != 42 {
+		t.Fatalf("epoch after set = %d, want 42", v.Epoch())
+	}
+	v.Close()
+
+	// Reopen and verify epoch persisted.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer v2.Close()
+	if v2.Epoch() != 42 {
+		t.Fatalf("epoch after reopen = %d, want 42", v2.Epoch())
+	}
+}
+
+func testEpochInWALEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "epoch-wal.blockvol")
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	if err := v.SetEpoch(7); err != nil {
+		t.Fatalf("SetEpoch: %v", err)
+	}
+	v.SetMasterEpoch(7)
+	v.SetRoleCallback(nil)
+	if err := v.SetRole(RolePrimary); err != nil {
+		t.Fatalf("SetRole: %v", err)
+	}
+	v.lease.Grant(10 * time.Second)
+
+	if err := v.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Read WAL entry header directly and check epoch field.
+	headerBuf := make([]byte, walEntryHeaderSize)
+	absOff := int64(v.super.WALOffset) // first entry at WAL start
+	if _, err := v.fd.ReadAt(headerBuf, absOff); err != nil {
+		t.Fatalf("ReadAt WAL: %v", err)
+	}
+	entryEpoch := binary.LittleEndian.Uint64(headerBuf[8:16])
+	if entryEpoch != 7 {
+		t.Fatalf("WAL entry epoch = %d, want 7", entryEpoch)
+	}
+}
+
+func testEpochSurvivesRecovery(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "epoch-recov.blockvol")
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	if err := v.SetEpoch(100); err != nil {
+		t.Fatalf("SetEpoch: %v", err)
+	}
+	v.SetMasterEpoch(100)
+	if err := v.SetRole(RolePrimary); err != nil {
+		t.Fatalf("SetRole: %v", err)
+	}
+	v.lease.Grant(10 * time.Second)
+
+	if err := v.WriteLBA(0, makeBlock('R')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Close properly (flushes WAL to extent).
+	if err := v.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reopen and verify epoch persisted.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer v2.Close()
+
+	if v2.Epoch() != 100 {
+		t.Fatalf("epoch after recovery = %d, want 100", v2.Epoch())
+	}
+
+	data, err := v2.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(data, makeBlock('R')) {
+		t.Fatal("data mismatch after recovery")
+	}
+}
+
+// --- Phase 4A CP1: Lease tests ---
+
+func testLeaseGrantValid(t *testing.T) {
+	var l Lease
+	if l.IsValid() {
+		t.Fatal("zero-value lease should be invalid")
+	}
+	l.Grant(1 * time.Second)
+	if !l.IsValid() {
+		t.Fatal("lease should be valid after grant")
+	}
+}
+
+func testLeaseExpiredRejects(t *testing.T) {
+	var l Lease
+	l.Grant(1 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond)
+	if l.IsValid() {
+		t.Fatal("lease should have expired")
+	}
+}
+
+func testLeaseRevoke(t *testing.T) {
+	var l Lease
+	l.Grant(1 * time.Hour)
+	if !l.IsValid() {
+		t.Fatal("lease should be valid")
+	}
+	l.Revoke()
+	if l.IsValid() {
+		t.Fatal("lease should be invalid after revoke")
+	}
+}
+
+// --- Phase 4A CP1: Role tests ---
+
+func testRoleTransitionsValid(t *testing.T) {
+	valid := [][2]Role{
+		{RoleNone, RolePrimary},
+		{RoleNone, RoleReplica},
+		{RolePrimary, RoleDraining},
+		{RoleDraining, RoleStale},
+		{RoleReplica, RolePrimary},
+		{RoleStale, RoleRebuilding},
+		{RoleStale, RoleReplica},
+		{RoleRebuilding, RoleReplica},
+	}
+	for _, pair := range valid {
+		if !ValidTransition(pair[0], pair[1]) {
+			t.Errorf("expected valid: %s -> %s", pair[0], pair[1])
+		}
+	}
+}
+
+func testRoleTransitionsInvalid(t *testing.T) {
+	invalid := [][2]Role{
+		{RolePrimary, RoleReplica},
+		{RolePrimary, RoleStale},
+		{RoleReplica, RoleStale},
+		{RoleReplica, RoleDraining},
+		{RoleDraining, RolePrimary},
+		{RoleRebuilding, RolePrimary},
+		{RoleNone, RoleStale},
+		{RoleNone, RoleDraining},
+	}
+	for _, pair := range invalid {
+		if ValidTransition(pair[0], pair[1]) {
+			t.Errorf("expected invalid: %s -> %s", pair[0], pair[1])
+		}
+	}
+}
+
+func testRolePrimaryCallback(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	var called bool
+	var gotOld, gotNew Role
+	v.SetRoleCallback(func(old, new Role) {
+		called = true
+		gotOld = old
+		gotNew = new
+	})
+
+	if err := v.SetRole(RolePrimary); err != nil {
+		t.Fatalf("SetRole(Primary): %v", err)
+	}
+	if !called {
+		t.Fatal("callback not called")
+	}
+	if gotOld != RoleNone || gotNew != RolePrimary {
+		t.Fatalf("callback args: old=%s new=%s, want none->primary", gotOld, gotNew)
+	}
+}
+
+func testRoleStaleCallback(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	var transitions []string
+	v.SetRoleCallback(func(old, new Role) {
+		transitions = append(transitions, old.String()+"->"+new.String())
+	})
+
+	// None -> Primary -> Draining -> Stale
+	v.SetRole(RolePrimary)
+	v.SetRole(RoleDraining)
+	v.SetRole(RoleStale)
+
+	expected := []string{"none->primary", "primary->draining", "draining->stale"}
+	if len(transitions) != len(expected) {
+		t.Fatalf("transitions = %v, want %v", transitions, expected)
+	}
+	for i, e := range expected {
+		if transitions[i] != e {
+			t.Errorf("transition[%d] = %s, want %s", i, transitions[i], e)
+		}
+	}
+}
+
+// --- Phase 4A CP1: Write gate tests ---
+
+func testGatePrimaryOK(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	// Set up as primary with valid epoch + lease.
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(10 * time.Second)
+
+	if err := v.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Fatalf("WriteLBA as primary: %v", err)
+	}
+}
+
+func testGateNotPrimary(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RoleReplica)
+
+	err := v.WriteLBA(0, makeBlock('A'))
+	if !errors.Is(err, ErrNotPrimary) {
+		t.Fatalf("expected ErrNotPrimary, got: %v", err)
+	}
+}
+
+func testGateStaleEpoch(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(2) // mismatch
+	v.lease.Grant(10 * time.Second)
+
+	err := v.WriteLBA(0, makeBlock('A'))
+	if !errors.Is(err, ErrEpochStale) {
+		t.Fatalf("expected ErrEpochStale, got: %v", err)
+	}
+}
+
+func testGateLeaseExpired(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	// No lease granted — should be expired.
+
+	err := v.WriteLBA(0, makeBlock('A'))
+	if !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("expected ErrLeaseExpired, got: %v", err)
+	}
+}
+
+func testGateTrimRejected(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RoleReplica)
+
+	err := v.Trim(0, 4096)
+	if !errors.Is(err, ErrNotPrimary) {
+		t.Fatalf("expected ErrNotPrimary for Trim, got: %v", err)
+	}
+}
+
+func testBlockvolWriteGateIntegration(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	// RoleNone: writes pass without fencing (Phase 3 compat).
+	if err := v.WriteLBA(0, makeBlock('Z')); err != nil {
+		t.Fatalf("WriteLBA with RoleNone: %v", err)
+	}
+
+	// Switch to primary with proper setup.
+	v.SetRole(RolePrimary)
+	v.SetEpoch(5)
+	v.SetMasterEpoch(5)
+	v.lease.Grant(10 * time.Second)
+
+	if err := v.WriteLBA(1, makeBlock('P')); err != nil {
+		t.Fatalf("WriteLBA as primary: %v", err)
+	}
+
+	// Reads always work regardless of role.
+	data, err := v.ReadLBA(1, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA: %v", err)
+	}
+	if !bytes.Equal(data, makeBlock('P')) {
+		t.Fatal("data mismatch")
+	}
+
+	// Demote to draining — writes should fail.
+	v.SetRole(RoleDraining)
+	err = v.WriteLBA(2, makeBlock('D'))
+	if !errors.Is(err, ErrNotPrimary) {
+		t.Fatalf("WriteLBA as draining: expected ErrNotPrimary, got: %v", err)
+	}
+
+	// Read still works.
+	_, err = v.ReadLBA(1, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after demotion: %v", err)
+	}
+}
+
+func testBlockvolGotchaALeaseExpired(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "gotcha-a.blockvol")
+	cfg := DefaultConfig()
+	cfg.GroupCommitMaxDelay = 1 * time.Millisecond
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+	}, cfg)
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Set up as primary.
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(50 * time.Millisecond) // short lease
+
+	// Write should succeed.
+	if err := v.WriteLBA(0, makeBlock('G')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Wait for lease to expire.
+	time.Sleep(100 * time.Millisecond)
+
+	// SyncCache should fail via PostSyncCheck (Gotcha A).
+	err = v.SyncCache()
+	if err == nil {
+		t.Fatal("SyncCache should fail after lease expired")
+	}
+	if !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("expected ErrLeaseExpired from SyncCache, got: %v", err)
+	}
+}
+
+// --- Phase 4A CP1: P3-BUG-9 ---
+
+func testDirtyMapPowerOf2Panics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for non-power-of-2 numShards")
+		}
+		msg, ok := r.(string)
+		if !ok || msg != "blockvol: NewDirtyMap numShards must be power of 2" {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+	NewDirtyMap(3) // should panic
 }

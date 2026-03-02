@@ -39,6 +39,7 @@ type Superblock struct {
 	Replication      [4]byte
 	CreatedAt        uint64 // unix timestamp
 	SnapshotCount    uint32
+	Epoch            uint64 // fencing epoch (0 = no fencing, Phase 3 compat)
 }
 
 // superblockOnDisk is the fixed-size on-disk layout (binary.Write/Read target).
@@ -59,6 +60,7 @@ type superblockOnDisk struct {
 	Replication      [4]byte
 	CreatedAt        uint64
 	SnapshotCount    uint32
+	Epoch            uint64
 }
 
 // NewSuperblock creates a superblock with defaults and a fresh UUID.
@@ -124,6 +126,7 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 		Replication:      sb.Replication,
 		CreatedAt:        sb.CreatedAt,
 		SnapshotCount:    sb.SnapshotCount,
+		Epoch:            sb.Epoch,
 	}
 
 	// Encode into beginning of buf; rest stays zero (padding).
@@ -155,6 +158,8 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 	endian.PutUint64(buf[off:], d.CreatedAt)
 	off += 8
 	endian.PutUint32(buf[off:], d.SnapshotCount)
+	off += 4
+	endian.PutUint64(buf[off:], d.Epoch)
 
 	n, err := w.Write(buf)
 	return int64(n), err
@@ -213,6 +218,8 @@ func ReadSuperblock(r io.Reader) (Superblock, error) {
 	sb.CreatedAt = endian.Uint64(buf[off:])
 	off += 8
 	sb.SnapshotCount = endian.Uint32(buf[off:])
+	off += 4
+	sb.Epoch = endian.Uint64(buf[off:])
 
 	return sb, nil
 }

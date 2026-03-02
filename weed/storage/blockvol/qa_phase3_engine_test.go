@@ -250,26 +250,15 @@ func testQADMMaxUint64LBA(t *testing.T) {
 }
 
 func testQADMNonPowerOf2Shards(t *testing.T) {
-	// Non-power-of-2: mask will be wrong (7-1=6=0b110), but should not panic.
-	// This tests robustness, not correctness of shard distribution.
-	dm := NewDirtyMap(7)
-
-	// Should not panic on basic operations.
-	for i := uint64(0); i < 100; i++ {
-		dm.Put(i, i*10, i+1, 4096)
-	}
-
-	// All entries should be retrievable (mask-based routing is deterministic).
-	for i := uint64(0); i < 100; i++ {
-		_, _, _, ok := dm.Get(i)
-		if !ok {
-			t.Errorf("Get(%d) not found with 7 shards", i)
+	// P3-BUG-9 fix: non-power-of-2 shards now panic to prevent silent
+	// shard routing bugs (mask-based routing requires power-of-2).
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for non-power-of-2 numShards")
 		}
-	}
-
-	if dm.Len() != 100 {
-		t.Errorf("Len() = %d, want 100", dm.Len())
-	}
+	}()
+	NewDirtyMap(7) // should panic
 }
 
 func testQADMZeroShards(t *testing.T) {

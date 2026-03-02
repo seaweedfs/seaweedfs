@@ -41,6 +41,13 @@ type BlockVol struct {
 	closed         atomic.Bool
 	opsOutstanding atomic.Int64 // in-flight Read/Write/Trim/SyncCache ops
 	opsDrained     chan struct{}
+
+	// Fencing fields (Phase 4A).
+	epoch        atomic.Uint64 // current persisted epoch
+	masterEpoch  atomic.Uint64 // expected epoch from master
+	lease        Lease
+	role         atomic.Uint32
+	roleCallback RoleChangeCallback
 }
 
 // CreateBlockVol creates a new block volume file at path.
@@ -105,11 +112,12 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:     fd.Sync,
-		MaxDelay:     cfg.GroupCommitMaxDelay,
-		MaxBatch:     cfg.GroupCommitMaxBatch,
-		LowWatermark: cfg.GroupCommitLowWatermark,
-		OnDegraded:   func() { v.healthy.Store(false) },
+		SyncFunc:       fd.Sync,
+		MaxDelay:       cfg.GroupCommitMaxDelay,
+		MaxBatch:       cfg.GroupCommitMaxBatch,
+		LowWatermark:   cfg.GroupCommitLowWatermark,
+		OnDegraded:     func() { v.healthy.Store(false) },
+		PostSyncCheck:  v.writeGate,
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -174,13 +182,15 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		opsDrained: make(chan struct{}, 1),
 	}
 	v.nextLSN.Store(nextLSN)
+	v.epoch.Store(sb.Epoch)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:     fd.Sync,
-		MaxDelay:     cfg.GroupCommitMaxDelay,
-		MaxBatch:     cfg.GroupCommitMaxBatch,
-		LowWatermark: cfg.GroupCommitLowWatermark,
-		OnDegraded:   func() { v.healthy.Store(false) },
+		SyncFunc:       fd.Sync,
+		MaxDelay:       cfg.GroupCommitMaxDelay,
+		MaxBatch:       cfg.GroupCommitMaxBatch,
+		LowWatermark:   cfg.GroupCommitLowWatermark,
+		OnDegraded:     func() { v.healthy.Store(false) },
+		PostSyncCheck:  v.writeGate,
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -253,6 +263,9 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 		return err
 	}
 	defer v.endOp()
+	if err := v.writeGate(); err != nil {
+		return err
+	}
 	if err := ValidateWrite(lba, uint32(len(data)), v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
 	}
@@ -260,7 +273,7 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 	lsn := v.nextLSN.Add(1) - 1
 	entry := &WALEntry{
 		LSN:    lsn,
-		Epoch:  0, // Phase 1: no fencing
+		Epoch:  v.epoch.Load(),
 		Type:   EntryTypeWrite,
 		LBA:    lba,
 		Length: uint32(len(data)),
@@ -426,6 +439,9 @@ func (v *BlockVol) Trim(lba uint64, length uint32) error {
 		return err
 	}
 	defer v.endOp()
+	if err := v.writeGate(); err != nil {
+		return err
+	}
 	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
 	}
@@ -433,7 +449,7 @@ func (v *BlockVol) Trim(lba uint64, length uint32) error {
 	lsn := v.nextLSN.Add(1) - 1
 	entry := &WALEntry{
 		LSN:    lsn,
-		Epoch:  0,
+		Epoch:  v.epoch.Load(),
 		Type:   EntryTypeTrim,
 		LBA:    lba,
 		Length: length,

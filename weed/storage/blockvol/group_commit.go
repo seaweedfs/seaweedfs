@@ -16,11 +16,12 @@ var (
 // GroupCommitter batches SyncCache requests and performs a single fsync
 // for the entire batch. This amortizes the cost of fsync across many callers.
 type GroupCommitter struct {
-	syncFunc     func() error  // called to fsync (injectable for testing)
-	maxDelay     time.Duration // max wait before flushing a partial batch
-	maxBatch     int           // flush immediately when this many waiters accumulate
-	lowWatermark int           // skip delay if fewer pending (0 = always wait)
-	onDegraded   func()        // called when fsync fails
+	syncFunc      func() error  // called to fsync (injectable for testing)
+	maxDelay      time.Duration // max wait before flushing a partial batch
+	maxBatch      int           // flush immediately when this many waiters accumulate
+	lowWatermark  int           // skip delay if fewer pending (0 = always wait)
+	onDegraded    func()        // called when fsync fails
+	postSyncCheck func() error  // called after sync; error fails waiters
 
 	mu       sync.Mutex
 	pending  []chan error
@@ -35,11 +36,12 @@ type GroupCommitter struct {
 
 // GroupCommitterConfig configures the group committer.
 type GroupCommitterConfig struct {
-	SyncFunc     func() error  // required: the fsync function
-	MaxDelay     time.Duration // default 1ms
-	MaxBatch     int           // default 64
-	LowWatermark int           // skip delay if fewer pending (0 = always wait)
-	OnDegraded   func()        // optional: called on fsync error
+	SyncFunc      func() error  // required: the fsync function
+	MaxDelay      time.Duration // default 1ms
+	MaxBatch      int           // default 64
+	LowWatermark  int           // skip delay if fewer pending (0 = always wait)
+	OnDegraded    func()        // optional: called on fsync error
+	PostSyncCheck func() error  // optional: called after successful sync; error fails all waiters
 }
 
 // NewGroupCommitter creates a new group committer. Call Run() to start it.
@@ -54,14 +56,15 @@ func NewGroupCommitter(cfg GroupCommitterConfig) *GroupCommitter {
 		cfg.OnDegraded = func() {}
 	}
 	return &GroupCommitter{
-		syncFunc:     cfg.SyncFunc,
-		maxDelay:     cfg.MaxDelay,
-		maxBatch:     cfg.MaxBatch,
-		lowWatermark: cfg.LowWatermark,
-		onDegraded:   cfg.OnDegraded,
-		notifyCh:     make(chan struct{}, 1),
-		stopCh:       make(chan struct{}),
-		done:         make(chan struct{}),
+		syncFunc:      cfg.SyncFunc,
+		maxDelay:      cfg.MaxDelay,
+		maxBatch:      cfg.MaxBatch,
+		lowWatermark:  cfg.LowWatermark,
+		onDegraded:    cfg.OnDegraded,
+		postSyncCheck: cfg.PostSyncCheck,
+		notifyCh:      make(chan struct{}, 1),
+		stopCh:        make(chan struct{}),
+		done:          make(chan struct{}),
 	}
 }
 
@@ -129,6 +132,9 @@ func (gc *GroupCommitter) Run() {
 		// not leave waiters hung — notify them and drain stragglers.
 		err := gc.callSyncFunc()
 		gc.syncCount.Add(1)
+		if err == nil && gc.postSyncCheck != nil {
+			err = gc.postSyncCheck()
+		}
 		if err != nil {
 			gc.onDegraded()
 		}
