@@ -459,7 +459,8 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 		t.Fatalf("LoadTable failed: %v", err)
 	}
 
-	creds, endpoint, region, pathStyle, err := extractS3Credentials(loadResp, location, env.s3Endpoint(), polarisRegion)
+	dataPrefix := location + "/data"
+	creds, endpoint, region, pathStyle, err := extractS3Credentials(loadResp, dataPrefix, env.s3Endpoint(), polarisRegion)
 	if err != nil {
 		t.Fatalf("Extract vended credentials failed: %v", err)
 	}
@@ -610,9 +611,17 @@ func extractS3Credentials(load *loadTableResponse, targetPrefix, fallbackEndpoin
 		return ""
 	}
 
-	accessKey := lookup("s3.access-key-id", "aws.access-key-id", "s3.accessKeyId")
-	secretKey := lookup("s3.secret-access-key", "aws.secret-access-key", "s3.secretAccessKey")
-	sessionToken := lookup("s3.session-token", "aws.session-token")
+	accessKey := lookup("s3.access-key-id", "aws.access-key-id", "s3.accessKeyId", "aws.accessKeyId", "accessKeyId", "access_key_id")
+	secretKey := lookup("s3.secret-access-key", "aws.secret-access-key", "s3.secretAccessKey", "aws.secretAccessKey", "secretAccessKey", "secret_access_key")
+	sessionToken := lookup("s3.session-token", "aws.session-token", "s3.sessionToken", "aws.sessionToken", "sessionToken", "session_token")
+	if accessKey == "" || secretKey == "" {
+		if altConfig := findConfigWithKeys(load, targetPrefix); altConfig != nil {
+			configMap = altConfig
+			accessKey = lookup("s3.access-key-id", "aws.access-key-id", "s3.accessKeyId", "aws.accessKeyId", "accessKeyId", "access_key_id")
+			secretKey = lookup("s3.secret-access-key", "aws.secret-access-key", "s3.secretAccessKey", "aws.secretAccessKey", "secretAccessKey", "secret_access_key")
+			sessionToken = lookup("s3.session-token", "aws.session-token", "s3.sessionToken", "aws.sessionToken", "sessionToken", "session_token")
+		}
+	}
 	if accessKey == "" || secretKey == "" {
 		return aws.Credentials{}, "", "", false, fmt.Errorf("missing access key or secret in storage credentials")
 	}
@@ -696,4 +705,62 @@ func normalizePrefix(prefix string) string {
 	p := strings.TrimSpace(prefix)
 	p = strings.TrimSuffix(p, "/")
 	return p
+}
+
+func findConfigWithKeys(load *loadTableResponse, targetPrefix string) map[string]string {
+	normalizedTarget := normalizePrefix(targetPrefix)
+	if normalizedTarget == "" {
+		return nil
+	}
+
+	hasKeys := func(config map[string]string) bool {
+		if config == nil {
+			return false
+		}
+		accessKey := lookupValue(config, "s3.access-key-id", "aws.access-key-id", "s3.accessKeyId", "aws.accessKeyId", "accessKeyId", "access_key_id")
+		secretKey := lookupValue(config, "s3.secret-access-key", "aws.secret-access-key", "s3.secretAccessKey", "aws.secretAccessKey", "secretAccessKey", "secret_access_key")
+		return accessKey != "" && secretKey != ""
+	}
+
+	bestConfig := map[string]string(nil)
+	bestLen := -1
+	for _, cred := range load.StorageCredentials {
+		if !hasKeys(cred.Config) {
+			continue
+		}
+		prefix := normalizePrefix(cred.Prefix)
+		if prefix == "" {
+			if bestLen < 0 {
+				bestLen = 0
+				bestConfig = cred.Config
+			}
+			continue
+		}
+		if normalizedTarget == prefix || strings.HasPrefix(normalizedTarget, prefix+"/") {
+			if len(prefix) > bestLen {
+				bestLen = len(prefix)
+				bestConfig = cred.Config
+			}
+		}
+	}
+	if bestConfig != nil {
+		return bestConfig
+	}
+
+	if len(load.StorageCredentials) == 0 && hasKeys(load.Config) {
+		return load.Config
+	}
+	if hasKeys(load.Config) {
+		return load.Config
+	}
+	return nil
+}
+
+func lookupValue(config map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if val, ok := config[key]; ok && val != "" {
+			return val
+		}
+	}
+	return ""
 }
