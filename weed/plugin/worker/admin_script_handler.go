@@ -21,6 +21,8 @@ import (
 const (
 	adminScriptJobType        = "admin_script"
 	maxAdminScriptOutputBytes = 16 * 1024
+	defaultAdminScriptRunMins = 17
+	adminScriptDetectTickSecs = 60
 )
 
 const defaultAdminScript = `volume.balance -apply
@@ -77,6 +79,15 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXTAREA,
 							Required:    true,
 						},
+						{
+							Name:        "run_interval_minutes",
+							Label:       "Run Interval (minutes)",
+							Description: "Minimum interval between successful admin script runs.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							Required:    true,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
 					},
 				},
 			},
@@ -84,11 +95,14 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"script": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultAdminScript},
 				},
+				"run_interval_minutes": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultAdminScriptRunMins},
+				},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       false,
-			DetectionIntervalSeconds:      24 * 60 * 60,
+			DetectionIntervalSeconds:      adminScriptDetectTickSecs,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           1,
 			GlobalExecutionConcurrency:    1,
@@ -113,6 +127,31 @@ func (h *AdminScriptHandler) Detect(ctx context.Context, request *plugin_pb.RunD
 
 	script := normalizeAdminScript(readStringConfig(request.GetAdminConfigValues(), "script", ""))
 	scriptName := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "script_name", ""))
+	runIntervalMinutes := readAdminScriptRunIntervalMinutes(request.GetAdminConfigValues())
+	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), runIntervalMinutes*60) {
+		_ = sender.SendActivity(buildDetectorActivity(
+			"skipped_by_interval",
+			fmt.Sprintf("ADMIN SCRIPT: Detection skipped due to run interval (%dm)", runIntervalMinutes),
+			map[string]*plugin_pb.ConfigValue{
+				"run_interval_minutes": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(runIntervalMinutes)},
+				},
+			},
+		))
+		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
+			JobType:   adminScriptJobType,
+			Proposals: []*plugin_pb.JobProposal{},
+			HasMore:   false,
+		}); err != nil {
+			return err
+		}
+		return sender.SendComplete(&plugin_pb.DetectionComplete{
+			JobType:        adminScriptJobType,
+			Success:        true,
+			TotalProposals: 0,
+		})
+	}
+
 	commands := parseAdminScriptCommands(script)
 	execCount := countExecutableCommands(commands)
 	if execCount == 0 {
@@ -344,6 +383,14 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 		},
 		CompletedAt: timestamppb.Now(),
 	})
+}
+
+func readAdminScriptRunIntervalMinutes(values map[string]*plugin_pb.ConfigValue) int {
+	runIntervalMinutes := int(readInt64Config(values, "run_interval_minutes", defaultAdminScriptRunMins))
+	if runIntervalMinutes <= 0 {
+		return defaultAdminScriptRunMins
+	}
+	return runIntervalMinutes
 }
 
 type adminScriptCommand struct {
