@@ -66,7 +66,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: s3-tables-test-logs
           path: test/s3tables/table-buckets/test-output.log
@@ -122,7 +122,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: iceberg-catalog-test-logs
           path: test/s3tables/catalog/test-output.log
@@ -188,7 +188,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: trino-iceberg-catalog-test-logs
           path: test/s3tables/catalog_trino/test-output.log
@@ -249,7 +249,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: polaris-test-logs
           path: test/s3tables/polaris/test-output.log
@@ -315,7 +315,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: spark-iceberg-catalog-test-logs
           path: test/s3tables/catalog_spark/test-output.log
@@ -383,7 +383,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: risingwave-catalog-test-logs
           path: test/s3tables/catalog_risingwave/test-output.log
@@ -449,7 +449,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: sts-integration-test-logs
           path: test/s3tables/sts_integration/test-output.log
@@ -518,7 +518,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: lakekeeper-integration-test-logs
           path: test/s3tables/lakekeeper/test-output.log
