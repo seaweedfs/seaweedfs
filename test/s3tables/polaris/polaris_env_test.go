@@ -297,6 +297,10 @@ func newPolarisHTTPClient(baseURL, realm, token string) *polarisHTTPClient {
 }
 
 func (c *polarisHTTPClient) doJSON(ctx context.Context, method, path string, body interface{}, out interface{}) error {
+	return c.doJSONWithHeaders(ctx, method, path, body, out, nil)
+}
+
+func (c *polarisHTTPClient) doJSONWithHeaders(ctx context.Context, method, path string, body interface{}, out interface{}, headers map[string]string) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -319,6 +323,9 @@ func (c *polarisHTTPClient) doJSON(ctx context.Context, method, path string, bod
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 
 	resp, err := c.httpClient.Do(req)

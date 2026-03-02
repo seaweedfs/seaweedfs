@@ -590,7 +590,10 @@ func (c *polarisCatalogClient) DeleteTable(ctx context.Context, namespace, table
 func (c *polarisCatalogClient) LoadTable(ctx context.Context, namespace, table string) (*loadTableResponse, error) {
 	path := fmt.Sprintf("/api/catalog/v1/%s/namespaces/%s/tables/%s", url.PathEscape(c.catalog), url.PathEscape(namespace), url.PathEscape(table))
 	var resp loadTableResponse
-	if err := c.http.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+	headers := map[string]string{
+		"X-Iceberg-Access-Delegation": "vended-credentials",
+	}
+	if err := c.http.doJSONWithHeaders(ctx, http.MethodGet, path, nil, &resp, headers); err != nil {
 		return nil, err
 	}
 	return &resp, nil
