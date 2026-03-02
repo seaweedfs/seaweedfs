@@ -57,8 +57,8 @@ func init() {
 
 	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
-	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "deprecated: read-only admin users are no longer supported")
-	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "deprecated: read-only admin users are no longer supported")
+	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 }
 
@@ -93,8 +93,12 @@ var cmdAdmin = &Command{
   Authentication:
     - Local auth: set adminUser/adminPassword for username/password login
     - If adminPassword is set, users must login with adminUser/adminPassword (full access)
+    - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
+    - Read-only users can view cluster status and configurations but cannot make changes
+    - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
+    - This ensures an admin account exists to manage and authorize read-only access
     - OIDC auth: configure [admin.oidc] in security.toml for Authorization Code flow
-    - OIDC role mapping must resolve users to admin
+    - OIDC role mapping must resolve users to admin or readonly
     - If neither local auth nor OIDC is configured, the admin interface runs without authentication
     - Sessions are secured with auto-generated session keys
 
@@ -161,8 +165,18 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Println("Error: -adminUser cannot be empty when -adminPassword is set")
 		return false
 	}
-	if *a.readOnlyUser != "" || *a.readOnlyPassword != "" {
-		fmt.Println("Error: read-only admin users are no longer supported; remove -readOnlyUser/-readOnlyPassword")
+	if *a.readOnlyPassword != "" && *a.readOnlyUser == "" {
+		fmt.Println("Error: -readOnlyUser is required when -readOnlyPassword is set")
+		return false
+	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *a.adminUser != "" && *a.readOnlyUser != "" && *a.adminUser == *a.readOnlyUser {
+		fmt.Println("Error: -adminUser and -readOnlyUser must be different when both are configured")
+		return false
+	}
+	// Security validation: admin password is required for read-only user
+	if *a.readOnlyPassword != "" && *a.adminPassword == "" {
+		fmt.Println("Error: -adminPassword must be set when -readOnlyPassword is configured")
 		return false
 	}
 
@@ -191,6 +205,9 @@ func runAdmin(cmd *Command, args []string) bool {
 		fmt.Printf("Authentication: Enabled\n")
 		if *a.adminPassword != "" {
 			fmt.Printf("Local credentials: Enabled (admin user: %s)\n", *a.adminUser)
+		}
+		if *a.readOnlyPassword != "" {
+			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
 		}
 		if oidcEnabled {
 			fmt.Printf("OIDC: Enabled (issuer: %s)\n", viper.GetString("admin.oidc.issuer"))
@@ -317,9 +334,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Create handlers and setup routes
 	authConfig := handlers.AuthConfig{
-		AdminUser:     *options.adminUser,
-		AdminPassword: *options.adminPassword,
-		OIDCAuth:      oidcAuthService,
+		AdminUser:        *options.adminUser,
+		AdminPassword:    *options.adminPassword,
+		ReadOnlyUser:     *options.readOnlyUser,
+		ReadOnlyPassword: *options.readOnlyPassword,
+		OIDCAuth:         oidcAuthService,
 	}
 	adminHandlers := handlers.NewAdminHandlers(adminServer, store, authConfig)
 	adminHandlers.SetupRoutes(r, enableUI)

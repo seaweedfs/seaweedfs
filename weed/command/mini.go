@@ -277,8 +277,8 @@ func initMiniAdminFlags() {
 	miniAdminOptions.dataDir = cmdMini.Flag.String("admin.dataDir", "", "directory to store admin configuration and data files")
 	miniAdminOptions.adminUser = cmdMini.Flag.String("admin.user", "admin", "admin interface username")
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
-	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "deprecated: read-only admin users are no longer supported")
-	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "deprecated: read-only admin users are no longer supported")
+	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
+	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
 }
 
 func init() {
@@ -989,8 +989,17 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	if *miniAdminOptions.adminPassword != "" && *miniAdminOptions.adminUser == "" {
 		glog.Fatalf("Error: -admin.user cannot be empty when -admin.password is set")
 	}
-	if *miniAdminOptions.readOnlyUser != "" || *miniAdminOptions.readOnlyPassword != "" {
-		glog.Fatalf("Error: read-only admin users are no longer supported; remove -admin.readOnlyUser/-admin.readOnlyPassword")
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.readOnlyUser == "" {
+		glog.Fatalf("Error: -admin.readOnlyUser is required when -admin.readOnlyPassword is set")
+	}
+	// Security validation: prevent username conflicts between admin and read-only users
+	if *miniAdminOptions.adminUser != "" && *miniAdminOptions.readOnlyUser != "" &&
+		*miniAdminOptions.adminUser == *miniAdminOptions.readOnlyUser {
+		glog.Fatalf("Error: -admin.user and -admin.readOnlyUser must be different when both are configured")
+	}
+	// Security validation: admin password is required for read-only user
+	if *miniAdminOptions.readOnlyPassword != "" && *miniAdminOptions.adminPassword == "" {
+		glog.Fatalf("Error: -admin.password must be set when -admin.readOnlyPassword is configured")
 	}
 
 	// gRPC port should have been initialized by ensureAllPortsAvailableOnIP in runMini

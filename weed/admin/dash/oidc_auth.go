@@ -167,7 +167,7 @@ func (c OIDCAuthConfig) Validate() error {
 	}
 
 	if c.RoleMapping.DefaultRole != "" && !isSupportedAdminRole(c.RoleMapping.DefaultRole) {
-		return fmt.Errorf("admin.oidc.role_mapping.default_role must be admin")
+		return fmt.Errorf("admin.oidc.role_mapping.default_role must be one of: admin, readonly")
 	}
 
 	for i, rule := range c.RoleMapping.Rules {
@@ -178,7 +178,7 @@ func (c OIDCAuthConfig) Validate() error {
 			return fmt.Errorf("admin.oidc.role_mapping.rules[%d].value is required", i)
 		}
 		if !isSupportedAdminRole(rule.Role) {
-			return fmt.Errorf("admin.oidc.role_mapping.rules[%d].role must be admin", i)
+			return fmt.Errorf("admin.oidc.role_mapping.rules[%d].role must be one of: admin, readonly", i)
 		}
 	}
 
@@ -459,10 +459,18 @@ func mapClaimsToRoles(claims *providers.TokenClaims, mapping *providers.RoleMapp
 }
 
 func resolveAdminRole(roles []string) (string, error) {
+	hasReadonly := false
 	for _, role := range roles {
-		if normalizeAdminRole(role) == "admin" {
+		role = normalizeAdminRole(role)
+		if role == "admin" {
 			return "admin", nil
 		}
+		if role == "readonly" {
+			hasReadonly = true
+		}
+	}
+	if hasReadonly {
+		return "readonly", nil
 	}
 	return "", fmt.Errorf("OIDC user does not map to an allowed admin role")
 }
@@ -524,7 +532,7 @@ func normalizeOIDCAuthConfig(config OIDCAuthConfig) OIDCAuthConfig {
 
 func isSupportedAdminRole(role string) bool {
 	switch normalizeAdminRole(role) {
-	case "admin":
+	case "admin", "readonly":
 		return true
 	default:
 		return false
