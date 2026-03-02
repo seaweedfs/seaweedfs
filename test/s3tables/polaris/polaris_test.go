@@ -456,7 +456,7 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 		t.Fatalf("LoadTable failed: %v", err)
 	}
 
-	creds, endpoint, region, pathStyle, err := extractS3Credentials(loadResp, env.s3Endpoint(), polarisRegion)
+	creds, endpoint, region, pathStyle, err := extractS3Credentials(loadResp, location, env.s3Endpoint(), polarisRegion)
 	if err != nil {
 		t.Fatalf("Extract vended credentials failed: %v", err)
 	}
@@ -590,23 +590,16 @@ func (c *polarisCatalogClient) LoadTable(ctx context.Context, namespace, table s
 	return &resp, nil
 }
 
-func extractS3Credentials(load *loadTableResponse, fallbackEndpoint, fallbackRegion string) (aws.Credentials, string, string, bool, error) {
-	configs := make([]map[string]string, 0, len(load.StorageCredentials)+1)
-	for _, cred := range load.StorageCredentials {
-		if cred.Config != nil {
-			configs = append(configs, cred.Config)
-		}
-	}
-	if load.Config != nil {
-		configs = append(configs, load.Config)
+func extractS3Credentials(load *loadTableResponse, targetPrefix, fallbackEndpoint, fallbackRegion string) (aws.Credentials, string, string, bool, error) {
+	configMap, err := selectStorageConfig(load, targetPrefix)
+	if err != nil {
+		return aws.Credentials{}, "", "", false, err
 	}
 
 	lookup := func(keys ...string) string {
-		for _, cfg := range configs {
-			for _, key := range keys {
-				if val, ok := cfg[key]; ok && val != "" {
-					return val
-				}
+		for _, key := range keys {
+			if val, ok := configMap[key]; ok && val != "" {
+				return val
 			}
 		}
 		return ""
@@ -643,4 +636,40 @@ func extractS3Credentials(load *loadTableResponse, fallbackEndpoint, fallbackReg
 		SessionToken:    sessionToken,
 		Source:          "polaris-vended",
 	}, endpoint, region, pathStyle, nil
+}
+
+func selectStorageConfig(load *loadTableResponse, targetPrefix string) (map[string]string, error) {
+	switch len(load.StorageCredentials) {
+	case 0:
+		if load.Config == nil {
+			return nil, fmt.Errorf("polaris returned no storage credentials or config")
+		}
+		return load.Config, nil
+	case 1:
+		cred := load.StorageCredentials[0]
+		if cred.Config == nil {
+			return nil, fmt.Errorf("storage credential for prefix %s returned nil config", cred.Prefix)
+		}
+		return cred.Config, nil
+	default:
+		if targetPrefix == "" {
+			return nil, fmt.Errorf("multiple storage credentials (%d) returned but no target prefix provided", len(load.StorageCredentials))
+		}
+		normalizedTarget := normalizePrefix(targetPrefix)
+		for _, cred := range load.StorageCredentials {
+			if normalizePrefix(cred.Prefix) == normalizedTarget {
+				if cred.Config == nil {
+					return nil, fmt.Errorf("storage credential for prefix %s returned nil config", cred.Prefix)
+				}
+				return cred.Config, nil
+			}
+		}
+		return nil, fmt.Errorf("none of the %d storage credentials matched prefix %s", len(load.StorageCredentials), targetPrefix)
+	}
+}
+
+func normalizePrefix(prefix string) string {
+	p := strings.TrimSpace(prefix)
+	p = strings.TrimSuffix(p, "/")
+	return p
 }
