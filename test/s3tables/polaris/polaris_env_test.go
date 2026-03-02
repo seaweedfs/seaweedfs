@@ -28,7 +28,7 @@ const (
 	polarisRootClientID     = "root"
 	polarisRootClientSecret = "s3cr3t"
 	polarisRegion           = "us-east-1"
-	polarisRoleArn          = "arn:aws:iam::000000000000:role/LakekeeperVendedRole"
+	polarisRoleArn          = "arn:aws:iam::000000000000:role/PolarisVendedRole"
 	polarisSigningKey       = "dGVzdC1zaWduaW5nLWtleS1mb3Itc3RzLWludGVncmF0aW9uLXRlc3Rz" // gitleaks:allow - test signing key
 )
 
@@ -140,7 +140,7 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
   },
   "roles": [
     {
-      "roleName": "LakekeeperVendedRole",
+      "roleName": "PolarisVendedRole",
       "roleArn": "%s",
       "trustPolicy": {
         "Version": "2012-10-17",
