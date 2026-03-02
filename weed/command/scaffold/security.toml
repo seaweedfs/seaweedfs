@@ -180,17 +180,12 @@ tls_ca_cert = ""                  # optional absolute path for custom CA bundle
 tls_insecure_skip_verify = false  # testing only; do not use in production
 
 [admin.oidc.role_mapping]
-default_role = "readonly"
+default_role = "admin"
 
 [[admin.oidc.role_mapping.rules]]
 claim = "groups"
 value = "seaweedfs-admin"
 role = "admin"
-
-[[admin.oidc.role_mapping.rules]]
-claim = "groups"
-value = "seaweedfs-readonly"
-role = "readonly"
 
 # white list. It's checking request ip address.
 [guard]
