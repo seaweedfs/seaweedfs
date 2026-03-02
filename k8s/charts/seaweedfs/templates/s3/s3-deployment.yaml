@@ -91,17 +91,9 @@ spec:
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.s3.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.s3.extraEnvironmentVars }}
-            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
-            {{- end }}
-            {{- end }}
-            {{- range $key, $value := $mergedExtraEnvironmentVars }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.s3 "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}

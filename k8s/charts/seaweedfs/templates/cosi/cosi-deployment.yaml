@@ -97,17 +97,9 @@ spec:
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.cosi.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.cosi.extraEnvironmentVars }}
-            {{- $_ := set $mergedExtraEnvironmentVars $key $value }}
-            {{- end }}
-            {{- end }}
-            {{- range $key, $value := $mergedExtraEnvironmentVars }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.cosi "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
