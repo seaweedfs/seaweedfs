@@ -59,6 +59,19 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
+{{- define "seaweedfs.mergeExtraEnvironmentVars" -}}
+{{- $global := .global | default dict -}}
+{{- $component := .component | default dict -}}
+{{- $merged := dict -}}
+{{- range $key, $value := $global }}
+{{- $_ := set $merged $key $value }}
+{{- end }}
+{{- range $key, $value := $component }}
+{{- $_ := set $merged $key $value }}
+{{- end }}
+{{- $merged -}}
+{{- end -}}
+
 {{/* Return the proper filer image */}}
 {{- define "filer.image" -}}
 {{- if .Values.filer.imageOverride -}}
