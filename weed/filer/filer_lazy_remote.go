@@ -3,6 +3,7 @@ package filer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -107,5 +108,9 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		return nil, err
 	}
 
-	return val.(lazyFetchResult).entry, nil
+	result, ok := val.(lazyFetchResult)
+	if !ok {
+		return nil, fmt.Errorf("maybeLazyFetchFromRemote: unexpected singleflight result type %T for %s", val, p)
+	}
+	return result.entry, nil
 }
