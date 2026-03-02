@@ -105,6 +105,16 @@ func (d *DirtyMap) Range(start uint64, count uint32, fn func(lba, walOffset, lsn
 	}
 }
 
+// Clear removes all entries from the dirty map.
+func (d *DirtyMap) Clear() {
+	for i := range d.shards {
+		s := &d.shards[i]
+		s.mu.Lock()
+		s.m = make(map[uint64]dirtyEntry)
+		s.mu.Unlock()
+	}
+}
+
 // Len returns the number of dirty entries across all shards.
 func (d *DirtyMap) Len() int {
 	n := 0

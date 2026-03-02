@@ -85,6 +85,49 @@ func ReadFrame(r io.Reader) (msgType byte, payload []byte, err error) {
 	return msgType, payload, nil
 }
 
+// Rebuild message types (on rebuild channel).
+const (
+	MsgRebuildReq    byte = 0x10 // client → server
+	MsgRebuildEntry  byte = 0x11 // server → client: WAL entry
+	MsgRebuildExtent byte = 0x12 // server → client: extent chunk
+	MsgRebuildDone   byte = 0x13 // server → client: stream complete
+	MsgRebuildError  byte = 0x14 // server → client: error
+)
+
+// Rebuild request types.
+const (
+	RebuildWALCatchUp  byte = 0x01
+	RebuildFullExtent  byte = 0x02
+)
+
+// RebuildRequest is sent by the rebuilding replica to the primary.
+type RebuildRequest struct {
+	Type    byte   // RebuildWALCatchUp or RebuildFullExtent
+	FromLSN uint64
+	Epoch   uint64
+}
+
+// EncodeRebuildRequest serializes a RebuildRequest (1+8+8 = 17 bytes).
+func EncodeRebuildRequest(req RebuildRequest) []byte {
+	buf := make([]byte, 17)
+	buf[0] = req.Type
+	binary.BigEndian.PutUint64(buf[1:9], req.FromLSN)
+	binary.BigEndian.PutUint64(buf[9:17], req.Epoch)
+	return buf
+}
+
+// DecodeRebuildRequest deserializes a RebuildRequest.
+func DecodeRebuildRequest(buf []byte) (RebuildRequest, error) {
+	if len(buf) < 17 {
+		return RebuildRequest{}, fmt.Errorf("repl: rebuild request too short: %d bytes", len(buf))
+	}
+	return RebuildRequest{
+		Type:    buf[0],
+		FromLSN: binary.BigEndian.Uint64(buf[1:9]),
+		Epoch:   binary.BigEndian.Uint64(buf[9:17]),
+	}, nil
+}
+
 // EncodeBarrierRequest serializes a BarrierRequest (4+8+8 = 20 bytes).
 func EncodeBarrierRequest(req BarrierRequest) []byte {
 	buf := make([]byte, 20)

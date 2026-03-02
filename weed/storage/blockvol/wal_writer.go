@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	ErrWALFull = errors.New("blockvol: WAL region full")
+	ErrWALFull      = errors.New("blockvol: WAL region full")
+	ErrWALRecycled  = errors.New("blockvol: WAL entries recycled past requested LSN")
 )
 
 // WALWriter appends entries to the circular WAL region of a blockvol file.
@@ -196,6 +197,95 @@ func (w *WALWriter) UsedFraction() float64 {
 		return 0
 	}
 	return float64(u) / float64(s)
+}
+
+// ScanFrom reads WAL entries starting at the first entry with LSN >= fromLSN.
+// Calls fn for each valid WRITE or TRIM entry. Returns ErrWALRecycled if
+// fromLSN is below checkpointLSN (those entries have been flushed to extent
+// and the WAL space may have been reused).
+func (w *WALWriter) ScanFrom(fd *os.File, walOffset uint64,
+	checkpointLSN uint64, fromLSN uint64, fn func(*WALEntry) error) error {
+
+	if fromLSN <= checkpointLSN && checkpointLSN > 0 {
+		return ErrWALRecycled
+	}
+
+	// Snapshot logical positions under lock.
+	w.mu.Lock()
+	logicalTail := w.logicalTail
+	logicalHead := w.logicalHead
+	walSize := w.walSize
+	w.mu.Unlock()
+
+	if logicalHead == logicalTail {
+		return nil // empty WAL
+	}
+
+	pos := logicalTail
+	for pos < logicalHead {
+		physPos := pos % walSize
+		remaining := walSize - physPos
+
+		// Need at least a header to proceed.
+		if remaining < uint64(walEntryHeaderSize) {
+			// Too small for a header — skip padding at end of region.
+			pos += remaining
+			continue
+		}
+
+		// Read header.
+		headerBuf := make([]byte, walEntryHeaderSize)
+		absOff := int64(walOffset + physPos)
+		if _, err := fd.ReadAt(headerBuf, absOff); err != nil {
+			return fmt.Errorf("ScanFrom: read header at WAL+%d: %w", physPos, err)
+		}
+
+		entryType := headerBuf[16]
+		lengthField := binary.LittleEndian.Uint32(headerBuf[26:])
+
+		// Calculate entry size based on type.
+		var payloadLen uint64
+		switch entryType {
+		case EntryTypePadding:
+			entrySize := uint64(walEntryHeaderSize) + uint64(lengthField)
+			pos += entrySize
+			continue
+		case EntryTypeWrite:
+			payloadLen = uint64(lengthField)
+		default:
+			// TRIM, BARRIER: no data payload
+		}
+
+		entrySize := uint64(walEntryHeaderSize) + payloadLen
+
+		// Read full entry.
+		fullBuf := make([]byte, entrySize)
+		if physPos+entrySize <= walSize {
+			if _, err := fd.ReadAt(fullBuf, absOff); err != nil {
+				return fmt.Errorf("ScanFrom: read entry at WAL+%d: %w", physPos, err)
+			}
+		} else {
+			// Entry should not span WAL boundary (padding prevents this),
+			// but guard against it.
+			return fmt.Errorf("ScanFrom: entry at WAL+%d spans boundary", physPos)
+		}
+
+		entry, err := DecodeWALEntry(fullBuf)
+		if err != nil {
+			// CRC failure — stop scanning (torn write).
+			return nil
+		}
+
+		if entry.LSN >= fromLSN && (entry.Type == EntryTypeWrite || entry.Type == EntryTypeTrim) {
+			if err := fn(&entry); err != nil {
+				return err
+			}
+		}
+
+		pos += entrySize
+	}
+
+	return nil
 }
 
 // Sync fsyncs the underlying file descriptor.

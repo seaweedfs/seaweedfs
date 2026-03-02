@@ -53,6 +53,11 @@ type BlockVol struct {
 	lease        Lease
 	role         atomic.Uint32
 	roleCallback RoleChangeCallback
+
+	// Promotion/rebuild fields (Phase 4A CP3).
+	rebuildServer *RebuildServer
+	assignMu      sync.Mutex    // serializes HandleAssignment calls
+	drainTimeout  time.Duration // default 10s, for demote drain
 }
 
 // CreateBlockVol creates a new block volume file at path.
@@ -547,6 +552,30 @@ func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string) error {
 	return nil
 }
 
+// HandleAssignment processes a role/epoch/lease assignment from master.
+func (v *BlockVol) HandleAssignment(epoch uint64, role Role, leaseTTL time.Duration) error {
+	return HandleAssignment(v, epoch, role, leaseTTL)
+}
+
+// StartRebuildServer creates and starts a rebuild server on the given address.
+func (v *BlockVol) StartRebuildServer(addr string) error {
+	srv, err := NewRebuildServer(v, addr)
+	if err != nil {
+		return err
+	}
+	v.rebuildServer = srv
+	srv.Serve()
+	return nil
+}
+
+// StopRebuildServer stops the rebuild server if running.
+func (v *BlockVol) StopRebuildServer() {
+	if v.rebuildServer != nil {
+		v.rebuildServer.Stop()
+		v.rebuildServer = nil
+	}
+}
+
 // degradeReplica marks the shipper as degraded and logs a warning.
 func (v *BlockVol) degradeReplica(err error) {
 	if v.shipper != nil {
@@ -556,7 +585,7 @@ func (v *BlockVol) degradeReplica(err error) {
 }
 
 // Close shuts down the block volume and closes the file.
-// Shutdown order: shipper → replica receiver → drain ops → group committer → flusher → final flush → close fd.
+// Shutdown order: shipper -> replica receiver -> rebuild server -> drain ops -> group committer -> flusher -> final flush -> close fd.
 func (v *BlockVol) Close() error {
 	v.closed.Store(true)
 
@@ -568,6 +597,8 @@ func (v *BlockVol) Close() error {
 	if v.replRecv != nil {
 		v.replRecv.Stop()
 	}
+	// Stop rebuild server.
+	v.StopRebuildServer()
 
 	// Drain in-flight ops: beginOp checks closed and returns ErrVolumeClosed,
 	// so no new ops can start. Wait for existing ones to finish (max 5s).
