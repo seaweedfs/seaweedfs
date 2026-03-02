@@ -18,9 +18,10 @@ import (
 )
 
 type polarisSession struct {
-	catalogName string
-	bucketName  string
-	token       string
+	catalogName  string
+	bucketName   string
+	token        string
+	baseLocation string
 }
 
 type polarisTableSetup struct {
@@ -339,6 +340,7 @@ func newPolarisSession(t *testing.T, ctx context.Context, env *TestEnvironment) 
 
 	managementClient := newPolarisHTTPClient(env.polarisEndpoint(), polarisRealm, rootToken)
 	catalogName := fmt.Sprintf("polaris_catalog_%d", time.Now().UnixNano())
+	baseLocation := fmt.Sprintf("s3://%s/polaris", bucketName)
 
 	catalogRequest := createCatalogRequest{
 		Catalog: polarisCatalog{
@@ -346,11 +348,11 @@ func newPolarisSession(t *testing.T, ctx context.Context, env *TestEnvironment) 
 			Type:     "INTERNAL",
 			ReadOnly: false,
 			Properties: map[string]string{
-				"default-base-location": fmt.Sprintf("s3://%s/polaris", bucketName),
+				"default-base-location": baseLocation,
 			},
 			StorageConfigInfo: polarisStorageConfig{
 				StorageType:      "S3",
-				AllowedLocations: []string{fmt.Sprintf("s3://%s", bucketName)},
+				AllowedLocations: []string{baseLocation},
 				Endpoint:         env.s3Endpoint(),
 				EndpointInternal: env.s3InternalEndpoint(),
 				StsEndpoint:      env.s3InternalEndpoint(),
@@ -429,9 +431,10 @@ func newPolarisSession(t *testing.T, ctx context.Context, env *TestEnvironment) 
 	}
 
 	return polarisSession{
-		catalogName: catalogName,
-		bucketName:  bucketName,
-		token:       userToken,
+		catalogName:  catalogName,
+		bucketName:   bucketName,
+		token:        userToken,
+		baseLocation: baseLocation,
 	}
 }
 
@@ -446,7 +449,7 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 		t.Fatalf("CreateNamespace failed: %v", err)
 	}
 
-	location := fmt.Sprintf("s3://%s/%s/%s", session.bucketName, namespace, table)
+	location := fmt.Sprintf("%s/%s/%s", session.baseLocation, namespace, table)
 	if err := catalogClient.CreateTable(ctx, namespace, table, location); err != nil {
 		t.Fatalf("CreateTable failed: %v", err)
 	}
