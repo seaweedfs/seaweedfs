@@ -320,6 +320,13 @@ func newPolarisSession(t *testing.T, ctx context.Context, env *TestEnvironment) 
 	}); err != nil {
 		t.Fatalf("CreateBucket failed: %v", err)
 	}
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"AllowPolarisVendedAccess","Effect":"Allow","Principal":"*","Action":"s3:*","Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/polaris/*"]}]}`, bucketName, bucketName)
+	if _, err := adminS3.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{
+		Bucket: aws.String(bucketName),
+		Policy: aws.String(policy),
+	}); err != nil {
+		t.Fatalf("PutBucketPolicy failed: %v", err)
+	}
 
 	rootToken, err := fetchPolarisToken(ctx, env.polarisEndpoint(), polarisRootClientID, polarisRootClientSecret)
 	if err != nil {
