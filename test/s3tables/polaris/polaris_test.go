@@ -470,10 +470,12 @@ func setupPolarisTable(t *testing.T, ctx context.Context, env *TestEnvironment, 
 	}
 
 	cleanup := func() {
-		if err := catalogClient.DeleteTable(ctx, namespace, table); err != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := catalogClient.DeleteTable(cleanupCtx, namespace, table); err != nil {
 			t.Logf("DeleteTable failed: %v", err)
 		}
-		if err := catalogClient.DeleteNamespace(ctx, namespace); err != nil {
+		if err := catalogClient.DeleteNamespace(cleanupCtx, namespace); err != nil {
 			t.Logf("DeleteNamespace failed: %v", err)
 		}
 	}
