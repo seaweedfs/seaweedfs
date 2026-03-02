@@ -58,7 +58,7 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	t.Helper()
 
 	if !testutil.HasDocker() {
-		t.Fatalf("Docker is required for Polaris integration tests")
+		t.Skip("Docker is required for Polaris integration tests")
 	}
 
 	wd, err := os.Getwd()
@@ -213,7 +213,10 @@ func (env *TestEnvironment) StartPolaris(t *testing.T) {
 	t.Helper()
 
 	containerName := fmt.Sprintf("seaweed-polaris-%d", time.Now().UnixNano())
-	cmd := exec.Command("docker", "run", "-d", "--rm",
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "docker", "run", "-d", "--rm",
 		"--name", containerName,
 		"--add-host", "host.docker.internal:host-gateway",
 		"-p", fmt.Sprintf("%d:8181", env.polarisPort),
@@ -229,12 +232,17 @@ func (env *TestEnvironment) StartPolaris(t *testing.T) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("Timed out waiting for Polaris container: %v\nOutput:\n%s", ctx.Err(), string(output))
+		}
 		t.Fatalf("Failed to start Polaris: %v\nOutput:\n%s", err, string(output))
 	}
 	env.polarisContainer = containerName
 
 	if !testutil.WaitForService(fmt.Sprintf("http://localhost:%d/q/health", env.polarisAdminPort), 60*time.Second) {
-		logs, _ := exec.Command("docker", "logs", env.polarisContainer).CombinedOutput()
+		logCtx, logCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer logCancel()
+		logs, _ := exec.CommandContext(logCtx, "docker", "logs", env.polarisContainer).CombinedOutput()
 		t.Fatalf("Polaris failed to become ready\nLogs:\n%s", string(logs))
 	}
 }
@@ -249,7 +257,9 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 		_ = env.weedProcess.Wait()
 	}
 	if env.polarisContainer != "" {
-		_ = exec.Command("docker", "rm", "-f", env.polarisContainer).Run()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = exec.CommandContext(ctx, "docker", "rm", "-f", env.polarisContainer).Run()
 	}
 	if env.dataDir != "" {
 		_ = os.RemoveAll(env.dataDir)
@@ -318,7 +328,10 @@ func (c *polarisHTTPClient) doJSON(ctx context.Context, method, path string, bod
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("request failed with status %d and could not read response body: %w", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
 	}
 	if out == nil {
