@@ -661,13 +661,32 @@ func selectStorageConfig(load *loadTableResponse, targetPrefix string) (map[stri
 			return nil, fmt.Errorf("multiple storage credentials (%d) returned but no target prefix provided", len(load.StorageCredentials))
 		}
 		normalizedTarget := normalizePrefix(targetPrefix)
+		if normalizedTarget == "" {
+			return nil, fmt.Errorf("target prefix %q normalized to empty string", targetPrefix)
+		}
+		var bestConfig map[string]string
+		bestLen := -1
 		for _, cred := range load.StorageCredentials {
-			if normalizePrefix(cred.Prefix) == normalizedTarget {
-				if cred.Config == nil {
-					return nil, fmt.Errorf("storage credential for prefix %s returned nil config", cred.Prefix)
-				}
-				return cred.Config, nil
+			if cred.Config == nil {
+				continue
 			}
+			prefix := normalizePrefix(cred.Prefix)
+			if prefix == "" {
+				if bestLen < 0 {
+					bestLen = 0
+					bestConfig = cred.Config
+				}
+				continue
+			}
+			if normalizedTarget == prefix || strings.HasPrefix(normalizedTarget, prefix+"/") {
+				if len(prefix) > bestLen {
+					bestLen = len(prefix)
+					bestConfig = cred.Config
+				}
+			}
+		}
+		if bestConfig != nil {
+			return bestConfig, nil
 		}
 		return nil, fmt.Errorf("none of the %d storage credentials matched prefix %s", len(load.StorageCredentials), targetPrefix)
 	}
