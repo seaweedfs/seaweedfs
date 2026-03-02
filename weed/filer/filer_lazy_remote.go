@@ -49,7 +49,11 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	}
 
 	relPath := strings.TrimPrefix(string(p), string(mountDir))
-	remotePath := "/" + strings.TrimLeft(strings.TrimSuffix(remoteLoc.Path, "/")+relPath, "/")
+	if relPath != "" && !strings.HasPrefix(relPath, "/") {
+		relPath = "/" + relPath
+	}
+	base := strings.TrimSuffix(remoteLoc.Path, "/")
+	remotePath := "/" + strings.TrimLeft(base+relPath, "/")
 
 	objectLoc := &remote_pb.RemoteStorageLocation{
 		Name:   remoteLoc.Name,
