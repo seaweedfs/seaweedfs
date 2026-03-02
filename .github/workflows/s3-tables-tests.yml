@@ -216,9 +216,11 @@ jobs:
         run: |
           go install -buildvcs=false ./weed
 
+      - name: Pre-pull Polaris image
+        run: docker pull apache/polaris:latest
+
       - name: Run Polaris Integration Tests
         timeout-minutes: 25
-        working-directory: .
         run: |
           set -x
           set -o pipefail
