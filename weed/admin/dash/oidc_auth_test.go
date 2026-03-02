@@ -40,21 +40,20 @@ func TestOIDCAuthConfigEffectiveScopesIncludesOpenID(t *testing.T) {
 func TestMapClaimsToRolesAndResolveAdminRole(t *testing.T) {
 	claims := &providers.TokenClaims{
 		Claims: map[string]interface{}{
-			"groups": []interface{}{"seaweedfs-readers", "seaweedfs-admins"},
+			"groups": []interface{}{"seaweedfs-admins"},
 		},
 	}
 
 	roleMapping := &providers.RoleMapping{
 		Rules: []providers.MappingRule{
-			{Claim: "groups", Value: "seaweedfs-readers", Role: "readonly"},
 			{Claim: "groups", Value: "seaweedfs-admins", Role: "admin"},
 		},
-		DefaultRole: "readonly",
+		DefaultRole: "admin",
 	}
 
 	roles := mapClaimsToRoles(claims, roleMapping)
-	if len(roles) != 2 {
-		t.Fatalf("expected 2 mapped roles, got %d (%v)", len(roles), roles)
+	if len(roles) != 1 {
+		t.Fatalf("expected 1 mapped role, got %d (%v)", len(roles), roles)
 	}
 
 	role, err := resolveAdminRole(roles)

@@ -14,7 +14,7 @@ func (s *AdminServer) ShowLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleLogin handles login form submission.
-func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword, readOnlyUser, readOnlyPassword string) http.HandlerFunc {
+func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			http.Redirect(w, r, "/login?error=Invalid form submission", http.StatusSeeOther)
@@ -34,16 +34,10 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 		loginUsername := r.FormValue("username")
 		loginPassword := r.FormValue("password")
 
-		var role string
 		var authenticated bool
 
 		// Check admin credentials.
 		if adminPassword != "" && loginUsername == adminUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(adminPassword)) == 1 {
-			role = "admin"
-			authenticated = true
-		} else if readOnlyPassword != "" && loginUsername == readOnlyUser && subtle.ConstantTimeCompare([]byte(loginPassword), []byte(readOnlyPassword)) == 1 {
-			// Check read-only credentials.
-			role = "readonly"
 			authenticated = true
 		}
 
@@ -53,7 +47,7 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 			}
 			session.Values["authenticated"] = true
 			session.Values["username"] = loginUsername
-			session.Values["role"] = role
+			session.Values["role"] = "admin"
 			csrfToken, err := generateCSRFToken()
 			if err != nil {
 				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)

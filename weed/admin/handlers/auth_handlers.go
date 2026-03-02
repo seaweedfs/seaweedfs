@@ -73,13 +73,7 @@ func (a *AuthHandlers) HandleLogin() http.HandlerFunc {
 		}
 	}
 
-	return a.adminServer.HandleLogin(
-		a.sessionStore,
-		a.authConfig.AdminUser,
-		a.authConfig.AdminPassword,
-		a.authConfig.ReadOnlyUser,
-		a.authConfig.ReadOnlyPassword,
-	)
+	return a.adminServer.HandleLogin(a.sessionStore, a.authConfig.AdminUser, a.authConfig.AdminPassword)
 }
 
 // HandleOIDCLogin starts the OIDC authorization code flow.
