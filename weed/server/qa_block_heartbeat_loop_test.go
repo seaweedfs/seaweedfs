@@ -69,7 +69,7 @@ func testStopBeforeRunDeadlocks(t *testing.T) {
 func testDoubleStopNoPanic(t *testing.T) {
 	bs := newTestBlockService(t)
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {}
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {})
 
 	go collector.Run()
 	time.Sleep(30 * time.Millisecond)
@@ -103,13 +103,13 @@ func testStopDuringCallback(t *testing.T) {
 	callbackStarted := make(chan struct{})
 	callbackRelease := make(chan struct{})
 
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		select {
 		case callbackStarted <- struct{}{}:
 		default:
 		}
 		<-callbackRelease
-	}
+	})
 
 	go collector.Run()
 
@@ -157,9 +157,9 @@ func testZeroIntervalPanics(t *testing.T) {
 	collector := NewBlockVolumeHeartbeatCollector(bs, 0)
 
 	var count atomic.Int64
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-	}
+	})
 
 	go collector.Run()
 	time.Sleep(30 * time.Millisecond)
@@ -177,9 +177,9 @@ func testVeryShortInterval(t *testing.T) {
 	var count atomic.Int64
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 1*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-	}
+	})
 
 	go collector.Run()
 	time.Sleep(50 * time.Millisecond)
@@ -203,12 +203,12 @@ func testCallbackPanicCrashesGoroutine(t *testing.T) {
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
 
 	var callCount atomic.Int64
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		n := callCount.Add(1)
 		if n == 1 {
 			panic("deliberate test panic in callback")
 		}
-	}
+	})
 
 	go collector.Run()
 
@@ -228,10 +228,10 @@ func testCallbackSlowBlocksNextTick(t *testing.T) {
 	var count atomic.Int64
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
 		time.Sleep(50 * time.Millisecond) // 5x the interval
-	}
+	})
 
 	go collector.Run()
 	time.Sleep(200 * time.Millisecond)
@@ -247,20 +247,20 @@ func testCallbackSlowBlocksNextTick(t *testing.T) {
 }
 
 func testCallbackSetAfterRun(t *testing.T) {
-	// Setting StatusCallback after Run() starts -- data race?
-	// The field is read without sync in Run(). This documents the behavior.
+	// Setting SetStatusCallback after Run() starts -- now safe with cbMu
+	// (BUG-CP4B3-2 fix).
 	bs := newTestBlockService(t)
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
 	// Start with nil callback.
 
 	go collector.Run()
 
-	// Set callback after Run started. Under -race, this would flag a data race.
+	// Set callback after Run started. With cbMu, this is race-free.
 	time.Sleep(5 * time.Millisecond)
 	var called atomic.Bool
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		called.Store(true)
-	}
+	})
 
 	time.Sleep(50 * time.Millisecond)
 	collector.Stop()
@@ -275,7 +275,7 @@ func testCallbackSetAfterRun(t *testing.T) {
 func testConcurrentStopCalls(t *testing.T) {
 	bs := newTestBlockService(t)
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {}
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {})
 
 	go collector.Run()
 	time.Sleep(30 * time.Millisecond)

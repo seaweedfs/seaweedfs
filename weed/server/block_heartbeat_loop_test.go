@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,7 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
-// ─── QA adversarial tests (CP4b-2) ───────────────────────────────────────────
+// --- QA adversarial tests (CP4b-2) ----------------------------------------
 // 9 tests exercising edge cases and concurrency in BlockVolumeHeartbeatCollector.
 // Bugs found: BUG-CP4B2-1 (Stop before Run), BUG-CP4B2-2 (zero interval),
 // BUG-CP4B2-3 (callback panic). All fixed.
@@ -29,7 +30,7 @@ func TestBlockQA_StopBeforeRun_NoPanic(t *testing.T) {
 	}()
 	select {
 	case <-done:
-		// ok — Stop returned without deadlock
+		// ok -- Stop returned without deadlock
 	case <-time.After(2 * time.Second):
 		t.Fatal("BUG-CP4B2-1: Stop() before Run() deadlocked (blocked >2s on <-c.done)")
 	}
@@ -64,11 +65,11 @@ func TestBlockQA_StopDuringCallback(t *testing.T) {
 	var finished atomic.Bool
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 5*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		entered.Store(true)
 		time.Sleep(50 * time.Millisecond) // slow callback
 		finished.Store(true)
-	}
+	})
 	go collector.Run()
 
 	// Wait for callback to enter.
@@ -96,9 +97,9 @@ func TestBlockQA_ZeroInterval_Clamped(t *testing.T) {
 	bs := newTestBlockService(t)
 	var count atomic.Int64
 	collector := NewBlockVolumeHeartbeatCollector(bs, 0)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-	}
+	})
 	go collector.Run()
 	defer collector.Stop()
 	time.Sleep(50 * time.Millisecond)
@@ -113,9 +114,9 @@ func TestBlockQA_NegativeInterval_Clamped(t *testing.T) {
 	bs := newTestBlockService(t)
 	var count atomic.Int64
 	collector := NewBlockVolumeHeartbeatCollector(bs, -5*time.Second)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-	}
+	})
 	go collector.Run()
 	defer collector.Stop()
 	time.Sleep(50 * time.Millisecond)
@@ -134,13 +135,13 @@ func TestBlockQA_CallbackPanic_Survives(t *testing.T) {
 	var afterPanic atomic.Int64
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		if !panicked.Load() {
 			panicked.Store(true)
 			panic("test panic in callback")
 		}
 		afterPanic.Add(1)
-	}
+	})
 	go collector.Run()
 	defer collector.Stop()
 
@@ -156,16 +157,16 @@ func TestBlockQA_CallbackPanic_Survives(t *testing.T) {
 }
 
 // TestBlockQA_SlowCallback_NoAccumulation verifies that a slow callback
-// doesn't cause tick accumulation — ticks are dropped while callback runs.
+// doesn't cause tick accumulation -- ticks are dropped while callback runs.
 func TestBlockQA_SlowCallback_NoAccumulation(t *testing.T) {
 	bs := newTestBlockService(t)
 	var count atomic.Int64
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 5*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-		time.Sleep(50 * time.Millisecond) // 10× the tick interval
-	}
+		time.Sleep(50 * time.Millisecond) // 10x the tick interval
+	})
 	go collector.Run()
 
 	time.Sleep(200 * time.Millisecond)
@@ -173,14 +174,14 @@ func TestBlockQA_SlowCallback_NoAccumulation(t *testing.T) {
 	// With 50ms sleep per callback over 200ms, expect ~4 callbacks, not 40.
 	n := count.Load()
 	if n > 10 {
-		t.Fatalf("expected ≤10 callbacks (slow callback), got %d — tick accumulation?", n)
+		t.Fatalf("expected <=10 callbacks (slow callback), got %d -- tick accumulation?", n)
 	}
 	if n < 1 {
 		t.Fatal("expected at least 1 callback")
 	}
 }
 
-// TestBlockQA_CallbackSetAfterRun verifies setting StatusCallback after
+// TestBlockQA_CallbackSetAfterRun verifies setting SetStatusCallback after
 // Run() has started still works on the next tick.
 func TestBlockQA_CallbackSetAfterRun(t *testing.T) {
 	bs := newTestBlockService(t)
@@ -195,9 +196,9 @@ func TestBlockQA_CallbackSetAfterRun(t *testing.T) {
 
 	// Now set the callback.
 	var called atomic.Bool
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		called.Store(true)
-	}
+	})
 
 	deadline := time.After(200 * time.Millisecond)
 	for !called.Load() {
@@ -261,16 +262,16 @@ func TestBlockCollectorPeriodicTick(t *testing.T) {
 	var calls [][]blockvol.BlockVolumeInfoMessage
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		mu.Lock()
 		calls = append(calls, msgs)
 		mu.Unlock()
-	}
+	})
 
 	go collector.Run()
 	defer collector.Stop()
 
-	// Wait up to 3× interval for ≥2 callbacks.
+	// Wait up to 3x interval for >=2 callbacks.
 	deadline := time.After(200 * time.Millisecond)
 	for {
 		mu.Lock()
@@ -284,7 +285,7 @@ func TestBlockCollectorPeriodicTick(t *testing.T) {
 			mu.Lock()
 			n = len(calls)
 			mu.Unlock()
-			t.Fatalf("expected ≥2 callbacks, got %d", n)
+			t.Fatalf("expected >=2 callbacks, got %d", n)
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
@@ -307,9 +308,9 @@ func TestBlockCollectorStopNoLeak(t *testing.T) {
 	var count atomic.Int64
 
 	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
-	collector.StatusCallback = func(msgs []blockvol.BlockVolumeInfoMessage) {
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
 		count.Add(1)
-	}
+	})
 
 	go collector.Run()
 
@@ -327,7 +328,7 @@ func TestBlockCollectorStopNoLeak(t *testing.T) {
 	case <-done:
 		// ok
 	case <-time.After(2 * time.Second):
-		t.Fatal("Stop() did not return within 2s — goroutine leak")
+		t.Fatal("Stop() did not return within 2s -- goroutine leak")
 	}
 
 	// After stop, no more callbacks should fire.
@@ -346,8 +347,173 @@ func TestBlockCollectorNilCallback(t *testing.T) {
 
 	go collector.Run()
 
-	// Let it tick — should not panic.
+	// Let it tick -- should not panic.
 	time.Sleep(50 * time.Millisecond)
 
 	collector.Stop()
+}
+
+// --- Dev tests: Assignment Processing (CP4b-3) ----------------------------
+// 7 tests verifying ProcessBlockVolumeAssignments and AssignmentSource wiring.
+
+// testBlockVolPath returns the path of the single block volume in the test service.
+func testBlockVolPath(t *testing.T, bs *BlockService) string {
+	t.Helper()
+	paths := bs.Store().ListBlockVolumes()
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(paths))
+	}
+	return paths[0]
+}
+
+// TestBlockAssign_Success verifies a valid assignment (RoleNone -> Primary)
+// changes the volume's role.
+func TestBlockAssign_Success(t *testing.T) {
+	bs := newTestBlockService(t)
+	path := testBlockVolPath(t, bs)
+
+	assignments := []blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      1,
+		Role:       uint32(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+	}}
+	errs := bs.Store().ProcessBlockVolumeAssignments(assignments)
+	if errs[0] != nil {
+		t.Fatalf("expected nil error, got %v", errs[0])
+	}
+
+	vol, _ := bs.Store().GetBlockVolume(path)
+	if vol.Role() != blockvol.RolePrimary {
+		t.Fatalf("expected Primary role, got %s", vol.Role())
+	}
+}
+
+// TestBlockAssign_UnknownVolume verifies an assignment for a non-existent
+// volume returns an error without stopping processing.
+func TestBlockAssign_UnknownVolume(t *testing.T) {
+	bs := newTestBlockService(t)
+
+	assignments := []blockvol.BlockVolumeAssignment{{
+		Path:  "/nonexistent/vol.blk",
+		Epoch: 1,
+		Role:  uint32(blockvol.RolePrimary),
+	}}
+	errs := bs.Store().ProcessBlockVolumeAssignments(assignments)
+	if errs[0] == nil {
+		t.Fatal("expected error for unknown volume")
+	}
+	if !strings.Contains(errs[0].Error(), "not found") {
+		t.Fatalf("expected 'not found' error, got: %v", errs[0])
+	}
+}
+
+// TestBlockAssign_InvalidTransition verifies an invalid role transition
+// (RoleNone -> Stale) returns an error.
+func TestBlockAssign_InvalidTransition(t *testing.T) {
+	bs := newTestBlockService(t)
+	path := testBlockVolPath(t, bs)
+
+	assignments := []blockvol.BlockVolumeAssignment{{
+		Path:  path,
+		Epoch: 1,
+		Role:  uint32(blockvol.RoleStale),
+	}}
+	errs := bs.Store().ProcessBlockVolumeAssignments(assignments)
+	if errs[0] == nil {
+		t.Fatal("expected error for invalid transition")
+	}
+}
+
+// TestBlockAssign_EmptyAssignments verifies an empty slice produces no errors.
+func TestBlockAssign_EmptyAssignments(t *testing.T) {
+	bs := newTestBlockService(t)
+
+	errs := bs.Store().ProcessBlockVolumeAssignments(nil)
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors for nil input, got %d", len(errs))
+	}
+
+	errs = bs.Store().ProcessBlockVolumeAssignments([]blockvol.BlockVolumeAssignment{})
+	if len(errs) != 0 {
+		t.Fatalf("expected 0 errors for empty input, got %d", len(errs))
+	}
+}
+
+// TestBlockAssign_NilSource verifies that a nil AssignmentSource doesn't
+// cause panics and status collection still works.
+func TestBlockAssign_NilSource(t *testing.T) {
+	bs := newTestBlockService(t)
+	collector := NewBlockVolumeHeartbeatCollector(bs, 10*time.Millisecond)
+	// AssignmentSource left nil intentionally.
+	var statusCalled atomic.Bool
+	collector.SetStatusCallback(func(msgs []blockvol.BlockVolumeInfoMessage) {
+		statusCalled.Store(true)
+	})
+	go collector.Run()
+	defer collector.Stop()
+
+	deadline := time.After(200 * time.Millisecond)
+	for !statusCalled.Load() {
+		select {
+		case <-deadline:
+			t.Fatal("status callback never fired with nil AssignmentSource")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// TestBlockAssign_MixedBatch verifies a batch with 1 success, 1 unknown volume,
+// and 1 invalid transition returns parallel errors correctly.
+func TestBlockAssign_MixedBatch(t *testing.T) {
+	bs := newTestBlockService(t)
+	path := testBlockVolPath(t, bs)
+
+	assignments := []blockvol.BlockVolumeAssignment{
+		{Path: path, Epoch: 1, Role: uint32(blockvol.RolePrimary), LeaseTtlMs: 30000},
+		{Path: "/nonexistent/vol.blk", Epoch: 1, Role: uint32(blockvol.RolePrimary)},
+		{Path: path, Epoch: 2, Role: uint32(blockvol.RoleReplica)}, // Primary->Replica is invalid
+	}
+	errs := bs.Store().ProcessBlockVolumeAssignments(assignments)
+	if len(errs) != 3 {
+		t.Fatalf("expected 3 errors, got %d", len(errs))
+	}
+	if errs[0] != nil {
+		t.Fatalf("assignment 0: expected nil error, got %v", errs[0])
+	}
+	if errs[1] == nil {
+		t.Fatal("assignment 1: expected error for unknown volume")
+	}
+	if errs[2] == nil {
+		t.Fatal("assignment 2: expected error for invalid transition")
+	}
+
+	// Volume should still be Primary from assignment 0.
+	vol, _ := bs.Store().GetBlockVolume(path)
+	if vol.Role() != blockvol.RolePrimary {
+		t.Fatalf("expected Primary role after mixed batch, got %s", vol.Role())
+	}
+}
+
+// TestBlockAssign_RoleNoneIgnored verifies a RoleNone (0) assignment is a
+// no-op same-role refresh -- no crash, no write gate opened.
+func TestBlockAssign_RoleNoneIgnored(t *testing.T) {
+	bs := newTestBlockService(t)
+	path := testBlockVolPath(t, bs)
+
+	assignments := []blockvol.BlockVolumeAssignment{{
+		Path:  path,
+		Epoch: 0,
+		Role:  uint32(blockvol.RoleNone),
+	}}
+	errs := bs.Store().ProcessBlockVolumeAssignments(assignments)
+	if errs[0] != nil {
+		t.Fatalf("expected nil error for RoleNone assignment, got %v", errs[0])
+	}
+
+	// Volume should still be RoleNone.
+	vol, _ := bs.Store().GetBlockVolume(path)
+	if vol.Role() != blockvol.RoleNone {
+		t.Fatalf("expected RoleNone, got %s", vol.Role())
+	}
 }

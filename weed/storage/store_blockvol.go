@@ -96,6 +96,41 @@ func (bs *BlockVolumeStore) CollectBlockVolumeHeartbeat() []blockvol.BlockVolume
 	return msgs
 }
 
+// withVolume looks up a volume by path and calls fn while holding RLock.
+// This prevents RemoveBlockVolume from closing the volume while fn runs
+// (BUG-CP4B3-1: TOCTOU between GetBlockVolume and HandleAssignment).
+func (bs *BlockVolumeStore) withVolume(path string, fn func(*blockvol.BlockVol) error) error {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	vol, ok := bs.volumes[path]
+	if !ok {
+		return fmt.Errorf("block volume not found: %s", path)
+	}
+	return fn(vol)
+}
+
+// ProcessBlockVolumeAssignments applies a batch of assignments from master.
+// Returns a slice of errors parallel to the input (nil = success).
+// Unknown volumes and invalid transitions are logged and returned as errors,
+// but do not stop processing of remaining assignments.
+func (bs *BlockVolumeStore) ProcessBlockVolumeAssignments(
+	assignments []blockvol.BlockVolumeAssignment,
+) []error {
+	errs := make([]error, len(assignments))
+	for i, a := range assignments {
+		role := blockvol.RoleFromWire(a.Role)
+		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
+		if err := bs.withVolume(a.Path, func(vol *blockvol.BlockVol) error {
+			return vol.HandleAssignment(a.Epoch, role, ttl)
+		}); err != nil {
+			errs[i] = err
+			glog.Warningf("assignment: volume %s epoch=%d role=%s: %v",
+				a.Path, a.Epoch, role, err)
+		}
+	}
+	return errs
+}
+
 // Close closes all block volumes.
 func (bs *BlockVolumeStore) Close() {
 	bs.mu.Lock()
