@@ -172,7 +172,7 @@ redirect_url = "https://admin.example.com/login/oidc/callback"
 scopes = ["openid", "profile", "email"]
 
 [admin.oidc.role_mapping]
-default_role = "admin"
+default_role = "readonly"
 
 [[admin.oidc.role_mapping.rules]]
 claim = "groups"
@@ -180,7 +180,7 @@ value = "seaweedfs-admin"
 role = "admin"
 ```
 
-Role mapping must resolve to `admin`.
+Role mapping must resolve to either `admin` or `readonly`.
 OIDC sessions are capped to the ID token expiration time.
 
 ### Docker Usage
