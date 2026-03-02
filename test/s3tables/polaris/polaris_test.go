@@ -125,23 +125,30 @@ type storageCredential struct {
 	Config map[string]string `json:"config"`
 }
 
+func bootstrapPolarisTest(t *testing.T, env *TestEnvironment) (context.Context, context.CancelFunc, polarisSession, *polarisTableSetup, func()) {
+	t.Helper()
+
+	t.Logf(">>> Starting SeaweedFS with Polaris configuration...")
+	env.StartSeaweedFS(t)
+	t.Logf(">>> SeaweedFS started.")
+
+	t.Logf(">>> Starting Polaris...")
+	env.StartPolaris(t)
+	t.Logf(">>> Polaris started.")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	session := newPolarisSession(t, ctx, env)
+	setup, cleanup := setupPolarisTable(t, ctx, env, session)
+
+	return ctx, cancel, session, setup, cleanup
+}
+
 func TestPolarisIntegration(t *testing.T) {
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
 
-	fmt.Printf(">>> Starting SeaweedFS with Polaris configuration...\n")
-	env.StartSeaweedFS(t)
-	fmt.Printf(">>> SeaweedFS started.\n")
-
-	fmt.Printf(">>> Starting Polaris...\n")
-	env.StartPolaris(t)
-	fmt.Printf(">>> Polaris started.\n")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel, session, setup, cleanup := bootstrapPolarisTest(t, env)
 	defer cancel()
-
-	session := newPolarisSession(t, ctx, env)
-	setup, cleanup := setupPolarisTable(t, ctx, env, session)
 	defer cleanup()
 
 	listResp, err := setup.s3Client.ListBuckets(ctx, &s3.ListBucketsInput{})
@@ -218,19 +225,8 @@ func TestPolarisTableIntegration(t *testing.T) {
 	env := NewTestEnvironment(t)
 	defer env.Cleanup(t)
 
-	fmt.Printf(">>> Starting SeaweedFS with Polaris configuration...\n")
-	env.StartSeaweedFS(t)
-	fmt.Printf(">>> SeaweedFS started.\n")
-
-	fmt.Printf(">>> Starting Polaris...\n")
-	env.StartPolaris(t)
-	fmt.Printf(">>> Polaris started.\n")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel, session, setup, cleanup := bootstrapPolarisTest(t, env)
 	defer cancel()
-
-	session := newPolarisSession(t, ctx, env)
-	setup, cleanup := setupPolarisTable(t, ctx, env, session)
 	defer cleanup()
 
 	objectKey := fmt.Sprintf("%s/%s/data/part-%d.parquet", setup.namespace, setup.table, time.Now().UnixNano())
@@ -508,7 +504,10 @@ func fetchPolarisToken(ctx context.Context, baseURL, clientID, clientSecret stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return "", fmt.Errorf("token request failed with status %d and reading body: %w", resp.StatusCode, readErr)
+		}
 		return "", fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
