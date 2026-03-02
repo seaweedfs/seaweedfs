@@ -91,12 +91,15 @@ var cmdAdmin = &Command{
     - Without dataDir, all configuration is kept in memory only
 
   Authentication:
-    - If adminPassword is not set, the admin interface runs without authentication
+    - Local auth: set adminUser/adminPassword for username/password login
     - If adminPassword is set, users must login with adminUser/adminPassword (full access)
     - Optional read-only access: set readOnlyUser and readOnlyPassword for view-only access
     - Read-only users can view cluster status and configurations but cannot make changes
     - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
     - This ensures an admin account exists to manage and authorize read-only access
+    - OIDC auth: configure [admin.oidc] in security.toml for Authorization Code flow
+    - OIDC role mapping must resolve users to admin or readonly
+    - If neither local auth nor OIDC is configured, the admin interface runs without authentication
     - Sessions are secured with auto-generated session keys
 
   Security Configuration:
@@ -183,9 +186,10 @@ func runAdmin(cmd *Command, args []string) bool {
 	}
 
 	// Security warnings
-	if *a.adminPassword == "" {
+	oidcEnabled := viper.GetBool("admin.oidc.enabled")
+	if *a.adminPassword == "" && !oidcEnabled {
 		fmt.Println("WARNING: Admin interface is running without authentication!")
-		fmt.Println("         Set -adminPassword for production use")
+		fmt.Println("         Set -adminPassword or configure [admin.oidc] in security.toml for production use")
 	}
 
 	fmt.Printf("Starting SeaweedFS Admin Interface on port %d\n", *a.port)
@@ -197,10 +201,16 @@ func runAdmin(cmd *Command, args []string) bool {
 	} else {
 		fmt.Printf("Data Directory: Not specified (configuration will be in-memory only)\n")
 	}
-	if *a.adminPassword != "" {
-		fmt.Printf("Authentication: Enabled (admin user: %s)\n", *a.adminUser)
+	if *a.adminPassword != "" || oidcEnabled {
+		fmt.Printf("Authentication: Enabled\n")
+		if *a.adminPassword != "" {
+			fmt.Printf("Local credentials: Enabled (admin user: %s)\n", *a.adminUser)
+		}
 		if *a.readOnlyPassword != "" {
 			fmt.Printf("Read-only access: Enabled (read-only user: %s)\n", *a.readOnlyUser)
+		}
+		if oidcEnabled {
+			fmt.Printf("OIDC: Enabled (issuer: %s)\n", viper.GetString("admin.oidc.issuer"))
 		}
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
@@ -292,6 +302,15 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	// Create admin server (plugin is always enabled)
 	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
+	oidcAuthConfig := dash.OIDCAuthConfig{}
+	if err := viper.UnmarshalKey("admin.oidc", &oidcAuthConfig); err != nil {
+		return fmt.Errorf("failed to parse security.toml [admin.oidc] config: %w", err)
+	}
+	oidcAuthService, err := dash.NewOIDCAuthService(oidcAuthConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC admin auth: %w", err)
+	}
+
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()
 	if len(filers) > 0 {
@@ -314,9 +333,15 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}()
 
 	// Create handlers and setup routes
-	authRequired := *options.adminPassword != ""
-	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
+	authConfig := handlers.AuthConfig{
+		AdminUser:        *options.adminUser,
+		AdminPassword:    *options.adminPassword,
+		ReadOnlyUser:     *options.readOnlyUser,
+		ReadOnlyPassword: *options.readOnlyPassword,
+		OIDCAuth:         oidcAuthService,
+	}
+	adminHandlers := handlers.NewAdminHandlers(adminServer, store, authConfig)
+	adminHandlers.SetupRoutes(r, enableUI)
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
