@@ -11,15 +11,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"golang.org/x/sync/singleflight"
 )
 
 type lazyFetchContextKey struct{}
-
-// lazyFetchGroup deduplicates concurrent remote StatFile + CreateEntry calls for
-// the same filer path so that only one goroutine races the remote backend and
-// writes the resulting entry into the store.
-var lazyFetchGroup singleflight.Group
 
 // maybeLazyFetchFromRemote is called by FindEntry when the store returns no
 // entry for p. If p is under a remote-storage mount, it stats the remote
@@ -69,7 +63,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 
 	innerCtx := context.WithValue(ctx, lazyFetchContextKey{}, true)
 	key := string(p)
-	val, err, _ := lazyFetchGroup.Do(key, func() (interface{}, error) {
+	val, err, _ := f.lazyFetchGroup.Do(key, func() (interface{}, error) {
 		remoteEntry, statErr := client.StatFile(objectLoc)
 		if statErr != nil {
 			if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
@@ -77,6 +71,10 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 			} else {
 				glog.Warningf("maybeLazyFetchFromRemote: stat %s failed: %v", p, statErr)
 			}
+			return lazyFetchResult{nil}, nil
+		}
+		if remoteEntry == nil {
+			glog.V(3).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s StatFile returned nil entry", p)
 			return lazyFetchResult{nil}, nil
 		}
 
@@ -95,7 +93,7 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		saveErr := f.CreateEntry(innerCtx, entry, false, false, nil, true, f.MaxFilenameLength)
 		if saveErr != nil {
 			glog.Warningf("maybeLazyFetchFromRemote: failed to persist filer entry for %s: %v", p, saveErr)
-			lazyFetchGroup.Forget(key)
+			f.lazyFetchGroup.Forget(key)
 		}
 
 		return lazyFetchResult{entry}, nil
