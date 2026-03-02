@@ -321,10 +321,28 @@ func newPolarisSession(t *testing.T, ctx context.Context, env *TestEnvironment) 
 	}); err != nil {
 		t.Fatalf("CreateBucket failed: %v", err)
 	}
-	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"AllowPolarisVendedAccess","Effect":"Allow","Principal":"*","Action":"s3:*","Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/polaris/*"]}]}`, bucketName, bucketName)
+	policyDoc := map[string]interface{}{
+		"Version": "2012-10-17",
+		"Statement": []map[string]interface{}{
+			{
+				"Sid":       "AllowPolarisVendedAccess",
+				"Effect":    "Allow",
+				"Principal": "*",
+				"Action":    "s3:*",
+				"Resource": []string{
+					fmt.Sprintf("arn:aws:s3:::%s", bucketName),
+					fmt.Sprintf("arn:aws:s3:::%s/polaris/*", bucketName),
+				},
+			},
+		},
+	}
+	policyBytes, err := json.Marshal(policyDoc)
+	if err != nil {
+		t.Fatalf("Failed to marshal bucket policy: %v", err)
+	}
 	if _, err := adminS3.PutBucketPolicy(ctx, &s3.PutBucketPolicyInput{
 		Bucket: aws.String(bucketName),
-		Policy: aws.String(policy),
+		Policy: aws.String(string(policyBytes)),
 	}); err != nil {
 		t.Fatalf("PutBucketPolicy failed: %v", err)
 	}
