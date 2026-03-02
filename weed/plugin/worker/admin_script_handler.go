@@ -64,17 +64,10 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Description: "Commands run sequentially by the admin script worker.",
 					Fields: []*plugin_pb.ConfigField{
 						{
-							Name:        "script_name",
-							Label:       "Script Name",
-							Description: "Optional label used in job summaries.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
-						},
-						{
 							Name:        "script",
 							Label:       "Script",
 							Description: "Admin shell commands to execute (one per line).",
-							HelpText:    "Lock/unlock are handled by the admin server; omit lock/unlock lines.",
+							HelpText:    "Lock/unlock are handled by the admin server; omit explicit lock/unlock commands.",
 							Placeholder: "volume.balance -apply\nvolume.fix.replication -apply",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXTAREA,
@@ -84,9 +77,6 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"script_name": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
-				},
 				"script": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
