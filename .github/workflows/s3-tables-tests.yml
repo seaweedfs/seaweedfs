@@ -194,6 +194,65 @@ jobs:
           path: test/s3tables/catalog_trino/test-output.log
           retention-days: 3
 
+  polaris-integration-tests:
+    name: Polaris Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Run go mod tidy
+        run: go mod tidy
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false ./weed
+
+      - name: Run Polaris Integration Tests
+        timeout-minutes: 25
+        working-directory: .
+        run: |
+          set -x
+          set -o pipefail
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Polaris Tests ==="
+
+          go test -v -timeout 20m ./test/s3tables/polaris 2>&1 | tee test/s3tables/polaris/test-output.log || {
+            echo "Polaris integration tests failed"
+            exit 1
+          }
+
+      - name: Show test output on failure
+        if: failure()
+        working-directory: test/s3tables/polaris
+        run: |
+          echo "=== Test Output ==="
+          if [ -f test-output.log ]; then
+            tail -200 test-output.log
+          fi
+
+          echo "=== Process information ==="
+          ps aux | grep -E "(weed|test|docker)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: polaris-test-logs
+          path: test/s3tables/polaris/test-output.log
+          retention-days: 3
+
   spark-iceberg-catalog-tests:
     name: Spark Iceberg Catalog Integration Tests
     runs-on: ubuntu-22.04
