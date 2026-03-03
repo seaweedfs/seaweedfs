@@ -235,6 +235,9 @@ func (s *AdminServer) GetPluginJobTypeConfigAPI(w http.ResponseWriter, r *http.R
 			AdminRuntime:       &plugin_pb.AdminRuntimeConfig{},
 		}
 	}
+	if descriptor, err := s.LoadPluginJobTypeDescriptor(jobType); err == nil && descriptor != nil {
+		applyDescriptorDefaultsToPersistedConfig(config, descriptor)
+	}
 
 	renderProtoJSON(w, http.StatusOK, config)
 }
@@ -735,6 +738,90 @@ func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, i
 	}
 
 	return jobSpec
+}
+
+func applyDescriptorDefaultsToPersistedConfig(
+	config *plugin_pb.PersistedJobTypeConfig,
+	descriptor *plugin_pb.JobTypeDescriptor,
+) {
+	if config == nil || descriptor == nil {
+		return
+	}
+
+	if config.AdminConfigValues == nil {
+		config.AdminConfigValues = map[string]*plugin_pb.ConfigValue{}
+	}
+	if config.WorkerConfigValues == nil {
+		config.WorkerConfigValues = map[string]*plugin_pb.ConfigValue{}
+	}
+	if config.AdminRuntime == nil {
+		config.AdminRuntime = &plugin_pb.AdminRuntimeConfig{}
+	}
+
+	if descriptor.AdminConfigForm != nil {
+		for key, value := range descriptor.AdminConfigForm.DefaultValues {
+			if value == nil {
+				continue
+			}
+			current := config.AdminConfigValues[key]
+			if current == nil {
+				config.AdminConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+				continue
+			}
+			if strings.EqualFold(descriptor.JobType, "admin_script") &&
+				key == "script" &&
+				isBlankStringConfigValue(current) {
+				config.AdminConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+			}
+		}
+	}
+	if descriptor.WorkerConfigForm != nil {
+		for key, value := range descriptor.WorkerConfigForm.DefaultValues {
+			if value == nil {
+				continue
+			}
+			if config.WorkerConfigValues[key] != nil {
+				continue
+			}
+			config.WorkerConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+		}
+	}
+	if descriptor.AdminRuntimeDefaults != nil {
+		runtime := config.AdminRuntime
+		defaults := descriptor.AdminRuntimeDefaults
+		if runtime.DetectionIntervalSeconds <= 0 {
+			runtime.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+		}
+		if runtime.DetectionTimeoutSeconds <= 0 {
+			runtime.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
+		}
+		if runtime.MaxJobsPerDetection <= 0 {
+			runtime.MaxJobsPerDetection = defaults.MaxJobsPerDetection
+		}
+		if runtime.GlobalExecutionConcurrency <= 0 {
+			runtime.GlobalExecutionConcurrency = defaults.GlobalExecutionConcurrency
+		}
+		if runtime.PerWorkerExecutionConcurrency <= 0 {
+			runtime.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
+		}
+		if runtime.RetryBackoffSeconds <= 0 {
+			runtime.RetryBackoffSeconds = defaults.RetryBackoffSeconds
+		}
+		if runtime.RetryLimit < 0 {
+			runtime.RetryLimit = defaults.RetryLimit
+		}
+	}
+}
+
+func isBlankStringConfigValue(value *plugin_pb.ConfigValue) bool {
+	if value == nil {
+		return true
+	}
+	kind, ok := value.Kind.(*plugin_pb.ConfigValue_StringValue)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(kind.StringValue) == ""
 }
 
 func parsePositiveInt(raw string, defaultValue int) int {
