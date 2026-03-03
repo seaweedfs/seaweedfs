@@ -69,9 +69,7 @@ spec:
       priorityClassName: {{ $volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if $.Values.global.createClusterRole }}
       serviceAccountName: {{ $volume.serviceAccountName | default (include "seaweedfs.serviceAccountName" $) | quote }} # for deleting statefulset pods after migration
-      {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" $ -}}
       {{- if $initContainers_exists }}
       initContainers:
