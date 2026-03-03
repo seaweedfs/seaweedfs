@@ -61,6 +61,8 @@ func (r *Plugin) schedulerLoop() {
 }
 
 func (r *Plugin) runSchedulerTick() {
+	r.expireStaleJobs(time.Now().UTC())
+
 	jobTypes := r.registry.DetectableJobTypes()
 	if len(jobTypes) == 0 {
 		return
@@ -843,6 +845,8 @@ func (r *Plugin) filterProposalsWithActiveJobs(jobType string, proposals []*plug
 	if len(proposals) == 0 {
 		return proposals, 0
 	}
+
+	r.expireStaleJobs(time.Now().UTC())
 
 	activeKeys := make(map[string]struct{})
 	r.jobsMu.RLock()

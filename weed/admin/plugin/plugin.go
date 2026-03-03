@@ -80,6 +80,8 @@ type Plugin struct {
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
+	// serialize stale job cleanup to avoid duplicate expirations
+	staleJobsMu sync.Mutex
 
 	jobDetailsMu sync.Mutex
 

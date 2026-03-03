@@ -1,12 +1,17 @@
 package plugin
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
 	// Keep exactly the last 10 successful and last 10 error runs per job type.
 	MaxSuccessfulRunHistory = 10
 	MaxErrorRunHistory      = 10
 )
+
+var ErrJobNotFound = errors.New("job not found")
 
 type RunOutcome string
 

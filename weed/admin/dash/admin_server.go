@@ -1020,6 +1020,14 @@ func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLim
 	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
 }
 
+// ExpirePluginJob marks an active plugin job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJob(jobID, reason string) (*adminplugin.TrackedJob, bool, error) {
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ExpireJob(jobID, reason)
+}
+
 // ListPluginActivities returns plugin job activities for monitoring.
 func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplugin.JobActivity {
 	if s.plugin == nil {
