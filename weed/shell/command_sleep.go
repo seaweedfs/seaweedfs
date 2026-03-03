@@ -1,7 +1,6 @@
 package shell
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"strconv"
