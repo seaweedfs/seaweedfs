@@ -66,6 +66,8 @@ type Plugin struct {
 	schedulerExecMu           sync.Mutex
 	schedulerExecReservations map[string]int
 	adminScriptRunMu          sync.RWMutex
+	schedulerDetectionMu      sync.Mutex
+	schedulerDetection        map[string]*schedulerDetectionInfo
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -159,6 +161,7 @@ func New(options Options) (*Plugin, error) {
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
 		schedulerExecReservations: make(map[string]int),
+		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
 		recentDedupeByType:        make(map[string]map[string]time.Time),
 		jobs:                      make(map[string]*TrackedJob),
 		activities:                make([]JobActivity, 0, 256),

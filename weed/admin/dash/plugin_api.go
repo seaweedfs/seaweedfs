@@ -172,6 +172,27 @@ func (s *AdminServer) GetPluginSchedulerStatesAPI(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, states)
 }
 
+// GetPluginSchedulerStatusAPI returns scheduler status including in-process jobs and lock state.
+func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http.Request) {
+	pluginSvc := s.GetPlugin()
+	if pluginSvc == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"enabled": false,
+		})
+		return
+	}
+
+	response := map[string]interface{}{
+		"enabled":   true,
+		"scheduler": pluginSvc.GetSchedulerStatus(),
+	}
+	if s.pluginLock != nil {
+		response["lock"] = s.pluginLock.Status()
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
 // RequestPluginJobTypeSchemaAPI asks a worker for one job type schema.
 func (s *AdminServer) RequestPluginJobTypeSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	jobType := strings.TrimSpace(mux.Vars(r)["jobType"])

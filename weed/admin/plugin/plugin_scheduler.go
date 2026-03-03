@@ -321,6 +321,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 
 	releaseLock, lockErr := r.acquireAdminLock(fmt.Sprintf("plugin scheduled detection %s", jobType))
 	if lockErr != nil {
+		r.recordSchedulerDetectionError(jobType, lockErr)
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
@@ -344,6 +345,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 	})
 
 	if skip, waitingCount, waitingThreshold := r.shouldSkipDetectionForWaitingJobs(jobType, policy); skip {
+		r.recordSchedulerDetectionSkip(jobType, fmt.Sprintf("waiting backlog %d reached threshold %d", waitingCount, waitingThreshold))
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
@@ -356,6 +358,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 
 	clusterContext, err := r.loadSchedulerClusterContext()
 	if err != nil {
+		r.recordSchedulerDetectionError(jobType, err)
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
@@ -370,6 +373,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 	proposals, err := r.RunDetection(ctx, jobType, clusterContext, policy.MaxResults)
 	cancel()
 	if err != nil {
+		r.recordSchedulerDetectionError(jobType, err)
 		r.appendActivity(JobActivity{
 			JobType:    jobType,
 			Source:     "admin_scheduler",
@@ -387,6 +391,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		Stage:      "detected",
 		OccurredAt: timeToPtr(time.Now().UTC()),
 	})
+	r.recordSchedulerDetectionSuccess(jobType, len(proposals))
 
 	filteredByActive, skippedActive := r.filterProposalsWithActiveJobs(jobType, proposals)
 	if skippedActive > 0 {
