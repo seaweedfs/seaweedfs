@@ -69,29 +69,18 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
-		// Collect entries in batches for efficient LevelDB writes
-		var batch []*filer.Entry
+		// Phase 1: Collect all entries from filer into memory (no lock held).
+		// Network I/O happens here without blocking MetaCache operations.
+		var allEntries []*filer.Entry
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
-			batch = nil // Reset batch on retry, allow GC of previous entries
+			allEntries = nil // Reset on retry, allow GC of previous entries
 			return filer_pb.ReadDirAllEntries(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
 				}
-
-				batch = append(batch, entry)
-
-				// Flush batch when it reaches the threshold
-				// Don't rely on isLast here - hidden entries may cause early return
-				if len(batch) >= batchInsertSize {
-					// No lock needed - LevelDB Write() is thread-safe
-					if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
-						return fmt.Errorf("batch insert for %s: %w", path, err)
-					}
-					// Create new slice to allow GC of flushed entries
-					batch = make([]*filer.Entry, 0, batchInsertSize)
-				}
+				allEntries = append(allEntries, entry)
 				return nil
 			})
 		})
@@ -100,12 +89,15 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
-		// Flush any remaining entries in the batch
-		if len(batch) > 0 {
-			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
-				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
-			}
+		// Phase 2: Atomically replace all children under a single lock.
+		// Concurrent DeleteEntry (from Unlink) and AtomicUpdateEntryFromFiler
+		// (from subscription) will block during the replace, then execute after
+		// the lock is released — correctly removing any stale entries that were
+		// in the filer listing snapshot but deleted during collection.
+		if err := mc.ReplaceDirectoryEntries(ctx, path, allEntries); err != nil {
+			return nil, fmt.Errorf("replace entries for %s: %w", path, err)
 		}
+
 		mc.markCachedFn(path)
 		return nil, nil
 	})

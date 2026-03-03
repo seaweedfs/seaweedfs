@@ -151,6 +151,32 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
 
+// ReplaceDirectoryEntries atomically clears all children of dirPath and inserts
+// the provided entries under a single lock. This prevents race conditions where
+// concurrent DeleteEntry (from Unlink) or AtomicUpdateEntryFromFiler (from
+// subscription) could interleave with streaming batch inserts, causing ghost entries.
+func (mc *MetaCache) ReplaceDirectoryEntries(ctx context.Context, dirPath util.FullPath, entries []*filer.Entry) error {
+	mc.Lock()
+	defer mc.Unlock()
+
+	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
+		return err
+	}
+
+	n := len(entries)
+	for i := 0; i < n; i += batchInsertSize {
+		end := i + batchInsertSize
+		if end > n {
+			end = n
+		}
+		if err := mc.leveldbStore.BatchInsertEntries(ctx, entries[i:end]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
 	mc.RLock()
 	defer mc.RUnlock()
