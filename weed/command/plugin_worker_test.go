@@ -123,6 +123,14 @@ func TestParsePluginWorkerJobTypes(t *testing.T) {
 	if _, err = parsePluginWorkerJobTypes(" , "); err != nil {
 		t.Fatalf("expected empty list to resolve to default vacuum: %v", err)
 	}
+
+	jobTypes, err = parsePluginWorkerJobTypes("admin-script,script,admin_script")
+	if err != nil {
+		t.Fatalf("parsePluginWorkerJobTypes(admin script aliases) err = %v", err)
+	}
+	if len(jobTypes) != 1 || jobTypes[0] != "admin_script" {
+		t.Fatalf("expected admin_script alias to resolve, got %v", jobTypes)
+	}
 }
 
 func TestPluginWorkerDefaultJobTypes(t *testing.T) {
@@ -130,8 +138,8 @@ func TestPluginWorkerDefaultJobTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsePluginWorkerJobTypes(default setting) err = %v", err)
 	}
-	if len(jobTypes) != 3 {
-		t.Fatalf("expected default job types to include 3 handlers, got %v", jobTypes)
+	if len(jobTypes) != 4 {
+		t.Fatalf("expected default job types to include 4 handlers, got %v", jobTypes)
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding"
+const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding,admin_script"
 
 type pluginWorkerRunOptions struct {
 	AdminServer string
@@ -156,6 +156,8 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExe
 		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
 	case "erasure_coding":
 		return pluginworker.NewErasureCodingHandler(dialOption, workingDir), nil
+	case "admin_script":
+		return pluginworker.NewAdminScriptHandler(dialOption), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
 	}
@@ -220,6 +222,8 @@ func canonicalPluginWorkerJobType(jobType string) (string, error) {
 		return "volume_balance", nil
 	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
 		return "erasure_coding", nil
+	case "admin_script", "admin-script", "admin.script", "script", "admin":
+		return "admin_script", nil
 	default:
 		return "", fmt.Errorf("unsupported plugin job type %q", jobType)
 	}
