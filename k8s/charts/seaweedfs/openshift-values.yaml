@@ -100,11 +100,18 @@ filer:
 
 # S3 gateway (if enabled)
 s3:
+  enabled: true
+  replicas: 1
+  port: 8333
+  enableAuth: true
   podSecurityContext:
     enabled: true
     # On OpenShift, we omit runAsUser/runAsGroup/fsGroup to let the admission
     # controller assign them automatically based on the namespace's SCC.
     runAsNonRoot: true
+
+  logs:
+    type: "emptyDir"
 
   containerSecurityContext:
     enabled: true
