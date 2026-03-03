@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,10 @@ type BlockVol struct {
 	rebuildServer *RebuildServer
 	assignMu      sync.Mutex    // serializes HandleAssignment calls
 	drainTimeout  time.Duration // default 10s, for demote drain
+
+	// Snapshot fields (Phase 5 CP5-2).
+	snapMu    sync.RWMutex
+	snapshots map[uint32]*activeSnapshot
 }
 
 // CreateBlockVol creates a new block volume file at path.
@@ -118,6 +123,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		wal:        wal,
 		dirtyMap:   dm,
 		opsDrained: make(chan struct{}, 1),
+		snapshots:  make(map[uint32]*activeSnapshot),
 	}
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
@@ -211,6 +217,28 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		Interval: cfg.FlushInterval,
 	})
 	go v.flusher.Run()
+
+	// Discover and reopen existing snapshots.
+	v.snapshots = make(map[uint32]*activeSnapshot)
+	snapFiles, _ := filepath.Glob(path + ".snap.*")
+	for _, sf := range snapFiles {
+		snap, err := openDeltaFile(sf)
+		if err != nil {
+			log.Printf("blockvol: skipping snapshot file %s: %v", sf, err)
+			continue
+		}
+		if snap.header.ParentUUID != v.super.UUID {
+			log.Printf("blockvol: skipping snapshot %d: parent UUID mismatch", snap.id)
+			snap.Close()
+			continue
+		}
+		v.snapshots[snap.id] = snap
+		v.flusher.AddSnapshot(snap)
+	}
+	if len(v.snapshots) > 0 {
+		log.Printf("blockvol: recovered %d snapshot(s)", len(v.snapshots))
+	}
+
 	return v, nil
 }
 
@@ -610,6 +638,244 @@ func (v *BlockVol) Status() BlockVolumeStatus {
 	}
 }
 
+// CreateSnapshot creates a point-in-time snapshot. The snapshot captures the
+// exact volume state after all pending writes have been flushed to the extent.
+// Only allowed on Primary or None (standalone) roles.
+func (v *BlockVol) CreateSnapshot(id uint32) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	// Role check: only Primary or None (standalone).
+	r := Role(v.role.Load())
+	if r != RoleNone && r != RolePrimary {
+		return ErrSnapshotRoleReject
+	}
+
+	// Hold snapMu across duplicate check + insert to prevent two concurrent
+	// CreateSnapshot(id) from both passing the check. (Fix #3: TOCTOU race.)
+	v.snapMu.Lock()
+	if _, exists := v.snapshots[id]; exists {
+		v.snapMu.Unlock()
+		return ErrSnapshotExists
+	}
+
+	// SyncCache: ensure all prior WAL writes are durable.
+	if err := v.groupCommit.Submit(); err != nil {
+		v.snapMu.Unlock()
+		return fmt.Errorf("blockvol: snapshot sync: %w", err)
+	}
+
+	// Pause flusher and flush everything to extent.
+	if err := v.flusher.PauseAndFlush(); err != nil {
+		v.flusher.Resume()
+		v.snapMu.Unlock()
+		return fmt.Errorf("blockvol: snapshot flush: %w", err)
+	}
+	// flusher is now paused (flushMu held) -- extent is consistent.
+
+	baseLSN := v.flusher.CheckpointLSN()
+
+	// Create delta file.
+	deltaPath := deltaFilePath(v.path, id)
+	snap, err := createDeltaFile(deltaPath, id, v, baseLSN)
+	if err != nil {
+		v.flusher.Resume()
+		v.snapMu.Unlock()
+		return err
+	}
+
+	// Register snapshot in flusher and volume (still under snapMu + flushMu).
+	v.flusher.AddSnapshot(snap)
+	v.snapshots[id] = snap
+	v.snapMu.Unlock()
+	v.flusher.Resume()
+
+	// Update superblock snapshot count.
+	v.snapMu.RLock()
+	v.super.SnapshotCount = uint32(len(v.snapshots))
+	v.snapMu.RUnlock()
+	return v.persistSuperblock()
+}
+
+// ReadSnapshot reads data from a snapshot at the given LBA and length (bytes).
+func (v *BlockVol) ReadSnapshot(id uint32, lba uint64, length uint32) ([]byte, error) {
+	if err := v.beginOp(); err != nil {
+		return nil, err
+	}
+	defer v.endOp()
+
+	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
+		return nil, err
+	}
+
+	v.snapMu.RLock()
+	snap, ok := v.snapshots[id]
+	v.snapMu.RUnlock()
+	if !ok {
+		return nil, ErrSnapshotNotFound
+	}
+
+	blocks := length / v.super.BlockSize
+	result := make([]byte, length)
+
+	for i := uint32(0); i < blocks; i++ {
+		blockLBA := lba + uint64(i)
+		off := i * v.super.BlockSize
+		if snap.bitmap.Get(blockLBA) {
+			// CoW'd block: read from delta file.
+			deltaOff := int64(snap.dataOffset + blockLBA*uint64(v.super.BlockSize))
+			if _, err := snap.fd.ReadAt(result[off:off+v.super.BlockSize], deltaOff); err != nil {
+				return nil, fmt.Errorf("blockvol: read snapshot delta LBA %d: %w", blockLBA, err)
+			}
+		} else {
+			// Not CoW'd: read from extent (still has snapshot-time data).
+			extentStart := v.super.WALOffset + v.super.WALSize
+			extentOff := int64(extentStart + blockLBA*uint64(v.super.BlockSize))
+			if _, err := v.fd.ReadAt(result[off:off+v.super.BlockSize], extentOff); err != nil {
+				return nil, fmt.Errorf("blockvol: read snapshot extent LBA %d: %w", blockLBA, err)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// DeleteSnapshot removes a snapshot and deletes its delta file.
+func (v *BlockVol) DeleteSnapshot(id uint32) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	v.snapMu.Lock()
+	snap, ok := v.snapshots[id]
+	if !ok {
+		v.snapMu.Unlock()
+		return ErrSnapshotNotFound
+	}
+	delete(v.snapshots, id)
+	remaining := uint32(len(v.snapshots))
+	v.snapMu.Unlock()
+
+	// Pause flusher so no in-flight CoW cycle can use snap.fd after close.
+	// (Fix #1: use-after-close race.)
+	v.flusher.PauseAndFlush()
+	v.flusher.RemoveSnapshot(id)
+	v.flusher.Resume()
+
+	// Close and remove delta file. Safe now -- flusher cannot reference snap.
+	deltaPath := deltaFilePath(v.path, id)
+	snap.Close()
+	os.Remove(deltaPath)
+
+	// Update superblock.
+	v.super.SnapshotCount = remaining
+	return v.persistSuperblock()
+}
+
+// RestoreSnapshot reverts the live volume to the state captured by the snapshot.
+// This is destructive: all writes after the snapshot are lost. All snapshots are
+// removed after restore. The volume must have no active I/O (call after Close
+// coordination or on a standalone volume).
+func (v *BlockVol) RestoreSnapshot(id uint32) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	v.snapMu.RLock()
+	snap, ok := v.snapshots[id]
+	v.snapMu.RUnlock()
+	if !ok {
+		return ErrSnapshotNotFound
+	}
+
+	// Pause flusher. Check error -- if flush fails, don't proceed.
+	if err := v.flusher.PauseAndFlush(); err != nil {
+		v.flusher.Resume()
+		return fmt.Errorf("blockvol: restore flush: %w", err)
+	}
+	defer v.flusher.Resume()
+
+	// Copy CoW'd blocks from delta back to extent.
+	extentStart := v.super.WALOffset + v.super.WALSize
+	totalBlocks := v.super.VolumeSize / uint64(v.super.BlockSize)
+	buf := make([]byte, v.super.BlockSize)
+	for lba := uint64(0); lba < totalBlocks; lba++ {
+		if snap.bitmap.Get(lba) {
+			deltaOff := int64(snap.dataOffset + lba*uint64(v.super.BlockSize))
+			if _, err := snap.fd.ReadAt(buf, deltaOff); err != nil {
+				return fmt.Errorf("blockvol: restore read delta LBA %d: %w", lba, err)
+			}
+			extentOff := int64(extentStart + lba*uint64(v.super.BlockSize))
+			if _, err := v.fd.WriteAt(buf, extentOff); err != nil {
+				return fmt.Errorf("blockvol: restore write extent LBA %d: %w", lba, err)
+			}
+		}
+	}
+
+	// Fsync extent.
+	if err := v.fd.Sync(); err != nil {
+		return fmt.Errorf("blockvol: restore fsync: %w", err)
+	}
+
+	// Clear dirty map.
+	v.dirtyMap.Clear()
+
+	// Reset WAL.
+	v.wal.Reset()
+	v.super.WALHead = 0
+	v.super.WALTail = 0
+	v.super.WALCheckpointLSN = snap.header.BaseLSN
+	v.nextLSN.Store(snap.header.BaseLSN + 1)
+
+	// Remove ALL snapshots. Flusher is paused, so no CoW cycle can race.
+	v.snapMu.Lock()
+	for sid, s := range v.snapshots {
+		v.flusher.RemoveSnapshot(sid)
+		s.Close()
+		os.Remove(deltaFilePath(v.path, sid))
+	}
+	v.snapshots = make(map[uint32]*activeSnapshot)
+	v.snapMu.Unlock()
+
+	// Update superblock.
+	v.super.SnapshotCount = 0
+	return v.persistSuperblock()
+}
+
+// ListSnapshots returns metadata for all active snapshots.
+func (v *BlockVol) ListSnapshots() []SnapshotInfo {
+	v.snapMu.RLock()
+	defer v.snapMu.RUnlock()
+	infos := make([]SnapshotInfo, 0, len(v.snapshots))
+	for _, snap := range v.snapshots {
+		infos = append(infos, SnapshotInfo{
+			ID:        snap.id,
+			BaseLSN:   snap.header.BaseLSN,
+			CreatedAt: time.Unix(int64(snap.header.CreatedAt), 0),
+			CoWBlocks: snap.bitmap.CountSet(),
+		})
+	}
+	return infos
+}
+
+// persistSuperblock writes the superblock to disk and fsyncs.
+func (v *BlockVol) persistSuperblock() error {
+	if _, err := v.fd.Seek(0, 0); err != nil {
+		return fmt.Errorf("blockvol: persist superblock seek: %w", err)
+	}
+	if _, err := v.super.WriteTo(v.fd); err != nil {
+		return fmt.Errorf("blockvol: persist superblock write: %w", err)
+	}
+	if err := v.fd.Sync(); err != nil {
+		return fmt.Errorf("blockvol: persist superblock sync: %w", err)
+	}
+	return nil
+}
+
 // Close shuts down the block volume and closes the file.
 // Shutdown order: shipper -> replica receiver -> rebuild server -> drain ops -> group committer -> flusher -> final flush -> close fd.
 func (v *BlockVol) Close() error {
@@ -644,6 +910,15 @@ func (v *BlockVol) Close() error {
 		v.flusher.Stop()         // stop background goroutine first (no concurrent flush)
 		flushErr = v.flusher.FlushOnce() // then do final flush safely
 	}
+
+	// Close snapshot delta files.
+	v.snapMu.Lock()
+	for _, snap := range v.snapshots {
+		snap.Close()
+	}
+	v.snapshots = nil
+	v.snapMu.Unlock()
+
 	closeErr := v.fd.Close()
 	if flushErr != nil {
 		return flushErr

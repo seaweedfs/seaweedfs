@@ -25,6 +25,16 @@ type Flusher struct {
 	checkpointLSN  uint64 // last flushed LSN
 	checkpointTail uint64 // WAL physical tail after last flush
 
+	// flushMu serializes FlushOnce calls and is acquired by CreateSnapshot
+	// to pause the flusher while the snapshot is being set up.
+	// Lock order: flushMu -> snapMu (flushMu acquired first).
+	flushMu sync.Mutex
+
+	// snapMu protects the snapshots slice. Acquired under flushMu in
+	// FlushOnce (RLock) and under flushMu in PauseAndFlush callers.
+	snapMu    sync.RWMutex
+	snapshots []*activeSnapshot
+
 	logger  *log.Logger
 	lastErr bool // true if last FlushOnce returned error
 
@@ -126,24 +136,109 @@ func (f *Flusher) Stop() {
 	<-f.done
 }
 
-// FlushOnce performs a single flush cycle: scan dirty map, copy data to
-// extent region, fsync, update checkpoint, advance WAL tail.
-func (f *Flusher) FlushOnce() error {
-	// Snapshot dirty entries. We use a full scan (Range over all possible LBAs
-	// is impractical), so we collect from the dirty map directly.
-	type flushEntry struct {
-		lba       uint64
-		walOff    uint64
-		lsn       uint64
-		length    uint32
-	}
+// AddSnapshot adds a snapshot to the flusher's active list.
+func (f *Flusher) AddSnapshot(snap *activeSnapshot) {
+	f.snapMu.Lock()
+	f.snapshots = append(f.snapshots, snap)
+	f.snapMu.Unlock()
+}
 
+// RemoveSnapshot removes a snapshot from the flusher's active list by ID.
+func (f *Flusher) RemoveSnapshot(id uint32) {
+	f.snapMu.Lock()
+	for i, s := range f.snapshots {
+		if s.id == id {
+			f.snapshots = append(f.snapshots[:i], f.snapshots[i+1:]...)
+			break
+		}
+	}
+	f.snapMu.Unlock()
+}
+
+// HasActiveSnapshots returns true if there are active snapshots needing CoW.
+func (f *Flusher) HasActiveSnapshots() bool {
+	f.snapMu.RLock()
+	n := len(f.snapshots)
+	f.snapMu.RUnlock()
+	return n > 0
+}
+
+// PauseAndFlush acquires flushMu (pausing the flusher), then runs FlushOnce.
+// The caller must call Resume() when done.
+func (f *Flusher) PauseAndFlush() error {
+	f.flushMu.Lock()
+	return f.flushOnceLocked()
+}
+
+// Resume releases flushMu, allowing the flusher to resume.
+func (f *Flusher) Resume() {
+	f.flushMu.Unlock()
+}
+
+// FlushOnce performs a single flush cycle: scan dirty map, CoW for active
+// snapshots, copy data to extent region, fsync, update checkpoint, advance WAL tail.
+func (f *Flusher) FlushOnce() error {
+	f.flushMu.Lock()
+	defer f.flushMu.Unlock()
+	return f.flushOnceLocked()
+}
+
+// flushOnceLocked is the inner FlushOnce. Caller must hold flushMu.
+func (f *Flusher) flushOnceLocked() error {
 	entries := f.dirtyMap.Snapshot()
 	if len(entries) == 0 {
 		return nil
 	}
 
-	// Find the max LSN and max WAL offset to know where to advance tail.
+	// --- Phase 1: CoW for active snapshots ---
+	f.snapMu.RLock()
+	snaps := make([]*activeSnapshot, len(f.snapshots))
+	copy(snaps, f.snapshots)
+	f.snapMu.RUnlock()
+
+	if len(snaps) > 0 {
+		cowDirty := false
+		for _, e := range entries {
+			for _, snap := range snaps {
+				if !snap.bitmap.Get(e.Lba) {
+					// Read old data from extent (pre-modification state).
+					oldData := make([]byte, f.blockSize)
+					extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
+					if _, err := f.fd.ReadAt(oldData, extentOff); err != nil {
+						return fmt.Errorf("flusher: CoW read extent LBA %d: %w", e.Lba, err)
+					}
+					// Write old data to delta file.
+					deltaOff := int64(snap.dataOffset + e.Lba*uint64(f.blockSize))
+					if _, err := snap.fd.WriteAt(oldData, deltaOff); err != nil {
+						return fmt.Errorf("flusher: CoW write delta LBA %d snap %d: %w", e.Lba, snap.id, err)
+					}
+					snap.bitmap.Set(e.Lba)
+					snap.dirty = true
+					cowDirty = true
+				}
+			}
+		}
+
+		if cowDirty {
+			// Crash safety: delta data -> fsync -> bitmap persist -> fsync -> extent write.
+			for _, snap := range snaps {
+				if snap.dirty {
+					if err := snap.fd.Sync(); err != nil {
+						return fmt.Errorf("flusher: fsync delta snap %d: %w", snap.id, err)
+					}
+					if err := snap.bitmap.WriteTo(snap.fd, SnapHeaderSize); err != nil {
+						return fmt.Errorf("flusher: persist bitmap snap %d: %w", snap.id, err)
+					}
+					if err := snap.fd.Sync(); err != nil {
+						return fmt.Errorf("flusher: fsync bitmap snap %d: %w", snap.id, err)
+					}
+					snap.dirty = false
+				}
+			}
+		}
+	}
+
+	// --- Phase 2: Extent writes (existing, unchanged) ---
 	var maxLSN uint64
 	var maxWALEnd uint64
 
@@ -156,8 +251,6 @@ func (f *Flusher) FlushOnce() error {
 		}
 
 		// WAL reuse guard: validate LSN before trusting the entry.
-		// Between Snapshot() and this read, the WAL slot could have been
-		// reused (by a previous flush cycle advancing the tail + new writes).
 		entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
 		if entryLSN != e.Lsn {
 			continue // stale --WAL slot reused, skip this entry
@@ -180,9 +273,6 @@ func (f *Flusher) FlushOnce() error {
 				continue // corrupt or partially overwritten --skip
 			}
 
-			// Write only this block's data to extent (not all blocks in the
-			// WAL entry). Other blocks may have been overwritten by newer
-			// writes and their dirty map entries point elsewhere.
 			if e.Lba < entry.LBA {
 				continue // LBA mismatch --stale entry
 			}
@@ -196,21 +286,17 @@ func (f *Flusher) FlushOnce() error {
 				}
 			}
 
-			// Track WAL end position for tail advance.
 			walEnd := e.WalOffset + uint64(entryLen)
 			if walEnd > maxWALEnd {
 				maxWALEnd = walEnd
 			}
 		} else if entryType == EntryTypeTrim {
-			// TRIM entries: zero the extent region for this LBA.
-			// Each dirty map entry represents one trimmed block.
 			zeroBlock := make([]byte, f.blockSize)
 			extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
 			if _, err := f.fd.WriteAt(zeroBlock, extentOff); err != nil {
 				return fmt.Errorf("flusher: zero extent at LBA %d: %w", e.Lba, err)
 			}
 
-			// TRIM entry has no data payload, just a header.
 			walEnd := e.WalOffset + uint64(walEntryHeaderSize)
 			if walEnd > maxWALEnd {
 				maxWALEnd = walEnd
@@ -230,8 +316,6 @@ func (f *Flusher) FlushOnce() error {
 	// Remove flushed entries from dirty map.
 	f.mu.Lock()
 	for _, e := range entries {
-		// Only remove if the dirty map entry still has the same LSN
-		// (a newer write may have updated it).
 		_, currentLSN, _, ok := f.dirtyMap.Get(e.Lba)
 		if ok && currentLSN == e.Lsn {
 			f.dirtyMap.Delete(e.Lba)

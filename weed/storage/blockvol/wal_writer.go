@@ -155,6 +155,14 @@ func (w *WALWriter) AdvanceTail(newTail uint64) {
 	w.mu.Unlock()
 }
 
+// Reset resets the WAL to empty state (head=tail=0). Used by snapshot restore.
+func (w *WALWriter) Reset() {
+	w.mu.Lock()
+	w.logicalHead = 0
+	w.logicalTail = 0
+	w.mu.Unlock()
+}
+
 // Head returns the current physical head position (relative to WAL start).
 func (w *WALWriter) Head() uint64 {
 	w.mu.Lock()
