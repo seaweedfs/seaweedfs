@@ -485,6 +485,11 @@ templ Plugin(page string) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="plugin-job-detail-modal-label"><i class="fas fa-file-alt me-2"></i>Job Detail</h5>
+                    <div class="ms-auto me-2">
+                        <button type="button" class="btn btn-outline-danger btn-sm" id="plugin-expire-job-btn" disabled>
+                            <i class="fas fa-stop-circle me-1"></i>Expire Job
+                        </button>
+                    </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body" id="plugin-job-detail-content">
@@ -1073,6 +1078,66 @@ templ Plugin(page string) {
                 return html;
             }
 
+            function isActiveJobState(candidateState) {
+                var jobState = candidateState;
+                if (candidateState && typeof candidateState === 'object' && candidateState.state !== undefined) {
+                    jobState = candidateState.state;
+                }
+                var st = String(jobState || '').toLowerCase();
+                return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' ||
+                    st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+            }
+
+            function setExpireButtonState(job) {
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (!expireBtn) {
+                    return;
+                }
+                var jobID = job && job.job_id ? String(job.job_id) : '';
+                var active = isActiveJobState(job);
+                expireBtn.setAttribute('data-job-id', jobID);
+                expireBtn.disabled = !jobID || !active;
+                if (!jobID) {
+                    expireBtn.title = 'Select a job to expire.';
+                } else if (!active) {
+                    expireBtn.title = 'Job is not active.';
+                } else {
+                    expireBtn.title = 'Expire job to unblock scheduling.';
+                }
+            }
+
+            async function expireJob(jobID) {
+                var normalizedJobID = String(jobID || '').trim();
+                if (!normalizedJobID) {
+                    return;
+                }
+
+                var reason = window.prompt('Expire job ' + normalizedJobID + '? Optional reason:', 'job expired by admin request');
+                if (reason === null) {
+                    return;
+                }
+
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (expireBtn) {
+                    expireBtn.disabled = true;
+                }
+
+                try {
+                    var response = await pluginRequest('POST', '/api/plugin/jobs/' + encodePath(normalizedJobID) + '/expire', {
+                        reason: reason,
+                    });
+                    if (response && response.expired === false) {
+                        notify(response.message || 'Job is not active.', 'info');
+                    } else {
+                        notify('Job expired: ' + normalizedJobID, 'success');
+                    }
+                    await refreshJobsAndActivities();
+                    await openJobDetail(normalizedJobID);
+                } catch (e) {
+                    notify('Failed to expire job: ' + e.message, 'error');
+                }
+            }
+
             async function openJobDetail(jobID) {
                 var normalizedJobID = String(jobID || '').trim();
                 if (!normalizedJobID) {
@@ -1093,10 +1158,12 @@ templ Plugin(page string) {
                     modal.show();
                 }
 
+                setExpireButtonState(null);
                 contentRoot.innerHTML = '<div class="text-muted">Loading job detail...</div>';
                 try {
                     var detail = await pluginRequest('GET', '/api/plugin/jobs/' + encodePath(normalizedJobID) + '/detail?activity_limit=500&related_limit=20');
                     var job = (detail && detail.job) ? detail.job : {};
+                    setExpireButtonState(job);
                     var runRecord = detail && detail.run_record ? detail.run_record : null;
                     var activities = (detail && Array.isArray(detail.activities)) ? detail.activities : [];
                     var relatedJobs = (detail && Array.isArray(detail.related_jobs)) ? detail.related_jobs : [];
@@ -1197,6 +1264,7 @@ templ Plugin(page string) {
 
                     contentRoot.innerHTML = html;
                 } catch (e) {
+                    setExpireButtonState(null);
                     contentRoot.innerHTML = '<div class="alert alert-danger mb-0">Failed to load job detail: ' + escapeHtml(e.message) + '</div>';
                 }
             }
@@ -1238,8 +1306,7 @@ templ Plugin(page string) {
                 var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
 
                 var activeCount = allJobs.filter(function(job) {
-                    var st = String(job.state || '').toLowerCase();
-                    return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    return isActiveJobState(job);
                 }).length;
 
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
@@ -1265,8 +1332,7 @@ templ Plugin(page string) {
                     if (!jobType) {
                         continue;
                     }
-                    var st = String(job.state || '').toLowerCase();
-                    var isActive = st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    var isActive = isActiveJobState(job);
                     if (!isActive) {
                         continue;
                     }
@@ -2775,6 +2841,17 @@ templ Plugin(page string) {
                     monitorStateFilter.addEventListener('change', function() {
                         state.monitorExecutionJobState = String(monitorStateFilter.value || '').trim();
                         renderExecutionJobs();
+                    });
+                }
+
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (expireBtn) {
+                    expireBtn.addEventListener('click', function() {
+                        var jobID = String(expireBtn.getAttribute('data-job-id') || '').trim();
+                        if (!jobID) {
+                            return;
+                        }
+                        expireJob(jobID);
                     });
                 }
 

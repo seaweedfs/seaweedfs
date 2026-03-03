@@ -242,6 +242,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	pluginApi.Handle("/job-types/{jobType}/detect", wrapWrite(h.adminServer.TriggerPluginDetectionAPI)).Methods(http.MethodPost)
 	pluginApi.Handle("/job-types/{jobType}/run", wrapWrite(h.adminServer.RunPluginJobTypeAPI)).Methods(http.MethodPost)
 	pluginApi.Handle("/jobs/execute", wrapWrite(h.adminServer.ExecutePluginJobAPI)).Methods(http.MethodPost)
+	pluginApi.Handle("/jobs/{jobId}/expire", wrapWrite(h.adminServer.ExpirePluginJobAPI)).Methods(http.MethodPost)
 
 	mqApi := api.PathPrefix("/mq").Subrouter()
 	mqApi.HandleFunc("/topics/{namespace}/{topic}", h.mqHandlers.GetTopicDetailsAPI).Methods(http.MethodGet)

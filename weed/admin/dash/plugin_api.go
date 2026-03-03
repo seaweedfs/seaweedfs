@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,6 +129,47 @@ func (s *AdminServer) GetPluginJobDetailAPI(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// ExpirePluginJobAPI marks a job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJobAPI(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimSpace(mux.Vars(r)["jobId"])
+	if jobID == "" {
+		writeJSONError(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil && err != io.EOF {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	job, expired, err := s.ExpirePluginJob(jobID, req.Reason)
+	if err != nil {
+		if errors.Is(err, plugin.ErrJobNotFound) {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	response := map[string]interface{}{
+		"job_id":  jobID,
+		"expired": expired,
+	}
+	if job != nil {
+		response["job"] = job
+	}
+	if !expired {
+		response["message"] = "job is not active"
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // GetPluginActivitiesAPI returns recent plugin activities.
