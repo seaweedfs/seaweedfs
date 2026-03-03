@@ -4,6 +4,9 @@
 //   GET  /status   -- return JSON status
 //   POST /replica  -- set WAL shipping target {data_addr, ctrl_addr}
 //   POST /rebuild  -- start/stop rebuild server {action, listen_addr}
+//   POST /snapshot -- create/delete/restore/list snapshots
+//   POST /resize   -- expand volume {new_size_bytes}
+//   GET  /metrics  -- Prometheus metrics (requires X-Admin-Token if auth enabled)
 package main
 
 import (
@@ -15,14 +18,17 @@ import (
 	_ "net/http/pprof" // registers /debug/pprof/* handlers on DefaultServeMux
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // adminServer provides HTTP admin control of the BlockVol.
 type adminServer struct {
-	vol    *blockvol.BlockVol
-	token  string // optional auth token; empty = no auth
-	logger *log.Logger
+	vol             *blockvol.BlockVol
+	token           string // optional auth token; empty = no auth
+	logger          *log.Logger
+	metricsRegistry *prometheus.Registry // dedicated Prometheus registry (nil = no /metrics)
 }
 
 // assignRequest is the JSON body for POST /assign.
@@ -44,6 +50,17 @@ type rebuildRequest struct {
 	ListenAddr string `json:"listen_addr"`
 }
 
+// snapshotRequest is the JSON body for POST /snapshot.
+type snapshotRequest struct {
+	Action string `json:"action"` // "create", "delete", "restore", "list"
+	ID     uint32 `json:"id"`
+}
+
+// resizeRequest is the JSON body for POST /resize.
+type resizeRequest struct {
+	NewSizeBytes uint64 `json:"new_size_bytes"`
+}
+
 // statusResponse is the JSON body for GET /status.
 type statusResponse struct {
 	Path          string `json:"path"`
@@ -53,6 +70,7 @@ type statusResponse struct {
 	CheckpointLSN uint64 `json:"checkpoint_lsn"`
 	HasLease      bool   `json:"has_lease"`
 	Healthy       bool   `json:"healthy"`
+	VolumeSize    uint64 `json:"volume_size"`
 }
 
 const maxValidRole = uint32(blockvol.RoleDraining)
@@ -78,6 +96,12 @@ func (a *adminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleReplica(w, r)
 	case "/rebuild":
 		a.handleRebuild(w, r)
+	case "/snapshot":
+		a.handleSnapshot(w, r)
+	case "/resize":
+		a.handleResize(w, r)
+	case "/metrics":
+		a.handleMetrics(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -130,6 +154,7 @@ func (a *adminServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		CheckpointLSN: st.CheckpointLSN,
 		HasLease:      st.HasLease,
 		Healthy:       info.Healthy,
+		VolumeSize:    info.VolumeSize,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
@@ -188,6 +213,98 @@ func (a *adminServer) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
+func (a *adminServer) handleSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req snapshotRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	switch req.Action {
+	case "create":
+		if err := a.vol.CreateSnapshot(req.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		a.logger.Printf("admin: created snapshot %d", req.ID)
+	case "delete":
+		if err := a.vol.DeleteSnapshot(req.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		a.logger.Printf("admin: deleted snapshot %d", req.ID)
+	case "restore":
+		if err := a.vol.RestoreSnapshot(req.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		a.logger.Printf("admin: restored snapshot %d", req.ID)
+	case "list":
+		snaps := a.vol.ListSnapshots()
+		type snapInfo struct {
+			ID        uint32 `json:"id"`
+			BaseLSN   uint64 `json:"base_lsn"`
+			CreatedAt string `json:"created_at"`
+			CoWBlocks uint64 `json:"cow_blocks"`
+		}
+		result := make([]snapInfo, len(snaps))
+		for i, s := range snaps {
+			result[i] = snapInfo{
+				ID:        s.ID,
+				BaseLSN:   s.BaseLSN,
+				CreatedAt: s.CreatedAt.Format(time.RFC3339),
+				CoWBlocks: s.CoWBlocks,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"snapshots": result})
+		return
+	default:
+		jsonError(w, "action must be 'create', 'delete', 'restore', or 'list'", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"ok":true}`))
+}
+
+func (a *adminServer) handleResize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req resizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.NewSizeBytes == 0 {
+		jsonError(w, "new_size_bytes is required", http.StatusBadRequest)
+		return
+	}
+	if err := a.vol.Expand(req.NewSizeBytes); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+	a.logger.Printf("admin: resized to %d bytes", req.NewSizeBytes)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":          true,
+		"volume_size": a.vol.Info().VolumeSize,
+	})
+}
+
+func (a *adminServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if a.metricsRegistry == nil {
+		http.Error(w, `{"error":"metrics not configured"}`, http.StatusNotFound)
+		return
+	}
+	promhttp.HandlerFor(a.metricsRegistry, promhttp.HandlerOpts{}).ServeHTTP(w, r)
+}
+
 // startAdminServer starts the HTTP admin server in a background goroutine.
 // Returns the listener so tests can determine the actual bound port.
 // Includes /debug/pprof/* endpoints for profiling.
@@ -201,6 +318,9 @@ func startAdminServer(addr string, srv *adminServer) (net.Listener, error) {
 	mux.Handle("/status", srv)
 	mux.Handle("/replica", srv)
 	mux.Handle("/rebuild", srv)
+	mux.Handle("/snapshot", srv)
+	mux.Handle("/resize", srv)
+	mux.Handle("/metrics", srv)
 	// pprof handlers registered on DefaultServeMux by net/http/pprof import.
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 	go func() {

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 )
@@ -34,6 +35,8 @@ func main() {
 	replicaData := flag.String("replica-data", "", "replica receiver data listen address (e.g. :9001; empty = disabled)")
 	replicaCtrl := flag.String("replica-ctrl", "", "replica receiver ctrl listen address (e.g. :9002; empty = disabled)")
 	rebuildListen := flag.String("rebuild-listen", "", "rebuild server listen address (e.g. :9003; empty = disabled)")
+	chapUser := flag.String("chap-user", "", "CHAP username (empty = CHAP disabled)")
+	chapSecret := flag.String("chap-secret", "", "CHAP shared secret")
 	flag.Parse()
 
 	if *volPath == "" {
@@ -43,6 +46,9 @@ func main() {
 	}
 	if *tpgID < 1 || *tpgID > 65535 {
 		log.Fatalf("invalid -tpg-id %d: must be 1-65535", *tpgID)
+	}
+	if *chapUser != "" && *chapSecret == "" {
+		log.Fatalf("-chap-secret is required when -chap-user is set")
 	}
 
 	logger := log.New(os.Stdout, "[iscsi] ", log.LstdFlags)
@@ -102,9 +108,18 @@ func main() {
 		logger.Printf("rebuild server: %s", *rebuildListen)
 	}
 
+	// Create Prometheus registry and metrics adapter.
+	promReg := prometheus.NewRegistry()
+	instrumented := &instrumentedAdapter{
+		inner:  &blockVolAdapter{vol: vol, tpgID: uint16(*tpgID)},
+		logger: logger,
+	}
+	adapter := newMetricsAdapter(instrumented, vol, promReg)
+
 	// Start admin HTTP server if configured
 	if *adminAddr != "" {
 		adm := newAdminServer(vol, *adminToken, logger)
+		adm.metricsRegistry = promReg
 		ln, err := startAdminServer(*adminAddr, adm)
 		if err != nil {
 			log.Fatalf("start admin server: %v", err)
@@ -113,16 +128,18 @@ func main() {
 		logger.Printf("admin server: %s", ln.Addr())
 	}
 
-	// Create adapter with ALUA support and latency instrumentation
-	adapter := &instrumentedAdapter{
-		inner:  &blockVolAdapter{vol: vol, tpgID: uint16(*tpgID)},
-		logger: logger,
-	}
-
 	// Create target server
 	config := iscsi.DefaultTargetConfig()
 	config.TargetName = *iqn
 	config.TargetAlias = "SeaweedFS BlockVol"
+	if *chapUser != "" && *chapSecret != "" {
+		config.CHAPConfig = iscsi.CHAPConfig{
+			Enabled:  true,
+			Username: *chapUser,
+			Secret:   *chapSecret,
+		}
+		logger.Printf("CHAP authentication enabled for user %q", *chapUser)
+	}
 	if *portal != "" {
 		// Parse portal group tag from "addr:port,tpgt" format
 		if idx := strings.LastIndex(*portal, ","); idx >= 0 {
@@ -138,7 +155,7 @@ func main() {
 	ts.AddVolume(*iqn, adapter)
 
 	// Start periodic performance stats logging (every 5 seconds).
-	adapter.StartStatsLogger(5 * time.Second)
+	instrumented.StartStatsLogger(5 * time.Second)
 
 	// Graceful shutdown on signal
 	sigCh := make(chan os.Signal, 1)

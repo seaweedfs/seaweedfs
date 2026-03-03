@@ -3,6 +3,7 @@ package iscsi
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -72,6 +73,7 @@ type TargetConfig struct {
 	ImmediateData           bool
 	ErrorRecoveryLevel      int
 	DataOutTimeout          time.Duration // read deadline for Data-Out collection (default 30s)
+	CHAPConfig              CHAPConfig    // CHAP authentication settings
 }
 
 // DefaultTargetConfig returns sensible defaults for a target.
@@ -101,6 +103,9 @@ type LoginNegotiator struct {
 	tsih     uint16
 	targetOK bool // target name validated
 
+	// CHAP authentication (nil when disabled)
+	chapAuth *CHAPAuthenticator
+
 	// Negotiated values (updated during negotiation)
 	NegMaxRecvDataSegLen int
 	NegMaxBurstLength    int
@@ -116,7 +121,7 @@ type LoginNegotiator struct {
 
 // NewLoginNegotiator creates a negotiator for a new login sequence.
 func NewLoginNegotiator(config TargetConfig) *LoginNegotiator {
-	return &LoginNegotiator{
+	ln := &LoginNegotiator{
 		config:               config,
 		phase:                LoginPhaseStart,
 		NegMaxRecvDataSegLen: config.MaxRecvDataSegmentLength,
@@ -125,6 +130,10 @@ func NewLoginNegotiator(config TargetConfig) *LoginNegotiator {
 		NegInitialR2T:        config.InitialR2T,
 		NegImmediateData:     config.ImmediateData,
 	}
+	if config.CHAPConfig.Enabled {
+		ln.chapAuth = NewCHAPAuthenticator(config.CHAPConfig)
+	}
+	return ln
 }
 
 // HandleLoginPDU processes one login request PDU and returns the response PDU.
@@ -198,8 +207,65 @@ func (ln *LoginNegotiator) HandleLoginPDU(req *PDU, resolver TargetResolver) *PD
 		// ISID
 		ln.isid = req.ISID()
 
-		// We don't implement CHAP -- declare AuthMethod=None
-		respParams.Set("AuthMethod", "None")
+		// CHAP authentication flow
+		if ln.chapAuth != nil && ln.chapAuth.IsEnabled() {
+			authMethod, _ := params.Get("AuthMethod")
+			chapN, hasChapN := params.Get("CHAP_N")
+			chapR, hasChapR := params.Get("CHAP_R")
+
+			switch ln.chapAuth.state {
+			case chapIdle:
+				// First security PDU: initiator offers AuthMethod.
+				// Check if initiator supports CHAP.
+				if !chapMethodOffered(authMethod) {
+					// CHAP required but initiator only offers None.
+					setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailAuthFailure)
+					return resp
+				}
+				respParams.Set("AuthMethod", "CHAP")
+				challenge, err := ln.chapAuth.GenerateChallenge()
+				if err != nil {
+					setLoginReject(resp, LoginStatusTargetErr, LoginDetailTargetError)
+					return resp
+				}
+				for k, v := range challenge {
+					respParams.Set(k, v)
+				}
+				// Do NOT transit yet -- more security PDUs needed.
+				resp.SetLoginStages(csg, nsg)
+				resp.SetLoginTransit(false)
+				resp.SetLoginStatus(LoginStatusSuccess, LoginDetailSuccess)
+				if ln.tsih == 0 {
+					ln.tsih = 1
+				}
+				resp.SetTSIH(ln.tsih)
+				tpgt := ln.config.TargetPortalGroupTag
+				if tpgt <= 0 {
+					tpgt = 1
+				}
+				respParams.Set("TargetPortalGroupTag", strconv.Itoa(tpgt))
+				if respParams.Len() > 0 {
+					resp.DataSegment = respParams.Encode()
+				}
+				return resp
+
+			case chapChallengeSent:
+				// Second security PDU: initiator sends CHAP_N + CHAP_R.
+				if !hasChapN || !hasChapR {
+					setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailAuthFailure)
+					return resp
+				}
+				if !ln.chapAuth.Verify(chapN, chapR) {
+					setLoginReject(resp, LoginStatusInitiatorErr, LoginDetailAuthFailure)
+					return resp
+				}
+				// CHAP verified -- echo AuthMethod, allow transit below.
+			respParams.Set("AuthMethod", "CHAP")
+			}
+		} else {
+			// No CHAP -- declare AuthMethod=None.
+			respParams.Set("AuthMethod", "None")
+		}
 
 		if transit {
 			if nsg == StageLoginOp {
@@ -374,6 +440,17 @@ type TargetResolver interface {
 func setLoginReject(resp *PDU, class, detail uint8) {
 	resp.SetLoginStatus(class, detail)
 	resp.SetLoginTransit(false)
+}
+
+// chapMethodOffered checks whether "CHAP" appears in a comma-separated
+// AuthMethod value list (e.g. "CHAP,None" or "CHAP").
+func chapMethodOffered(authMethod string) bool {
+	for _, m := range strings.Split(authMethod, ",") {
+		if strings.TrimSpace(m) == "CHAP" {
+			return true
+		}
+	}
+	return false
 }
 
 // LoginResult contains the outcome of a completed login negotiation.

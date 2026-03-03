@@ -541,6 +541,22 @@ type VolumeInfo struct {
 	Healthy    bool
 }
 
+// WALUsedFraction returns the fraction of WAL space currently in use (0.0 to 1.0).
+func (v *BlockVol) WALUsedFraction() float64 {
+	if v.wal == nil {
+		return 0
+	}
+	return v.wal.UsedFraction()
+}
+
+// DirtyMapLen returns the number of entries in the dirty map.
+func (v *BlockVol) DirtyMapLen() int {
+	if v.dirtyMap == nil {
+		return 0
+	}
+	return v.dirtyMap.Len()
+}
+
 // SyncCache ensures all previously written WAL entries are durable on disk.
 // It submits a sync request to the group committer, which batches fsyncs.
 func (v *BlockVol) SyncCache() error {
@@ -860,6 +876,58 @@ func (v *BlockVol) ListSnapshots() []SnapshotInfo {
 		})
 	}
 	return infos
+}
+
+var (
+	ErrShrinkNotSupported     = errors.New("blockvol: shrink not supported")
+	ErrSnapshotsPreventResize = errors.New("blockvol: cannot resize with active snapshots")
+)
+
+// Expand grows the volume to newSize bytes. newSize must be larger than
+// the current size and aligned to BlockSize. Fails if snapshots are active.
+func (v *BlockVol) Expand(newSize uint64) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+	if err := v.writeGate(); err != nil {
+		return err
+	}
+
+	if newSize <= v.super.VolumeSize {
+		if newSize == v.super.VolumeSize {
+			return nil // no-op
+		}
+		return ErrShrinkNotSupported
+	}
+	if newSize%uint64(v.super.BlockSize) != 0 {
+		return ErrAlignment
+	}
+
+	// Hold snapMu across entire operation to prevent concurrent CreateSnapshot.
+	v.snapMu.RLock()
+	defer v.snapMu.RUnlock()
+	if len(v.snapshots) > 0 {
+		return ErrSnapshotsPreventResize
+	}
+
+	// Pause flusher (no concurrent extent writes during file extension).
+	if err := v.flusher.PauseAndFlush(); err != nil {
+		v.flusher.Resume()
+		return fmt.Errorf("blockvol: expand flush: %w", err)
+	}
+	defer v.flusher.Resume()
+
+	// Extend file.
+	extentStart := v.super.WALOffset + v.super.WALSize
+	newFileSize := int64(extentStart + newSize)
+	if err := v.fd.Truncate(newFileSize); err != nil {
+		return fmt.Errorf("blockvol: expand truncate: %w", err)
+	}
+
+	// Update superblock.
+	v.super.VolumeSize = newSize
+	return v.persistSuperblock()
 }
 
 // persistSuperblock writes the superblock to disk and fsyncs.
