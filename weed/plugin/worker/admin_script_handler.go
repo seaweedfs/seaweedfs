@@ -106,7 +106,7 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
-			Enabled:                       false,
+			Enabled:                       true,
 			DetectionIntervalSeconds:      adminScriptDetectTickSecs,
 			DetectionTimeoutSeconds:       300,
 			MaxJobsPerDetection:           1,
