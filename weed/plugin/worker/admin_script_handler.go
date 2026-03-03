@@ -25,14 +25,12 @@ const (
 	adminScriptDetectTickSecs = 60
 )
 
-const defaultAdminScript = `
-ec.balance -apply
+const defaultAdminScript = `ec.balance -apply
 fs.log.purge -daysAgo=7
 volume.deleteEmpty -quietFor=24h -apply
 volume.balance -apply
 volume.fix.replication -apply
-s3.clean.uploads -timeAgo=24h
-`
+s3.clean.uploads -timeAgo=24h`
 
 var adminScriptTokenRegex = regexp.MustCompile(`'.*?'|".*?"|\S+`)
 
