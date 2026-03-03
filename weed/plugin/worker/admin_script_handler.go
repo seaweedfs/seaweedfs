@@ -550,7 +550,7 @@ func (h *AdminScriptHandler) buildAdminScriptCommandEnv(
 	}
 
 	commandEnv := shell.NewCommandEnv(&options)
-	commandEnv.SetNoLock(true)
+	commandEnv.ForceNoLock()
 
 	ctx, cancel := context.WithCancel(ctx)
 	go commandEnv.MasterClient.KeepConnectedToMaster(ctx)
