@@ -841,6 +841,9 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 	}
 }
 
+// filterProposalsWithActiveJobs removes proposals whose dedupe keys already have active jobs.
+// It first expires stale tracked jobs via expireStaleJobs, which can mutate scheduler state,
+// so callers should treat this method as a stateful operation.
 func (r *Plugin) filterProposalsWithActiveJobs(jobType string, proposals []*plugin_pb.JobProposal) ([]*plugin_pb.JobProposal, int) {
 	if len(proposals) == 0 {
 		return proposals, 0
