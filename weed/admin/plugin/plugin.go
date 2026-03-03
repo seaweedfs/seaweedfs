@@ -416,7 +416,10 @@ func (r *Plugin) RunDetectionWithReport(
 	if err != nil {
 		return nil, err
 	}
-	lastSuccessfulRun := r.loadLastSuccessfulRun(jobType)
+	lastCompletedRun := r.loadLastSuccessfulRun(jobType)
+	if strings.EqualFold(strings.TrimSpace(jobType), adminScriptJobType) {
+		lastCompletedRun = r.loadLastCompletedRun(jobType)
+	}
 
 	state := &pendingDetectionState{
 		complete: make(chan *plugin_pb.DetectionComplete, 1),
@@ -457,7 +460,7 @@ func (r *Plugin) RunDetectionWithReport(
 				AdminConfigValues:  adminConfigValues,
 				WorkerConfigValues: workerConfigValues,
 				ClusterContext:     clusterContext,
-				LastSuccessfulRun:  lastSuccessfulRun,
+				LastSuccessfulRun:  lastCompletedRun,
 				MaxResults:         maxResults,
 			},
 		},
@@ -1311,6 +1314,41 @@ func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
 	var latest time.Time
 	for i := range history.SuccessfulRuns {
 		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return timestamppb.New(latest.UTC())
+}
+
+func (r *Plugin) loadLastCompletedRun(jobType string) *timestamppb.Timestamp {
+	history, err := r.store.LoadRunHistory(jobType)
+	if err != nil {
+		glog.Warningf("Plugin failed to load run history for %s: %v", jobType, err)
+		return nil
+	}
+	if history == nil {
+		return nil
+	}
+
+	var latest time.Time
+	for i := range history.SuccessfulRuns {
+		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	for i := range history.ErrorRuns {
+		completedAt := history.ErrorRuns[i].CompletedAt
 		if completedAt == nil || completedAt.IsZero() {
 			continue
 		}
