@@ -27,7 +27,8 @@ const (
 	ScsiWriteSame16        uint8 = 0x93
 	ScsiServiceActionIn16  uint8 = 0x9e // READ CAPACITY(16), etc.
 	ScsiReportLuns         uint8 = 0xa0
-	ScsiMaintenanceIn      uint8 = 0xa3 // REPORT SUPPORTED OPCODES, etc.
+	ScsiMaintenanceIn      uint8 = 0xa3 // REPORT SUPPORTED OPCODES, REPORT TARGET PORT GROUPS, etc.
+	ScsiMaintenanceOut     uint8 = 0xa4 // SET TARGET PORT GROUPS, etc.
 )
 
 // Service action for READ CAPACITY (16)
@@ -115,10 +116,19 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 	case ScsiRead10:
 		return h.read10(cdb)
 	case ScsiWrite10:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.write10(cdb, dataOut)
 	case ScsiSyncCache10:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.syncCache()
 	case ScsiUnmap:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.unmap(cdb, dataOut)
 	case ScsiModeSelect10:
 		return h.modeSelect10(cdb, dataOut)
@@ -131,10 +141,19 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 	case ScsiRead16:
 		return h.read16(cdb)
 	case ScsiWrite16:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.write16(cdb, dataOut)
 	case ScsiSyncCache16:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.syncCache()
 	case ScsiWriteSame16:
+		if r := h.checkStandbyReject(); r != nil {
+			return *r
+		}
 		return h.writeSame16(cdb, dataOut)
 	case ScsiServiceActionIn16:
 		sa := cdb[1] & 0x1f
@@ -146,6 +165,8 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 		return h.reportLuns(cdb)
 	case ScsiMaintenanceIn:
 		return h.maintenanceIn(cdb)
+	case ScsiMaintenanceOut:
+		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	default:
 		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	}
@@ -211,16 +232,21 @@ func (h *SCSIHandler) persistReserveOut(cdb [16]byte, dataOut []byte) SCSIResult
 }
 
 // maintenanceIn handles MAINTENANCE IN (0xA3).
+// Service action 0x0A = REPORT TARGET PORT GROUPS (ALUA).
 // Service action 0x0C = REPORT SUPPORTED OPERATION CODES.
-// Windows sends this to discover which commands we support.
+// Windows sends 0x0C to discover which commands we support.
 func (h *SCSIHandler) maintenanceIn(cdb [16]byte) SCSIResult {
 	sa := cdb[1] & 0x1f
-	if sa == 0x0c {
+	switch sa {
+	case 0x0a:
+		return h.reportTargetPortGroups(cdb)
+	case 0x0c:
 		// REPORT SUPPORTED OPERATION CODES -- return empty (not supported).
 		// This tells Windows to probe commands individually.
 		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
+	default:
+		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	}
-	return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 }
 
 func (h *SCSIHandler) inquiry(cdb [16]byte) SCSIResult {
@@ -243,6 +269,10 @@ func (h *SCSIHandler) inquiry(cdb [16]byte) SCSIResult {
 	data[3] = 0x02 // Response data format = 2 (SPC-2+)
 	data[4] = 91   // Additional length (96-5)
 	data[5] = 0x00 // SCCS, ACC, TPGS, 3PC
+	// If ALUA is supported, set TPGS = implicit (bits 5:4 = 01).
+	if _, ok := h.dev.(ALUAProvider); ok {
+		data[5] |= 0x10 // TPGS = 01 (implicit ALUA)
+	}
 	data[6] = 0x00 // Obsolete, EncServ, VS, MultiP
 	data[7] = 0x02 // CmdQue=1 (supports command queuing)
 
@@ -290,23 +320,7 @@ func (h *SCSIHandler) inquiryVPD(pageCode uint8, allocLen uint16) SCSIResult {
 		return SCSIResult{Status: SCSIStatusGood, Data: data}
 
 	case 0x83: // Device identification
-		// NAA identifier (8 bytes)
-		naaID := []byte{
-			0x01,                               // code set: binary
-			0x03,                               // identifier type: NAA
-			0x00,                               // reserved
-			0x08,                               // identifier length
-			0x60, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // NAA-6 fake
-		}
-		data := make([]byte, 4+len(naaID))
-		data[0] = 0x00 // device type
-		data[1] = 0x83 // page code
-		binary.BigEndian.PutUint16(data[2:4], uint16(len(naaID)))
-		copy(data[4:], naaID)
-		if int(allocLen) < len(data) {
-			data = data[:allocLen]
-		}
-		return SCSIResult{Status: SCSIStatusGood, Data: data}
+		return h.inquiryVPD83(allocLen)
 
 	case 0xb0: // Block Limits (SBC-4, Section 6.6.4)
 		return h.inquiryVPDB0(allocLen)
@@ -387,6 +401,72 @@ func (h *SCSIHandler) inquiryVPDB2(allocLen uint16) SCSIResult {
 	// Bit 6: LBPWS (LBP Write Same) = 1 -- we support WRITE SAME with UNMAP bit
 	// Bit 5: LBPWS10 = 0 -- we don't support WRITE SAME(10)
 	data[6] = 0xC0 // LBPU=1, LBPWS=1
+
+	if int(allocLen) < len(data) {
+		data = data[:allocLen]
+	}
+	return SCSIResult{Status: SCSIStatusGood, Data: data}
+}
+
+// inquiryVPD83 returns the Device Identification VPD page (0x83).
+// When ALUAProvider is available, returns three descriptors needed by dm-multipath:
+//  1. NAA-6 identifier (logical unit identity, UUID-derived)
+//  2. Target Port Group designator (TPG identity)
+//  3. Relative Target Port designator (target port identity)
+//
+// Without ALUAProvider, returns only the NAA descriptor with a hardcoded value.
+func (h *SCSIHandler) inquiryVPD83(allocLen uint16) SCSIResult {
+	alua, hasALUA := h.dev.(ALUAProvider)
+
+	// Descriptor 1: NAA-6 identifier (always present).
+	var naaBytes [8]byte
+	if hasALUA {
+		naaBytes = alua.DeviceNAA()
+	} else {
+		naaBytes = [8]byte{0x60, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07}
+	}
+	naaDesc := []byte{
+		0x01, // code set: binary
+		0x03, // PIV=0, association=00 (logical unit), type=3 (NAA)
+		0x00, // reserved
+		0x08, // identifier length
+	}
+	naaDesc = append(naaDesc, naaBytes[:]...)
+
+	descs := make([]byte, 0, 32)
+	descs = append(descs, naaDesc...)
+
+	if hasALUA {
+		tpgID := alua.TPGroupID()
+
+		// Descriptor 2: Target Port Group designator (type 0x05).
+		tpgDesc := []byte{
+			0x01, // code set: binary
+			0x15, // PIV=1, association=01 (target port), type=5 (target port group)
+			0x00, // reserved
+			0x04, // identifier length
+			0x00, 0x00, // reserved
+			byte(tpgID >> 8), byte(tpgID), // TPG ID big-endian
+		}
+		descs = append(descs, tpgDesc...)
+
+		// Descriptor 3: Relative Target Port designator (type 0x04).
+		rtpDesc := []byte{
+			0x01, // code set: binary
+			0x14, // PIV=1, association=01 (target port), type=4 (relative target port)
+			0x00, // reserved
+			0x04, // identifier length
+			0x00, 0x00, // reserved
+			0x00, 0x01, // relative target port identifier = 1
+		}
+		descs = append(descs, rtpDesc...)
+	}
+
+	data := make([]byte, 4+len(descs))
+	data[0] = 0x00 // device type
+	data[1] = 0x83 // page code
+	binary.BigEndian.PutUint16(data[2:4], uint16(len(descs)))
+	copy(data[4:], descs)
 
 	if int(allocLen) < len(data) {
 		data = data[:allocLen]

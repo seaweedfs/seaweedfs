@@ -28,6 +28,7 @@ func main() {
 	iqn := flag.String("iqn", "iqn.2024.com.seaweedfs:vol1", "target IQN")
 	create := flag.Bool("create", false, "create a new volume file")
 	size := flag.String("size", "1G", "volume size (e.g., 1G, 100M) -- used with -create")
+	tpgID := flag.Int("tpg-id", 1, "target port group ID for ALUA (1-65535)")
 	adminAddr := flag.String("admin", "", "HTTP admin listen address (e.g. 127.0.0.1:8080; empty = disabled)")
 	adminToken := flag.String("admin-token", "", "optional admin auth token (empty = no auth)")
 	replicaData := flag.String("replica-data", "", "replica receiver data listen address (e.g. :9001; empty = disabled)")
@@ -40,6 +41,9 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+	if *tpgID < 1 || *tpgID > 65535 {
+		log.Fatalf("invalid -tpg-id %d: must be 1-65535", *tpgID)
+	}
 
 	logger := log.New(os.Stdout, "[iscsi] ", log.LstdFlags)
 
@@ -51,15 +55,24 @@ func main() {
 		if parseErr != nil {
 			log.Fatalf("invalid size %q: %v", *size, parseErr)
 		}
-		vol, err = blockvol.CreateBlockVol(*volPath, blockvol.CreateOptions{
-			VolumeSize: volSize,
-			BlockSize:  4096,
-			WALSize:    64 * 1024 * 1024,
-		})
-		if err != nil {
-			log.Fatalf("create volume: %v", err)
+		if _, statErr := os.Stat(*volPath); statErr == nil {
+			// File exists -- open it instead of failing
+			vol, err = blockvol.OpenBlockVol(*volPath)
+			if err != nil {
+				log.Fatalf("open existing volume: %v", err)
+			}
+			logger.Printf("opened existing volume: %s", *volPath)
+		} else {
+			vol, err = blockvol.CreateBlockVol(*volPath, blockvol.CreateOptions{
+				VolumeSize: volSize,
+				BlockSize:  4096,
+				WALSize:    64 * 1024 * 1024,
+			})
+			if err != nil {
+				log.Fatalf("create volume: %v", err)
+			}
+			logger.Printf("created volume: %s (%s)", *volPath, *size)
 		}
-		logger.Printf("created volume: %s (%s)", *volPath, *size)
 	} else {
 		vol, err = blockvol.OpenBlockVol(*volPath)
 		if err != nil {
@@ -100,9 +113,9 @@ func main() {
 		logger.Printf("admin server: %s", ln.Addr())
 	}
 
-	// Create adapter with latency instrumentation
+	// Create adapter with ALUA support and latency instrumentation
 	adapter := &instrumentedAdapter{
-		inner:  &blockVolAdapter{vol: vol},
+		inner:  &blockVolAdapter{vol: vol, tpgID: uint16(*tpgID)},
 		logger: logger,
 	}
 
@@ -143,9 +156,10 @@ func main() {
 	logger.Println("target stopped")
 }
 
-// blockVolAdapter wraps BlockVol to implement iscsi.BlockDevice.
+// blockVolAdapter wraps BlockVol to implement iscsi.BlockDevice and iscsi.ALUAProvider.
 type blockVolAdapter struct {
-	vol *blockvol.BlockVol
+	vol   *blockvol.BlockVol
+	tpgID uint16
 }
 
 func (a *blockVolAdapter) ReadAt(lba uint64, length uint32) ([]byte, error) {
@@ -163,6 +177,39 @@ func (a *blockVolAdapter) SyncCache() error {
 func (a *blockVolAdapter) BlockSize() uint32  { return a.vol.Info().BlockSize }
 func (a *blockVolAdapter) VolumeSize() uint64 { return a.vol.Info().VolumeSize }
 func (a *blockVolAdapter) IsHealthy() bool    { return a.vol.Info().Healthy }
+
+// ALUAProvider implementation.
+func (a *blockVolAdapter) ALUAState() uint8    { return roleToALUA(a.vol.Role()) }
+func (a *blockVolAdapter) TPGroupID() uint16   { return a.tpgID }
+func (a *blockVolAdapter) DeviceNAA() [8]byte  { return uuidToNAA(a.vol.Info().UUID) }
+
+// roleToALUA maps a BlockVol Role to an ALUA asymmetric access state.
+// RoleNone maps to Active/Optimized so standalone single-node targets
+// (no assignment from master) can accept writes.
+func roleToALUA(r blockvol.Role) uint8 {
+	switch r {
+	case blockvol.RolePrimary, blockvol.RoleNone:
+		return iscsi.ALUAActiveOptimized
+	case blockvol.RoleReplica:
+		return iscsi.ALUAStandby
+	case blockvol.RoleStale:
+		return iscsi.ALUAUnavailable
+	case blockvol.RoleRebuilding, blockvol.RoleDraining:
+		return iscsi.ALUATransitioning
+	default:
+		return iscsi.ALUAStandby
+	}
+}
+
+// uuidToNAA converts a 16-byte UUID to an 8-byte NAA-6 identifier.
+// NAA-6 format: nibble 6 (NAA=6) followed by 60 bits from the UUID.
+func uuidToNAA(uuid [16]byte) [8]byte {
+	var naa [8]byte
+	// Set NAA=6 in the high nibble of the first byte.
+	naa[0] = 0x60 | (uuid[0] & 0x0F)
+	copy(naa[1:], uuid[1:8])
+	return naa
+}
 
 // instrumentedAdapter wraps a BlockDevice and logs latency stats periodically.
 type instrumentedAdapter struct {
@@ -222,6 +269,26 @@ func (a *instrumentedAdapter) SyncCache() error {
 func (a *instrumentedAdapter) BlockSize() uint32  { return a.inner.BlockSize() }
 func (a *instrumentedAdapter) VolumeSize() uint64 { return a.inner.VolumeSize() }
 func (a *instrumentedAdapter) IsHealthy() bool    { return a.inner.IsHealthy() }
+
+// ALUAProvider proxy: delegate to inner device if it implements ALUAProvider.
+func (a *instrumentedAdapter) ALUAState() uint8 {
+	if p, ok := a.inner.(iscsi.ALUAProvider); ok {
+		return p.ALUAState()
+	}
+	return iscsi.ALUAStandby
+}
+func (a *instrumentedAdapter) TPGroupID() uint16 {
+	if p, ok := a.inner.(iscsi.ALUAProvider); ok {
+		return p.TPGroupID()
+	}
+	return 1
+}
+func (a *instrumentedAdapter) DeviceNAA() [8]byte {
+	if p, ok := a.inner.(iscsi.ALUAProvider); ok {
+		return p.DeviceNAA()
+	}
+	return [8]byte{}
+}
 
 // StartStatsLogger runs a goroutine that logs performance stats every interval.
 func (a *instrumentedAdapter) StartStatsLogger(interval time.Duration) {

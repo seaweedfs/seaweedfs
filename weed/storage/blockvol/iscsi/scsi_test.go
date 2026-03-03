@@ -117,6 +117,18 @@ func TestSCSI(t *testing.T) {
 		{"mode_sense_10", testModeSense10},
 		{"vpd_b0_block_limits", testVPDB0BlockLimits},
 		{"vpd_b2_logical_block_prov", testVPDB2LogicalBlockProv},
+		{"alua_inquiry_tpgs", testALUA_InquiryTPGS},
+		{"alua_inquiry_no_tpgs", testALUA_InquiryNoTPGS},
+		{"alua_vpd83_three_descriptors", testALUA_VPD83_ThreeDescriptors},
+		{"alua_vpd83_shared_naa", testALUA_VPD83_SharedNAA},
+		{"alua_report_tpg_primary", testALUA_ReportTPG_Primary},
+		{"alua_report_tpg_replica", testALUA_ReportTPG_Replica},
+		{"alua_report_tpg_stale", testALUA_ReportTPG_Stale},
+		{"alua_report_tpg_tpgid_matches", testALUA_ReportTPG_TPGIDMatches},
+		{"alua_set_tpg_rejected", testALUA_SetTPG_Rejected},
+		{"alua_standby_rejects_write", testALUA_StandbyRejectsWrite},
+		{"alua_role_none_allows_writes", testALUA_RoleNone_AllowsWrites},
+		{"alua_report_tpg_transitioning", testALUA_ReportTPG_Transitioning},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -930,5 +942,417 @@ func testReadCapacity16InvalidSA(t *testing.T) {
 	r := h.HandleCommand(cdb, nil)
 	if r.Status != SCSIStatusCheckCond {
 		t.Fatal("should fail for wrong SA")
+	}
+}
+
+// --- ALUA tests ---
+
+// mockALUADevice embeds mockBlockDevice and adds ALUAProvider support.
+type mockALUADevice struct {
+	*mockBlockDevice
+	aluaState uint8
+	tpgID     uint16
+	naa       [8]byte
+}
+
+func newMockALUADevice(volumeSize uint64, state uint8, tpgID uint16) *mockALUADevice {
+	return &mockALUADevice{
+		mockBlockDevice: newMockDevice(volumeSize),
+		aluaState:       state,
+		tpgID:           tpgID,
+		naa:             [8]byte{0x60, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x01},
+	}
+}
+
+func (m *mockALUADevice) ALUAState() uint8    { return m.aluaState }
+func (m *mockALUADevice) TPGroupID() uint16   { return m.tpgID }
+func (m *mockALUADevice) DeviceNAA() [8]byte  { return m.naa }
+
+// testALUA_InquiryTPGS verifies byte 5 has TPGS=01 when ALUAProvider is present.
+func testALUA_InquiryTPGS(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 1)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	binary.BigEndian.PutUint16(cdb[3:5], 96)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	// Byte 5 bits 5:4 should be 01 (implicit ALUA) = 0x10
+	if r.Data[5]&0x30 != 0x10 {
+		t.Fatalf("TPGS bits: got %02x, want 0x10 in byte 5 (%02x)", r.Data[5]&0x30, r.Data[5])
+	}
+}
+
+// testALUA_InquiryNoTPGS verifies byte 5 has TPGS=00 when no ALUAProvider.
+func testALUA_InquiryNoTPGS(t *testing.T) {
+	dev := newMockDevice(100 * 4096)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	binary.BigEndian.PutUint16(cdb[3:5], 96)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	// Byte 5 bits 5:4 should be 00 (no ALUA)
+	if r.Data[5]&0x30 != 0x00 {
+		t.Fatalf("TPGS bits: got %02x, want 0x00 in byte 5 (%02x)", r.Data[5]&0x30, r.Data[5])
+	}
+}
+
+// testALUA_VPD83_ThreeDescriptors verifies VPD 0x83 has NAA + TPG + RTP descriptors.
+func testALUA_VPD83_ThreeDescriptors(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 42)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	cdb[1] = 0x01 // EVPD
+	cdb[2] = 0x83
+	binary.BigEndian.PutUint16(cdb[3:5], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+
+	// Page length is at bytes 2-3
+	pageLen := binary.BigEndian.Uint16(r.Data[2:4])
+	// 12 (NAA) + 8 (TPG) + 8 (RTP) = 28
+	if pageLen != 28 {
+		t.Fatalf("page length: %d, want 28 (NAA=12 + TPG=8 + RTP=8)", pageLen)
+	}
+
+	// Descriptor 1 (offset 4): NAA type=3
+	if r.Data[4+1]&0x0F != 0x03 {
+		t.Fatalf("desc 1 type: %02x, want 03 (NAA)", r.Data[4+1]&0x0F)
+	}
+	// Descriptor 2 (offset 4+12=16): TPG type=5
+	if r.Data[16+1]&0x0F != 0x05 {
+		t.Fatalf("desc 2 type: %02x, want 05 (TPG)", r.Data[16+1]&0x0F)
+	}
+	// TPG ID should be 42
+	tpgID := binary.BigEndian.Uint16(r.Data[16+6 : 16+8])
+	if tpgID != 42 {
+		t.Fatalf("TPG ID: %d, want 42", tpgID)
+	}
+	// Descriptor 3 (offset 16+8=24): RTP type=4
+	if r.Data[24+1]&0x0F != 0x04 {
+		t.Fatalf("desc 3 type: %02x, want 04 (RTP)", r.Data[24+1]&0x0F)
+	}
+	// Relative target port = 1
+	rtp := binary.BigEndian.Uint16(r.Data[24+6 : 24+8])
+	if rtp != 1 {
+		t.Fatalf("RTP: %d, want 1", rtp)
+	}
+}
+
+// testALUA_VPD83_SharedNAA verifies NAA is derived from UUID (deterministic).
+func testALUA_VPD83_SharedNAA(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 1)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiInquiry
+	cdb[1] = 0x01
+	cdb[2] = 0x83
+	binary.BigEndian.PutUint16(cdb[3:5], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+
+	// NAA identifier starts at offset 4+4=8 (after page header + desc header)
+	naa := r.Data[8:16]
+	want := dev.naa[:]
+	for i := range want {
+		if naa[i] != want[i] {
+			t.Fatalf("NAA byte %d: got %02x, want %02x", i, naa[i], want[i])
+		}
+	}
+
+	// Run again -- same result (deterministic)
+	r2 := h.HandleCommand(cdb, nil)
+	naa2 := r2.Data[8:16]
+	for i := range naa {
+		if naa[i] != naa2[i] {
+			t.Fatalf("NAA not deterministic at byte %d: %02x vs %02x", i, naa[i], naa2[i])
+		}
+	}
+}
+
+// testALUA_ReportTPG_Primary verifies REPORT TARGET PORT GROUPS returns Active/Optimized.
+func testALUA_ReportTPG_Primary(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 1)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceIn
+	cdb[1] = 0x0a // SA = REPORT TARGET PORT GROUPS
+	binary.BigEndian.PutUint32(cdb[6:10], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	// Return data length (bytes 0-3) should be 12
+	rdl := binary.BigEndian.Uint32(r.Data[0:4])
+	if rdl != 12 {
+		t.Fatalf("return data length: %d, want 12", rdl)
+	}
+	// ALUA state is in byte 4 (lower nibble)
+	state := r.Data[4] & 0x0F
+	if state != ALUAActiveOptimized {
+		t.Fatalf("ALUA state: %02x, want %02x (Active/Optimized)", state, ALUAActiveOptimized)
+	}
+}
+
+// testALUA_ReportTPG_Replica verifies REPORT TARGET PORT GROUPS returns Standby.
+func testALUA_ReportTPG_Replica(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAStandby, 2)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceIn
+	cdb[1] = 0x0a
+	binary.BigEndian.PutUint32(cdb[6:10], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	state := r.Data[4] & 0x0F
+	if state != ALUAStandby {
+		t.Fatalf("ALUA state: %02x, want %02x (Standby)", state, ALUAStandby)
+	}
+}
+
+// testALUA_ReportTPG_Stale verifies REPORT TARGET PORT GROUPS returns Unavailable.
+func testALUA_ReportTPG_Stale(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAUnavailable, 1)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceIn
+	cdb[1] = 0x0a
+	binary.BigEndian.PutUint32(cdb[6:10], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	state := r.Data[4] & 0x0F
+	if state != ALUAUnavailable {
+		t.Fatalf("ALUA state: %02x, want %02x (Unavailable)", state, ALUAUnavailable)
+	}
+}
+
+// testALUA_ReportTPG_TPGIDMatches verifies TPG ID in response matches configured value.
+func testALUA_ReportTPG_TPGIDMatches(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 0x1234)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceIn
+	cdb[1] = 0x0a
+	binary.BigEndian.PutUint32(cdb[6:10], 255)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	// TPG ID at bytes 8-9
+	tpgID := binary.BigEndian.Uint16(r.Data[8:10])
+	if tpgID != 0x1234 {
+		t.Fatalf("TPG ID: %04x, want 1234", tpgID)
+	}
+}
+
+// testALUA_SetTPG_Rejected verifies MAINTENANCE OUT returns ILLEGAL_REQUEST.
+func testALUA_SetTPG_Rejected(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 1)
+	h := NewSCSIHandler(dev)
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceOut
+	cdb[1] = 0x0a // SA = SET TARGET PORT GROUPS
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusCheckCond {
+		t.Fatalf("expected CHECK_CONDITION, got %d", r.Status)
+	}
+	if r.SenseKey != SenseIllegalRequest {
+		t.Fatalf("expected ILLEGAL_REQUEST, got %02x", r.SenseKey)
+	}
+}
+
+// testALUA_StandbyRejectsWrite verifies Write on Standby returns NOT_READY.
+func testALUA_StandbyRejectsWrite(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUAStandby, 1)
+	h := NewSCSIHandler(dev)
+
+	// Test Write10
+	var cdb [16]byte
+	cdb[0] = ScsiWrite10
+	binary.BigEndian.PutUint32(cdb[2:6], 0)
+	binary.BigEndian.PutUint16(cdb[7:9], 1)
+	r := h.HandleCommand(cdb, make([]byte, 4096))
+	if r.Status != SCSIStatusCheckCond {
+		t.Fatalf("Write10: expected CHECK_CONDITION, got %d", r.Status)
+	}
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("Write10: expected NOT_READY (0x02), got %02x", r.SenseKey)
+	}
+	if r.SenseASC != 0x04 || r.SenseASCQ != 0x0B {
+		t.Fatalf("Write10: expected ASC=04 ASCQ=0B, got ASC=%02x ASCQ=%02x", r.SenseASC, r.SenseASCQ)
+	}
+
+	// Test Write16
+	cdb = [16]byte{}
+	cdb[0] = ScsiWrite16
+	binary.BigEndian.PutUint64(cdb[2:10], 0)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+	r = h.HandleCommand(cdb, make([]byte, 4096))
+	if r.Status != SCSIStatusCheckCond {
+		t.Fatalf("Write16: expected CHECK_CONDITION, got %d", r.Status)
+	}
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("Write16: expected NOT_READY, got %02x", r.SenseKey)
+	}
+
+	// Test WriteSame16
+	cdb = [16]byte{}
+	cdb[0] = ScsiWriteSame16
+	cdb[1] = 0x08 // UNMAP
+	binary.BigEndian.PutUint64(cdb[2:10], 0)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+	r = h.HandleCommand(cdb, nil)
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("WriteSame16: expected NOT_READY, got %02x", r.SenseKey)
+	}
+
+	// Test Unmap
+	unmapData := make([]byte, 24)
+	binary.BigEndian.PutUint16(unmapData[0:2], 22)
+	binary.BigEndian.PutUint16(unmapData[2:4], 16)
+	binary.BigEndian.PutUint64(unmapData[8:16], 0)
+	binary.BigEndian.PutUint32(unmapData[16:20], 1)
+	cdb = [16]byte{}
+	cdb[0] = ScsiUnmap
+	r = h.HandleCommand(cdb, unmapData)
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("Unmap: expected NOT_READY, got %02x", r.SenseKey)
+	}
+
+	// Test SyncCache10
+	cdb = [16]byte{}
+	cdb[0] = ScsiSyncCache10
+	r = h.HandleCommand(cdb, nil)
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("SyncCache10: expected NOT_READY, got %02x", r.SenseKey)
+	}
+
+	// Test SyncCache16
+	cdb = [16]byte{}
+	cdb[0] = ScsiSyncCache16
+	r = h.HandleCommand(cdb, nil)
+	if r.SenseKey != SenseNotReady {
+		t.Fatalf("SyncCache16: expected NOT_READY, got %02x", r.SenseKey)
+	}
+
+	// Verify reads still work on Standby
+	cdb = [16]byte{}
+	cdb[0] = ScsiRead10
+	binary.BigEndian.PutUint32(cdb[2:6], 0)
+	binary.BigEndian.PutUint16(cdb[7:9], 1)
+	r = h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("Read10 should succeed on Standby, got status %d", r.Status)
+	}
+}
+
+// testALUA_RoleNone_AllowsWrites verifies that Active/Optimized state (which
+// RoleNone maps to in the adapter) allows writes through checkStandbyReject.
+// This covers the Fix-1 regression: standalone single-node targets must accept
+// writes even without an explicit role assignment from a master.
+func testALUA_RoleNone_AllowsWrites(t *testing.T) {
+	// Active/Optimized = what RoleNone maps to after Fix 1
+	dev := newMockALUADevice(100*4096, ALUAActiveOptimized, 1)
+	h := NewSCSIHandler(dev)
+
+	// Write10 should succeed
+	var cdb [16]byte
+	cdb[0] = ScsiWrite10
+	binary.BigEndian.PutUint32(cdb[2:6], 0)
+	binary.BigEndian.PutUint16(cdb[7:9], 1)
+	r := h.HandleCommand(cdb, make([]byte, 4096))
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("Write10: expected GOOD, got status %d (sense=%02x ASC=%02x ASCQ=%02x)",
+			r.Status, r.SenseKey, r.SenseASC, r.SenseASCQ)
+	}
+
+	// Write16 should succeed
+	cdb = [16]byte{}
+	cdb[0] = ScsiWrite16
+	binary.BigEndian.PutUint64(cdb[2:10], 0)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+	r = h.HandleCommand(cdb, make([]byte, 4096))
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("Write16: expected GOOD, got status %d", r.Status)
+	}
+
+	// SyncCache10 should succeed
+	cdb = [16]byte{}
+	cdb[0] = ScsiSyncCache10
+	r = h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("SyncCache10: expected GOOD, got status %d", r.Status)
+	}
+
+	// WriteSame16 (UNMAP) should succeed
+	cdb = [16]byte{}
+	cdb[0] = ScsiWriteSame16
+	cdb[1] = 0x08 // UNMAP
+	binary.BigEndian.PutUint64(cdb[2:10], 0)
+	binary.BigEndian.PutUint32(cdb[10:14], 1)
+	r = h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("WriteSame16 UNMAP: expected GOOD, got status %d", r.Status)
+	}
+}
+
+// testALUA_ReportTPG_Transitioning verifies REPORT TARGET PORT GROUPS returns
+// state=Transitioning (0x0F) and supported flags include T_SUP (bit 3).
+// This covers Fix-2: we use ALUATransitioning for RoleDraining/RoleRebuilding,
+// so T_SUP must be advertised.
+func testALUA_ReportTPG_Transitioning(t *testing.T) {
+	dev := newMockALUADevice(100*4096, ALUATransitioning, 5)
+	h := NewSCSIHandler(dev)
+
+	var cdb [16]byte
+	cdb[0] = ScsiMaintenanceIn
+	cdb[1] = 0x0A // SA = REPORT TARGET PORT GROUPS
+	binary.BigEndian.PutUint32(cdb[6:10], 256)
+	r := h.HandleCommand(cdb, nil)
+	if r.Status != SCSIStatusGood {
+		t.Fatalf("status: %d", r.Status)
+	}
+	if len(r.Data) < 16 {
+		t.Fatalf("data too short: %d", len(r.Data))
+	}
+
+	// Byte 4: asymmetric access state (lower 4 bits) = 0x0F (Transitioning)
+	gotState := r.Data[4] & 0x0F
+	if gotState != ALUATransitioning {
+		t.Fatalf("state: got %02x, want %02x (Transitioning)", gotState, ALUATransitioning)
+	}
+
+	// Byte 5: supported states flags -- T_SUP (bit 3) must be set
+	supFlags := r.Data[5]
+	if supFlags&0x08 == 0 {
+		t.Fatalf("T_SUP (bit 3) not set in supported flags: %02x", supFlags)
+	}
+	// Also verify O_SUP (bit 0), S_SUP (bit 1), U_SUP (bit 2) are set
+	if supFlags&0x07 != 0x07 {
+		t.Fatalf("O_SUP|S_SUP|U_SUP missing: got %02x, want bits 0-2 set", supFlags)
+	}
+	// Full value should be 0x0F
+	if supFlags != 0x0F {
+		t.Fatalf("supported flags: got %02x, want 0x0F", supFlags)
+	}
+
+	// TPG ID should be 5
+	tpgID := binary.BigEndian.Uint16(r.Data[8:10])
+	if tpgID != 5 {
+		t.Fatalf("TPG ID: got %d, want 5", tpgID)
 	}
 }

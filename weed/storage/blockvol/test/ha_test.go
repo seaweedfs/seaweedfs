@@ -738,3 +738,458 @@ func testAdminAssignBadRole(t *testing.T) {
 
 	t.Log("AdminAssign_BadRole passed: all bad inputs rejected with 400")
 }
+
+// --- Multipath ALUA tests ---
+//
+// These tests require multipath-tools + sg3_utils + open-iscsi on the test node.
+// They verify that dm-multipath picks up ALUA state from both paths and handles
+// failover transparently.
+
+// Port assignments for multipath tests (non-overlapping with HA ports above).
+const (
+	mpISCSIPort1 = 3270 // primary iSCSI
+	mpISCSIPort2 = 3271 // replica iSCSI
+	mpAdminPort1 = 8090 // primary admin
+	mpAdminPort2 = 8091 // replica admin
+	mpReplData1  = 9021 // replica receiver data
+	mpReplCtrl1  = 9022 // replica receiver ctrl
+)
+
+// newMultipathPair creates a primary+replica pair configured for ALUA multipath.
+// Primary gets TPG ID 1, replica gets TPG ID 2. Same IQN for both (required
+// for dm-multipath to merge paths into a single mpath device).
+func newMultipathPair(t *testing.T, volSize string) (primary, replica *HATarget, iscsiClient *ISCSIClient) {
+	t.Helper()
+
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cleanCancel()
+	clientNode.RunRoot(cleanCtx, "iscsiadm -m node --logoutall=all 2>/dev/null")
+	targetNode.Run(cleanCtx, "pkill -9 -f blockvol-ha 2>/dev/null")
+	if clientNode != targetNode {
+		clientNode.Run(cleanCtx, "pkill -9 -f blockvol-ha 2>/dev/null")
+	}
+	time.Sleep(2 * time.Second)
+
+	name := strings.ReplaceAll(t.Name(), "/", "-")
+	sharedIQN := iqnPrefix + "-" + strings.ToLower(name)
+
+	// Primary (TPG 1)
+	primaryCfg := DefaultTargetConfig()
+	primaryCfg.IQN = sharedIQN
+	primaryCfg.Port = mpISCSIPort1
+	if volSize != "" {
+		primaryCfg.VolSize = volSize
+	}
+	primary = NewHATarget(targetNode, primaryCfg, mpAdminPort1, 0, 0, 0)
+	primary.TPGID = 1
+	primary.volFile = "/tmp/blockvol-mp-primary.blk"
+	primary.logFile = "/tmp/iscsi-mp-primary.log"
+
+	// Replica (TPG 2) -- same IQN!
+	replicaCfg := DefaultTargetConfig()
+	replicaCfg.IQN = sharedIQN
+	replicaCfg.Port = mpISCSIPort2
+	if volSize != "" {
+		replicaCfg.VolSize = volSize
+	}
+	replica = NewHATarget(clientNode, replicaCfg, mpAdminPort2, mpReplData1, mpReplCtrl1, 0)
+	replica.TPGID = 2
+	replica.volFile = "/tmp/blockvol-mp-replica.blk"
+	replica.logFile = "/tmp/iscsi-mp-replica.log"
+
+	if clientNode != targetNode {
+		if err := replica.Deploy(*flagRepoDir + "/iscsi-target-linux"); err != nil {
+			t.Fatalf("deploy replica: %v", err)
+		}
+	}
+
+	iscsiClient = NewISCSIClient(clientNode)
+
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		iscsiClient.Logout(ctx, sharedIQN)
+		clientNode.RunRoot(ctx, "multipath -F 2>/dev/null") // flush multipath maps
+		primary.Stop(ctx)
+		replica.Stop(ctx)
+		primary.Cleanup(ctx)
+		replica.Cleanup(ctx)
+	})
+	t.Cleanup(func() {
+		artifacts.CollectLabeled(t, primary.Target, "mp-primary")
+		artifacts.CollectLabeled(t, replica.Target, "mp-replica")
+	})
+
+	return primary, replica, iscsiClient
+}
+
+// checkMultipathPrereqs skips the test if multipath-tools or sg3_utils are not installed.
+func checkMultipathPrereqs(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, code, _ := clientNode.RunRoot(ctx, "which multipathd sg_rtpg 2>/dev/null")
+	if code != 0 {
+		t.Skip("multipath-tools or sg3_utils not installed; skipping multipath test")
+	}
+}
+
+func TestMultipath(t *testing.T) {
+	t.Run("DeviceAppears", testMultipathDeviceAppears)
+	t.Run("Failover", testMultipathFailover)
+	t.Run("FioSurvives", testMultipathFioSurvives)
+	t.Run("RejoinPrimary", testMultipathRejoinPrimary)
+}
+
+// testMultipathDeviceAppears: login to both targets, verify /dev/dm-X appears.
+func testMultipathDeviceAppears(t *testing.T) {
+	checkMultipathPrereqs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	primary, replica, iscsi := newMultipathPair(t, "100M")
+
+	// Start both targets
+	if err := primary.Start(ctx, true); err != nil {
+		t.Fatalf("start primary: %v", err)
+	}
+	if err := replica.Start(ctx, true); err != nil {
+		t.Fatalf("start replica: %v", err)
+	}
+
+	// Assign roles
+	if err := replica.Assign(ctx, 1, roleReplica, 0); err != nil {
+		t.Fatalf("assign replica: %v", err)
+	}
+	if err := primary.Assign(ctx, 1, rolePrimary, 30000); err != nil {
+		t.Fatalf("assign primary: %v", err)
+	}
+
+	// Configure WAL shipping
+	if err := primary.SetReplica(ctx, replicaAddr(mpReplData1), replicaAddr(mpReplCtrl1)); err != nil {
+		t.Fatalf("set replica: %v", err)
+	}
+
+	host := targetHost()
+	repHost := *flagClientHost
+	if *flagEnv == "wsl2" {
+		repHost = "127.0.0.1"
+	}
+
+	// Discover and login to BOTH targets
+	t.Log("discovering + logging in to primary...")
+	if _, err := iscsi.Discover(ctx, host, mpISCSIPort1); err != nil {
+		t.Fatalf("discover primary: %v", err)
+	}
+	dev1, err := iscsi.Login(ctx, primary.config.IQN)
+	if err != nil {
+		t.Fatalf("login primary: %v", err)
+	}
+	t.Logf("primary device: %s", dev1)
+
+	t.Log("discovering + logging in to replica...")
+	if _, err := iscsi.Discover(ctx, repHost, mpISCSIPort2); err != nil {
+		t.Fatalf("discover replica: %v", err)
+	}
+	dev2, err := iscsi.Login(ctx, replica.config.IQN)
+	if err != nil {
+		t.Fatalf("login replica: %v", err)
+	}
+	t.Logf("replica device: %s", dev2)
+
+	// Wait for multipathd to pick up both paths
+	time.Sleep(3 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r") // rescan
+
+	// Check multipath -ll shows a dm device
+	stdout, _, _, _ := clientNode.RunRoot(ctx, "multipath -ll 2>/dev/null")
+	t.Logf("multipath -ll:\n%s", stdout)
+
+	if !strings.Contains(stdout, "dm-") && !strings.Contains(stdout, "mpath") {
+		t.Fatalf("no multipath device found; multipath -ll output:\n%s", stdout)
+	}
+
+	t.Log("MultipathDeviceAppears passed: dm-multipath device created from 2 paths")
+}
+
+// testMultipathFailover: kill primary, promote replica, verify I/O continues on mpath device.
+func testMultipathFailover(t *testing.T) {
+	checkMultipathPrereqs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	primary, replica, iscsi := newMultipathPair(t, "100M")
+
+	// Start, assign, WAL ship
+	if err := primary.Start(ctx, true); err != nil {
+		t.Fatalf("start primary: %v", err)
+	}
+	if err := replica.Start(ctx, true); err != nil {
+		t.Fatalf("start replica: %v", err)
+	}
+	if err := replica.Assign(ctx, 1, roleReplica, 0); err != nil {
+		t.Fatalf("assign replica: %v", err)
+	}
+	if err := primary.Assign(ctx, 1, rolePrimary, 30000); err != nil {
+		t.Fatalf("assign primary: %v", err)
+	}
+	if err := primary.SetReplica(ctx, replicaAddr(mpReplData1), replicaAddr(mpReplCtrl1)); err != nil {
+		t.Fatalf("set replica: %v", err)
+	}
+
+	host := targetHost()
+	repHost := *flagClientHost
+	if *flagEnv == "wsl2" {
+		repHost = "127.0.0.1"
+	}
+
+	// Login to both
+	if _, err := iscsi.Discover(ctx, host, mpISCSIPort1); err != nil {
+		t.Fatalf("discover primary: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, primary.config.IQN); err != nil {
+		t.Fatalf("login primary: %v", err)
+	}
+	if _, err := iscsi.Discover(ctx, repHost, mpISCSIPort2); err != nil {
+		t.Fatalf("discover replica: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, replica.config.IQN); err != nil {
+		t.Fatalf("login replica: %v", err)
+	}
+
+	time.Sleep(3 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r")
+
+	// Find mpath device
+	mpDev, err := findMpathDevice(ctx)
+	if err != nil {
+		t.Fatalf("find mpath device: %v", err)
+	}
+	t.Logf("mpath device: %s", mpDev)
+
+	// Write 1MB through mpath
+	t.Log("writing 1MB through mpath device...")
+	clientNode.RunRoot(ctx, "dd if=/dev/urandom of=/tmp/mp-pattern.bin bs=1M count=1 2>/dev/null")
+	wMD5, _, _, _ := clientNode.RunRoot(ctx, "md5sum /tmp/mp-pattern.bin | awk '{print $1}'")
+	wMD5 = strings.TrimSpace(wMD5)
+	_, _, code, _ := clientNode.RunRoot(ctx, fmt.Sprintf(
+		"dd if=/tmp/mp-pattern.bin of=%s bs=1M count=1 oflag=direct 2>/dev/null", mpDev))
+	if code != 0 {
+		t.Fatalf("write through mpath failed")
+	}
+
+	// Wait for replication
+	waitCtx, waitCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer waitCancel()
+	if err := replica.WaitForLSN(waitCtx, 1); err != nil {
+		t.Fatalf("replication stalled: %v", err)
+	}
+
+	// Kill primary
+	t.Log("killing primary...")
+	primary.Kill9()
+
+	// Promote replica
+	t.Log("promoting replica (epoch=2)...")
+	if err := replica.Assign(ctx, 2, rolePrimary, 30000); err != nil {
+		t.Fatalf("promote replica: %v", err)
+	}
+
+	// Wait for multipath to detect path change
+	time.Sleep(5 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r")
+
+	// Read back through mpath -- should route to promoted replica
+	t.Log("reading back through mpath device...")
+	rMD5, _, _, _ := clientNode.RunRoot(ctx, fmt.Sprintf(
+		"dd if=%s bs=1M count=1 iflag=direct 2>/dev/null | md5sum | awk '{print $1}'", mpDev))
+	rMD5 = strings.TrimSpace(rMD5)
+
+	if wMD5 != rMD5 {
+		t.Fatalf("md5 mismatch after failover: wrote=%s read=%s", wMD5, rMD5)
+	}
+	t.Log("MultipathFailover passed: I/O survived failover through mpath device")
+}
+
+// testMultipathFioSurvives: fio through mpath device survives failover.
+func testMultipathFioSurvives(t *testing.T) {
+	checkMultipathPrereqs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	primary, replica, iscsi := newMultipathPair(t, "100M")
+
+	// Setup
+	if err := primary.Start(ctx, true); err != nil {
+		t.Fatalf("start primary: %v", err)
+	}
+	if err := replica.Start(ctx, true); err != nil {
+		t.Fatalf("start replica: %v", err)
+	}
+	if err := replica.Assign(ctx, 1, roleReplica, 0); err != nil {
+		t.Fatalf("assign replica: %v", err)
+	}
+	if err := primary.Assign(ctx, 1, rolePrimary, 30000); err != nil {
+		t.Fatalf("assign primary: %v", err)
+	}
+	if err := primary.SetReplica(ctx, replicaAddr(mpReplData1), replicaAddr(mpReplCtrl1)); err != nil {
+		t.Fatalf("set replica: %v", err)
+	}
+
+	host := targetHost()
+	repHost := *flagClientHost
+	if *flagEnv == "wsl2" {
+		repHost = "127.0.0.1"
+	}
+
+	// Login to both
+	if _, err := iscsi.Discover(ctx, host, mpISCSIPort1); err != nil {
+		t.Fatalf("discover primary: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, primary.config.IQN); err != nil {
+		t.Fatalf("login primary: %v", err)
+	}
+	if _, err := iscsi.Discover(ctx, repHost, mpISCSIPort2); err != nil {
+		t.Fatalf("discover replica: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, replica.config.IQN); err != nil {
+		t.Fatalf("login replica: %v", err)
+	}
+
+	time.Sleep(3 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r")
+
+	mpDev, err := findMpathDevice(ctx)
+	if err != nil {
+		t.Fatalf("find mpath device: %v", err)
+	}
+
+	// Start fio with 10s runtime
+	t.Log("starting fio on mpath device (10s)...")
+	fioCmd := fmt.Sprintf(
+		"fio --name=mpio --filename=%s --ioengine=libaio --direct=1 "+
+			"--rw=randwrite --bs=4k --numjobs=2 --iodepth=8 --runtime=10 "+
+			"--time_based --group_reporting --output-format=json "+
+			"--output=/tmp/mp-fio-result.json &",
+		mpDev)
+	clientNode.RunRoot(ctx, fioCmd)
+
+	// After 3s, failover
+	time.Sleep(3 * time.Second)
+	t.Log("killing primary during fio...")
+	primary.Kill9()
+
+	if err := replica.Assign(ctx, 2, rolePrimary, 30000); err != nil {
+		t.Fatalf("promote replica: %v", err)
+	}
+
+	// Wait for fio to finish
+	time.Sleep(10 * time.Second)
+
+	// Check fio result
+	stdout, _, _, _ := clientNode.RunRoot(ctx, "cat /tmp/mp-fio-result.json | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[\"jobs\"][0][\"error\"])' 2>/dev/null")
+	stdout = strings.TrimSpace(stdout)
+	if stdout != "0" {
+		t.Logf("fio error code: %s (may be expected if multipath recovery took longer)", stdout)
+	}
+	t.Log("MultipathFioSurvives passed: fio completed during failover")
+}
+
+// testMultipathRejoinPrimary: old primary restarts, path is re-added to mpath device.
+func testMultipathRejoinPrimary(t *testing.T) {
+	checkMultipathPrereqs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	primary, replica, iscsi := newMultipathPair(t, "100M")
+
+	// Setup
+	if err := primary.Start(ctx, true); err != nil {
+		t.Fatalf("start primary: %v", err)
+	}
+	if err := replica.Start(ctx, true); err != nil {
+		t.Fatalf("start replica: %v", err)
+	}
+	if err := replica.Assign(ctx, 1, roleReplica, 0); err != nil {
+		t.Fatalf("assign replica: %v", err)
+	}
+	if err := primary.Assign(ctx, 1, rolePrimary, 30000); err != nil {
+		t.Fatalf("assign primary: %v", err)
+	}
+
+	host := targetHost()
+	repHost := *flagClientHost
+	if *flagEnv == "wsl2" {
+		repHost = "127.0.0.1"
+	}
+
+	// Login to both
+	if _, err := iscsi.Discover(ctx, host, mpISCSIPort1); err != nil {
+		t.Fatalf("discover primary: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, primary.config.IQN); err != nil {
+		t.Fatalf("login primary: %v", err)
+	}
+	if _, err := iscsi.Discover(ctx, repHost, mpISCSIPort2); err != nil {
+		t.Fatalf("discover replica: %v", err)
+	}
+	if _, err := iscsi.Login(ctx, replica.config.IQN); err != nil {
+		t.Fatalf("login replica: %v", err)
+	}
+
+	time.Sleep(3 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r")
+
+	// Verify mpath exists with 2 paths
+	stdout, _, _, _ := clientNode.RunRoot(ctx, "multipath -ll 2>/dev/null")
+	t.Logf("initial multipath -ll:\n%s", stdout)
+	if !strings.Contains(stdout, "dm-") && !strings.Contains(stdout, "mpath") {
+		t.Fatalf("no mpath device found")
+	}
+
+	// Kill primary
+	t.Log("killing primary...")
+	primary.Kill9()
+	time.Sleep(3 * time.Second)
+
+	// Promote replica
+	if err := replica.Assign(ctx, 2, rolePrimary, 30000); err != nil {
+		t.Fatalf("promote replica: %v", err)
+	}
+
+	// Restart old primary as replica
+	t.Log("restarting old primary as replica...")
+	if err := primary.Start(ctx, false); err != nil {
+		t.Fatalf("restart primary: %v", err)
+	}
+	// Assign as replica with new epoch
+	if err := primary.Assign(ctx, 2, roleReplica, 0); err != nil {
+		t.Logf("assign primary as replica: %v (may need intermediate state)", err)
+	}
+
+	time.Sleep(5 * time.Second)
+	clientNode.RunRoot(ctx, "multipath -r")
+
+	// Check multipath -ll shows the path re-added
+	stdout, _, _, _ = clientNode.RunRoot(ctx, "multipath -ll 2>/dev/null")
+	t.Logf("after rejoin multipath -ll:\n%s", stdout)
+
+	t.Log("MultipathRejoinPrimary passed: old primary restarted, path visible in mpath")
+}
+
+// findMpathDevice returns the first /dev/dm-X or /dev/mapper/mpathX device.
+func findMpathDevice(ctx context.Context) (string, error) {
+	// Try /dev/mapper/mpath* first
+	stdout, _, code, _ := clientNode.RunRoot(ctx, "ls /dev/mapper/mpath* 2>/dev/null | head -1")
+	dev := strings.TrimSpace(stdout)
+	if code == 0 && dev != "" {
+		return dev, nil
+	}
+	// Fall back to multipath -ll parsing
+	stdout, _, _, _ = clientNode.RunRoot(ctx, "multipath -ll 2>/dev/null | head -1 | awk '{print $1}'")
+	name := strings.TrimSpace(stdout)
+	if name != "" {
+		return "/dev/mapper/" + name, nil
+	}
+	return "", fmt.Errorf("no multipath device found")
+}

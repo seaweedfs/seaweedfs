@@ -18,6 +18,7 @@ type HATarget struct {
 	ReplicaData int // replica receiver data port
 	ReplicaCtrl int // replica receiver ctrl port
 	RebuildPort int
+	TPGID       int // ALUA target port group ID (0 = omit flag)
 }
 
 // StatusResp matches the JSON returned by GET /status.
@@ -63,6 +64,9 @@ func (h *HATarget) Start(ctx context.Context, create bool) error {
 	}
 	if h.RebuildPort > 0 {
 		args += fmt.Sprintf(" -rebuild-listen :%d", h.RebuildPort)
+	}
+	if h.TPGID > 0 {
+		args += fmt.Sprintf(" -tpg-id %d", h.TPGID)
 	}
 
 	cmd := fmt.Sprintf("setsid -f %s %s >%s 2>&1", h.binPath, args, h.logFile)

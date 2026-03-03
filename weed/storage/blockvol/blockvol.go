@@ -498,6 +498,7 @@ func (v *BlockVol) Info() VolumeInfo {
 		BlockSize:  v.super.BlockSize,
 		ExtentSize: v.super.ExtentSize,
 		WALSize:    v.super.WALSize,
+		UUID:       v.super.UUID,
 		Healthy:    v.healthy.Load(),
 	}
 }
@@ -508,6 +509,7 @@ type VolumeInfo struct {
 	BlockSize  uint32
 	ExtentSize uint32
 	WALSize    uint64
+	UUID       [16]byte
 	Healthy    bool
 }
 
