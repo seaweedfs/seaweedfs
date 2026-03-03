@@ -1078,8 +1078,12 @@ templ Plugin(page string) {
                 return html;
             }
 
-            function isActiveJobState(state) {
-                var st = String(state || '').toLowerCase();
+            function isActiveJobState(candidateState) {
+                var jobState = candidateState;
+                if (candidateState && typeof candidateState === 'object' && candidateState.state !== undefined) {
+                    jobState = candidateState.state;
+                }
+                var st = String(jobState || '').toLowerCase();
                 return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' ||
                     st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
             }
@@ -1090,7 +1094,7 @@ templ Plugin(page string) {
                     return;
                 }
                 var jobID = job && job.job_id ? String(job.job_id) : '';
-                var active = job && isActiveJobState(job.state);
+                var active = isActiveJobState(job);
                 expireBtn.setAttribute('data-job-id', jobID);
                 expireBtn.disabled = !jobID || !active;
                 if (!jobID) {
@@ -1302,8 +1306,7 @@ templ Plugin(page string) {
                 var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
 
                 var activeCount = allJobs.filter(function(job) {
-                    var st = String(job.state || '').toLowerCase();
-                    return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    return isActiveJobState(job);
                 }).length;
 
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
@@ -1329,8 +1332,7 @@ templ Plugin(page string) {
                     if (!jobType) {
                         continue;
                     }
-                    var st = String(job.state || '').toLowerCase();
-                    var isActive = st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    var isActive = isActiveJobState(job);
                     if (!isActive) {
                         continue;
                     }
