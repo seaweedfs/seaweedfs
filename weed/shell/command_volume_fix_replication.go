@@ -82,7 +82,7 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 
 	handleDeprecatedForceFlag(writer, volFixReplicationCommand, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
-	commandEnv.noLock = !*applyChanges
+	commandEnv.noLock = commandEnv.noLock || !*applyChanges
 
 	if err = commandEnv.confirmIsLocked(args); *applyChanges && err != nil {
 		return
