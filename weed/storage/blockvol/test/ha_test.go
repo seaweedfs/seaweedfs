@@ -24,10 +24,10 @@ const (
 	haISCSIPort2   = 3261 // replica iSCSI (used after promotion)
 	haAdminPort1   = 8080 // primary admin
 	haAdminPort2   = 8081 // replica admin
-	haReplData1    = 9001 // replica receiver data (on replica node)
-	haReplCtrl1    = 9002 // replica receiver ctrl (on replica node)
-	haRebuildPort1 = 9003 // rebuild server (primary)
-	haRebuildPort2 = 9004 // rebuild server (replica, after promotion)
+	haReplData1    = 9011 // replica receiver data (on replica node)
+	haReplCtrl1    = 9012 // replica receiver ctrl (on replica node)
+	haRebuildPort1 = 9013 // rebuild server (primary)
+	haRebuildPort2 = 9014 // rebuild server (replica, after promotion)
 )
 
 // newHAPair creates a primary HATarget on targetNode and a replica HATarget

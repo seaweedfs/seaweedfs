@@ -311,7 +311,7 @@ func testReadCapacity16(t *testing.T) {
 	dev := newMockDevice(3 * 1024 * 1024 * 1024 * 1024) // 3 TB
 	h := NewSCSIHandler(dev)
 	var cdb [16]byte
-	cdb[0] = ScsiReadCapacity16
+	cdb[0] = ScsiServiceActionIn16
 	cdb[1] = ScsiSAReadCapacity16
 	binary.BigEndian.PutUint32(cdb[10:14], 32)
 	r := h.HandleCommand(cdb, nil)
@@ -329,7 +329,7 @@ func testReadCapacity16LBPME(t *testing.T) {
 	dev := newMockDevice(100 * 4096)
 	h := NewSCSIHandler(dev)
 	var cdb [16]byte
-	cdb[0] = ScsiReadCapacity16
+	cdb[0] = ScsiServiceActionIn16
 	cdb[1] = ScsiSAReadCapacity16
 	binary.BigEndian.PutUint32(cdb[10:14], 32)
 	r := h.HandleCommand(cdb, nil)
@@ -925,7 +925,7 @@ func testReadCapacity16InvalidSA(t *testing.T) {
 	dev := newMockDevice(100 * 4096)
 	h := NewSCSIHandler(dev)
 	var cdb [16]byte
-	cdb[0] = ScsiReadCapacity16
+	cdb[0] = ScsiServiceActionIn16
 	cdb[1] = 0x05 // wrong service action
 	r := h.HandleCommand(cdb, nil)
 	if r.Status != SCSIStatusCheckCond {

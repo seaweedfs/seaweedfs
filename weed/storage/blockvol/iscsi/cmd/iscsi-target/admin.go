@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof/* handlers on DefaultServeMux
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
@@ -189,13 +190,21 @@ func (a *adminServer) handleRebuild(w http.ResponseWriter, r *http.Request) {
 
 // startAdminServer starts the HTTP admin server in a background goroutine.
 // Returns the listener so tests can determine the actual bound port.
+// Includes /debug/pprof/* endpoints for profiling.
 func startAdminServer(addr string, srv *adminServer) (net.Listener, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("admin listen %s: %w", addr, err)
 	}
+	mux := http.NewServeMux()
+	mux.Handle("/assign", srv)
+	mux.Handle("/status", srv)
+	mux.Handle("/replica", srv)
+	mux.Handle("/rebuild", srv)
+	// pprof handlers registered on DefaultServeMux by net/http/pprof import.
+	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 	go func() {
-		if err := http.Serve(ln, srv); err != nil && !isClosedErr(err) {
+		if err := http.Serve(ln, mux); err != nil && !isClosedErr(err) {
 			srv.logger.Printf("admin server error: %v", err)
 		}
 	}()

@@ -6,21 +6,28 @@ import (
 
 // SCSI opcode constants (SPC-5 / SBC-4)
 const (
-	ScsiTestUnitReady  uint8 = 0x00
-	ScsiInquiry        uint8 = 0x12
-	ScsiModeSense6     uint8 = 0x1a
-	ScsiModeSense10    uint8 = 0x5a
-	ScsiReadCapacity10 uint8 = 0x25
-	ScsiRead10         uint8 = 0x28
-	ScsiWrite10        uint8 = 0x2a
-	ScsiSyncCache10    uint8 = 0x35
-	ScsiUnmap          uint8 = 0x42
-	ScsiReportLuns     uint8 = 0xa0
-	ScsiRead16         uint8 = 0x88
-	ScsiWrite16        uint8 = 0x8a
-	ScsiReadCapacity16 uint8 = 0x9e // SERVICE ACTION IN (16), SA=0x10
-	ScsiSyncCache16    uint8 = 0x91
-	ScsiWriteSame16    uint8 = 0x93
+	ScsiTestUnitReady      uint8 = 0x00
+	ScsiRequestSense       uint8 = 0x03
+	ScsiInquiry            uint8 = 0x12
+	ScsiModeSelect6        uint8 = 0x15
+	ScsiModeSense6         uint8 = 0x1a
+	ScsiStartStopUnit      uint8 = 0x1b
+	ScsiReadCapacity10     uint8 = 0x25
+	ScsiRead10             uint8 = 0x28
+	ScsiWrite10            uint8 = 0x2a
+	ScsiSyncCache10        uint8 = 0x35
+	ScsiUnmap              uint8 = 0x42
+	ScsiModeSelect10       uint8 = 0x55
+	ScsiModeSense10        uint8 = 0x5a
+	ScsiPersistReserveIn   uint8 = 0x5e
+	ScsiPersistReserveOut  uint8 = 0x5f
+	ScsiRead16             uint8 = 0x88
+	ScsiWrite16            uint8 = 0x8a
+	ScsiSyncCache16        uint8 = 0x91
+	ScsiWriteSame16        uint8 = 0x93
+	ScsiServiceActionIn16  uint8 = 0x9e // READ CAPACITY(16), etc.
+	ScsiReportLuns         uint8 = 0xa0
+	ScsiMaintenanceIn      uint8 = 0xa3 // REPORT SUPPORTED OPCODES, etc.
 )
 
 // Service action for READ CAPACITY (16)
@@ -93,15 +100,43 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 	switch opcode {
 	case ScsiTestUnitReady:
 		return h.testUnitReady()
+	case ScsiRequestSense:
+		return h.requestSense(cdb)
 	case ScsiInquiry:
 		return h.inquiry(cdb)
+	case ScsiModeSelect6:
+		return h.modeSelect6(cdb, dataOut)
 	case ScsiModeSense6:
 		return h.modeSense6(cdb)
-	case ScsiModeSense10:
-		return h.modeSense10(cdb)
+	case ScsiStartStopUnit:
+		return h.startStopUnit(cdb)
 	case ScsiReadCapacity10:
 		return h.readCapacity10()
-	case ScsiReadCapacity16:
+	case ScsiRead10:
+		return h.read10(cdb)
+	case ScsiWrite10:
+		return h.write10(cdb, dataOut)
+	case ScsiSyncCache10:
+		return h.syncCache()
+	case ScsiUnmap:
+		return h.unmap(cdb, dataOut)
+	case ScsiModeSelect10:
+		return h.modeSelect10(cdb, dataOut)
+	case ScsiModeSense10:
+		return h.modeSense10(cdb)
+	case ScsiPersistReserveIn:
+		return h.persistReserveIn(cdb)
+	case ScsiPersistReserveOut:
+		return h.persistReserveOut(cdb, dataOut)
+	case ScsiRead16:
+		return h.read16(cdb)
+	case ScsiWrite16:
+		return h.write16(cdb, dataOut)
+	case ScsiSyncCache16:
+		return h.syncCache()
+	case ScsiWriteSame16:
+		return h.writeSame16(cdb, dataOut)
+	case ScsiServiceActionIn16:
 		sa := cdb[1] & 0x1f
 		if sa == ScsiSAReadCapacity16 {
 			return h.readCapacity16(cdb)
@@ -109,22 +144,8 @@ func (h *SCSIHandler) HandleCommand(cdb [16]byte, dataOut []byte) SCSIResult {
 		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	case ScsiReportLuns:
 		return h.reportLuns(cdb)
-	case ScsiRead10:
-		return h.read10(cdb)
-	case ScsiRead16:
-		return h.read16(cdb)
-	case ScsiWrite10:
-		return h.write10(cdb, dataOut)
-	case ScsiWrite16:
-		return h.write16(cdb, dataOut)
-	case ScsiSyncCache10:
-		return h.syncCache()
-	case ScsiSyncCache16:
-		return h.syncCache()
-	case ScsiUnmap:
-		return h.unmap(cdb, dataOut)
-	case ScsiWriteSame16:
-		return h.writeSame16(cdb, dataOut)
+	case ScsiMaintenanceIn:
+		return h.maintenanceIn(cdb)
 	default:
 		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 	}
@@ -142,6 +163,64 @@ func (h *SCSIHandler) testUnitReady() SCSIResult {
 		}
 	}
 	return SCSIResult{Status: SCSIStatusGood}
+}
+
+func (h *SCSIHandler) requestSense(cdb [16]byte) SCSIResult {
+	allocLen := cdb[4]
+	if allocLen == 0 {
+		allocLen = 18
+	}
+
+	// Return fixed-format sense data with NO SENSE (no pending error).
+	data := BuildSenseData(SenseNoSense, 0x00, 0x00)
+	if int(allocLen) < len(data) {
+		data = data[:allocLen]
+	}
+	return SCSIResult{Status: SCSIStatusGood, Data: data}
+}
+
+// startStopUnit handles START STOP UNIT (0x1B).
+// Windows sends this during disk init. We accept and ignore.
+func (h *SCSIHandler) startStopUnit(cdb [16]byte) SCSIResult {
+	return SCSIResult{Status: SCSIStatusGood}
+}
+
+// modeSelect6 handles MODE SELECT(6) (0x15).
+// Windows sends this to set caching mode pages. We accept and ignore the data.
+func (h *SCSIHandler) modeSelect6(cdb [16]byte, dataOut []byte) SCSIResult {
+	return SCSIResult{Status: SCSIStatusGood}
+}
+
+// modeSelect10 handles MODE SELECT(10) (0x55).
+// Same as modeSelect6 but with 10-byte CDB.
+func (h *SCSIHandler) modeSelect10(cdb [16]byte, dataOut []byte) SCSIResult {
+	return SCSIResult{Status: SCSIStatusGood}
+}
+
+// persistReserveIn handles PERSISTENT RESERVE IN (0x5E).
+// Windows Cluster and MPIO use this. We don't support reservations,
+// so return ILLEGAL_REQUEST with a specific ASC that tells Windows
+// "not supported" rather than "broken device".
+func (h *SCSIHandler) persistReserveIn(cdb [16]byte) SCSIResult {
+	return illegalRequest(ASCInvalidOpcode, ASCQLuk)
+}
+
+// persistReserveOut handles PERSISTENT RESERVE OUT (0x5F).
+func (h *SCSIHandler) persistReserveOut(cdb [16]byte, dataOut []byte) SCSIResult {
+	return illegalRequest(ASCInvalidOpcode, ASCQLuk)
+}
+
+// maintenanceIn handles MAINTENANCE IN (0xA3).
+// Service action 0x0C = REPORT SUPPORTED OPERATION CODES.
+// Windows sends this to discover which commands we support.
+func (h *SCSIHandler) maintenanceIn(cdb [16]byte) SCSIResult {
+	sa := cdb[1] & 0x1f
+	if sa == 0x0c {
+		// REPORT SUPPORTED OPERATION CODES -- return empty (not supported).
+		// This tells Windows to probe commands individually.
+		return illegalRequest(ASCInvalidOpcode, ASCQLuk)
+	}
+	return illegalRequest(ASCInvalidOpcode, ASCQLuk)
 }
 
 func (h *SCSIHandler) inquiry(cdb [16]byte) SCSIResult {
@@ -353,17 +432,22 @@ func (h *SCSIHandler) readCapacity16(cdb [16]byte) SCSIResult {
 }
 
 func (h *SCSIHandler) modeSense6(cdb [16]byte) SCSIResult {
-	// Minimal MODE SENSE(6) response -- no mode pages
 	allocLen := cdb[4]
 	if allocLen == 0 {
 		allocLen = 4
 	}
+	pageCode := cdb[2] & 0x3f
 
-	data := make([]byte, 4)
-	data[0] = 3    // Mode data length (3 bytes follow)
-	data[1] = 0x00 // Medium type: default
-	data[2] = 0x00 // Device-specific parameter (no write protect)
-	data[3] = 0x00 // Block descriptor length = 0
+	// Build mode page data based on requested page.
+	pages := h.buildModePages(pageCode)
+
+	// MODE SENSE(6) header = 4 bytes + pages
+	data := make([]byte, 4+len(pages))
+	data[0] = byte(3 + len(pages)) // Mode data length (everything after byte 0)
+	data[1] = 0x00                 // Medium type: default
+	data[2] = 0x00                 // Device-specific parameter (no write protect)
+	data[3] = 0x00                 // Block descriptor length = 0
+	copy(data[4:], pages)
 
 	if int(allocLen) < len(data) {
 		data = data[:allocLen]
@@ -372,26 +456,65 @@ func (h *SCSIHandler) modeSense6(cdb [16]byte) SCSIResult {
 }
 
 func (h *SCSIHandler) modeSense10(cdb [16]byte) SCSIResult {
-	// MODE SENSE(10) -- 8-byte header, no mode pages
 	allocLen := binary.BigEndian.Uint16(cdb[7:9])
 	if allocLen == 0 {
 		allocLen = 8
 	}
+	pageCode := cdb[2] & 0x3f
 
-	data := make([]byte, 8)
-	// Mode data length = 6 (8-byte header minus the 2-byte length field)
-	binary.BigEndian.PutUint16(data[0:2], 6)
+	// Build mode page data based on requested page.
+	pages := h.buildModePages(pageCode)
+
+	// MODE SENSE(10) header = 8 bytes + pages
+	data := make([]byte, 8+len(pages))
+	binary.BigEndian.PutUint16(data[0:2], uint16(6+len(pages))) // Mode data length
 	data[2] = 0x00 // Medium type: default
 	data[3] = 0x00 // Device-specific parameter (no write protect)
 	data[4] = 0x00 // Reserved (LONGLBA=0)
 	data[5] = 0x00 // Reserved
-	// Block descriptor length = 0 (bytes 6-7)
-	binary.BigEndian.PutUint16(data[6:8], 0)
+	binary.BigEndian.PutUint16(data[6:8], 0) // Block descriptor length = 0
+	copy(data[8:], pages)
 
 	if int(allocLen) < len(data) {
 		data = data[:allocLen]
 	}
 	return SCSIResult{Status: SCSIStatusGood, Data: data}
+}
+
+// buildModePages returns the mode page data for the requested page code.
+// Page 0x3F = return all pages.
+func (h *SCSIHandler) buildModePages(pageCode uint8) []byte {
+	switch pageCode {
+	case 0x08: // Caching mode page
+		return h.modePage08()
+	case 0x0a: // Control mode page
+		return h.modePage0A()
+	case 0x3f: // All pages
+		var pages []byte
+		pages = append(pages, h.modePage08()...)
+		pages = append(pages, h.modePage0A()...)
+		return pages
+	default:
+		return nil
+	}
+}
+
+// modePage08 returns the Caching mode page (SBC-4, Section 7.5.5).
+// Tells Windows we support write caching.
+func (h *SCSIHandler) modePage08() []byte {
+	page := make([]byte, 20)
+	page[0] = 0x08 // Page code
+	page[1] = 18   // Page length (20 - 2)
+	page[2] = 0x04 // WCE=1 (Write Cache Enable), RCD=0 (Read Cache Disable)
+	return page
+}
+
+// modePage0A returns the Control mode page (SPC-5, Section 8.4.8).
+func (h *SCSIHandler) modePage0A() []byte {
+	page := make([]byte, 12)
+	page[0] = 0x0a // Page code
+	page[1] = 10   // Page length (12 - 2)
+	return page
 }
 
 func (h *SCSIHandler) reportLuns(cdb [16]byte) SCSIResult {

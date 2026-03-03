@@ -40,7 +40,7 @@ func testDataInSinglePDU(t *testing.T) {
 	data := bytes.Repeat([]byte{0xAA}, 4096)
 	statSN := uint32(1)
 
-	n, err := dw.WriteDataIn(w, data, 0x100, 1, 10, &statSN)
+	n, err := dw.WriteDataIn(w, data, 0x100, uint32(len(data)), 1, 10, &statSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func testDataInMultiPDU(t *testing.T) {
 	data := bytes.Repeat([]byte{0xBB}, 3000)
 	statSN := uint32(1)
 
-	n, err := dw.WriteDataIn(w, data, 0x200, 1, 10, &statSN)
+	n, err := dw.WriteDataIn(w, data, 0x200, uint32(len(data)), 1, 10, &statSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func testDataInExactBoundary(t *testing.T) {
 	data := bytes.Repeat([]byte{0xCC}, 2048) // exact 2 PDUs
 	statSN := uint32(1)
 
-	n, err := dw.WriteDataIn(w, data, 0x300, 1, 10, &statSN)
+	n, err := dw.WriteDataIn(w, data, 0x300, uint32(len(data)), 1, 10, &statSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func testDataInZeroLength(t *testing.T) {
 	dw := NewDataInWriter(8192)
 	statSN := uint32(5)
 
-	n, err := dw.WriteDataIn(w, nil, 0x400, 1, 10, &statSN)
+	n, err := dw.WriteDataIn(w, nil, 0x400, 0, 1, 10, &statSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func testDataInDataSNOrdering(t *testing.T) {
 	data := bytes.Repeat([]byte{0xDD}, 2048) // 4 PDUs
 	statSN := uint32(1)
 
-	dw.WriteDataIn(w, data, 0x500, 1, 10, &statSN)
+	dw.WriteDataIn(w, data, 0x500, uint32(len(data)), 1, 10, &statSN)
 
 	for i := 0; i < 4; i++ {
 		pdu, _ := ReadPDU(w)
@@ -173,7 +173,7 @@ func testDataInFbitSbit(t *testing.T) {
 	data := bytes.Repeat([]byte{0xEE}, 2500)
 	statSN := uint32(1)
 
-	dw.WriteDataIn(w, data, 0x600, 1, 10, &statSN)
+	dw.WriteDataIn(w, data, 0x600, uint32(len(data)), 1, 10, &statSN)
 
 	for i := 0; i < 3; i++ {
 		pdu, _ := ReadPDU(w)
@@ -399,7 +399,7 @@ func testDataInStatSNIncrement(t *testing.T) {
 	data := bytes.Repeat([]byte{0x00}, 3072) // 3 PDUs
 	statSN := uint32(100)
 
-	dw.WriteDataIn(w, data, 0x700, 1, 10, &statSN)
+	dw.WriteDataIn(w, data, 0x700, uint32(len(data)), 1, 10, &statSN)
 	// Only the final PDU has S-bit, so StatSN increments once
 	if statSN != 101 {
 		t.Fatalf("StatSN should be 101, got %d", statSN)

@@ -13,7 +13,9 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
@@ -98,18 +100,32 @@ func main() {
 		logger.Printf("admin server: %s", ln.Addr())
 	}
 
-	// Create adapter
-	adapter := &blockVolAdapter{vol: vol}
+	// Create adapter with latency instrumentation
+	adapter := &instrumentedAdapter{
+		inner:  &blockVolAdapter{vol: vol},
+		logger: logger,
+	}
 
 	// Create target server
 	config := iscsi.DefaultTargetConfig()
 	config.TargetName = *iqn
 	config.TargetAlias = "SeaweedFS BlockVol"
+	if *portal != "" {
+		// Parse portal group tag from "addr:port,tpgt" format
+		if idx := strings.LastIndex(*portal, ","); idx >= 0 {
+			if tpgt, err := strconv.Atoi((*portal)[idx+1:]); err == nil {
+				config.TargetPortalGroupTag = tpgt
+			}
+		}
+	}
 	ts := iscsi.NewTargetServer(*addr, config, logger)
 	if *portal != "" {
 		ts.SetPortalAddr(*portal)
 	}
 	ts.AddVolume(*iqn, adapter)
+
+	// Start periodic performance stats logging (every 5 seconds).
+	adapter.StartStatsLogger(5 * time.Second)
 
 	// Graceful shutdown on signal
 	sigCh := make(chan os.Signal, 1)
@@ -147,6 +163,119 @@ func (a *blockVolAdapter) SyncCache() error {
 func (a *blockVolAdapter) BlockSize() uint32  { return a.vol.Info().BlockSize }
 func (a *blockVolAdapter) VolumeSize() uint64 { return a.vol.Info().VolumeSize }
 func (a *blockVolAdapter) IsHealthy() bool    { return a.vol.Info().Healthy }
+
+// instrumentedAdapter wraps a BlockDevice and logs latency stats periodically.
+type instrumentedAdapter struct {
+	inner  iscsi.BlockDevice
+	logger *log.Logger
+
+	// Counters (atomic, lock-free)
+	writeOps   atomic.Int64
+	readOps    atomic.Int64
+	syncOps    atomic.Int64
+	writeTotUs atomic.Int64 // total microseconds
+	readTotUs  atomic.Int64
+	syncTotUs  atomic.Int64
+	writeMaxUs atomic.Int64
+	readMaxUs  atomic.Int64
+	syncMaxUs  atomic.Int64
+	writeBytes atomic.Int64
+	readBytes  atomic.Int64
+}
+
+func (a *instrumentedAdapter) ReadAt(lba uint64, length uint32) ([]byte, error) {
+	start := time.Now()
+	data, err := a.inner.ReadAt(lba, length)
+	us := time.Since(start).Microseconds()
+	a.readOps.Add(1)
+	a.readTotUs.Add(us)
+	a.readBytes.Add(int64(length))
+	atomicMax(&a.readMaxUs, us)
+	return data, err
+}
+
+func (a *instrumentedAdapter) WriteAt(lba uint64, data []byte) error {
+	start := time.Now()
+	err := a.inner.WriteAt(lba, data)
+	us := time.Since(start).Microseconds()
+	a.writeOps.Add(1)
+	a.writeTotUs.Add(us)
+	a.writeBytes.Add(int64(len(data)))
+	atomicMax(&a.writeMaxUs, us)
+	return err
+}
+
+func (a *instrumentedAdapter) Trim(lba uint64, length uint32) error {
+	return a.inner.Trim(lba, length)
+}
+
+func (a *instrumentedAdapter) SyncCache() error {
+	start := time.Now()
+	err := a.inner.SyncCache()
+	us := time.Since(start).Microseconds()
+	a.syncOps.Add(1)
+	a.syncTotUs.Add(us)
+	atomicMax(&a.syncMaxUs, us)
+	return err
+}
+
+func (a *instrumentedAdapter) BlockSize() uint32  { return a.inner.BlockSize() }
+func (a *instrumentedAdapter) VolumeSize() uint64 { return a.inner.VolumeSize() }
+func (a *instrumentedAdapter) IsHealthy() bool    { return a.inner.IsHealthy() }
+
+// StartStatsLogger runs a goroutine that logs performance stats every interval.
+func (a *instrumentedAdapter) StartStatsLogger(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			wr := a.writeOps.Swap(0)
+			rd := a.readOps.Swap(0)
+			sy := a.syncOps.Swap(0)
+			wrUs := a.writeTotUs.Swap(0)
+			rdUs := a.readTotUs.Swap(0)
+			syUs := a.syncTotUs.Swap(0)
+			wrMax := a.writeMaxUs.Swap(0)
+			rdMax := a.readMaxUs.Swap(0)
+			syMax := a.syncMaxUs.Swap(0)
+			wrBytes := a.writeBytes.Swap(0)
+			rdBytes := a.readBytes.Swap(0)
+
+			if wr+rd+sy == 0 {
+				continue // quiet when idle
+			}
+
+			wrAvg, rdAvg, syAvg := int64(0), int64(0), int64(0)
+			if wr > 0 {
+				wrAvg = wrUs / wr
+			}
+			if rd > 0 {
+				rdAvg = rdUs / rd
+			}
+			if sy > 0 {
+				syAvg = syUs / sy
+			}
+			a.logger.Printf("PERF[%ds] wr=%d(%.1fMB avg=%dus max=%dus) rd=%d(%.1fMB avg=%dus max=%dus) sync=%d(avg=%dus max=%dus)",
+				int(interval.Seconds()),
+				wr, float64(wrBytes)/(1024*1024), wrAvg, wrMax,
+				rd, float64(rdBytes)/(1024*1024), rdAvg, rdMax,
+				sy, syAvg, syMax,
+			)
+		}
+	}()
+}
+
+func atomicMax(addr *atomic.Int64, val int64) {
+	for {
+		old := addr.Load()
+		if val <= old {
+			return
+		}
+		if addr.CompareAndSwap(old, val) {
+			return
+		}
+	}
+}
 
 func parseSize(s string) (uint64, error) {
 	s = strings.TrimSpace(s)

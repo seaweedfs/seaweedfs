@@ -269,6 +269,10 @@ func (s *Session) close() {
 func (s *Session) dispatch(pdu *PDU) error {
 	op := pdu.Opcode()
 
+	if op != OpSCSICmd && op != OpSCSIDataOut {
+		s.logger.Printf("dispatch: opcode=%s(0x%02x)", OpcodeName(op), op)
+	}
+
 	switch op {
 	case OpLoginReq:
 		return s.handleLogin(pdu)
@@ -337,6 +341,8 @@ func (s *Session) handleText(pdu *PDU) error {
 		targets = lister.ListTargets()
 	}
 
+	s.logger.Printf("text request: params=%q targets=%d", string(pdu.DataSegment), len(targets))
+
 	resp := HandleTextRequest(pdu, targets)
 	// ExpCmdSN/MaxCmdSN are set by txLoop via pduNeedsStatSN.
 	s.enqueue(resp)
@@ -355,6 +361,9 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 	cdb := pdu.CDB()
 	itt := pdu.InitiatorTaskTag()
 	flags := pdu.OpSpecific1()
+
+	s.logger.Printf("SCSI CDB: opcode=0x%02x cdb=%x itt=0x%08x flags=0x%02x edtl=%d",
+		cdb[0], cdb[:], itt, flags, pdu.ExpectedDataTransferLength())
 
 	// CmdSN validation for non-immediate commands
 	if !pdu.Immediate() {
@@ -400,7 +409,7 @@ func (s *Session) handleSCSICmd(pdu *PDU) error {
 
 	if isRead && result.Status == SCSIStatusGood && len(result.Data) > 0 {
 		// Build Data-In PDUs and enqueue them all.
-		pdus := s.dataInWriter.BuildDataInPDUs(result.Data, itt, s.expCmdSN.Load(), s.maxCmdSN.Load())
+		pdus := s.dataInWriter.BuildDataInPDUs(result.Data, itt, expectedLen, s.expCmdSN.Load(), s.maxCmdSN.Load())
 		for _, p := range pdus {
 			s.enqueue(p)
 		}

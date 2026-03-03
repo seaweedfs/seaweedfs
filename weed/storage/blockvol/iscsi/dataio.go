@@ -27,16 +27,21 @@ func NewDataInWriter(maxSegLen uint32) *DataInWriter {
 }
 
 // WriteDataIn splits data into Data-In PDUs and writes them to w.
-// itt is the initiator task tag, ttt is the target transfer tag.
+// itt is the initiator task tag, edtl is expected data transfer length.
 // statSN is the current StatSN (incremented when S-bit is set).
 // Returns the number of PDUs written.
-func (d *DataInWriter) WriteDataIn(w io.Writer, data []byte, itt uint32, expCmdSN, maxCmdSN uint32, statSN *uint32) (int, error) {
+func (d *DataInWriter) WriteDataIn(w io.Writer, data []byte, itt, edtl uint32, expCmdSN, maxCmdSN uint32, statSN *uint32) (int, error) {
 	totalLen := uint32(len(data))
 	if totalLen == 0 {
 		// Zero-length read -- send single Data-In with S-bit, no data
 		pdu := &PDU{}
 		pdu.SetOpcode(OpSCSIDataIn)
-		pdu.SetOpSpecific1(FlagF | FlagS) // Final + Status
+		flags := uint8(FlagF | FlagS)
+		if edtl > 0 {
+			flags |= FlagU
+			pdu.SetResidualCount(edtl)
+		}
+		pdu.SetOpSpecific1(flags)
 		pdu.SetInitiatorTaskTag(itt)
 		pdu.SetTargetTransferTag(0xFFFFFFFF)
 		pdu.SetStatSN(*statSN)
@@ -74,7 +79,15 @@ func (d *DataInWriter) WriteDataIn(w io.Writer, data []byte, itt uint32, expCmdS
 		pdu.DataSegment = data[offset : offset+segLen]
 
 		if isFinal {
-			pdu.SetOpSpecific1(FlagF | FlagS) // Final + Status
+			flags := uint8(FlagF | FlagS)
+			if totalLen < edtl {
+				flags |= FlagU
+				pdu.SetResidualCount(edtl - totalLen)
+			} else if totalLen > edtl {
+				flags |= FlagO
+				pdu.SetResidualCount(totalLen - edtl)
+			}
+			pdu.SetOpSpecific1(flags)
 			pdu.SetStatSN(*statSN)
 			*statSN++
 			pdu.SetSCSIStatus(SCSIStatusGood)
@@ -219,14 +232,20 @@ func BuildSCSIResponse(result SCSIResult, itt uint32, expCmdSN, maxCmdSN uint32)
 }
 
 // BuildDataInPDUs splits data into Data-In PDUs and returns them.
+// edtl is the Expected Data Transfer Length from the SCSI command PDU.
 // StatSN is NOT set on the final PDU -- the txLoop assigns it.
 // Intermediate PDUs (without S-bit) never carry StatSN.
-func (d *DataInWriter) BuildDataInPDUs(data []byte, itt uint32, expCmdSN, maxCmdSN uint32) []*PDU {
+func (d *DataInWriter) BuildDataInPDUs(data []byte, itt, edtl uint32, expCmdSN, maxCmdSN uint32) []*PDU {
 	totalLen := uint32(len(data))
 	if totalLen == 0 {
 		pdu := &PDU{}
 		pdu.SetOpcode(OpSCSIDataIn)
-		pdu.SetOpSpecific1(FlagF | FlagS)
+		flags := uint8(FlagF | FlagS)
+		if edtl > 0 {
+			flags |= FlagU // underflow: expected data but got none
+			pdu.SetResidualCount(edtl)
+		}
+		pdu.SetOpSpecific1(flags)
 		pdu.SetInitiatorTaskTag(itt)
 		pdu.SetTargetTransferTag(0xFFFFFFFF)
 		pdu.SetExpCmdSN(expCmdSN)
@@ -262,7 +281,16 @@ func (d *DataInWriter) BuildDataInPDUs(data []byte, itt uint32, expCmdSN, maxCmd
 		pdu.DataSegment = seg
 
 		if isFinal {
-			pdu.SetOpSpecific1(FlagF | FlagS)
+			flags := uint8(FlagF | FlagS)
+			// RFC 7143: set underflow/overflow residual on final Data-In with S-bit.
+			if totalLen < edtl {
+				flags |= FlagU
+				pdu.SetResidualCount(edtl - totalLen)
+			} else if totalLen > edtl {
+				flags |= FlagO
+				pdu.SetResidualCount(totalLen - edtl)
+			}
+			pdu.SetOpSpecific1(flags)
 			pdu.SetSCSIStatus(SCSIStatusGood)
 		} else {
 			pdu.SetOpSpecific1(0)

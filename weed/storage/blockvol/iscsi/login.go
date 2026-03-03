@@ -58,6 +58,7 @@ const (
 type TargetConfig struct {
 	TargetName              string
 	TargetAlias             string
+	TargetPortalGroupTag    int // TPGT (1-65535); 0 = use default 1
 	MaxRecvDataSegmentLength int
 	MaxBurstLength          int
 	FirstBurstLength        int
@@ -271,6 +272,13 @@ func (ln *LoginNegotiator) HandleLoginPDU(req *PDU, resolver TargetResolver) *PD
 		ln.tsih = 1 // simplified: single session
 	}
 	resp.SetTSIH(ln.tsih)
+
+	// RFC 7143 Section 13.9: All Login Responses MUST carry TargetPortalGroupTag.
+	tpgt := ln.config.TargetPortalGroupTag
+	if tpgt <= 0 {
+		tpgt = 1
+	}
+	respParams.Set("TargetPortalGroupTag", strconv.Itoa(tpgt))
 
 	// Encode response params
 	if respParams.Len() > 0 {
