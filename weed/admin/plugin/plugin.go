@@ -24,6 +24,7 @@ const (
 	defaultHeartbeatInterval   = 30
 	defaultReconnectDelay      = 5
 	defaultPendingSchemaBuffer = 1
+	adminScriptJobType         = "admin_script"
 )
 
 type Options struct {
@@ -64,6 +65,7 @@ type Plugin struct {
 
 	schedulerExecMu           sync.Mutex
 	schedulerExecReservations map[string]int
+	adminScriptRunMu          sync.RWMutex
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -397,6 +399,9 @@ func (r *Plugin) RunDetectionWithReport(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) (*DetectionReport, error) {
+	releaseGate := r.acquireDetectionExecutionGate(jobType, false)
+	defer releaseGate()
+
 	detector, err := r.pickDetector(jobType)
 	if err != nil {
 		return nil, err
@@ -539,16 +544,36 @@ func (r *Plugin) ExecuteJob(
 	if job == nil {
 		return nil, fmt.Errorf("job is nil")
 	}
-	if strings.TrimSpace(job.JobType) == "" {
+	jobType := strings.TrimSpace(job.JobType)
+	if jobType == "" {
 		return nil, fmt.Errorf("job_type is required")
 	}
+	releaseGate := r.acquireDetectionExecutionGate(jobType, true)
+	defer releaseGate()
 
-	executor, err := r.registry.PickExecutor(job.JobType)
+	executor, err := r.registry.PickExecutor(jobType)
 	if err != nil {
 		return nil, err
 	}
 
 	return r.executeJobWithExecutor(ctx, executor, job, clusterContext, attempt)
+}
+
+func (r *Plugin) acquireDetectionExecutionGate(jobType string, execution bool) func() {
+	normalizedJobType := strings.ToLower(strings.TrimSpace(jobType))
+	if execution && normalizedJobType == adminScriptJobType {
+		r.adminScriptRunMu.Lock()
+		return func() {
+			r.adminScriptRunMu.Unlock()
+		}
+	}
+	if normalizedJobType != adminScriptJobType {
+		r.adminScriptRunMu.RLock()
+		return func() {
+			r.adminScriptRunMu.RUnlock()
+		}
+	}
+	return func() {}
 }
 
 func (r *Plugin) executeJobWithExecutor(
