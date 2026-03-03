@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -9,12 +10,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
 	maxTrackedJobsTotal = 1000
 	maxActivityRecords  = 4000
 	maxRelatedJobs      = 100
+
+	// stale active jobs block dedupe and scheduling; use generous defaults to
+	// avoid expiring legitimate long-running tasks.
+	defaultStaleActiveJobTimeout    = 24 * time.Hour
+	defaultOrphanedActiveJobTimeout = 15 * time.Minute
 )
 
 var (
@@ -22,6 +29,14 @@ var (
 	StateFailed    = strings.ToLower(plugin_pb.JobState_JOB_STATE_FAILED.String())
 	StateCanceled  = strings.ToLower(plugin_pb.JobState_JOB_STATE_CANCELED.String())
 )
+
+type activeJobSnapshot struct {
+	jobID      string
+	jobType    string
+	workerID   string
+	requestID  string
+	lastUpdate time.Time
+}
 
 // activityLess reports whether activity a occurred after activity b (newest-first order).
 // A nil OccurredAt is treated as the zero time.
@@ -54,6 +69,13 @@ func (r *Plugin) loadPersistedMonitorState() error {
 			if strings.TrimSpace(job.JobID) == "" {
 				continue
 			}
+			if isActiveTrackedJobState(job.State) {
+				if detail, detailErr := r.store.LoadJobDetail(job.JobID); detailErr != nil {
+					glog.Warningf("Plugin failed to load detail snapshot for job %s: %v", job.JobID, detailErr)
+				} else if detail != nil {
+					mergeTerminalDetailIntoTracked(&job, detail)
+				}
+			}
 			// Backward compatibility: migrate older inline detail payloads
 			// out of tracked_jobs.json into dedicated per-job detail files.
 			if hasTrackedJobRichDetails(job) {
@@ -79,6 +101,265 @@ func (r *Plugin) loadPersistedMonitorState() error {
 	}
 
 	return nil
+}
+
+// ExpireJob marks an active job as failed so it no longer blocks scheduling.
+func (r *Plugin) ExpireJob(jobID, reason string) (*TrackedJob, bool, error) {
+	normalizedJobID := strings.TrimSpace(jobID)
+	if normalizedJobID == "" {
+		return nil, false, ErrJobNotFound
+	}
+
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "job expired by admin request"
+	}
+
+	var jobType string
+	var requestID string
+	active := false
+
+	r.jobsMu.RLock()
+	if tracked := r.jobs[normalizedJobID]; tracked != nil {
+		jobType = tracked.JobType
+		requestID = tracked.RequestID
+		active = isActiveTrackedJobState(tracked.State)
+	}
+	r.jobsMu.RUnlock()
+
+	if jobType == "" || requestID == "" || !active {
+		if detail, err := r.store.LoadJobDetail(normalizedJobID); err != nil {
+			return nil, false, err
+		} else if detail != nil {
+			if jobType == "" {
+				jobType = detail.JobType
+			}
+			if requestID == "" {
+				requestID = detail.RequestID
+			}
+			if !active && isActiveTrackedJobState(detail.State) {
+				active = true
+			}
+		}
+	}
+
+	if jobType == "" {
+		return nil, false, ErrJobNotFound
+	}
+
+	if !active {
+		current, _ := r.GetTrackedJob(normalizedJobID)
+		if current == nil {
+			if detail, err := r.store.LoadJobDetail(normalizedJobID); err == nil && detail != nil {
+				clone := cloneTrackedJob(*detail)
+				current = &clone
+			}
+		}
+		return current, false, nil
+	}
+
+	now := time.Now().UTC()
+	r.handleJobCompleted(&plugin_pb.JobCompleted{
+		JobId:        normalizedJobID,
+		JobType:      jobType,
+		RequestId:    requestID,
+		Success:      false,
+		ErrorMessage: reason,
+		CompletedAt:  timestamppb.New(now),
+	})
+	r.appendActivity(JobActivity{
+		JobID:      normalizedJobID,
+		JobType:    jobType,
+		RequestID:  requestID,
+		Source:     "admin_expire",
+		Message:    reason,
+		Stage:      "expired",
+		OccurredAt: timeToPtr(now),
+	})
+
+	updated, _ := r.GetTrackedJob(normalizedJobID)
+	return updated, true, nil
+}
+
+// expireStaleJobs marks stale active jobs as failed so they stop blocking new work.
+func (r *Plugin) expireStaleJobs(now time.Time) int {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	r.staleJobsMu.Lock()
+	defer r.staleJobsMu.Unlock()
+
+	snapshots := r.snapshotActiveJobs()
+	if len(snapshots) == 0 {
+		return 0
+	}
+
+	expired := 0
+	for _, snap := range snapshots {
+		if snap.lastUpdate.IsZero() {
+			continue
+		}
+		if stale, _, _ := r.evaluateStaleJob(now, snap.workerID, snap.lastUpdate); !stale {
+			continue
+		}
+
+		reason := r.confirmStaleReason(now, snap.jobID)
+		if reason == "" {
+			continue
+		}
+
+		r.handleJobCompleted(&plugin_pb.JobCompleted{
+			JobId:        snap.jobID,
+			JobType:      snap.jobType,
+			RequestId:    snap.requestID,
+			Success:      false,
+			ErrorMessage: reason,
+			CompletedAt:  timestamppb.New(now),
+		})
+		expired++
+	}
+
+	return expired
+}
+
+func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {
+	r.jobsMu.RLock()
+	defer r.jobsMu.RUnlock()
+
+	if len(r.jobs) == 0 {
+		return nil
+	}
+
+	out := make([]activeJobSnapshot, 0, len(r.jobs))
+	for _, job := range r.jobs {
+		if job == nil {
+			continue
+		}
+		if !isActiveTrackedJobState(job.State) {
+			continue
+		}
+		out = append(out, activeJobSnapshot{
+			jobID:      job.JobID,
+			jobType:    job.JobType,
+			workerID:   job.WorkerID,
+			requestID:  job.RequestID,
+			lastUpdate: jobLastUpdated(job),
+		})
+	}
+	return out
+}
+
+func jobLastUpdated(job *TrackedJob) time.Time {
+	if job == nil {
+		return time.Time{}
+	}
+	if job.UpdatedAt != nil && !job.UpdatedAt.IsZero() {
+		return *job.UpdatedAt
+	}
+	if job.CreatedAt != nil && !job.CreatedAt.IsZero() {
+		return *job.CreatedAt
+	}
+	return time.Time{}
+}
+
+func (r *Plugin) evaluateStaleJob(now time.Time, workerID string, lastUpdate time.Time) (bool, time.Duration, string) {
+	if lastUpdate.IsZero() {
+		return false, 0, ""
+	}
+
+	timeout := defaultStaleActiveJobTimeout
+	reason := fmt.Sprintf("job expired after %s without progress", timeout)
+
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		reason = fmt.Sprintf("job expired after %s without executor assignment", timeout)
+	} else if !r.isWorkerAvailable(workerID) {
+		timeout = defaultOrphanedActiveJobTimeout
+		reason = fmt.Sprintf("job expired after %s without worker heartbeat (worker=%s)", timeout, workerID)
+	}
+
+	if now.Sub(lastUpdate) < timeout {
+		return false, timeout, reason
+	}
+	return true, timeout, reason
+}
+
+func (r *Plugin) confirmStaleReason(now time.Time, jobID string) string {
+	r.jobsMu.RLock()
+	job := r.jobs[jobID]
+	if job == nil || !isActiveTrackedJobState(job.State) {
+		r.jobsMu.RUnlock()
+		return ""
+	}
+	lastUpdate := jobLastUpdated(job)
+	workerID := job.WorkerID
+	r.jobsMu.RUnlock()
+
+	stale, _, reason := r.evaluateStaleJob(now, workerID, lastUpdate)
+	if !stale {
+		return ""
+	}
+	return reason
+}
+
+func (r *Plugin) isWorkerAvailable(workerID string) bool {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return false
+	}
+	_, ok := r.registry.Get(workerID)
+	return ok
+}
+
+func isTerminalTrackedJobState(state string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(state))
+	switch normalized {
+	case StateSucceeded, StateFailed, StateCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
+	if tracked == nil || detail == nil {
+		return
+	}
+	if !isTerminalTrackedJobState(detail.State) {
+		return
+	}
+	if !isActiveTrackedJobState(tracked.State) {
+		return
+	}
+
+	if detail.State != "" {
+		tracked.State = detail.State
+	}
+	if detail.Progress != 0 {
+		tracked.Progress = detail.Progress
+	}
+	if detail.Stage != "" {
+		tracked.Stage = detail.Stage
+	}
+	if detail.Message != "" {
+		tracked.Message = detail.Message
+	}
+	if detail.ErrorMessage != "" {
+		tracked.ErrorMessage = detail.ErrorMessage
+	}
+	if detail.ResultSummary != "" {
+		tracked.ResultSummary = detail.ResultSummary
+	}
+	if detail.CompletedAt != nil && !detail.CompletedAt.IsZero() {
+		tracked.CompletedAt = detail.CompletedAt
+	}
+	if detail.UpdatedAt != nil && !detail.UpdatedAt.IsZero() {
+		tracked.UpdatedAt = detail.UpdatedAt
+	}
+	if tracked.UpdatedAt == nil && tracked.CompletedAt != nil {
+		tracked.UpdatedAt = tracked.CompletedAt
+	}
 }
 
 func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []TrackedJob {

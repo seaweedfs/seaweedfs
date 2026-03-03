@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -32,4 +33,38 @@ func TestFilerRemoteStorage_FindRemoteStorageClient(t *testing.T) {
 
 	_, _, found4 := rs.FindRemoteStorageClient("/a/b/cc")
 	assert.Equal(t, false, found4, "should not find storage client")
+}
+
+func TestFilerRemoteStorage_FindMountDirectory_LongestPrefixWins(t *testing.T) {
+	conf := &remote_pb.RemoteConf{Name: "store", Type: "s3"}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "store",
+		Bucket: "bucket-root",
+		Path:   "/",
+	})
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket/prefix", &remote_pb.RemoteStorageLocation{
+		Name:   "store",
+		Bucket: "bucket-prefix",
+		Path:   "/",
+	})
+
+	tests := []struct {
+		path           string
+		wantMount      string
+		wantBucket     string
+	}{
+		{"/buckets/mybucket/file.txt", "/buckets/mybucket", "bucket-root"},
+		{"/buckets/mybucket/prefix/file.txt", "/buckets/mybucket/prefix", "bucket-prefix"},
+		{"/buckets/mybucket/prefix/sub/file.txt", "/buckets/mybucket/prefix", "bucket-prefix"},
+	}
+	for _, tt := range tests {
+		mountDir, loc := rs.FindMountDirectory(util.FullPath(tt.path))
+		assert.Equal(t, util.FullPath(tt.wantMount), mountDir, "mount dir for %s", tt.path)
+		if assert.NotNil(t, loc, "location for %s", tt.path) {
+			assert.Equal(t, tt.wantBucket, loc.Bucket, "bucket for %s", tt.path)
+		}
+	}
 }

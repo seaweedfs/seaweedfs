@@ -61,6 +61,8 @@ func (r *Plugin) schedulerLoop() {
 }
 
 func (r *Plugin) runSchedulerTick() {
+	r.expireStaleJobs(time.Now().UTC())
+
 	jobTypes := r.registry.DetectableJobTypes()
 	if len(jobTypes) == 0 {
 		return
@@ -859,10 +861,15 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 	}
 }
 
+// filterProposalsWithActiveJobs removes proposals whose dedupe keys already have active jobs.
+// It first expires stale tracked jobs via expireStaleJobs, which can mutate scheduler state,
+// so callers should treat this method as a stateful operation.
 func (r *Plugin) filterProposalsWithActiveJobs(jobType string, proposals []*plugin_pb.JobProposal) ([]*plugin_pb.JobProposal, int) {
 	if len(proposals) == 0 {
 		return proposals, 0
 	}
+
+	r.expireStaleJobs(time.Now().UTC())
 
 	activeKeys := make(map[string]struct{})
 	r.jobsMu.RLock()

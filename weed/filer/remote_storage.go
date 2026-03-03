@@ -82,6 +82,9 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc
 	rs.rules.Put([]byte(dir+"/"), loc)
 }
 
+// FindMountDirectory returns the mount directory and location for p. When multiple
+// mounts match (e.g. /buckets/b and /buckets/b/prefix), ptrie MatchPrefix visits
+// shorter prefixes first, so the last match is the longest prefix.
 func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *remote_pb.RemoteStorageLocation) {
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		mountDir = util.FullPath(string(key[:len(key)-1]))
