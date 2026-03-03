@@ -143,7 +143,12 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	glog.V(3).Infof("remove file: %v", entryFullPath)
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
 	// The filer has the correct hard link count and will only delete chunks when appropriate.
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{wfs.signature})
+
+	// Pass empty signatures so the filer event is NOT filtered by our own
+	// subscription handler. This ensures that if doEnsureVisited's atomic
+	// replace re-inserts a stale entry (from a filer listing snapshot taken
+	// before this delete), the subscription handler will delete it afterward.
+	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		return fuse.OK
