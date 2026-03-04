@@ -232,6 +232,7 @@ message AdminRuntimeDefaults {
   int32 per_worker_execution_concurrency = 6;
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
+  int32 job_type_max_runtime_seconds = 9;
 }
 
 message AdminRuntimeConfig {
@@ -243,6 +244,7 @@ message AdminRuntimeConfig {
   int32 per_worker_execution_concurrency = 6;
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
+  int32 job_type_max_runtime_seconds = 9;
 }
 
 message RunDetectionRequest {

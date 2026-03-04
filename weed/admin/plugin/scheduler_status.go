@@ -9,6 +9,12 @@ import (
 type SchedulerStatus struct {
 	Now                  time.Time                `json:"now"`
 	SchedulerTickSeconds int                      `json:"scheduler_tick_seconds"`
+	IdleSleepSeconds     int                      `json:"idle_sleep_seconds,omitempty"`
+	NextDetectionAt      *time.Time               `json:"next_detection_at,omitempty"`
+	CurrentJobType       string                   `json:"current_job_type,omitempty"`
+	CurrentPhase         string                   `json:"current_phase,omitempty"`
+	LastIterationHadJobs bool                     `json:"last_iteration_had_jobs,omitempty"`
+	LastIterationDoneAt  *time.Time               `json:"last_iteration_done_at,omitempty"`
 	Waiting              []SchedulerWaitingStatus `json:"waiting,omitempty"`
 	InProcessJobs        []SchedulerJobStatus     `json:"in_process_jobs,omitempty"`
 	JobTypes             []SchedulerJobTypeStatus `json:"job_types,omitempty"`
@@ -54,6 +60,19 @@ type schedulerDetectionInfo struct {
 	lastError         string
 	lastSkippedAt     time.Time
 	lastSkippedReason string
+}
+
+type schedulerRunInfo struct {
+	lastRunStartedAt   time.Time
+	lastRunCompletedAt time.Time
+	lastRunStatus      string
+}
+
+type schedulerLoopState struct {
+	currentJobType         string
+	currentPhase           string
+	lastIterationHadJobs   bool
+	lastIterationCompleted time.Time
 }
 
 func (r *Plugin) recordSchedulerDetectionSuccess(jobType string, count int) {
@@ -122,12 +141,105 @@ func (r *Plugin) snapshotSchedulerDetection(jobType string) schedulerDetectionIn
 	return *info
 }
 
+func (r *Plugin) recordSchedulerRunStart(jobType string) {
+	if r == nil {
+		return
+	}
+	r.schedulerRunMu.Lock()
+	defer r.schedulerRunMu.Unlock()
+	info := r.schedulerRun[jobType]
+	if info == nil {
+		info = &schedulerRunInfo{}
+		r.schedulerRun[jobType] = info
+	}
+	info.lastRunStartedAt = time.Now().UTC()
+	info.lastRunStatus = ""
+}
+
+func (r *Plugin) recordSchedulerRunComplete(jobType, status string) {
+	if r == nil {
+		return
+	}
+	r.schedulerRunMu.Lock()
+	defer r.schedulerRunMu.Unlock()
+	info := r.schedulerRun[jobType]
+	if info == nil {
+		info = &schedulerRunInfo{}
+		r.schedulerRun[jobType] = info
+	}
+	info.lastRunCompletedAt = time.Now().UTC()
+	info.lastRunStatus = status
+}
+
+func (r *Plugin) snapshotSchedulerRun(jobType string) schedulerRunInfo {
+	if r == nil {
+		return schedulerRunInfo{}
+	}
+	r.schedulerRunMu.Lock()
+	defer r.schedulerRunMu.Unlock()
+	info := r.schedulerRun[jobType]
+	if info == nil {
+		return schedulerRunInfo{}
+	}
+	return *info
+}
+
+func (r *Plugin) setSchedulerLoopState(jobType, phase string) {
+	if r == nil {
+		return
+	}
+	r.schedulerLoopMu.Lock()
+	r.schedulerLoopState.currentJobType = jobType
+	r.schedulerLoopState.currentPhase = phase
+	r.schedulerLoopMu.Unlock()
+}
+
+func (r *Plugin) recordSchedulerIterationComplete(hadJobs bool) {
+	if r == nil {
+		return
+	}
+	r.schedulerLoopMu.Lock()
+	r.schedulerLoopState.lastIterationHadJobs = hadJobs
+	r.schedulerLoopState.lastIterationCompleted = time.Now().UTC()
+	r.schedulerLoopMu.Unlock()
+}
+
+func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
+	if r == nil {
+		return schedulerLoopState{}
+	}
+	r.schedulerLoopMu.Lock()
+	defer r.schedulerLoopMu.Unlock()
+	return r.schedulerLoopState
+}
+
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 	now := time.Now().UTC()
+	loopState := r.snapshotSchedulerLoopState()
+	schedulerConfig := r.GetSchedulerConfig()
 	status := SchedulerStatus{
 		Now:                  now,
 		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
 		InProcessJobs:        r.listInProcessJobs(now),
+		IdleSleepSeconds:     int(schedulerConfig.IdleSleepSeconds),
+		CurrentJobType:       loopState.currentJobType,
+		CurrentPhase:         loopState.currentPhase,
+		LastIterationHadJobs: loopState.lastIterationHadJobs,
+	}
+	nextDetectionAt := r.earliestNextDetectionAt()
+	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
+		idleSleep := schedulerConfig.IdleSleepDuration()
+		if idleSleep > 0 {
+			nextDetectionAt = loopState.lastIterationCompleted.Add(idleSleep)
+		}
+	}
+	if !nextDetectionAt.IsZero() {
+		at := nextDetectionAt
+		status.NextDetectionAt = &at
+	}
+	if !loopState.lastIterationCompleted.IsZero() {
+		at := loopState.lastIterationCompleted
+		status.LastIterationDoneAt = &at
 	}
 
 	states, err := r.ListSchedulerStates()

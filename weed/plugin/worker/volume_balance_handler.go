@@ -144,6 +144,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			PerWorkerExecutionConcurrency: 4,
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           15,
+			JobTypeMaxRuntimeSeconds:      1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold": {
