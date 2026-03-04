@@ -180,9 +180,9 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	}
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
 		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("VACUUM: Detection skipped due to min interval (%s)", minInterval),
 			map[string]*plugin_pb.ConfigValue{
@@ -311,7 +311,7 @@ func emitVacuumDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(buildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(BuildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -351,7 +351,7 @@ func emitVacuumDetectionDecisionTrace(
 			metric.Age.Truncate(time.Minute),
 			minVolumeAge.Truncate(time.Minute),
 		)
-		if err := sender.SendActivity(buildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
 			},
@@ -429,7 +429,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(stage, message),
+				BuildExecutorActivity(stage, message),
 			},
 		})
 	})
@@ -442,7 +442,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		Stage:           "assigned",
 		Message:         "vacuum job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "vacuum job accepted"),
+			BuildExecutorActivity("assigned", "vacuum job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -457,7 +457,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("failed", err.Error()),
+				BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -480,7 +480,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -709,7 +709,9 @@ func mapTaskPriority(priority workertypes.TaskPriority) plugin_pb.JobPriority {
 	}
 }
 
-func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
+// ShouldSkipDetectionByInterval returns true when less than minIntervalSeconds
+// have elapsed since lastSuccessfulRun. Exported so sub-packages can reuse it.
+func ShouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
 	if lastSuccessfulRun == nil || minIntervalSeconds <= 0 {
 		return false
 	}
@@ -720,7 +722,8 @@ func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, min
 	return time.Since(lastRun) < time.Duration(minIntervalSeconds)*time.Second
 }
 
-func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
+// BuildExecutorActivity creates an executor activity event. Exported for sub-packages.
+func BuildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
 	return &plugin_pb.ActivityEvent{
 		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
 		Stage:     stage,
@@ -729,7 +732,8 @@ func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEven
 	}
 }
 
-func buildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
+// BuildDetectorActivity creates a detector activity event. Exported for sub-packages.
+func BuildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
 	return &plugin_pb.ActivityEvent{
 		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR,
 		Stage:     stage,

@@ -122,20 +122,20 @@ func TestMasterAddressCandidates(t *testing.T) {
 }
 
 func TestShouldSkipDetectionByInterval(t *testing.T) {
-	if shouldSkipDetectionByInterval(nil, 10) {
+	if ShouldSkipDetectionByInterval(nil, 10) {
 		t.Fatalf("expected false when timestamp is nil")
 	}
-	if shouldSkipDetectionByInterval(timestamppb.Now(), 0) {
+	if ShouldSkipDetectionByInterval(timestamppb.Now(), 0) {
 		t.Fatalf("expected false when min interval is zero")
 	}
 
 	recent := timestamppb.New(time.Now().Add(-5 * time.Second))
-	if !shouldSkipDetectionByInterval(recent, 10) {
+	if !ShouldSkipDetectionByInterval(recent, 10) {
 		t.Fatalf("expected true for recent successful run")
 	}
 
 	old := timestamppb.New(time.Now().Add(-30 * time.Second))
-	if shouldSkipDetectionByInterval(old, 10) {
+	if ShouldSkipDetectionByInterval(old, 10) {
 		t.Fatalf("expected false for old successful run")
 	}
 }
@@ -182,7 +182,7 @@ func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
 }
 
 func TestBuildExecutorActivity(t *testing.T) {
-	activity := buildExecutorActivity("running", "vacuum in progress")
+	activity := BuildExecutorActivity("running", "vacuum in progress")
 	if activity == nil {
 		t.Fatalf("expected non-nil activity")
 	}

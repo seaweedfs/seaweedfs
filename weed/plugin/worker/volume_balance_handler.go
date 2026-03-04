@@ -176,9 +176,9 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
 		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("VOLUME BALANCE: Detection skipped due to min interval (%s)", minInterval),
 			map[string]*plugin_pb.ConfigValue{
@@ -284,7 +284,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(buildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -331,7 +331,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				volumeCount,
 				minVolumeCount,
 			)
-			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -362,7 +362,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				len(serverVolumeCounts),
 				taskConfig.MinServerCount,
 			)
-			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -433,7 +433,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			)
 		}
 
-		if err := sender.SendActivity(buildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(BuildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
 			"disk_type": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 			},
@@ -534,7 +534,7 @@ func (h *VolumeBalanceHandler) Execute(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(stage, message),
+				BuildExecutorActivity(stage, message),
 			},
 		})
 	})
@@ -547,7 +547,7 @@ func (h *VolumeBalanceHandler) Execute(
 		Stage:           "assigned",
 		Message:         "volume balance job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "volume balance job accepted"),
+			BuildExecutorActivity("assigned", "volume balance job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -562,7 +562,7 @@ func (h *VolumeBalanceHandler) Execute(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("failed", err.Error()),
+				BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -591,7 +591,7 @@ func (h *VolumeBalanceHandler) Execute(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }

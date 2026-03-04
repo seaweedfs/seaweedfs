@@ -131,8 +131,8 @@ func (h *AdminScriptHandler) Detect(ctx context.Context, request *plugin_pb.RunD
 	script := normalizeAdminScript(readStringConfig(request.GetAdminConfigValues(), "script", ""))
 	scriptName := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "script_name", ""))
 	runIntervalMinutes := readAdminScriptRunIntervalMinutes(request.GetAdminConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), runIntervalMinutes*60) {
-		_ = sender.SendActivity(buildDetectorActivity(
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), runIntervalMinutes*60) {
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("ADMIN SCRIPT: Detection skipped due to run interval (%dm)", runIntervalMinutes),
 			map[string]*plugin_pb.ConfigValue{
@@ -158,7 +158,7 @@ func (h *AdminScriptHandler) Detect(ctx context.Context, request *plugin_pb.RunD
 	commands := parseAdminScriptCommands(script)
 	execCount := countExecutableCommands(commands)
 	if execCount == 0 {
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"no_script",
 			"ADMIN SCRIPT: No executable commands configured",
 			map[string]*plugin_pb.ConfigValue{
@@ -251,7 +251,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 		Stage:           "assigned",
 		Message:         "admin script job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "admin script job accepted"),
+			BuildExecutorActivity("assigned", "admin script job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -287,7 +287,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 					Stage:           "error",
 					Message:         msg,
 					Activities: []*plugin_pb.ActivityEvent{
-						buildExecutorActivity("error", msg),
+						BuildExecutorActivity("error", msg),
 					},
 				})
 			}
@@ -303,7 +303,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 				Stage:           "error",
 				Message:         msg,
 				Activities: []*plugin_pb.ActivityEvent{
-					buildExecutorActivity("error", msg),
+					BuildExecutorActivity("error", msg),
 				},
 			})
 		}
@@ -316,7 +316,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 			Stage:           "running",
 			Message:         fmt.Sprintf("executed %d/%d command(s)", executed, len(execCommands)),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("running", commandLine),
+				BuildExecutorActivity("running", commandLine),
 			},
 		})
 	}
@@ -382,7 +382,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 			OutputValues: outputValues,
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 		CompletedAt: timestamppb.Now(),
 	})
