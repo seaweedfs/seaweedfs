@@ -42,6 +42,10 @@ const (
 // advanced since planning. The caller should not retry the same plan.
 var errStalePlan = errors.New("stale plan: table head changed since planning")
 
+// errMetadataVersionConflict is returned when the xattr update detects a
+// concurrent metadata version change (compare-and-swap failure).
+var errMetadataVersionConflict = errors.New("metadata version conflict")
+
 // IcebergMaintenanceHandler implements the JobHandler interface for
 // Iceberg table maintenance: snapshot expiration, orphan file removal,
 // and manifest rewriting.
@@ -1040,7 +1044,8 @@ func (h *IcebergMaintenanceHandler) commitWithRetry(
 		}
 
 		// Determine new metadata file name
-		newVersion := extractMetadataVersion(metaFileName) + 1
+		currentVersion := extractMetadataVersion(metaFileName)
+		newVersion := currentVersion + 1
 		newMetadataFileName := fmt.Sprintf("v%d.metadata.json", newVersion)
 
 		// Save new metadata file
@@ -1049,9 +1054,9 @@ func (h *IcebergMaintenanceHandler) commitWithRetry(
 			return fmt.Errorf("save metadata file (attempt %d): %w", attempt, err)
 		}
 
-		// Update the table entry's xattr with new metadata
+		// Update the table entry's xattr with new metadata (CAS on version)
 		tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
-		err = updateTableMetadataXattr(ctx, filerClient, tableDir, metadataBytes)
+		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes)
 		if err != nil {
 			// On conflict, clean up the new metadata file and retry
 			_ = deleteFilerFile(ctx, filerClient, metaDir, newMetadataFileName)
@@ -1262,9 +1267,10 @@ func deleteFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 }
 
 // updateTableMetadataXattr updates the table entry's metadata xattr with
-// the new Iceberg metadata. It reads the existing xattr, updates the
-// fullMetadata field, and writes it back.
-func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerClient, tableDir string, newFullMetadata []byte) error {
+// the new Iceberg metadata. It performs a compare-and-swap: if the stored
+// metadataVersion does not match expectedVersion, it returns
+// errMetadataVersionConflict so the caller can retry.
+func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerClient, tableDir string, expectedVersion int, newFullMetadata []byte) error {
 	tableName := path.Base(tableDir)
 	parentDir := path.Dir(tableDir)
 
@@ -1290,6 +1296,16 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 		return fmt.Errorf("unmarshal existing xattr: %w", err)
 	}
 
+	// Compare-and-swap: verify the stored metadataVersion matches what we expect
+	if versionRaw, ok := internalMeta["metadataVersion"]; ok {
+		var storedVersion int
+		if err := json.Unmarshal(versionRaw, &storedVersion); err == nil {
+			if storedVersion != expectedVersion {
+				return fmt.Errorf("%w: expected version %d, found %d", errMetadataVersionConflict, expectedVersion, storedVersion)
+			}
+		}
+	}
+
 	// Update the metadata.fullMetadata field
 	var metadataObj map[string]json.RawMessage
 	if raw, ok := internalMeta["metadata"]; ok {
@@ -1307,14 +1323,9 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 	internalMeta["metadata"] = metadataJSON
 
 	// Increment version
-	if versionRaw, ok := internalMeta["metadataVersion"]; ok {
-		var version int
-		if err := json.Unmarshal(versionRaw, &version); err == nil {
-			version++
-			versionJSON, _ := json.Marshal(version)
-			internalMeta["metadataVersion"] = versionJSON
-		}
-	}
+	newVersion := expectedVersion + 1
+	versionJSON, _ := json.Marshal(newVersion)
+	internalMeta["metadataVersion"] = versionJSON
 
 	// Update modifiedAt
 	modifiedAt, _ := json.Marshal(time.Now().Format(time.RFC3339Nano))
@@ -1326,15 +1337,12 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 	}
 
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
-	updateResp, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 		Directory: parentDir,
 		Entry:     resp.Entry,
 	})
 	if err != nil {
 		return fmt.Errorf("update table entry: %w", err)
-	}
-	if updateResp != nil {
-		// success
 	}
 	return nil
 }
