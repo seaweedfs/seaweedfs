@@ -394,6 +394,8 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	var expiredEntries []*Entry
 	var s3ExpiredEntries []*Entry
 	var hasValidEntries bool
+	var localCount int64
+	localNames := make(map[string]struct{})
 
 	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
@@ -418,11 +420,19 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			}
 			// Track that we found at least one valid (non-expired) entry
 			hasValidEntries = true
+			localNames[entry.Name()] = struct{}{}
+			localCount++
 			return eachEntryFunc(entry)
 		}
 	})
 	if err != nil {
 		return expiredCount, lastFileName, err
+	}
+
+	// After local store scan, merge remote entries if under a mount
+	if f.RemoteStorage != nil && localCount < limit {
+		remaining := limit - localCount
+		f.maybeMergeRemoteListings(ctx, p, localNames, startFileName, remaining, prefix, eachEntryFunc)
 	}
 
 	// Delete expired entries after iteration completes to avoid DB connection deadlock
