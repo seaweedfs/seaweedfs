@@ -156,6 +156,29 @@ func (h *IcebergMaintenanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					},
 				},
 				{
+					SectionId:   "compaction",
+					Title:       "Data Compaction",
+					Description: "Controls for bin-packing small Parquet data files.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "target_file_size_bytes",
+							Label:       "Target File Size (bytes)",
+							Description: "Files smaller than this are candidates for compaction.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1024 * 1024}},
+						},
+						{
+							Name:        "min_input_files",
+							Label:       "Min Input Files",
+							Description: "Minimum number of small files in a partition to trigger compaction.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+						},
+					},
+				},
+				{
 					SectionId:   "orphans",
 					Title:       "Orphan Removal",
 					Description: "Controls for orphan file cleanup.",
@@ -187,7 +210,7 @@ func (h *IcebergMaintenanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "operations",
 							Label:       "Operations",
-							Description: "Comma-separated list of operations to run: expire_snapshots, remove_orphans, rewrite_manifests, or 'all'.",
+							Description: "Comma-separated list of operations to run: compact, expire_snapshots, remove_orphans, rewrite_manifests, or 'all'.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -195,6 +218,8 @@ func (h *IcebergMaintenanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
+				"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
@@ -214,6 +239,8 @@ func (h *IcebergMaintenanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
+			"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
@@ -383,6 +410,8 @@ func (h *IcebergMaintenanceHandler) Execute(ctx context.Context, request *plugin
 		var opErr error
 
 		switch op {
+		case "compact":
+			opResult, opErr = h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "expire_snapshots":
 			opResult, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "remove_orphans":
@@ -1297,14 +1326,14 @@ func parseIcebergMaintenanceConfig(values map[string]*plugin_pb.ConfigValue) ice
 }
 
 // parseOperations returns the ordered list of maintenance operations to execute.
-// Order follows Iceberg best practices: expire_snapshots → remove_orphans → rewrite_manifests
+// Order follows Iceberg best practices: compact → expire_snapshots → remove_orphans → rewrite_manifests
 func parseOperations(ops string) []string {
 	ops = strings.TrimSpace(strings.ToLower(ops))
 	if ops == "" || ops == "all" {
-		return []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}
+		return []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}
 	}
 
-	allOps := []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}
+	allOps := []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}
 	requested := make(map[string]struct{})
 	for _, op := range strings.Split(ops, ",") {
 		op = strings.TrimSpace(op)

@@ -33,12 +33,15 @@ func TestParseOperations(t *testing.T) {
 		input    string
 		expected []string
 	}{
-		{"all", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
-		{"", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
+		{"all", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}},
+		{"", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}},
 		{"expire_snapshots", []string{"expire_snapshots"}},
+		{"compact", []string{"compact"}},
 		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}},
+		{"compact,expire_snapshots", []string{"compact", "expire_snapshots"}},
 		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}},
 		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
+		{"compact,expire_snapshots,remove_orphans,rewrite_manifests", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}},
 		{"unknown_op", nil},
 	}
 
@@ -211,6 +214,133 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 	if readStringConfig(proposal.Parameters, "filer_address", "") != "localhost:8888" {
 		t.Error("expected filer_address=localhost:8888 in parameters")
 	}
+}
+
+func TestPartitionKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		partition map[int]any
+		expected  string
+	}{
+		{"empty partition", map[int]any{}, "__unpartitioned__"},
+		{"nil partition", nil, "__unpartitioned__"},
+		{"single field", map[int]any{1: "us-east"}, "1=us-east"},
+		{"multiple fields sorted", map[int]any{3: "2024", 1: "us-east"}, "1=us-east,3=2024"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := partitionKey(tc.partition)
+			if result != tc.expected {
+				t.Errorf("partitionKey(%v) = %q, want %q", tc.partition, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestBuildCompactionBins(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024) // 256MB
+	minFiles := 3
+
+	// Create test entries: small files in same partition
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 3 {
+		t.Errorf("expected 3 entries in bin, got %d", len(bins[0].Entries))
+	}
+}
+
+func TestBuildCompactionBinsFiltersLargeFiles(t *testing.T) {
+	targetSize := int64(4000)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/small1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/small2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/large.parquet", size: 5000, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 2 {
+		t.Errorf("expected 2 entries (large excluded), got %d", len(bins[0].Entries))
+	}
+}
+
+func TestBuildCompactionBinsMinFilesThreshold(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 5
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 0 {
+		t.Errorf("expected 0 bins (below min threshold), got %d", len(bins))
+	}
+}
+
+func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 2
+
+	partA := map[int]any{1: "us-east"}
+	partB := map[int]any{1: "eu-west"}
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/a1.parquet", size: 1024, partition: partA},
+		{path: "data/a2.parquet", size: 2048, partition: partA},
+		{path: "data/b1.parquet", size: 1024, partition: partB},
+		{path: "data/b2.parquet", size: 2048, partition: partB},
+		{path: "data/b3.parquet", size: 4096, partition: partB},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 2 {
+		t.Fatalf("expected 2 bins (one per partition), got %d", len(bins))
+	}
+}
+
+type testEntrySpec struct {
+	path      string
+	size      int64
+	partition map[int]any
+}
+
+func makeTestEntries(t *testing.T, specs []testEntrySpec) []iceberg.ManifestEntry {
+	t.Helper()
+	entries := make([]iceberg.ManifestEntry, 0, len(specs))
+	for _, spec := range specs {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			*iceberg.UnpartitionedSpec,
+			iceberg.EntryContentData,
+			spec.path,
+			iceberg.ParquetFile,
+			spec.partition,
+			nil, nil,
+			1, // recordCount (must be > 0)
+			spec.size,
+		)
+		if err != nil {
+			t.Fatalf("failed to build data file %s: %v", spec.path, err)
+		}
+		snapID := int64(1)
+		entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func TestDetectNilRequest(t *testing.T) {
