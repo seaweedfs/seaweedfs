@@ -138,9 +138,7 @@ func (r *Plugin) runSchedulerIteration() bool {
 		r.finishIteration(false)
 		return false
 	}
-	if releaseLock != nil {
-		defer releaseLock()
-	}
+	defer releaseLock()
 
 	// Load cluster context ONCE for all job types.
 	clusterContext, err := r.loadSchedulerClusterContext()
@@ -523,7 +521,7 @@ func (r *Plugin) dispatchScheduledProposals(
 					default:
 					}
 
-					executor, release, reserveErr := r.reserveScheduledExecutor(jobType, policy)
+					executor, release, reserveErr := r.reserveScheduledExecutor(parentCtx, jobType, policy)
 					if reserveErr != nil {
 						select {
 						case <-r.shutdownCh:
@@ -588,6 +586,7 @@ func (r *Plugin) dispatchScheduledProposals(
 }
 
 func (r *Plugin) reserveScheduledExecutor(
+	ctx context.Context,
 	jobType string,
 	policy schedulerPolicy,
 ) (*WorkerSession, func(), error) {
@@ -600,6 +599,8 @@ func (r *Plugin) reserveScheduledExecutor(
 		select {
 		case <-r.shutdownCh:
 			return nil, nil, fmt.Errorf("plugin is shutting down")
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
 		default:
 		}
 
@@ -609,8 +610,8 @@ func (r *Plugin) reserveScheduledExecutor(
 
 		executors, err := r.registry.ListExecutors(jobType)
 		if err != nil {
-			if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
-				return nil, nil, fmt.Errorf("plugin is shutting down")
+			if !waitForShutdownOrCtx(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+				return nil, nil, fmt.Errorf("plugin is shutting down or context canceled")
 			}
 			continue
 		}
@@ -623,8 +624,8 @@ func (r *Plugin) reserveScheduledExecutor(
 			return executor, release, nil
 		}
 
-		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
-			return nil, nil, fmt.Errorf("plugin is shutting down")
+		if !waitForShutdownOrCtx(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+			return nil, nil, fmt.Errorf("plugin is shutting down or context canceled")
 		}
 	}
 }
@@ -886,6 +887,24 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 
 	select {
 	case <-shutdown:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func waitForShutdownOrCtx(shutdown <-chan struct{}, ctx context.Context, duration time.Duration) bool {
+	if duration <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-shutdown:
+		return false
+	case <-ctx.Done():
 		return false
 	case <-timer.C:
 		return true
