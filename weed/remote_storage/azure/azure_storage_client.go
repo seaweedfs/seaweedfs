@@ -315,6 +315,10 @@ func (az *azureRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocat
 	return
 }
 
+func (az *azureRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation) ([]*remote_storage.RemoteListing, error) {
+	return nil, nil
+}
+
 func (az *azureRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	pager := az.client.NewListContainersPager(nil)
 

@@ -73,6 +73,16 @@ type Bucket struct {
 // ErrRemoteObjectNotFound is returned by StatFile when the object does not exist in the remote storage backend.
 var ErrRemoteObjectNotFound = errors.New("remote object not found")
 
+// RemoteListing represents a single entry returned by ListDirectory.
+type RemoteListing struct {
+	Name        string
+	IsDirectory bool
+	Size        int64
+	Mtime       int64
+	ETag        string
+	StorageName string
+}
+
 type RemoteStorageClient interface {
 	Traverse(loc *remote_pb.RemoteStorageLocation, visitFn VisitFunc) error
 	StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error)
@@ -85,6 +95,9 @@ type RemoteStorageClient interface {
 	ListBuckets() ([]*Bucket, error)
 	CreateBucket(name string) (err error)
 	DeleteBucket(name string) (err error)
+	// ListDirectory returns a single-level listing of the given remote directory.
+	// Returns nil, nil if the backend does not support efficient single-level listing.
+	ListDirectory(loc *remote_pb.RemoteStorageLocation) ([]*RemoteListing, error)
 }
 
 type RemoteStorageClientMaker interface {

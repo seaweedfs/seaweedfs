@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -265,6 +266,42 @@ func (s *s3RemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation)
 		Key:    aws.String(loc.Path[1:]),
 	})
 	return
+}
+
+func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation) ([]*remote_storage.RemoteListing, error) {
+	prefix := loc.Path[1:] // strip leading /
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	input := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(loc.Bucket),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
+	}
+	var results []*remote_storage.RemoteListing
+	err := s.conn.ListObjectsV2Pages(input, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		for _, cp := range page.CommonPrefixes {
+			name := strings.TrimPrefix(*cp.Prefix, prefix)
+			name = strings.TrimSuffix(name, "/")
+			if name != "" {
+				results = append(results, &remote_storage.RemoteListing{
+					Name: name, IsDirectory: true, StorageName: s.conf.Name,
+				})
+			}
+		}
+		for _, obj := range page.Contents {
+			name := strings.TrimPrefix(*obj.Key, prefix)
+			if name == "" {
+				continue
+			}
+			results = append(results, &remote_storage.RemoteListing{
+				Name: name, Size: *obj.Size, Mtime: obj.LastModified.Unix(),
+				ETag: *obj.ETag, StorageName: s.conf.Name,
+			})
+		}
+		return true
+	})
+	return results, err
 }
 
 func (s *s3RemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
