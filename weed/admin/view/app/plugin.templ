@@ -120,7 +120,7 @@ templ Plugin(page string) {
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
-                            <small class="text-muted">Per job type detection schedule and execution limits</small>
+                            <small class="text-muted">Sequential scheduler with per-job runtime limits</small>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -131,12 +131,12 @@ templ Plugin(page string) {
                                             <th>Enabled</th>
                                             <th>Detector</th>
                                             <th>In Flight</th>
-                                            <th>Next Detection</th>
-                                            <th>Interval</th>
+                                            <th>Max Runtime</th>
                                             <th>Exec Global</th>
                                             <th>Exec/Worker</th>
                                             <th>Executor Workers</th>
                                             <th>Effective Exec</th>
+                                            <th>Last Run</th>
                                         </tr>
                                     </thead>
                                     <tbody id="plugin-scheduler-table-body">
@@ -243,12 +243,12 @@ templ Plugin(page string) {
                                     </div>
                                 </div>
                                 <div class="col-12">
-                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
-                                    <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
-                                </div>
-                                <div class="col-12">
                                     <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-max-runtime">Job Type Max Runtime (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-max-runtime" min="0"/>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label" for="plugin-admin-max-results">Max Jobs / Detection</label>
@@ -271,6 +271,21 @@ templ Plugin(page string) {
                                     <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm mt-3">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler Settings</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label" for="plugin-scheduler-idle-sleep">Idle Sleep (s)</label>
+                                <input type="number" class="form-control" id="plugin-scheduler-idle-sleep" min="0"/>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn">
+                                <i class="fas fa-save me-1"></i>Save Scheduler Settings
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -572,6 +587,8 @@ templ Plugin(page string) {
                 jobs: [],
                 activities: [],
                 schedulerStates: [],
+                schedulerConfig: null,
+                schedulerConfigLoaded: false,
                 allJobs: [],
                 allActivities: [],
                 loadedJobType: '',
@@ -1442,8 +1459,8 @@ templ Plugin(page string) {
                     var enabled = !!item.enabled;
                     var inFlight = !!item.detection_in_flight;
                     var detector = item.detector_available ? textOrDash(item.detector_worker_id) : 'No detector';
-                    var intervalSeconds = Number(item.detection_interval_seconds || 0);
-                    var intervalText = intervalSeconds > 0 ? (String(intervalSeconds) + 's') : '-';
+                    var maxRuntimeSeconds = Number(item.job_type_max_runtime_seconds || 0);
+                    var maxRuntimeText = maxRuntimeSeconds > 0 ? (String(maxRuntimeSeconds) + 's') : '-';
                     var globalExec = Number(item.global_execution_concurrency || 0);
                     var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
                     var executorWorkers = Number(item.executor_worker_count || 0);
@@ -1452,6 +1469,13 @@ templ Plugin(page string) {
                     var perWorkerExecText = enabled ? String(perWorkerExec) : '-';
                     var executorWorkersText = enabled ? String(executorWorkers) : '-';
                     var effectiveExecText = enabled ? String(effectiveExec) : '-';
+                    var lastRunStatus = textOrDash(item.last_run_status);
+                    var lastRunTime = parseTime(item.last_run_completed_at);
+                    var lastRunText = '-';
+                    if (lastRunStatus !== '-' || lastRunTime) {
+                        var statusLabel = lastRunStatus !== '-' ? lastRunStatus : 'run';
+                        lastRunText = lastRunTime ? (statusLabel + ' @ ' + lastRunTime) : statusLabel;
+                    }
 
                     var enabledBadge = enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>';
                     var inFlightBadge = inFlight ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="badge bg-light text-dark">No</span>';
@@ -1465,12 +1489,12 @@ templ Plugin(page string) {
                         '<td>' + enabledBadge + '</td>' +
                         '<td><small>' + escapeHtml(detector) + '</small></td>' +
                         '<td>' + inFlightBadge + '</td>' +
-                        '<td><small>' + escapeHtml(parseTime(item.next_detection_at) || '-') + '</small></td>' +
-                        '<td><small>' + escapeHtml(intervalText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(maxRuntimeText) + '</small></td>' +
                         '<td><small>' + escapeHtml(globalExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(perWorkerExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(executorWorkersText) + '</small></td>' +
                         '<td><small>' + escapeHtml(effectiveExecText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(lastRunText) + '</small></td>' +
                         '</tr>';
                 }
 
@@ -2372,8 +2396,8 @@ templ Plugin(page string) {
                 }
 
                 document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
-                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
                 document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
+                document.getElementById('plugin-admin-max-runtime').value = String(pickNumber('job_type_max_runtime_seconds'));
                 document.getElementById('plugin-admin-max-results').value = String(pickNumber('max_jobs_per_detection'));
                 document.getElementById('plugin-admin-global-exec').value = String(pickNumber('global_execution_concurrency'));
                 document.getElementById('plugin-admin-per-worker-exec').value = String(pickNumber('per_worker_execution_concurrency'));
@@ -2396,8 +2420,8 @@ templ Plugin(page string) {
 
                 return {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
-                    detection_interval_seconds: getInt('plugin-admin-detection-interval'),
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
+                    job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),
                     max_jobs_per_detection: getInt('plugin-admin-max-results'),
                     global_execution_concurrency: getInt('plugin-admin-global-exec'),
                     per_worker_execution_concurrency: getInt('plugin-admin-per-worker-exec'),
@@ -2713,6 +2737,50 @@ templ Plugin(page string) {
                 }
             }
 
+            async function loadSchedulerConfig(forceRefresh) {
+                if (state.schedulerConfigLoaded && !forceRefresh) {
+                    return;
+                }
+                var idleInput = document.getElementById('plugin-scheduler-idle-sleep');
+                if (!idleInput) {
+                    return;
+                }
+                try {
+                    var cfg = await pluginRequest('GET', '/api/plugin/scheduler-config');
+                    state.schedulerConfig = cfg || {};
+                    state.schedulerConfigLoaded = true;
+                    var idleSeconds = Number((cfg && cfg.idle_sleep_seconds) || 0);
+                    idleInput.value = idleSeconds > 0 ? String(idleSeconds) : '';
+                } catch (e) {
+                    notify('Failed to load scheduler config: ' + e.message, 'error');
+                }
+            }
+
+            async function saveSchedulerConfig() {
+                var idleInput = document.getElementById('plugin-scheduler-idle-sleep');
+                if (!idleInput) {
+                    return;
+                }
+                var raw = String(idleInput.value || '').trim();
+                var parsed = raw ? parseInt(raw, 10) : 0;
+                if (Number.isNaN(parsed) || parsed < 0) {
+                    notify('Invalid idle sleep value', 'error');
+                    return;
+                }
+                try {
+                    var updated = await pluginRequest('PUT', '/api/plugin/scheduler-config', {
+                        idle_sleep_seconds: parsed,
+                    });
+                    state.schedulerConfig = updated || {};
+                    state.schedulerConfigLoaded = true;
+                    var idleSeconds = Number((updated && updated.idle_sleep_seconds) || 0);
+                    idleInput.value = idleSeconds > 0 ? String(idleSeconds) : '';
+                    notify('Scheduler settings saved', 'success');
+                } catch (e) {
+                    notify('Failed to save scheduler config: ' + e.message, 'error');
+                }
+            }
+
             function getMaxResults() {
                 var raw = String(document.getElementById('plugin-admin-max-results').value || '').trim();
                 if (!raw) {
@@ -2880,6 +2948,13 @@ templ Plugin(page string) {
                     saveConfig();
                 });
 
+                var saveSchedulerBtn = document.getElementById('plugin-save-scheduler-btn');
+                if (saveSchedulerBtn) {
+                    saveSchedulerBtn.addEventListener('click', function() {
+                        saveSchedulerConfig();
+                    });
+                }
+
                 document.getElementById('plugin-trigger-detection-btn').addEventListener('click', function() {
                     runDetection();
                 });
@@ -2964,6 +3039,7 @@ templ Plugin(page string) {
                 ensureActiveNavigation();
                 renderNavigationState();
                 await refreshAll();
+                await loadSchedulerConfig(false);
 
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
