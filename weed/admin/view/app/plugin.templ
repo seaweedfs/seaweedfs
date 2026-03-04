@@ -119,8 +119,38 @@ templ Plugin(page string) {
                 <div class="col-12">
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <h5 class="mb-0"><i class="fas fa-sync-alt me-2"></i>Scheduler Iteration</h5>
+                            <small class="text-muted">Current iteration phase and timing</small>
+                        </div>
+                        <div class="card-body" id="plugin-scheduler-iteration-card">
+                            <div class="row g-3">
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="small text-muted">Phase</div>
+                                    <div class="fw-semibold" id="plugin-scheduler-phase">-</div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="small text-muted">Current Job Type</div>
+                                    <div class="fw-semibold" id="plugin-scheduler-current-jt">-</div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="small text-muted">Idle Sleep</div>
+                                    <div class="fw-semibold" id="plugin-scheduler-idle-sleep">-</div>
+                                </div>
+                                <div class="col-md-3 col-sm-6">
+                                    <div class="small text-muted">Last Iteration</div>
+                                    <div class="fw-semibold" id="plugin-scheduler-last-iteration">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
-                            <small class="text-muted">Per job type detection schedule and execution limits</small>
+                            <small class="text-muted">Per job type execution limits and status</small>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -130,9 +160,8 @@ templ Plugin(page string) {
                                             <th>Job Type</th>
                                             <th>Enabled</th>
                                             <th>Detector</th>
-                                            <th>In Flight</th>
-                                            <th>Next Detection</th>
-                                            <th>Interval</th>
+                                            <th>Status</th>
+                                            <th>Max Duration</th>
                                             <th>Exec Global</th>
                                             <th>Exec/Worker</th>
                                             <th>Executor Workers</th>
@@ -140,7 +169,7 @@ templ Plugin(page string) {
                                         </tr>
                                     </thead>
                                     <tbody id="plugin-scheduler-table-body">
-                                        <tr><td colspan="10" class="text-muted text-center py-3">Loading...</td></tr>
+                                        <tr><td colspan="9" class="text-muted text-center py-3">Loading...</td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -1432,7 +1461,7 @@ templ Plugin(page string) {
 
                 var states = Array.isArray(state.schedulerStates) ? state.schedulerStates : [];
                 if (!states.length) {
-                    tbody.innerHTML = '<tr><td colspan="10" class="text-muted text-center py-3">No scheduler state available</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" class="text-muted text-center py-3">No scheduler state available</td></tr>';
                     return;
                 }
 
@@ -1442,8 +1471,8 @@ templ Plugin(page string) {
                     var enabled = !!item.enabled;
                     var inFlight = !!item.detection_in_flight;
                     var detector = item.detector_available ? textOrDash(item.detector_worker_id) : 'No detector';
-                    var intervalSeconds = Number(item.detection_interval_seconds || 0);
-                    var intervalText = intervalSeconds > 0 ? (String(intervalSeconds) + 's') : '-';
+                    var maxDurationSeconds = Number(item.max_job_type_duration_seconds || 0);
+                    var maxDurationText = maxDurationSeconds > 0 ? (String(Math.round(maxDurationSeconds / 60)) + 'm') : '-';
                     var globalExec = Number(item.global_execution_concurrency || 0);
                     var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
                     var executorWorkers = Number(item.executor_worker_count || 0);
@@ -1454,7 +1483,7 @@ templ Plugin(page string) {
                     var effectiveExecText = enabled ? String(effectiveExec) : '-';
 
                     var enabledBadge = enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>';
-                    var inFlightBadge = inFlight ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="badge bg-light text-dark">No</span>';
+                    var statusBadge = inFlight ? '<span class="badge bg-warning text-dark">Processing</span>' : '<span class="badge bg-light text-dark">Idle</span>';
                     var policyErrorHtml = '';
                     if (item.policy_error) {
                         policyErrorHtml = '<div><small class="text-danger">' + escapeHtml(String(item.policy_error)) + '</small></div>';
@@ -1464,9 +1493,8 @@ templ Plugin(page string) {
                         '<td>' + escapeHtml(textOrDash(item.job_type)) + policyErrorHtml + '</td>' +
                         '<td>' + enabledBadge + '</td>' +
                         '<td><small>' + escapeHtml(detector) + '</small></td>' +
-                        '<td>' + inFlightBadge + '</td>' +
-                        '<td><small>' + escapeHtml(parseTime(item.next_detection_at) || '-') + '</small></td>' +
-                        '<td><small>' + escapeHtml(intervalText) + '</small></td>' +
+                        '<td>' + statusBadge + '</td>' +
+                        '<td><small>' + escapeHtml(maxDurationText) + '</small></td>' +
                         '<td><small>' + escapeHtml(globalExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(perWorkerExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(executorWorkersText) + '</small></td>' +
@@ -2780,6 +2808,37 @@ templ Plugin(page string) {
                 }
             }
 
+            function renderSchedulerIterationStatus(schedulerStatus) {
+                var phaseEl = document.getElementById('plugin-scheduler-phase');
+                var currentJtEl = document.getElementById('plugin-scheduler-current-jt');
+                var idleSleepEl = document.getElementById('plugin-scheduler-idle-sleep');
+                var lastIterEl = document.getElementById('plugin-scheduler-last-iteration');
+                if (!phaseEl) {
+                    return;
+                }
+
+                var sched = (schedulerStatus && schedulerStatus.scheduler) ? schedulerStatus.scheduler : {};
+                var phase = String(sched.phase || 'unknown');
+                var phaseColors = { idle: 'bg-secondary', acquiring_lock: 'bg-info', processing: 'bg-primary' };
+                var phaseColor = phaseColors[phase] || 'bg-dark';
+                phaseEl.innerHTML = '<span class="badge ' + phaseColor + '">' + escapeHtml(phase) + '</span>';
+                currentJtEl.textContent = sched.current_job_type || '-';
+
+                var idleSleep = Number(sched.idle_sleep_seconds || 0);
+                idleSleepEl.textContent = idleSleep > 0 ? (String(Math.round(idleSleep / 60)) + ' min') : '-';
+
+                var lastEnded = parseTime(sched.last_iteration_ended_at);
+                var workDetected = !!sched.last_iteration_work_detected;
+                if (lastEnded) {
+                    var workBadge = workDetected
+                        ? '<span class="badge bg-success ms-1">work found</span>'
+                        : '<span class="badge bg-light text-dark ms-1">no work</span>';
+                    lastIterEl.innerHTML = '<small>' + escapeHtml(lastEnded) + '</small>' + workBadge;
+                } else {
+                    lastIterEl.textContent = '-';
+                }
+            }
+
             async function refreshJobsAndActivities() {
                 var executionStateFilter = document.getElementById('plugin-monitor-job-state-filter');
 
@@ -2788,10 +2847,12 @@ templ Plugin(page string) {
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
                 var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
+                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status');
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
+                var schedulerStatus = await schedulerStatusPromise;
 
                 state.jobs = Array.isArray(allJobs) ? allJobs : [];
                 state.activities = Array.isArray(allActivities) ? allActivities : [];
@@ -2803,6 +2864,7 @@ templ Plugin(page string) {
                 renderExecutionJobs();
                 renderExecutionActivities();
                 renderSchedulerStates();
+                renderSchedulerIterationStatus(schedulerStatus);
                 renderStatus();
                 renderJobTypeSummary();
             }
