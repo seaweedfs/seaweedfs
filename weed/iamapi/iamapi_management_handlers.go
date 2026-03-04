@@ -287,35 +287,39 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
 
+	// Verify the user exists before persisting the policy
+	var targetIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			targetIdent = ident
+			break
+		}
+	}
+	if targetIdent == nil {
+		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
+	}
+
 	// Persist inline policy to storage using per-user indexed structure
 	policies := Policies{}
 	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Get or create user's policy map
 	userPolicies := policies.getOrCreateUserPolicies(userName)
 	userPolicies[policyName] = policyDocument
-	// policies.InlinePolicies[userName] now contains the updated map
 
 	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Find the target identity and recompute aggregated actions (inline + managed)
-	for _, ident := range s3cfg.Identities {
-		if userName != ident.Name {
-			continue
-		}
-		aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, ident)
-		if computeErr != nil {
-			glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
-			aggregatedActions = actions // Fall back to current policy's actions
-		}
-		ident.Actions = aggregatedActions
-		return resp, nil
+	// Recompute aggregated actions (inline + managed)
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
+	if computeErr != nil {
+		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
+		aggregatedActions = actions // Fall back to current policy's actions
 	}
-	return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
+	targetIdent.Actions = aggregatedActions
+	return resp, nil
 }
 
 func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err *IamError) {
