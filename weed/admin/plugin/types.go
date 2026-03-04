@@ -90,6 +90,7 @@ type SchedulerJobTypeState struct {
 	DetectionIntervalSeconds      int32      `json:"detection_interval_seconds,omitempty"`
 	DetectionTimeoutSeconds       int32      `json:"detection_timeout_seconds,omitempty"`
 	ExecutionTimeoutSeconds       int32      `json:"execution_timeout_seconds,omitempty"`
+	JobTypeMaxRuntimeSeconds      int32      `json:"job_type_max_runtime_seconds,omitempty"`
 	MaxJobsPerDetection           int32      `json:"max_jobs_per_detection,omitempty"`
 	GlobalExecutionConcurrency    int        `json:"global_execution_concurrency,omitempty"`
 	PerWorkerExecutionConcurrency int        `json:"per_worker_execution_concurrency,omitempty"`
@@ -98,6 +99,9 @@ type SchedulerJobTypeState struct {
 	DetectorAvailable             bool       `json:"detector_available"`
 	DetectorWorkerID              string     `json:"detector_worker_id,omitempty"`
 	ExecutorWorkerCount           int        `json:"executor_worker_count"`
+	LastRunStartedAt              *time.Time `json:"last_run_started_at,omitempty"`
+	LastRunCompletedAt            *time.Time `json:"last_run_completed_at,omitempty"`
+	LastRunStatus                 string     `json:"last_run_status,omitempty"`
 }
 
 func timeToPtr(t time.Time) *time.Time {

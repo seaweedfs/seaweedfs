@@ -20,6 +20,7 @@ const (
 	defaultScheduledDetectionInterval          = 300 * time.Second
 	defaultScheduledDetectionTimeout           = 45 * time.Second
 	defaultScheduledExecutionTimeout           = 90 * time.Second
+	defaultScheduledJobTypeMaxRuntime          = 30 * time.Minute
 	defaultScheduledMaxResults           int32 = 1000
 	defaultScheduledExecutionConcurrency       = 1
 	defaultScheduledPerWorkerConcurrency       = 1
@@ -34,6 +35,7 @@ type schedulerPolicy struct {
 	DetectionInterval      time.Duration
 	DetectionTimeout       time.Duration
 	ExecutionTimeout       time.Duration
+	JobTypeMaxRuntime      time.Duration
 	RetryBackoff           time.Duration
 	MaxResults             int32
 	ExecutionConcurrency   int
@@ -44,31 +46,51 @@ type schedulerPolicy struct {
 
 func (r *Plugin) schedulerLoop() {
 	defer r.wg.Done()
-	ticker := time.NewTicker(r.schedulerTick)
-	defer ticker.Stop()
-
-	// Try once immediately on startup.
-	r.runSchedulerTick()
-
 	for {
 		select {
 		case <-r.shutdownCh:
 			return
-		case <-ticker.C:
-			r.runSchedulerTick()
+		default:
+		}
+
+		hadJobs := r.runSchedulerIteration()
+		r.recordSchedulerIterationComplete(hadJobs)
+
+		if hadJobs {
+			continue
+		}
+
+		r.setSchedulerLoopState("", "sleeping")
+		idleSleep := r.GetSchedulerConfig().IdleSleepDuration()
+		if !waitForShutdownOrTimer(r.shutdownCh, idleSleep) {
+			return
 		}
 	}
 }
 
-func (r *Plugin) runSchedulerTick() {
+func (r *Plugin) runSchedulerIteration() bool {
 	r.expireStaleJobs(time.Now().UTC())
 
 	jobTypes := r.registry.DetectableJobTypes()
 	if len(jobTypes) == 0 {
-		return
+		r.setSchedulerLoopState("", "idle")
+		return false
+	}
+
+	r.setSchedulerLoopState("", "waiting_for_lock")
+	releaseLock, err := r.acquireAdminLock("plugin scheduler iteration")
+	if err != nil {
+		glog.Warningf("Plugin scheduler failed to acquire lock: %v", err)
+		r.setSchedulerLoopState("", "idle")
+		return false
+	}
+	if releaseLock != nil {
+		defer releaseLock()
 	}
 
 	active := make(map[string]struct{}, len(jobTypes))
+	hadJobs := false
+
 	for _, jobType := range jobTypes {
 		active[jobType] = struct{}{}
 
@@ -82,19 +104,180 @@ func (r *Plugin) runSchedulerTick() {
 			continue
 		}
 
-		if !r.markDetectionDue(jobType, policy.DetectionInterval) {
-			continue
+		detected := r.runJobTypeIteration(jobType, policy)
+		if detected {
+			hadJobs = true
 		}
-
-		r.wg.Add(1)
-		go func(jt string, p schedulerPolicy) {
-			defer r.wg.Done()
-			r.runScheduledDetection(jt, p)
-		}(jobType, policy)
 	}
 
 	r.pruneSchedulerState(active)
 	r.pruneDetectorLeases(active)
+	r.setSchedulerLoopState("", "idle")
+	return hadJobs
+}
+
+func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {
+	r.recordSchedulerRunStart(jobType)
+	r.setSchedulerLoopState(jobType, "detecting")
+	r.markJobTypeInFlight(jobType)
+	defer r.finishDetection(jobType)
+
+	start := time.Now().UTC()
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		Source:     "admin_scheduler",
+		Message:    "scheduled detection started",
+		Stage:      "detecting",
+		OccurredAt: timeToPtr(start),
+	})
+
+	maxRuntime := policy.JobTypeMaxRuntime
+	if maxRuntime <= 0 {
+		maxRuntime = defaultScheduledJobTypeMaxRuntime
+	}
+	jobCtx, cancel := context.WithTimeout(context.Background(), maxRuntime)
+	defer cancel()
+
+	clusterContext, err := r.loadSchedulerClusterContext()
+	if err != nil {
+		r.recordSchedulerDetectionError(jobType, err)
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection aborted: %v", err),
+			Stage:      "failed",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		r.recordSchedulerRunComplete(jobType, "error")
+		return false
+	}
+
+	detectionTimeout := policy.DetectionTimeout
+	remaining := time.Until(start.Add(maxRuntime))
+	if remaining <= 0 {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    "scheduled run timed out before detection",
+			Stage:      "timeout",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		r.recordSchedulerRunComplete(jobType, "timeout")
+		return false
+	}
+	if detectionTimeout <= 0 {
+		detectionTimeout = defaultScheduledDetectionTimeout
+	}
+	if detectionTimeout > remaining {
+		detectionTimeout = remaining
+	}
+
+	detectCtx, cancelDetect := context.WithTimeout(jobCtx, detectionTimeout)
+	proposals, err := r.RunDetection(detectCtx, jobType, clusterContext, policy.MaxResults)
+	cancelDetect()
+	if err != nil {
+		r.recordSchedulerDetectionError(jobType, err)
+		stage := "failed"
+		status := "error"
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			stage = "timeout"
+			status = "timeout"
+		}
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection failed: %v", err),
+			Stage:      stage,
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		r.recordSchedulerRunComplete(jobType, status)
+		return false
+	}
+
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		Source:     "admin_scheduler",
+		Message:    fmt.Sprintf("scheduled detection completed: %d proposal(s)", len(proposals)),
+		Stage:      "detected",
+		OccurredAt: timeToPtr(time.Now().UTC()),
+	})
+	r.recordSchedulerDetectionSuccess(jobType, len(proposals))
+
+	detected := len(proposals) > 0
+
+	filteredByActive, skippedActive := r.filterProposalsWithActiveJobs(jobType, proposals)
+	if skippedActive > 0 {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection skipped %d proposal(s) due to active assigned/running jobs", skippedActive),
+			Stage:      "deduped_active_jobs",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+	}
+
+	if len(filteredByActive) == 0 {
+		r.recordSchedulerRunComplete(jobType, "success")
+		return detected
+	}
+
+	filtered := r.filterScheduledProposals(filteredByActive)
+	if len(filtered) != len(filteredByActive) {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection deduped %d proposal(s) within this run", len(filteredByActive)-len(filtered)),
+			Stage:      "deduped",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+	}
+
+	if len(filtered) == 0 {
+		r.recordSchedulerRunComplete(jobType, "success")
+		return detected
+	}
+
+	r.setSchedulerLoopState(jobType, "executing")
+
+	remaining = time.Until(start.Add(maxRuntime))
+	if remaining <= 0 {
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    "scheduled execution skipped: job type max runtime reached",
+			Stage:      "timeout",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		r.recordSchedulerRunComplete(jobType, "timeout")
+		return detected
+	}
+
+	execPolicy := policy
+	if execPolicy.ExecutionTimeout <= 0 {
+		execPolicy.ExecutionTimeout = defaultScheduledExecutionTimeout
+	}
+	if execPolicy.ExecutionTimeout > remaining {
+		execPolicy.ExecutionTimeout = remaining
+	}
+
+	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(jobCtx, jobType, filtered, clusterContext, execPolicy)
+
+	status := "success"
+	if jobCtx.Err() != nil {
+		status = "timeout"
+	} else if errorCount > 0 || canceledCount > 0 {
+		status = "error"
+	}
+
+	r.appendActivity(JobActivity{
+		JobType:    jobType,
+		Source:     "admin_scheduler",
+		Message:    fmt.Sprintf("scheduled execution finished: success=%d error=%d canceled=%d", successCount, errorCount, canceledCount),
+		Stage:      "executed",
+		OccurredAt: timeToPtr(time.Now().UTC()),
+	})
+	r.recordSchedulerRunComplete(jobType, status)
+	return detected
 }
 
 func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, error) {
@@ -119,6 +302,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
 		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
 		ExecutionTimeout:       defaultScheduledExecutionTimeout,
+		JobTypeMaxRuntime:      durationFromSeconds(adminRuntime.JobTypeMaxRuntimeSeconds, defaultScheduledJobTypeMaxRuntime),
 		RetryBackoff:           durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
 		MaxResults:             adminRuntime.MaxJobsPerDetection,
 		ExecutionConcurrency:   int(adminRuntime.GlobalExecutionConcurrency),
@@ -147,6 +331,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 	}
 	if policy.RetryLimit < 0 {
 		policy.RetryLimit = 0
+	}
+	if policy.JobTypeMaxRuntime <= 0 {
+		policy.JobTypeMaxRuntime = defaultScheduledJobTypeMaxRuntime
 	}
 
 	// Plugin protocol currently has only detection timeout in admin settings.
@@ -199,12 +386,26 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 				state.DetectionIntervalSeconds = secondsFromDuration(policy.DetectionInterval)
 				state.DetectionTimeoutSeconds = secondsFromDuration(policy.DetectionTimeout)
 				state.ExecutionTimeoutSeconds = secondsFromDuration(policy.ExecutionTimeout)
+				state.JobTypeMaxRuntimeSeconds = secondsFromDuration(policy.JobTypeMaxRuntime)
 				state.MaxJobsPerDetection = policy.MaxResults
 				state.GlobalExecutionConcurrency = policy.ExecutionConcurrency
 				state.PerWorkerExecutionConcurrency = policy.PerWorkerConcurrency
 				state.RetryLimit = policy.RetryLimit
 				state.RetryBackoffSeconds = secondsFromDuration(policy.RetryBackoff)
 			}
+		}
+
+		runInfo := r.snapshotSchedulerRun(jobType)
+		if !runInfo.lastRunStartedAt.IsZero() {
+			at := runInfo.lastRunStartedAt
+			state.LastRunStartedAt = &at
+		}
+		if !runInfo.lastRunCompletedAt.IsZero() {
+			at := runInfo.lastRunCompletedAt
+			state.LastRunCompletedAt = &at
+		}
+		if runInfo.lastRunStatus != "" {
+			state.LastRunStatus = runInfo.lastRunStatus
 		}
 
 		leasedWorkerID := r.getDetectorLease(jobType)
@@ -258,6 +459,7 @@ func deriveSchedulerAdminRuntime(
 		PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
 		RetryLimit:                    defaults.RetryLimit,
 		RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+		JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
 	}
 }
 
@@ -279,6 +481,12 @@ func (r *Plugin) markDetectionDue(jobType string, interval time.Duration) bool {
 	r.nextDetectionAt[jobType] = now.Add(interval)
 	r.detectionInFlight[jobType] = true
 	return true
+}
+
+func (r *Plugin) markJobTypeInFlight(jobType string) {
+	r.schedulerMu.Lock()
+	r.detectionInFlight[jobType] = true
+	r.schedulerMu.Unlock()
 }
 
 func (r *Plugin) finishDetection(jobType string) {
@@ -425,7 +633,7 @@ func (r *Plugin) runScheduledDetection(jobType string, policy schedulerPolicy) {
 		return
 	}
 
-	r.dispatchScheduledProposals(jobType, filtered, clusterContext, policy)
+	r.dispatchScheduledProposals(context.Background(), jobType, filtered, clusterContext, policy)
 }
 
 func (r *Plugin) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error) {
@@ -447,11 +655,16 @@ func (r *Plugin) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error
 }
 
 func (r *Plugin) dispatchScheduledProposals(
+	ctx context.Context,
 	jobType string,
 	proposals []*plugin_pb.JobProposal,
 	clusterContext *plugin_pb.ClusterContext,
 	policy schedulerPolicy,
-) {
+) (int, int, int) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	jobQueue := make(chan *plugin_pb.JobSpec, len(proposals))
 	for index, proposal := range proposals {
 		job := buildScheduledJobSpec(jobType, proposal, index)
@@ -459,7 +672,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		select {
 		case <-r.shutdownCh:
 			close(jobQueue)
-			return
+			return 0, 0, 0
 		default:
 			jobQueue <- job
 		}
@@ -470,6 +683,7 @@ func (r *Plugin) dispatchScheduledProposals(
 	var statsMu sync.Mutex
 	successCount := 0
 	errorCount := 0
+	canceledCount := 0
 
 	workerCount := policy.ExecutionConcurrency
 	if workerCount < 1 {
@@ -488,19 +702,36 @@ func (r *Plugin) dispatchScheduledProposals(
 				default:
 				}
 
+				if ctx.Err() != nil {
+					r.cancelQueuedJob(job, ctx.Err())
+					statsMu.Lock()
+					canceledCount++
+					statsMu.Unlock()
+					return
+				}
+
 				for {
 					select {
 					case <-r.shutdownCh:
 						return
 					default:
 					}
+					if ctx.Err() != nil {
+						r.cancelQueuedJob(job, ctx.Err())
+						statsMu.Lock()
+						canceledCount++
+						statsMu.Unlock()
+						return
+					}
 
-					executor, release, reserveErr := r.reserveScheduledExecutor(jobType, policy)
+					executor, release, reserveErr := r.reserveScheduledExecutor(ctx, jobType, policy)
 					if reserveErr != nil {
-						select {
-						case <-r.shutdownCh:
+						if ctx.Err() != nil {
+							r.cancelQueuedJob(job, ctx.Err())
+							statsMu.Lock()
+							canceledCount++
+							statsMu.Unlock()
 							return
-						default:
 						}
 						statsMu.Lock()
 						errorCount++
@@ -515,16 +746,23 @@ func (r *Plugin) dispatchScheduledProposals(
 						break
 					}
 
-					err := r.executeScheduledJobWithExecutor(executor, job, clusterContext, policy)
+					err := r.executeScheduledJobWithExecutor(ctx, executor, job, clusterContext, policy)
 					release()
 					if errors.Is(err, errExecutorAtCapacity) {
 						r.trackExecutionQueued(job)
-						if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+						if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
 							return
 						}
 						continue
 					}
 					if err != nil {
+						if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+							r.cancelQueuedJob(job, err)
+							statsMu.Lock()
+							canceledCount++
+							statsMu.Unlock()
+							return
+						}
 						statsMu.Lock()
 						errorCount++
 						statsMu.Unlock()
@@ -550,22 +788,31 @@ func (r *Plugin) dispatchScheduledProposals(
 
 	wg.Wait()
 
-	r.appendActivity(JobActivity{
-		JobType:    jobType,
-		Source:     "admin_scheduler",
-		Message:    fmt.Sprintf("scheduled execution finished: success=%d error=%d", successCount, errorCount),
-		Stage:      "executed",
-		OccurredAt: timeToPtr(time.Now().UTC()),
-	})
+	if ctx.Err() != nil {
+		for job := range jobQueue {
+			r.cancelQueuedJob(job, ctx.Err())
+			canceledCount++
+		}
+	}
+
+	return successCount, errorCount, canceledCount
 }
 
 func (r *Plugin) reserveScheduledExecutor(
+	ctx context.Context,
 	jobType string,
 	policy schedulerPolicy,
 ) (*WorkerSession, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	deadline := time.Now().Add(policy.ExecutionTimeout)
 	if policy.ExecutionTimeout <= 0 {
 		deadline = time.Now().Add(10 * time.Minute) // Default cap
+	}
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
 	}
 
 	for {
@@ -574,6 +821,9 @@ func (r *Plugin) reserveScheduledExecutor(
 			return nil, nil, fmt.Errorf("plugin is shutting down")
 		default:
 		}
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
 
 		if time.Now().After(deadline) {
 			return nil, nil, fmt.Errorf("timed out waiting for executor capacity for %s", jobType)
@@ -581,7 +831,10 @@ func (r *Plugin) reserveScheduledExecutor(
 
 		executors, err := r.registry.ListExecutors(jobType)
 		if err != nil {
-			if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+			if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+				if ctx.Err() != nil {
+					return nil, nil, ctx.Err()
+				}
 				return nil, nil, fmt.Errorf("plugin is shutting down")
 			}
 			continue
@@ -595,7 +848,10 @@ func (r *Plugin) reserveScheduledExecutor(
 			return executor, release, nil
 		}
 
-		if !waitForShutdownOrTimer(r.shutdownCh, policy.ExecutorReserveBackoff) {
+		if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
 			return nil, nil, fmt.Errorf("plugin is shutting down")
 		}
 	}
@@ -680,6 +936,7 @@ func schedulerWorkerExecutionLimit(executor *WorkerSession, jobType string, poli
 }
 
 func (r *Plugin) executeScheduledJobWithExecutor(
+	ctx context.Context,
 	executor *WorkerSession,
 	job *plugin_pb.JobSpec,
 	clusterContext *plugin_pb.ClusterContext,
@@ -697,8 +954,15 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 			return fmt.Errorf("plugin is shutting down")
 		default:
 		}
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 
-		execCtx, cancel := context.WithTimeout(context.Background(), policy.ExecutionTimeout)
+		parent := ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		execCtx, cancel := context.WithTimeout(parent, policy.ExecutionTimeout)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {
@@ -855,6 +1119,27 @@ func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bo
 
 	select {
 	case <-shutdown:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func waitForShutdownOrTimerWithContext(shutdown <-chan struct{}, ctx context.Context, duration time.Duration) bool {
+	if duration <= 0 {
+		return true
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-shutdown:
+		return false
+	case <-ctx.Done():
 		return false
 	case <-timer.C:
 		return true
