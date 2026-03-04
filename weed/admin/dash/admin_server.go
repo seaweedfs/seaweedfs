@@ -99,6 +99,7 @@ type AdminServer struct {
 	maintenanceManager *maintenance.MaintenanceManager
 	plugin             *adminplugin.Plugin
 	pluginLock         *AdminLockManager
+	adminPresenceLock  *adminPresenceLock
 	expireJobHandler   func(jobID string, reason string) (*adminplugin.TrackedJob, bool, error)
 
 	// Topic retention purger
@@ -137,6 +138,10 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	go masterClient.KeepConnectedToMaster(ctx)
 
 	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
+	presenceLock := newAdminPresenceLock(masterClient)
+	if presenceLock != nil {
+		presenceLock.Start()
+	}
 
 	server := &AdminServer{
 		masterClient:                  masterClient,
@@ -150,6 +155,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
 		pluginLock:                    lockManager,
+		adminPresenceLock:             presenceLock,
 	}
 
 	// Initialize topic retention purger
@@ -1286,6 +1292,9 @@ func (s *AdminServer) Shutdown() {
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+	if s.adminPresenceLock != nil {
+		s.adminPresenceLock.Stop()
+	}
 
 	if s.plugin != nil {
 		s.plugin.Shutdown()
