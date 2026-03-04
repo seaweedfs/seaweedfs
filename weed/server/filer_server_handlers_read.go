@@ -96,6 +96,17 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
+			// If this is a directory request under a remote mount, the directory
+			// entry may not exist locally but remote files may exist underneath it.
+			// Proceed to directory listing so hybrid listing can query the remote.
+			if isForDirectory && fs.filer.RemoteStorage != nil {
+				_, remoteLoc := fs.filer.RemoteStorage.FindMountDirectory(util.FullPath(path + "/"))
+				if remoteLoc != nil {
+					glog.V(1).InfofCtx(ctx, "directory %s not found locally but is under remote mount, attempting listing", path)
+					fs.listDirectoryHandler(w, r)
+					return
+				}
+			}
 			glog.V(2).InfofCtx(ctx, "Not found %s: %v", path, err)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
 			w.WriteHeader(http.StatusNotFound)
