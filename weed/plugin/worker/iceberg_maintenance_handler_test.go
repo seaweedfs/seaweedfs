@@ -1,6 +1,9 @@
 package pluginworker
 
 import (
+	"bytes"
+	"fmt"
+	"path"
 	"testing"
 	"time"
 
@@ -210,6 +213,63 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 	}
 	if readStringConfig(proposal.Parameters, "filer_address", "") != "localhost:8888" {
 		t.Error("expected filer_address=localhost:8888 in parameters")
+	}
+}
+
+func TestManifestRewritePathConsistency(t *testing.T) {
+	// Verify that WriteManifest returns a ManifestFile whose FilePath()
+	// matches the path we pass in. This ensures the pattern used in
+	// rewriteManifests (compute filename once, pass to both WriteManifest
+	// and saveFilerFile) produces consistent references.
+	schema := newTestSchema()
+	spec := *iceberg.UnpartitionedSpec
+
+	snapshotID := int64(42)
+	manifestFileName := fmt.Sprintf("merged-%d-%d.avro", snapshotID, int64(1700000000000))
+	manifestPath := "metadata/" + manifestFileName
+
+	// Create a minimal manifest entry to write
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		spec,
+		iceberg.EntryContentData,
+		"data/test.parquet",
+		iceberg.ParquetFile,
+		map[int]any{},
+		nil, nil,
+		1,    // recordCount
+		1024, // fileSizeBytes
+	)
+	if err != nil {
+		t.Fatalf("failed to build data file: %v", err)
+	}
+	entry := iceberg.NewManifestEntry(
+		iceberg.EntryStatusADDED,
+		&snapshotID,
+		nil, nil,
+		dfBuilder.Build(),
+	)
+
+	var buf bytes.Buffer
+	mf, err := iceberg.WriteManifest(
+		manifestPath,
+		&buf,
+		2, // version
+		spec,
+		schema,
+		snapshotID,
+		[]iceberg.ManifestEntry{entry},
+	)
+	if err != nil {
+		t.Fatalf("WriteManifest failed: %v", err)
+	}
+
+	if mf.FilePath() != manifestPath {
+		t.Errorf("manifest FilePath() = %q, want %q", mf.FilePath(), manifestPath)
+	}
+
+	// Verify the filename we'd use for saveFilerFile matches
+	if path.Base(mf.FilePath()) != manifestFileName {
+		t.Errorf("manifest base name = %q, want %q", path.Base(mf.FilePath()), manifestFileName)
 	}
 }
 
