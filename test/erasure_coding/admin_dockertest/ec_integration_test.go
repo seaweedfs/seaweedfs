@@ -413,9 +413,9 @@ func TestEcEndToEnd(t *testing.T) {
 			var schedulerStatus map[string]interface{}
 			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-status", &schedulerStatus); err == nil {
 				if schedValue, ok := schedulerStatus["scheduler"].(map[string]interface{}); ok {
-					t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v last_iteration_done_at=%v",
+					t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v last_iteration_done_at=%v next_detection_at=%v",
 						schedValue["current_job_type"], schedValue["current_phase"],
-						schedValue["last_iteration_had_jobs"], schedValue["idle_sleep_seconds"], schedValue["last_iteration_done_at"])
+						schedValue["last_iteration_had_jobs"], schedValue["idle_sleep_seconds"], schedValue["last_iteration_done_at"], schedValue["next_detection_at"])
 				} else {
 					t.Logf("Scheduler status: %v", schedulerStatus)
 				}
