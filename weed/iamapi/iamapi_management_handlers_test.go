@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
@@ -260,4 +261,212 @@ func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	for _, expectedAction := range expectedActions {
 		assert.True(t, actionSet[expectedAction], "Expected action '%s' not found in aggregated actions. Got: %v", expectedAction, aliceIdent.Actions)
 	}
+}
+
+// Helper to create a mock IamApiServer with pre-populated managed policies
+func newTestIamApiServer(policies Policies) *IamApiServer {
+	return &IamApiServer{
+		s3ApiConfig: &mockIamS3ApiConfig{policies: policies},
+	}
+}
+
+func TestGetPolicy(t *testing.T) {
+	policyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	iama := newTestIamApiServer(Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"my-policy": policyDoc},
+	})
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+
+	// Success case
+	values := url.Values{"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"}}
+	resp, iamErr := iama.GetPolicy(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "my-policy", *resp.GetPolicyResult.Policy.PolicyName)
+	assert.Equal(t, "arn:aws:iam:::policy/my-policy", *resp.GetPolicyResult.Policy.Arn)
+
+	// Not found case
+	values = url.Values{"PolicyArn": []string{"arn:aws:iam:::policy/nonexistent"}}
+	_, iamErr = iama.GetPolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+func TestDeletePolicy(t *testing.T) {
+	policyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	mock := &mockIamS3ApiConfig{policies: Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"my-policy": policyDoc},
+	}}
+	iama := &IamApiServer{s3ApiConfig: mock}
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+
+	values := url.Values{"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"}}
+	_, iamErr := iama.DeletePolicy(s3cfg, values)
+	assert.Nil(t, iamErr)
+
+	// Verify deleted
+	_, iamErr = iama.GetPolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+func TestListPolicies(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{}
+
+	// Empty case
+	resp, iamErr := iama.ListPolicies(s3cfg, url.Values{})
+	assert.Nil(t, iamErr)
+	assert.Empty(t, resp.ListPoliciesResult.Policies)
+
+	// Populated case
+	policyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	iama = newTestIamApiServer(Policies{
+		Policies: map[string]policy_engine.PolicyDocument{
+			"policy-a": policyDoc,
+			"policy-b": policyDoc,
+		},
+	})
+
+	resp, iamErr = iama.ListPolicies(s3cfg, url.Values{})
+	assert.Nil(t, iamErr)
+	assert.Equal(t, 2, len(resp.ListPoliciesResult.Policies))
+}
+
+func TestAttachUserPolicy(t *testing.T) {
+	policyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	iama := newTestIamApiServer(Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"my-policy": policyDoc},
+	})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+
+	// Success case
+	values := url.Values{
+		"UserName":  []string{"alice"},
+		"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"},
+	}
+	_, iamErr := iama.AttachUserPolicy(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Contains(t, s3cfg.Identities[0].PolicyNames, "my-policy")
+	// Verify actions were computed from the managed policy
+	assert.Greater(t, len(s3cfg.Identities[0].Actions), 0)
+
+	// Idempotent re-attach
+	_, iamErr = iama.AttachUserPolicy(s3cfg, values)
+	assert.Nil(t, iamErr)
+	// Should still have exactly one entry
+	count := 0
+	for _, name := range s3cfg.Identities[0].PolicyNames {
+		if name == "my-policy" {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count)
+
+	// Policy not found
+	values = url.Values{
+		"UserName":  []string{"alice"},
+		"PolicyArn": []string{"arn:aws:iam:::policy/nonexistent"},
+	}
+	_, iamErr = iama.AttachUserPolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+
+	// User not found
+	values = url.Values{
+		"UserName":  []string{"bob"},
+		"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"},
+	}
+	_, iamErr = iama.AttachUserPolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+func TestDetachUserPolicy(t *testing.T) {
+	policyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	iama := newTestIamApiServer(Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"my-policy": policyDoc},
+	})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice", PolicyNames: []string{"my-policy"}}},
+	}
+
+	values := url.Values{
+		"UserName":  []string{"alice"},
+		"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"},
+	}
+	_, iamErr := iama.DetachUserPolicy(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Empty(t, s3cfg.Identities[0].PolicyNames)
+
+	// Detach again should fail (not attached)
+	_, iamErr = iama.DetachUserPolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+}
+
+func TestListAttachedUserPolicies(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice", PolicyNames: []string{"policy-a", "policy-b"}}},
+	}
+
+	values := url.Values{"UserName": []string{"alice"}}
+	resp, iamErr := iama.ListAttachedUserPolicies(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, 2, len(resp.ListAttachedUserPoliciesResult.AttachedPolicies))
+	assert.Equal(t, "policy-a", *resp.ListAttachedUserPoliciesResult.AttachedPolicies[0].PolicyName)
+	assert.Equal(t, "arn:aws:iam:::policy/policy-a", *resp.ListAttachedUserPoliciesResult.AttachedPolicies[0].PolicyArn)
+
+	// User not found
+	values = url.Values{"UserName": []string{"bob"}}
+	_, iamErr = iama.ListAttachedUserPolicies(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
 }
