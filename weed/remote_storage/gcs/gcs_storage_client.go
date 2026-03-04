@@ -234,6 +234,10 @@ func (gcs *gcsRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocati
 	return
 }
 
+func (gcs *gcsRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation) ([]*remote_storage.RemoteListing, error) {
+	return nil, nil
+}
+
 func (gcs *gcsRemoteStorageClient) ListBuckets() (buckets []*remote_storage.Bucket, err error) {
 	if gcs.projectID == "" {
 		return nil, fmt.Errorf("gcs project id or GOOGLE_CLOUD_PROJECT env variable not set")

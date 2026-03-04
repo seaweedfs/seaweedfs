@@ -92,8 +92,10 @@ func (s *stubFilerStore) DeleteEntry(_ context.Context, p util.FullPath) error {
 // --- minimal RemoteStorageClient stub ---
 
 type stubRemoteClient struct {
-	statResult *filer_pb.RemoteEntry
-	statErr    error
+	statResult      *filer_pb.RemoteEntry
+	statErr         error
+	listDirResult   []*remote_storage.RemoteListing
+	listDirErr      error
 }
 
 func (c *stubRemoteClient) StatFile(*remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
@@ -119,6 +121,9 @@ func (c *stubRemoteClient) DeleteFile(*remote_pb.RemoteStorageLocation) error { 
 func (c *stubRemoteClient) ListBuckets() ([]*remote_storage.Bucket, error)    { return nil, nil }
 func (c *stubRemoteClient) CreateBucket(string) error                         { return nil }
 func (c *stubRemoteClient) DeleteBucket(string) error                         { return nil }
+func (c *stubRemoteClient) ListDirectory(*remote_pb.RemoteStorageLocation) ([]*remote_storage.RemoteListing, error) {
+	return c.listDirResult, c.listDirErr
+}
 
 // --- stub RemoteStorageClientMaker ---
 
