@@ -152,7 +152,11 @@ func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (
 func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
-		u.Concurrency = 1
+		downloadConcurrency := 1
+		if s.conf.DownloadConcurrency > 0 {
+			downloadConcurrency = int(s.conf.DownloadConcurrency)
+		}
+		u.Concurrency = downloadConcurrency
 	})
 
 	dataSlice := make([]byte, int(size))
