@@ -91,18 +91,24 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 	// Parse optional pagination headers for ObjectParts
 	maxParts := maxPartsListDefault
 	if v := r.Header.Get(s3_constants.AmzMaxParts); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
-			maxParts = parsed
-			if maxParts > maxPartsListDefault {
-				maxParts = maxPartsListDefault
-			}
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 0 {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxParts)
+			return
+		}
+		maxParts = parsed
+		if maxParts > maxPartsListDefault {
+			maxParts = maxPartsListDefault
 		}
 	}
 	partNumberMarker := 0
 	if v := r.Header.Get(s3_constants.AmzPartNumberMarker); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
-			partNumberMarker = parsed
+		parsed, err := strconv.Atoi(v)
+		if err != nil || parsed < 0 {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidPartNumberMarker)
+			return
 		}
+		partNumberMarker = parsed
 	}
 
 	// Check for specific version ID
