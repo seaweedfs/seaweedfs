@@ -1658,7 +1658,11 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	objectExists := entry != nil
 
 	// For PUT requests, all specified conditions must be met.
-	// The evaluation order follows AWS S3 behavior for consistency.
+	// The evaluation order follows RFC 7232 Section 6 and AWS S3 behavior:
+	//   1. If-Match
+	//   2. If-Unmodified-Since (ignored when If-Match is present, per RFC 7232 Section 3.4)
+	//   3. If-None-Match
+	//   4. If-Modified-Since (ignored when If-None-Match is present, per RFC 7232 Section 3.3)
 
 	// 1. Check If-Match
 	if headers.ifMatch != "" {
@@ -1679,7 +1683,9 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	}
 
 	// 2. Check If-Unmodified-Since
-	if !headers.ifUnmodifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.4: "A recipient MUST ignore If-Unmodified-Since
+	// if the request contains an If-Match header field"
+	if !headers.ifUnmodifiedSince.IsZero() && headers.ifMatch == "" {
 		if objectExists {
 			if entry.Attributes != nil {
 				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
@@ -1713,7 +1719,9 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	}
 
 	// 4. Check If-Modified-Since
-	if !headers.ifModifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.3: "A recipient MUST ignore If-Modified-Since
+	// if the request contains an If-None-Match header field"
+	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		if objectExists {
 			if entry.Attributes != nil {
 				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
@@ -1802,7 +1810,11 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// Object exists - check all conditions
-	// The evaluation order follows AWS S3 behavior for consistency.
+	// The evaluation order follows RFC 7232 Section 6 and AWS S3 behavior:
+	//   1. If-Match
+	//   2. If-Unmodified-Since (ignored when If-Match is present, per RFC 7232 Section 3.4)
+	//   3. If-None-Match
+	//   4. If-Modified-Since (ignored when If-None-Match is present, per RFC 7232 Section 3.3)
 
 	// 1. Check If-Match (412 Precondition Failed if fails)
 	if headers.ifMatch != "" {
@@ -1821,7 +1833,9 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// 2. Check If-Unmodified-Since (412 Precondition Failed if fails)
-	if !headers.ifUnmodifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.4: "A recipient MUST ignore If-Unmodified-Since
+	// if the request contains an If-Match header field"
+	if !headers.ifUnmodifiedSince.IsZero() && headers.ifMatch == "" {
 		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
 		if objectModTime.After(headers.ifUnmodifiedSince) {
 			glog.V(3).Infof("validateConditionalHeadersForReads: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
@@ -1848,7 +1862,9 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// 4. Check If-Modified-Since (304 Not Modified if fails)
-	if !headers.ifModifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.3: "A recipient MUST ignore If-Modified-Since
+	// if the request contains an If-None-Match header field"
+	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
 		if !objectModTime.After(headers.ifModifiedSince) {
 			// Use production getObjectETag method
