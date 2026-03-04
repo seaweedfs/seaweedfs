@@ -1,4 +1,4 @@
-package pluginworker
+package iceberg
 
 import (
 	"bytes"
@@ -11,8 +11,8 @@ import (
 	"github.com/apache/iceberg-go/table"
 )
 
-func TestParseIcebergMaintenanceConfig(t *testing.T) {
-	config := parseIcebergMaintenanceConfig(nil)
+func TestParseConfig(t *testing.T) {
+	config := ParseConfig(nil)
 
 	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
 		t.Errorf("expected SnapshotRetentionHours=%d, got %d", defaultSnapshotRetentionHours, config.SnapshotRetentionHours)
@@ -37,12 +37,15 @@ func TestParseOperations(t *testing.T) {
 		expected []string
 		wantErr  bool
 	}{
-		{"all", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
-		{"", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"all", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots", []string{"expire_snapshots"}, false},
+		{"compact", []string{"compact"}, false},
 		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}, false},
+		{"compact,expire_snapshots", []string{"compact", "expire_snapshots"}, false},
 		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"compact,expire_snapshots,remove_orphans,rewrite_manifests", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"unknown_op", nil, true},
 		{"expire_snapshots,bad_op", nil, true},
 	}
@@ -91,7 +94,7 @@ func TestExtractMetadataVersion(t *testing.T) {
 }
 
 func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
-	config := icebergMaintenanceConfig{
+	config := Config{
 		SnapshotRetentionHours: 24,
 		MaxSnapshotsToKeep:     2,
 	}
@@ -103,7 +106,7 @@ func TestNeedsMaintenanceNoSnapshots(t *testing.T) {
 }
 
 func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
-	config := icebergMaintenanceConfig{
+	config := Config{
 		SnapshotRetentionHours: 24 * 365, // very long retention
 		MaxSnapshotsToKeep:     2,
 	}
@@ -121,7 +124,7 @@ func TestNeedsMaintenanceExceedsMaxSnapshots(t *testing.T) {
 }
 
 func TestNeedsMaintenanceWithinLimits(t *testing.T) {
-	config := icebergMaintenanceConfig{
+	config := Config{
 		SnapshotRetentionHours: 24 * 365, // very long retention
 		MaxSnapshotsToKeep:     5,
 	}
@@ -138,7 +141,7 @@ func TestNeedsMaintenanceWithinLimits(t *testing.T) {
 
 func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 	// Use a retention of 0 hours so that any snapshot is considered "old"
-	config := icebergMaintenanceConfig{
+	config := Config{
 		SnapshotRetentionHours: 0, // instant expiry
 		MaxSnapshotsToKeep:     10,
 	}
@@ -155,11 +158,11 @@ func TestNeedsMaintenanceOldSnapshot(t *testing.T) {
 }
 
 func TestCapabilityAndDescriptor(t *testing.T) {
-	handler := NewIcebergMaintenanceHandler(nil)
+	handler := NewHandler(nil)
 
 	cap := handler.Capability()
-	if cap.JobType != icebergMaintenanceJobType {
-		t.Errorf("expected job type %q, got %q", icebergMaintenanceJobType, cap.JobType)
+	if cap.JobType != jobType {
+		t.Errorf("expected job type %q, got %q", jobType, cap.JobType)
 	}
 	if !cap.CanDetect {
 		t.Error("expected CanDetect=true")
@@ -169,8 +172,8 @@ func TestCapabilityAndDescriptor(t *testing.T) {
 	}
 
 	desc := handler.Descriptor()
-	if desc.JobType != icebergMaintenanceJobType {
-		t.Errorf("expected job type %q, got %q", icebergMaintenanceJobType, desc.JobType)
+	if desc.JobType != jobType {
+		t.Errorf("expected job type %q, got %q", jobType, desc.JobType)
 	}
 	if desc.AdminConfigForm == nil {
 		t.Error("expected admin config form")
@@ -187,7 +190,7 @@ func TestCapabilityAndDescriptor(t *testing.T) {
 }
 
 func TestBuildMaintenanceProposal(t *testing.T) {
-	handler := NewIcebergMaintenanceHandler(nil)
+	handler := NewHandler(nil)
 
 	now := time.Now().UnixMilli()
 	snapshots := []table.Snapshot{
@@ -210,8 +213,8 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 	if proposal.DedupeKey != expectedDedupe {
 		t.Errorf("expected dedupe key %q, got %q", expectedDedupe, proposal.DedupeKey)
 	}
-	if proposal.JobType != icebergMaintenanceJobType {
-		t.Errorf("expected job type %q, got %q", icebergMaintenanceJobType, proposal.JobType)
+	if proposal.JobType != jobType {
+		t.Errorf("expected job type %q, got %q", jobType, proposal.JobType)
 	}
 
 	if readStringConfig(proposal.Parameters, "bucket_name", "") != "my-bucket" {
@@ -285,8 +288,258 @@ func TestManifestRewritePathConsistency(t *testing.T) {
 	}
 }
 
+func TestManifestRewriteNestedPathConsistency(t *testing.T) {
+	// Verify that WriteManifest with nested paths preserves the full path
+	// and that loadFileByIcebergPath (via normalizeIcebergPath) would
+	// resolve them correctly.
+	schema := newTestSchema()
+	spec := *iceberg.UnpartitionedSpec
+	snapshotID := int64(42)
+
+	testCases := []struct {
+		name         string
+		manifestPath string
+	}{
+		{"nested two levels", "metadata/a/b/merged-42-1700000000000.avro"},
+		{"nested one level", "metadata/subdir/manifest-42.avro"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dfBuilder, err := iceberg.NewDataFileBuilder(
+				spec,
+				iceberg.EntryContentData,
+				"data/test.parquet",
+				iceberg.ParquetFile,
+				map[int]any{},
+				nil, nil,
+				1, 1024,
+			)
+			if err != nil {
+				t.Fatalf("failed to build data file: %v", err)
+			}
+			entry := iceberg.NewManifestEntry(
+				iceberg.EntryStatusADDED,
+				&snapshotID,
+				nil, nil,
+				dfBuilder.Build(),
+			)
+
+			var buf bytes.Buffer
+			mf, err := iceberg.WriteManifest(
+				tc.manifestPath, &buf, 2, spec, schema, snapshotID,
+				[]iceberg.ManifestEntry{entry},
+			)
+			if err != nil {
+				t.Fatalf("WriteManifest failed: %v", err)
+			}
+
+			if mf.FilePath() != tc.manifestPath {
+				t.Errorf("FilePath() = %q, want %q", mf.FilePath(), tc.manifestPath)
+			}
+
+			// normalizeIcebergPath should return the path unchanged when already relative
+			normalized := normalizeIcebergPath(tc.manifestPath, "bucket", "ns/table")
+			if normalized != tc.manifestPath {
+				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", tc.manifestPath, normalized, tc.manifestPath)
+			}
+
+			// Verify normalization strips S3 scheme prefix correctly
+			s3Path := "s3://bucket/ns/table/" + tc.manifestPath
+			normalized = normalizeIcebergPath(s3Path, "bucket", "ns/table")
+			if normalized != tc.manifestPath {
+				t.Errorf("normalizeIcebergPath(%q) = %q, want %q", s3Path, normalized, tc.manifestPath)
+			}
+		})
+	}
+}
+
+func TestNormalizeIcebergPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		icebergPath string
+		bucket     string
+		tablePath  string
+		expected   string
+	}{
+		{
+			"relative metadata path",
+			"metadata/snap-1.avro",
+			"mybucket", "ns/table",
+			"metadata/snap-1.avro",
+		},
+		{
+			"relative data path",
+			"data/file.parquet",
+			"mybucket", "ns/table",
+			"data/file.parquet",
+		},
+		{
+			"S3 URL",
+			"s3://mybucket/ns/table/metadata/snap-1.avro",
+			"mybucket", "ns/table",
+			"metadata/snap-1.avro",
+		},
+		{
+			"absolute filer path",
+			"/buckets/mybucket/ns/table/data/file.parquet",
+			"mybucket", "ns/table",
+			"data/file.parquet",
+		},
+		{
+			"nested data path",
+			"data/region=us/city=sf/file.parquet",
+			"mybucket", "ns/table",
+			"data/region=us/city=sf/file.parquet",
+		},
+		{
+			"S3 URL nested",
+			"s3://mybucket/ns/table/data/region=us/file.parquet",
+			"mybucket", "ns/table",
+			"data/region=us/file.parquet",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := normalizeIcebergPath(tc.icebergPath, tc.bucket, tc.tablePath)
+			if result != tc.expected {
+				t.Errorf("normalizeIcebergPath(%q, %q, %q) = %q, want %q",
+					tc.icebergPath, tc.bucket, tc.tablePath, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestPartitionKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		partition map[int]any
+		expected  string
+	}{
+		{"empty partition", map[int]any{}, "__unpartitioned__"},
+		{"nil partition", nil, "__unpartitioned__"},
+		{"single field", map[int]any{1: "us-east"}, "1=us-east"},
+		{"multiple fields sorted", map[int]any{3: "2024", 1: "us-east"}, "1=us-east,3=2024"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := partitionKey(tc.partition)
+			if result != tc.expected {
+				t.Errorf("partitionKey(%v) = %q, want %q", tc.partition, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestBuildCompactionBins(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024) // 256MB
+	minFiles := 3
+
+	// Create test entries: small files in same partition
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/f3.parquet", size: 4096, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 3 {
+		t.Errorf("expected 3 entries in bin, got %d", len(bins[0].Entries))
+	}
+}
+
+func TestBuildCompactionBinsFiltersLargeFiles(t *testing.T) {
+	targetSize := int64(4000)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/small1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/small2.parquet", size: 2048, partition: map[int]any{}},
+		{path: "data/large.parquet", size: 5000, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 1 {
+		t.Fatalf("expected 1 bin, got %d", len(bins))
+	}
+	if len(bins[0].Entries) != 2 {
+		t.Errorf("expected 2 entries (large excluded), got %d", len(bins[0].Entries))
+	}
+}
+
+func TestBuildCompactionBinsMinFilesThreshold(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 5
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 1024, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 2048, partition: map[int]any{}},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 0 {
+		t.Errorf("expected 0 bins (below min threshold), got %d", len(bins))
+	}
+}
+
+func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
+	targetSize := int64(256 * 1024 * 1024)
+	minFiles := 2
+
+	partA := map[int]any{1: "us-east"}
+	partB := map[int]any{1: "eu-west"}
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/a1.parquet", size: 1024, partition: partA},
+		{path: "data/a2.parquet", size: 2048, partition: partA},
+		{path: "data/b1.parquet", size: 1024, partition: partB},
+		{path: "data/b2.parquet", size: 2048, partition: partB},
+		{path: "data/b3.parquet", size: 4096, partition: partB},
+	})
+
+	bins := buildCompactionBins(entries, targetSize, minFiles)
+	if len(bins) != 2 {
+		t.Fatalf("expected 2 bins (one per partition), got %d", len(bins))
+	}
+}
+
+type testEntrySpec struct {
+	path      string
+	size      int64
+	partition map[int]any
+}
+
+func makeTestEntries(t *testing.T, specs []testEntrySpec) []iceberg.ManifestEntry {
+	t.Helper()
+	entries := make([]iceberg.ManifestEntry, 0, len(specs))
+	for _, spec := range specs {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			*iceberg.UnpartitionedSpec,
+			iceberg.EntryContentData,
+			spec.path,
+			iceberg.ParquetFile,
+			spec.partition,
+			nil, nil,
+			1, // recordCount (must be > 0)
+			spec.size,
+		)
+		if err != nil {
+			t.Fatalf("failed to build data file %s: %v", spec.path, err)
+		}
+		snapID := int64(1)
+		entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
 func TestDetectNilRequest(t *testing.T) {
-	handler := NewIcebergMaintenanceHandler(nil)
+	handler := NewHandler(nil)
 	err := handler.Detect(nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for nil request")
@@ -294,7 +547,7 @@ func TestDetectNilRequest(t *testing.T) {
 }
 
 func TestExecuteNilRequest(t *testing.T) {
-	handler := NewIcebergMaintenanceHandler(nil)
+	handler := NewHandler(nil)
 	err := handler.Execute(nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for nil request")

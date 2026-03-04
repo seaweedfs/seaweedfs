@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	icebergworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker/iceberg"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -159,7 +160,7 @@ func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExe
 	case "admin_script":
 		return pluginworker.NewAdminScriptHandler(dialOption), nil
 	case "iceberg_maintenance":
-		return pluginworker.NewIcebergMaintenanceHandler(dialOption), nil
+		return icebergworker.NewHandler(dialOption), nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
 	}
