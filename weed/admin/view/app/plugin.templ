@@ -2847,16 +2847,17 @@ templ Plugin(page string) {
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
                 var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
-                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status');
+                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status').catch(function(e) { return e; });
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
+                var schedulerStatusResult = await schedulerStatusPromise;
                 var schedulerStatus = null;
-                try {
-                    schedulerStatus = await schedulerStatusPromise;
-                } catch (e) {
-                    console.error('Failed to fetch scheduler status:', e);
+                if (schedulerStatusResult instanceof Error) {
+                    console.error('Failed to fetch scheduler status:', schedulerStatusResult);
+                } else {
+                    schedulerStatus = schedulerStatusResult;
                 }
 
                 state.jobs = Array.isArray(allJobs) ? allJobs : [];
