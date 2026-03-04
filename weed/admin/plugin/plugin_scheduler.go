@@ -65,6 +65,13 @@ func (r *Plugin) schedulerLoop() {
 
 		r.setSchedulerLoopState("", "sleeping")
 		idleSleep := r.GetSchedulerConfig().IdleSleepDuration()
+		if nextRun := r.earliestNextDetectionAt(); !nextRun.IsZero() {
+			if until := time.Until(nextRun); until <= 0 {
+				idleSleep = 0
+			} else if until < idleSleep {
+				idleSleep = until
+			}
+		}
 		if !waitForShutdownOrTimer(r.shutdownCh, idleSleep) {
 			return
 		}
@@ -92,6 +99,7 @@ func (r *Plugin) runSchedulerIteration() bool {
 	}
 
 	active := make(map[string]struct{}, len(jobTypes))
+	schedulerIdleSleep := r.GetSchedulerConfig().IdleSleepDuration()
 	hadJobs := false
 
 	for _, jobType := range jobTypes {
@@ -106,7 +114,11 @@ func (r *Plugin) runSchedulerIteration() bool {
 			r.clearSchedulerJobType(jobType)
 			continue
 		}
-		if !r.markDetectionDue(jobType, policy.DetectionInterval) {
+		initialDelay := time.Duration(0)
+		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
+			initialDelay = schedulerIdleSleep / 2
+		}
+		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
 			continue
 		}
 
@@ -482,7 +494,7 @@ func deriveSchedulerAdminRuntime(
 	}
 }
 
-func (r *Plugin) markDetectionDue(jobType string, interval time.Duration) bool {
+func (r *Plugin) markDetectionDue(jobType string, interval, initialDelay time.Duration) bool {
 	now := time.Now().UTC()
 
 	r.schedulerMu.Lock()
@@ -496,10 +508,35 @@ func (r *Plugin) markDetectionDue(jobType string, interval time.Duration) bool {
 	if exists && now.Before(nextRun) {
 		return false
 	}
+	if !exists && initialDelay > 0 {
+		r.nextDetectionAt[jobType] = now.Add(initialDelay)
+		return false
+	}
 
 	r.nextDetectionAt[jobType] = now.Add(interval)
 	r.detectionInFlight[jobType] = true
 	return true
+}
+
+func (r *Plugin) earliestNextDetectionAt() time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+
+	r.schedulerMu.Lock()
+	defer r.schedulerMu.Unlock()
+
+	var earliest time.Time
+	for _, nextRun := range r.nextDetectionAt {
+		if nextRun.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || nextRun.Before(earliest) {
+			earliest = nextRun
+		}
+	}
+
+	return earliest
 }
 
 func (r *Plugin) markJobTypeInFlight(jobType string) {
