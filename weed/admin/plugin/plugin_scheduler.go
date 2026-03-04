@@ -72,8 +72,21 @@ func (r *Plugin) schedulerLoop() {
 				idleSleep = until
 			}
 		}
-		if !waitForShutdownOrTimer(r.shutdownCh, idleSleep) {
+		if idleSleep <= 0 {
+			continue
+		}
+
+		timer := time.NewTimer(idleSleep)
+		select {
+		case <-r.shutdownCh:
+			timer.Stop()
 			return
+		case <-r.schedulerWakeCh:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			continue
+		case <-timer.C:
 		}
 	}
 }
@@ -132,6 +145,16 @@ func (r *Plugin) runSchedulerIteration() bool {
 	r.pruneDetectorLeases(active)
 	r.setSchedulerLoopState("", "idle")
 	return hadJobs
+}
+
+func (r *Plugin) wakeScheduler() {
+	if r == nil {
+		return
+	}
+	select {
+	case r.schedulerWakeCh <- struct{}{}:
+	default:
+	}
 }
 
 func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {

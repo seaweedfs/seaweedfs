@@ -74,6 +74,7 @@ type Plugin struct {
 	schedulerLoopState        schedulerLoopState
 	schedulerConfigMu         sync.RWMutex
 	schedulerConfig           SchedulerConfig
+	schedulerWakeCh           chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -175,6 +176,7 @@ func New(options Options) (*Plugin, error) {
 		jobs:                      make(map[string]*TrackedJob),
 		activities:                make([]JobActivity, 0, 256),
 		persistTicker:             time.NewTicker(2 * time.Second),
+		schedulerWakeCh:           make(chan struct{}, 1),
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
@@ -393,7 +395,11 @@ func (r *Plugin) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeC
 }
 
 func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
-	return r.store.SaveJobTypeConfig(config)
+	if err := r.store.SaveJobTypeConfig(config); err != nil {
+		return err
+	}
+	r.wakeScheduler()
+	return nil
 }
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
@@ -433,6 +439,7 @@ func (r *Plugin) UpdateSchedulerConfig(cfg SchedulerConfig) (SchedulerConfig, er
 	r.schedulerConfigMu.Lock()
 	r.schedulerConfig = normalized
 	r.schedulerConfigMu.Unlock()
+	r.wakeScheduler()
 	return normalized, nil
 }
 
@@ -958,6 +965,7 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 	switch body := message.Body.(type) {
 	case *plugin_pb.WorkerToAdminMessage_Hello:
 		r.registry.UpsertFromHello(body.Hello)
+		r.wakeScheduler()
 	case *plugin_pb.WorkerToAdminMessage_Heartbeat:
 		r.registry.UpdateHeartbeat(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
