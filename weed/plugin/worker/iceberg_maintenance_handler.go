@@ -20,6 +20,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1067,8 +1069,8 @@ func listFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, d
 			Limit:              limit,
 		})
 		if err != nil {
-			// Treat "not found" as empty directory; propagate other errors.
-			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+			// Treat not-found as empty directory; propagate other errors.
+			if status.Code(err) == codes.NotFound {
 				return entries, nil
 			}
 			return entries, fmt.Errorf("list entries in %s: %w", dir, err)
