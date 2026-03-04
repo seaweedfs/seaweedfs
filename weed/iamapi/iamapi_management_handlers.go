@@ -302,18 +302,15 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Compute aggregated actions from all user's inline policies, passing the local policies
-	// to avoid redundant I/O (reuses the just-written Policies map)
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
-	if computeErr != nil {
-		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
-		aggregatedActions = actions // Fall back to current policy's actions
-	}
-
-	glog.V(3).Infof("PutUserPolicy: aggregated actions=%v", aggregatedActions)
+	// Find the target identity and recompute aggregated actions (inline + managed)
 	for _, ident := range s3cfg.Identities {
 		if userName != ident.Name {
 			continue
+		}
+		aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, ident)
+		if computeErr != nil {
+			glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
+			aggregatedActions = actions // Fall back to current policy's actions
 		}
 		ident.Actions = aggregatedActions
 		return resp, nil
@@ -436,8 +433,8 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		}
 	}
 
-	// Recompute aggregated actions from remaining inline policies (passing policies to avoid redundant GetPolicies)
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
+	// Recompute aggregated actions from remaining inline + managed policies
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
 	if computeErr != nil {
 		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
 	}

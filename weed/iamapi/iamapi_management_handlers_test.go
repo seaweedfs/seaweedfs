@@ -451,6 +451,61 @@ func TestAttachUserPolicy(t *testing.T) {
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
 }
 
+func TestManagedPolicyActionsPreservedAcrossInlineMutations(t *testing.T) {
+	managedPolicyDoc := policy_engine.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+			},
+		},
+	}
+	iama := newTestIamApiServer(Policies{
+		Policies: map[string]policy_engine.PolicyDocument{"my-policy": managedPolicyDoc},
+	})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+
+	// Attach managed policy
+	_, iamErr := iama.AttachUserPolicy(s3cfg, url.Values{
+		"UserName":  []string{"alice"},
+		"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"},
+	})
+	assert.Nil(t, iamErr)
+	assert.Contains(t, s3cfg.Identities[0].Actions, "Read", "Managed policy should grant Read action")
+
+	// Add an inline policy
+	inlinePolicyJSON := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:PutObject","Resource":"arn:aws:s3:::bucket-x/*"}]}`
+	_, iamErr = iama.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"alice"},
+		"PolicyName":     []string{"inline-write"},
+		"PolicyDocument": []string{inlinePolicyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	// Should have both managed (Read) and inline (Write:bucket-x/*) actions
+	actionSet := make(map[string]bool)
+	for _, a := range s3cfg.Identities[0].Actions {
+		actionSet[a] = true
+	}
+	assert.True(t, actionSet["Read"], "Managed policy Read action should persist after PutUserPolicy")
+	assert.True(t, actionSet["Write:bucket-x/*"], "Inline policy Write action should be present")
+
+	// Delete the inline policy
+	_, iamErr = iama.DeleteUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"alice"},
+		"PolicyName": []string{"inline-write"},
+	})
+	assert.Nil(t, iamErr)
+
+	// Managed policy actions should still be present
+	assert.Contains(t, s3cfg.Identities[0].PolicyNames, "my-policy", "Managed policy should still be attached")
+	assert.Contains(t, s3cfg.Identities[0].Actions, "Read", "Managed policy Read action should persist after DeleteUserPolicy")
+}
+
 func TestDetachUserPolicy(t *testing.T) {
 	policyDoc := policy_engine.PolicyDocument{
 		Version: "2012-10-17",
