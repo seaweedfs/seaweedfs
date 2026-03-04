@@ -128,6 +128,16 @@ func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client
 	return
 }
 
+func (rs *FilerRemoteStorage) GetAllMountMappings() map[string]*remote_pb.RemoteStorageLocation {
+	result := make(map[string]*remote_pb.RemoteStorageLocation)
+	rs.rules.Walk(func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
+		dir := string(key[:len(key)-1]) // strip trailing "/"
+		result[dir] = value
+		return true
+	})
+	return result
+}
+
 func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.RemoteStorageMapping, err error) {
 	mappings = &remote_pb.RemoteStorageMapping{
 		Mappings: make(map[string]*remote_pb.RemoteStorageLocation),
