@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,6 +18,8 @@ type BlockService struct {
 	blockStore   *storage.BlockVolumeStore
 	targetServer *iscsi.TargetServer
 	iqnPrefix    string
+	blockDir     string
+	listenAddr   string
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -34,6 +37,8 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 	bs := &BlockService{
 		blockStore: storage.NewBlockVolumeStore(),
 		iqnPrefix:  iqnPrefix,
+		blockDir:   blockDir,
+		listenAddr: listenAddr,
 	}
 
 	logger := log.New(os.Stderr, "iscsi: ", log.LstdFlags)
@@ -83,7 +88,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 
 		// Derive IQN from filename: vol1.blk -> iqn.2024-01.com.seaweedfs:vol.vol1
 		name := strings.TrimSuffix(entry.Name(), ".blk")
-		iqn := iqnPrefix + name
+		iqn := iqnPrefix + blockvol.SanitizeIQN(name)
 		adapter := blockvol.NewBlockVolAdapter(vol)
 		bs.targetServer.AddVolume(iqn, adapter)
 		glog.V(0).Infof("block service: registered %s as %s", path, iqn)
@@ -103,6 +108,95 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 // Store returns the underlying BlockVolumeStore.
 func (bs *BlockService) Store() *storage.BlockVolumeStore {
 	return bs.blockStore
+}
+
+// BlockDir returns the block volume data directory.
+func (bs *BlockService) BlockDir() string {
+	return bs.blockDir
+}
+
+// ListenAddr returns the iSCSI target listen address.
+func (bs *BlockService) ListenAddr() string {
+	return bs.listenAddr
+}
+
+// CreateBlockVol creates a new .blk file, registers it with BlockVolumeStore
+// and iSCSI TargetServer. Returns path, IQN, iSCSI addr.
+// Idempotent: if volume already exists with same or larger size, returns existing info.
+func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error) {
+	sanitized := blockvol.SanitizeFilename(name)
+	path = filepath.Join(bs.blockDir, sanitized+".blk")
+	iqn = bs.iqnPrefix + blockvol.SanitizeIQN(name)
+	iscsiAddr = bs.listenAddr
+
+	// Check if already registered.
+	if vol, ok := bs.blockStore.GetBlockVolume(path); ok {
+		info := vol.Info()
+		if info.VolumeSize < sizeBytes {
+			return "", "", "", fmt.Errorf("block volume %q exists with size %d (requested %d)",
+				name, info.VolumeSize, sizeBytes)
+		}
+		// Re-add to TargetServer in case it was cleared (crash recovery).
+		// AddVolume is idempotent — no-op if already registered.
+		adapter := blockvol.NewBlockVolAdapter(vol)
+		bs.targetServer.AddVolume(iqn, adapter)
+		return path, iqn, iscsiAddr, nil
+	}
+
+	// Create the .blk file.
+	if err := os.MkdirAll(bs.blockDir, 0755); err != nil {
+		return "", "", "", fmt.Errorf("create block dir: %w", err)
+	}
+	created, err := blockvol.CreateBlockVol(path, blockvol.CreateOptions{
+		VolumeSize: sizeBytes,
+	})
+	if err != nil {
+		return "", "", "", fmt.Errorf("create block volume: %w", err)
+	}
+	created.Close()
+
+	// Open and register.
+	vol, err := bs.blockStore.AddBlockVolume(path, diskType)
+	if err != nil {
+		os.Remove(path)
+		return "", "", "", fmt.Errorf("register block volume: %w", err)
+	}
+
+	adapter := blockvol.NewBlockVolAdapter(vol)
+	bs.targetServer.AddVolume(iqn, adapter)
+	glog.V(0).Infof("block service: created %s as %s (%d bytes)", path, iqn, sizeBytes)
+	return path, iqn, iscsiAddr, nil
+}
+
+// DeleteBlockVol disconnects iSCSI sessions, closes the volume, and removes the .blk file.
+// Idempotent: returns nil if volume not found.
+func (bs *BlockService) DeleteBlockVol(name string) error {
+	sanitized := blockvol.SanitizeFilename(name)
+	path := filepath.Join(bs.blockDir, sanitized+".blk")
+	iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
+
+	// Disconnect active iSCSI sessions and remove target entry.
+	if bs.targetServer != nil {
+		bs.targetServer.DisconnectVolume(iqn)
+	}
+
+	// Close and unregister.
+	if err := bs.blockStore.RemoveBlockVolume(path); err != nil {
+		// Not found is OK (idempotent).
+		if !strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("remove block volume: %w", err)
+		}
+	}
+
+	// Remove the .blk file and any snapshot files.
+	os.Remove(path)
+	matches, _ := filepath.Glob(path + ".snap.*")
+	for _, m := range matches {
+		os.Remove(m)
+	}
+
+	glog.V(0).Infof("block service: deleted %s", path)
+	return nil
 }
 
 // Shutdown gracefully stops the iSCSI target and closes all block volumes.

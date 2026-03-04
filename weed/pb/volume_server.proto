@@ -138,6 +138,12 @@ service VolumeServer {
     rpc Ping (PingRequest) returns (PingResponse) {
     }
 
+    // block volumes
+    rpc AllocateBlockVolume (AllocateBlockVolumeRequest) returns (AllocateBlockVolumeResponse) {
+    }
+    rpc VolumeServerDeleteBlockVolume (VolumeServerDeleteBlockVolumeRequest) returns (VolumeServerDeleteBlockVolumeResponse) {
+    }
+
 }
 
 //////////////////////////////////////////////////
@@ -755,4 +761,25 @@ message PingResponse {
     int64 start_time_ns = 1;
     int64 remote_time_ns = 2;
     int64 stop_time_ns = 3;
+}
+
+//////////////////////////////////////////////////
+// Block volume messages (volume_server_pb package)
+//////////////////////////////////////////////////
+
+message AllocateBlockVolumeRequest {
+    string name = 1;
+    uint64 size_bytes = 2;
+    string disk_type = 3;
+}
+message AllocateBlockVolumeResponse {
+    string path = 1;
+    string iqn = 2;
+    string iscsi_addr = 3;
+}
+
+message VolumeServerDeleteBlockVolumeRequest {
+    string name = 1;
+}
+message VolumeServerDeleteBlockVolumeResponse {
 }

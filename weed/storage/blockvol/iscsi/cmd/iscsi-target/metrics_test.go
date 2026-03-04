@@ -30,7 +30,7 @@ func TestMetrics_WriteIncrementsCounter(t *testing.T) {
 	defer vol.Close()
 
 	reg := prometheus.NewRegistry()
-	inner := &blockVolAdapter{vol: vol, tpgID: 1}
+	inner := &blockvol.BlockVolAdapter{Vol: vol, TPGID: 1}
 	m := newMetricsAdapter(inner, vol, reg)
 
 	// Write 10 blocks.
@@ -80,7 +80,7 @@ func TestMetrics_EndpointServes(t *testing.T) {
 	defer vol.Close()
 
 	reg := prometheus.NewRegistry()
-	inner := &blockVolAdapter{vol: vol, tpgID: 1}
+	inner := &blockvol.BlockVolAdapter{Vol: vol, TPGID: 1}
 	_ = newMetricsAdapter(inner, vol, reg)
 
 	adm := newAdminServer(vol, "", log.New(os.Stderr, "[test] ", 0))

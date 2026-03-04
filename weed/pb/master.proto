@@ -57,6 +57,12 @@ service Seaweed {
   }
   rpc VolumeGrow (VolumeGrowRequest) returns (VolumeGrowResponse) {
   }
+  rpc CreateBlockVolume (CreateBlockVolumeRequest) returns (CreateBlockVolumeResponse) {
+  }
+  rpc DeleteBlockVolume (DeleteBlockVolumeRequest) returns (DeleteBlockVolumeResponse) {
+  }
+  rpc LookupBlockVolume (LookupBlockVolumeRequest) returns (LookupBlockVolumeResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -89,6 +95,13 @@ message Heartbeat {
 
   // state flags
   volume_server_pb.VolumeServerState state = 23;
+
+  // block volumes (full list on first heartbeat, empty thereafter)
+  repeated BlockVolumeInfoMessage block_volume_infos = 24;
+  // delta block volumes (subsequent heartbeats only)
+  repeated BlockVolumeShortInfoMessage new_block_volumes = 25;
+  repeated BlockVolumeShortInfoMessage deleted_block_volumes = 26;
+  bool has_no_block_volumes = 27;
 }
 
 message HeartbeatResponse {
@@ -99,6 +112,8 @@ message HeartbeatResponse {
   repeated StorageBackend storage_backends = 5;
   repeated string duplicated_uuids = 6;
   bool preallocate = 7;
+
+  repeated BlockVolumeAssignment block_volume_assignments = 10;
 }
 
 message VolumeInformationMessage {
@@ -460,4 +475,63 @@ message RaftLeadershipTransferResponse {
 }
 
 message VolumeGrowResponse {
+}
+
+//////////////////////////////////////////////////
+// Block volume messages
+//////////////////////////////////////////////////
+
+message BlockVolumeInfoMessage {
+  string path = 1;
+  uint64 volume_size = 2;
+  uint32 block_size = 3;
+  uint64 epoch = 4;
+  uint32 role = 5;
+  uint64 wal_head_lsn = 6;
+  uint64 checkpoint_lsn = 7;
+  bool has_lease = 8;
+  string disk_type = 9;
+}
+
+message BlockVolumeShortInfoMessage {
+  string path = 1;
+  uint64 volume_size = 2;
+  uint32 block_size = 3;
+  string disk_type = 4;
+}
+
+message BlockVolumeAssignment {
+  string path = 1;
+  uint64 epoch = 2;
+  uint32 role = 3;
+  uint32 lease_ttl_ms = 4;
+}
+
+message CreateBlockVolumeRequest {
+  string name = 1;
+  uint64 size_bytes = 2;
+  string disk_type = 3;
+}
+message CreateBlockVolumeResponse {
+  string volume_id = 1;
+  string volume_server = 2;
+  string iscsi_addr = 3;
+  string iqn = 4;
+  uint64 capacity_bytes = 5;
+}
+
+message DeleteBlockVolumeRequest {
+  string name = 1;
+}
+message DeleteBlockVolumeResponse {
+}
+
+message LookupBlockVolumeRequest {
+  string name = 1;
+}
+message LookupBlockVolumeResponse {
+  string volume_server = 1;
+  string iscsi_addr = 2;
+  string iqn = 3;
+  uint64 capacity_bytes = 4;
 }

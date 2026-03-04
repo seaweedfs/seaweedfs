@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 
 	"context"
@@ -210,6 +211,15 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	rack := vs.store.GetRack()
 	ip := vs.store.Ip
 	port := uint32(vs.store.Port)
+
+	// Send block volume full heartbeat if block service is enabled.
+	if vs.blockService != nil {
+		blockBeat := vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)
+		if err = stream.Send(blockBeat); err != nil {
+			glog.V(0).Infof("Volume Server Failed to send block volume heartbeat to master %s: %v", masterAddress, err)
+			return "", err
+		}
+	}
 	for {
 		select {
 		case stateMessage := <-vs.store.StateUpdateChan:
@@ -305,14 +315,15 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 		case <-vs.stopChan:
 			var volumeMessages []*master_pb.VolumeInformationMessage
 			emptyBeat := &master_pb.Heartbeat{
-				Ip:           ip,
-				Port:         port,
-				PublicUrl:    vs.store.PublicUrl,
-				MaxFileKey:   uint64(0),
-				DataCenter:   dataCenter,
-				Rack:         rack,
-				Volumes:      volumeMessages,
-				HasNoVolumes: len(volumeMessages) == 0,
+				Ip:                ip,
+				Port:              port,
+				PublicUrl:         vs.store.PublicUrl,
+				MaxFileKey:        uint64(0),
+				DataCenter:        dataCenter,
+				Rack:              rack,
+				Volumes:           volumeMessages,
+				HasNoVolumes:      len(volumeMessages) == 0,
+				HasNoBlockVolumes: vs.blockService != nil,
 			}
 			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {
@@ -321,5 +332,18 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 			return
 		}
+	}
+}
+
+// collectBlockVolumeHeartbeat builds a heartbeat with the full list of block volumes.
+func (vs *VolumeServer) collectBlockVolumeHeartbeat(ip string, port uint32, dc, rack string) *master_pb.Heartbeat {
+	msgs := vs.blockService.Store().CollectBlockVolumeHeartbeat()
+	return &master_pb.Heartbeat{
+		Ip:                ip,
+		Port:              port,
+		DataCenter:        dc,
+		Rack:              rack,
+		BlockVolumeInfos:  blockvol.InfoMessagesToProto(msgs),
+		HasNoBlockVolumes: len(msgs) == 0,
 	}
 }

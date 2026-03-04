@@ -34,12 +34,13 @@ const (
 type Session struct {
 	mu sync.Mutex
 
-	state    SessionState
-	conn     net.Conn
-	scsi     *SCSIHandler
-	config   TargetConfig
-	resolver TargetResolver
-	devices  DeviceLookup
+	state     SessionState
+	conn      net.Conn
+	scsi      *SCSIHandler
+	config    TargetConfig
+	resolver  TargetResolver
+	devices   DeviceLookup
+	targetIQN string // negotiated target name (set after login)
 
 	// Sequence numbers
 	expCmdSN atomic.Uint32 // expected CmdSN from initiator
@@ -315,6 +316,7 @@ func (s *Session) handleLogin(pdu *PDU) error {
 		s.loginDone = true
 		s.state = SessionLoggedIn
 		result := s.negotiator.Result()
+		s.targetIQN = result.TargetName
 		s.dataInWriter = NewDataInWriter(uint32(result.MaxRecvDataSegLen))
 		s.negImmediateData = result.ImmediateData
 		s.negInitialR2T = result.InitialR2T
@@ -592,4 +594,12 @@ func (s *Session) State() SessionState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// TargetIQN returns the negotiated target name for this session.
+// Returns empty string if login has not completed.
+func (s *Session) TargetIQN() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.targetIQN
 }

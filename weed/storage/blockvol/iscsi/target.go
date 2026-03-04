@@ -185,6 +185,20 @@ func (ts *TargetServer) LookupDevice(iqn string) BlockDevice {
 	return &nullDevice{}
 }
 
+// DisconnectVolume terminates all active sessions using the given IQN,
+// then removes the volume from the registry.
+func (ts *TargetServer) DisconnectVolume(iqn string) {
+	ts.activeMu.Lock()
+	for id, sess := range ts.active {
+		if sess.TargetIQN() == iqn {
+			sess.Close()
+			delete(ts.active, id)
+		}
+	}
+	ts.activeMu.Unlock()
+	ts.RemoveVolume(iqn)
+}
+
 // Close gracefully shuts down the target server.
 func (ts *TargetServer) Close() error {
 	select {

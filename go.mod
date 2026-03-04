@@ -129,6 +129,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0
 	github.com/cognusion/imaging v1.0.2
+	github.com/container-storage-interface/spec v1.10.0
 	github.com/fluent/fluent-logger-golang v1.10.1
 	github.com/getsentry/sentry-go v0.42.0
 	github.com/go-ldap/ldap/v3 v3.4.12
@@ -138,7 +139,6 @@ require (
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/jhump/protoreflect v1.18.0
-	github.com/lib/pq v1.11.1
 	github.com/linkedin/goavro/v2 v2.14.1
 	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/minio/crc64nvme v1.1.1
@@ -237,6 +237,7 @@ require (
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/lib/pq v1.11.1 // indirect
 	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/lithammer/shortuuid/v3 v3.0.7 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect

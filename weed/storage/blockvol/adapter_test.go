@@ -68,3 +68,81 @@ func TestAdapterImplementsInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdapterALUAProvider(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alua_test.blk")
+
+	vol, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1024 * 4096,
+		BlockSize:  4096,
+		ExtentSize: 65536,
+		WALSize:    1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vol.Close()
+
+	adapter := &BlockVolAdapter{Vol: vol, TPGID: 42}
+
+	// Verify it satisfies the ALUA interface.
+	var _ iscsi.ALUAProvider = adapter
+
+	if adapter.TPGroupID() != 42 {
+		t.Fatalf("TPGroupID: got %d, want 42", adapter.TPGroupID())
+	}
+
+	// RoleNone -> Active/Optimized
+	if adapter.ALUAState() != iscsi.ALUAActiveOptimized {
+		t.Fatalf("ALUAState: got %d, want %d", adapter.ALUAState(), iscsi.ALUAActiveOptimized)
+	}
+
+	// DeviceNAA should have NAA=6 in high nibble.
+	naa := adapter.DeviceNAA()
+	if naa[0]&0xF0 != 0x60 {
+		t.Fatalf("DeviceNAA high nibble: got 0x%02x, want 0x6x", naa[0])
+	}
+}
+
+func TestRoleToALUA(t *testing.T) {
+	tests := []struct {
+		role Role
+		want uint8
+	}{
+		{RoleNone, iscsi.ALUAActiveOptimized},
+		{RolePrimary, iscsi.ALUAActiveOptimized},
+		{RoleReplica, iscsi.ALUAStandby},
+		{RoleStale, iscsi.ALUAUnavailable},
+		{RoleRebuilding, iscsi.ALUATransitioning},
+		{RoleDraining, iscsi.ALUATransitioning},
+	}
+	for _, tt := range tests {
+		got := RoleToALUA(tt.role)
+		if got != tt.want {
+			t.Errorf("RoleToALUA(%v): got %d, want %d", tt.role, got, tt.want)
+		}
+	}
+}
+
+func TestUUIDToNAA(t *testing.T) {
+	var uuid [16]byte
+	for i := range uuid {
+		uuid[i] = byte(i + 1)
+	}
+	naa := UUIDToNAA(uuid)
+	// High nibble must be 0x6
+	if naa[0]&0xF0 != 0x60 {
+		t.Fatalf("NAA high nibble: got 0x%02x, want 0x6x", naa[0])
+	}
+	// Low nibble of first byte comes from uuid[0]
+	if naa[0]&0x0F != uuid[0]&0x0F {
+		t.Fatalf("NAA low nibble: got 0x%02x, want 0x%02x", naa[0]&0x0F, uuid[0]&0x0F)
+	}
+	// Bytes 1-7 come from uuid[1:8]
+	for i := 1; i < 8; i++ {
+		if naa[i] != uuid[i] {
+			t.Fatalf("NAA[%d]: got 0x%02x, want 0x%02x", i, naa[i], uuid[i])
+		}
+	}
+}

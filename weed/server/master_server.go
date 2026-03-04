@@ -15,11 +15,13 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 
 	"github.com/gorilla/mux"
 	hashicorpRaft "github.com/hashicorp/raft"
@@ -90,6 +92,11 @@ type MasterServer struct {
 
 	// telemetry
 	telemetryCollector *telemetry.Collector
+
+	// block volume support
+	blockRegistry    *BlockVolumeRegistry
+	blockVSAllocate  func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error)
+	blockVSDelete    func(ctx context.Context, server pb.ServerAddress, name string) error
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
@@ -137,6 +144,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		adminLocks:              NewAdminLocks(),
 		Cluster:                 cluster.NewCluster(),
 	}
+
+	ms.blockRegistry = NewBlockVolumeRegistry()
+	ms.blockVSAllocate = ms.defaultBlockVSAllocate
+	ms.blockVSDelete = ms.defaultBlockVSDelete
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 
@@ -501,4 +512,33 @@ func (ms *MasterServer) Reload() {
 	ms.guard.UpdateWhiteList(append(ms.option.WhiteList,
 		util.StringSplit(v.GetString("guard.white_list"), ",")...),
 	)
+}
+
+// defaultBlockVSAllocate calls a volume server's AllocateBlockVolume RPC.
+func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error) {
+	err = operation.WithVolumeServerClient(false, server, ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, rerr := client.AllocateBlockVolume(ctx, &volume_server_pb.AllocateBlockVolumeRequest{
+			Name:      name,
+			SizeBytes: sizeBytes,
+			DiskType:  diskType,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		path = resp.Path
+		iqn = resp.Iqn
+		iscsiAddr = resp.IscsiAddr
+		return nil
+	})
+	return
+}
+
+// defaultBlockVSDelete calls a volume server's VolumeServerDeleteBlockVolume RPC.
+func (ms *MasterServer) defaultBlockVSDelete(ctx context.Context, server pb.ServerAddress, name string) error {
+	return operation.WithVolumeServerClient(false, server, ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.VolumeServerDeleteBlockVolume(ctx, &volume_server_pb.VolumeServerDeleteBlockVolumeRequest{
+			Name: name,
+		})
+		return err
+	})
 }

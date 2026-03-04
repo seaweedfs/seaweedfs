@@ -89,6 +89,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.Topo.UnRegisterDataNode(dn)
 			glog.V(0).Infof("unregister disconnected volume server %s:%d", dn.Ip, dn.Port)
 			ms.UnRegisterUuids(dn.Ip, dn.Port)
+			if ms.blockRegistry != nil {
+				ms.blockRegistry.UnmarkBlockCapable(dn.Url())
+			}
 
 			if ms.Topo.IsLeader() && (len(message.DeletedVids) > 0 || len(message.DeletedEcVids) > 0) {
 				ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
@@ -262,6 +265,16 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 		if len(message.NewVids) > 0 || len(message.DeletedVids) > 0 || len(message.NewEcVids) > 0 || len(message.DeletedEcVids) > 0 {
 			ms.broadcastToClients(&master_pb.KeepConnectedResponse{VolumeLocation: message})
+		}
+
+		// Process block volume heartbeat.
+		// These are mutually exclusive: the volume server sends either a full list
+		// (BlockVolumeInfos on first heartbeat) or deltas (NewBlockVolumes/DeletedBlockVolumes
+		// on subsequent heartbeats), never both in the same message.
+		if len(heartbeat.BlockVolumeInfos) > 0 || heartbeat.HasNoBlockVolumes {
+			ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos)
+		} else if len(heartbeat.NewBlockVolumes) > 0 || len(heartbeat.DeletedBlockVolumes) > 0 {
+			ms.blockRegistry.UpdateDeltaHeartbeat(dn.Url(), heartbeat.NewBlockVolumes, heartbeat.DeletedBlockVolumes)
 		}
 	}
 }

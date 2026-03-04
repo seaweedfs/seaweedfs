@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sw-block-csi-node
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: sw-block-csi-node
+  template:
+    metadata:
+      labels:
+        app: sw-block-csi-node
+    spec:
+      serviceAccountName: sw-block-csi
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: block-csi
+          image: sw-block-csi:local
+          imagePullPolicy: Never
+          args:
+            - "-endpoint=unix:///csi/csi.sock"
+            - "-mode=node"
+            - "-node-id=$(NODE_NAME)"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+            - name: dev
+              mountPath: /dev
+            - name: iscsi-dir
+              mountPath: /etc/iscsi
+        - name: csi-node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/block.csi.seaweedfs.com/csi.sock"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/block.csi.seaweedfs.com
+            type: DirectoryOrCreate
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: dev
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: iscsi-dir
+          hostPath:
+            path: /etc/iscsi
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory

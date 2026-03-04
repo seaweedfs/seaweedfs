@@ -1,0 +1,7 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: sw-block
+provisioner: block.csi.seaweedfs.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

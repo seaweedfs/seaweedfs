@@ -1,0 +1,9 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: block.csi.seaweedfs.com
+spec:
+  attachRequired: false
+  podInfoOnMount: false
+  volumeLifecycleModes:
+    - Persistent

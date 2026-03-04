@@ -54,6 +54,8 @@ type VolumeServer struct {
 	fileSizeLimitBytes       int64
 	isHeartbeating           bool
 	stopChan                 chan bool
+
+	blockService *BlockService // block volume iSCSI service (nil if disabled)
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,

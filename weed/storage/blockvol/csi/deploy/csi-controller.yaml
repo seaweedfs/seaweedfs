@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sw-block-csi-controller
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sw-block-csi-controller
+  template:
+    metadata:
+      labels:
+        app: sw-block-csi-controller
+    spec:
+      serviceAccountName: sw-block-csi
+      containers:
+        - name: block-csi
+          image: sw-block-csi:local
+          imagePullPolicy: Never
+          args:
+            - "-endpoint=unix:///csi/csi.sock"
+            - "-mode=controller"
+            - "-master=master:9333"
+            - "-node-id=$(NODE_NAME)"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+        - name: csi-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+          args:
+            - "--csi-address=/csi/csi.sock"
+            - "--feature-gates=Topology=true"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}

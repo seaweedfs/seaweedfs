@@ -111,7 +111,7 @@ func main() {
 	// Create Prometheus registry and metrics adapter.
 	promReg := prometheus.NewRegistry()
 	instrumented := &instrumentedAdapter{
-		inner:  &blockVolAdapter{vol: vol, tpgID: uint16(*tpgID)},
+		inner:  &blockvol.BlockVolAdapter{Vol: vol, TPGID: uint16(*tpgID)},
 		logger: logger,
 	}
 	adapter := newMetricsAdapter(instrumented, vol, promReg)
@@ -171,61 +171,6 @@ func main() {
 		log.Fatalf("target server: %v", err)
 	}
 	logger.Println("target stopped")
-}
-
-// blockVolAdapter wraps BlockVol to implement iscsi.BlockDevice and iscsi.ALUAProvider.
-type blockVolAdapter struct {
-	vol   *blockvol.BlockVol
-	tpgID uint16
-}
-
-func (a *blockVolAdapter) ReadAt(lba uint64, length uint32) ([]byte, error) {
-	return a.vol.ReadLBA(lba, length)
-}
-func (a *blockVolAdapter) WriteAt(lba uint64, data []byte) error {
-	return a.vol.WriteLBA(lba, data)
-}
-func (a *blockVolAdapter) Trim(lba uint64, length uint32) error {
-	return a.vol.Trim(lba, length)
-}
-func (a *blockVolAdapter) SyncCache() error {
-	return a.vol.SyncCache()
-}
-func (a *blockVolAdapter) BlockSize() uint32  { return a.vol.Info().BlockSize }
-func (a *blockVolAdapter) VolumeSize() uint64 { return a.vol.Info().VolumeSize }
-func (a *blockVolAdapter) IsHealthy() bool    { return a.vol.Info().Healthy }
-
-// ALUAProvider implementation.
-func (a *blockVolAdapter) ALUAState() uint8    { return roleToALUA(a.vol.Role()) }
-func (a *blockVolAdapter) TPGroupID() uint16   { return a.tpgID }
-func (a *blockVolAdapter) DeviceNAA() [8]byte  { return uuidToNAA(a.vol.Info().UUID) }
-
-// roleToALUA maps a BlockVol Role to an ALUA asymmetric access state.
-// RoleNone maps to Active/Optimized so standalone single-node targets
-// (no assignment from master) can accept writes.
-func roleToALUA(r blockvol.Role) uint8 {
-	switch r {
-	case blockvol.RolePrimary, blockvol.RoleNone:
-		return iscsi.ALUAActiveOptimized
-	case blockvol.RoleReplica:
-		return iscsi.ALUAStandby
-	case blockvol.RoleStale:
-		return iscsi.ALUAUnavailable
-	case blockvol.RoleRebuilding, blockvol.RoleDraining:
-		return iscsi.ALUATransitioning
-	default:
-		return iscsi.ALUAStandby
-	}
-}
-
-// uuidToNAA converts a 16-byte UUID to an 8-byte NAA-6 identifier.
-// NAA-6 format: nibble 6 (NAA=6) followed by 60 bits from the UUID.
-func uuidToNAA(uuid [16]byte) [8]byte {
-	var naa [8]byte
-	// Set NAA=6 in the high nibble of the first byte.
-	naa[0] = 0x60 | (uuid[0] & 0x0F)
-	copy(naa[1:], uuid[1:8])
-	return naa
 }
 
 // instrumentedAdapter wraps a BlockDevice and logs latency stats periodically.

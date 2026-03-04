@@ -303,9 +303,4 @@ func testAppsMdRaid1(t *testing.T) {
 	t.Skip("MD RAID-1 test requires 2 iSCSI volumes")
 }
 
-func requireCmd(t *testing.T, cmd string) {
-	t.Helper()
-	if !clientNode.HasCommand(cmd) {
-		t.Skipf("%s not available", cmd)
-	}
-}
+// requireCmd is defined in fault_helpers.go (integration tag).

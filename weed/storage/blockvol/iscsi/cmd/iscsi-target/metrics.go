@@ -9,7 +9,7 @@ import (
 )
 
 // metricsAdapter wraps a BlockDevice and feeds Prometheus counters/histograms.
-// It sits in the adapter stack: metricsAdapter -> instrumentedAdapter -> blockVolAdapter.
+// It sits in the adapter stack: metricsAdapter -> instrumentedAdapter -> BlockVolAdapter.
 // Counters count all attempts (including errors) per Prometheus conventions.
 type metricsAdapter struct {
 	inner iscsi.BlockDevice
