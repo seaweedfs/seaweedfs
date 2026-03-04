@@ -847,7 +847,7 @@ func (h *IcebergMaintenanceHandler) rewriteManifests(
 		return "", fmt.Errorf("parse manifest list: %w", err)
 	}
 
-	if len(manifests) < int(config.MinInputFiles) {
+	if int64(len(manifests)) < config.MinInputFiles {
 		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinInputFiles), nil
 	}
 
