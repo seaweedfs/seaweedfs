@@ -34,6 +34,11 @@ func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 	return rs
 }
 
+func (rs *FilerRemoteStorage) Reset() {
+	rs.rules = ptrie.New[*remote_pb.RemoteStorageLocation]()
+	rs.storageNameToConf = make(map[string]*remote_pb.RemoteConf)
+}
+
 func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *Filer) (err error) {
 	// execute this on filer
 

@@ -130,5 +130,16 @@ func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	}
 }
 func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
-	// FIXME add reloading
+	dir := event.Directory
+	if event.EventNotification.NewParentPath != "" {
+		dir = event.EventNotification.NewParentPath
+	}
+	if dir != DirectoryEtcRemote {
+		return
+	}
+	glog.V(0).Infof("remote storage configuration changed, reloading...")
+	f.RemoteStorage.Reset()
+	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
+		glog.Errorf("reload remote storage config: %v", err)
+	}
 }
