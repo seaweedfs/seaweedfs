@@ -777,11 +777,10 @@ func (h *IcebergMaintenanceHandler) removeOrphans(
 			}
 
 			// Check if file is referenced (try multiple path formats)
-			filePath := path.Join(dirPath, entry.Name)
 			relPath := path.Join(subdir, entry.Name)
 			isReferenced := false
 			for ref := range referencedFiles {
-				if strings.HasSuffix(ref, "/"+entry.Name) || ref == filePath || ref == relPath || strings.HasSuffix(ref, entry.Name) {
+				if ref == relPath || strings.HasSuffix(ref, "/"+entry.Name) {
 					isReferenced = true
 					break
 				}
