@@ -973,12 +973,12 @@ func (h *IcebergMaintenanceHandler) commitWithRetry(
 	config icebergMaintenanceConfig,
 	mutate func(currentMeta table.Metadata, builder *table.MetadataBuilder) error,
 ) error {
-	maxRetries := int(config.MaxCommitRetries)
-	if maxRetries <= 0 {
+	maxRetries := config.MaxCommitRetries
+	if maxRetries <= 0 || maxRetries > 20 {
 		maxRetries = defaultMaxCommitRetries
 	}
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := int64(0); attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			jitter := time.Duration(rand.Int64N(int64(25 * time.Millisecond)))
 			time.Sleep(time.Duration(50*attempt)*time.Millisecond + jitter)
