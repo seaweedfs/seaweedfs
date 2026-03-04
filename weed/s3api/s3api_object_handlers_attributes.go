@@ -41,7 +41,7 @@ type ObjectAttributesParts struct {
 	MaxParts             int                     `xml:"MaxParts"`
 	NextPartNumberMarker int                     `xml:"NextPartNumberMarker"`
 	PartNumberMarker     int                     `xml:"PartNumberMarker"`
-	PartsCount           int                     `xml:"PartsCount"`
+	TotalPartsCount      int                     `xml:"PartsCount"`
 	Parts                []*ObjectAttributesPart `xml:"Part"`
 }
 
@@ -289,7 +289,7 @@ func (s3a *S3ApiServer) buildObjectAttributesParts(entry *filer_pb.Entry, maxPar
 	parts := &ObjectAttributesParts{
 		PartNumberMarker: partNumberMarker,
 		MaxParts:         maxParts,
-		PartsCount:       len(boundaries),
+		TotalPartsCount:  len(boundaries),
 	}
 
 	chunks := entry.GetChunks()
@@ -303,7 +303,7 @@ func (s3a *S3ApiServer) buildObjectAttributesParts(entry *filer_pb.Entry, maxPar
 		}
 
 		var partSize int64
-		if b.StartChunk < len(chunks) && b.EndChunk <= len(chunks) && b.StartChunk < b.EndChunk {
+		if b.StartChunk >= 0 && b.EndChunk >= 0 && b.StartChunk < len(chunks) && b.EndChunk <= len(chunks) && b.StartChunk < b.EndChunk {
 			for ci := b.StartChunk; ci < b.EndChunk; ci++ {
 				partSize += int64(chunks[ci].Size)
 			}
