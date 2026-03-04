@@ -59,6 +59,9 @@ func TestGetObjectAttributes(t *testing.T) {
 	t.Run("VersionedObject", func(t *testing.T) {
 		testGetObjectAttributesVersioned(t, cluster)
 	})
+	t.Run("ConditionalHeaders", func(t *testing.T) {
+		testGetObjectAttributesConditionalHeaders(t, cluster)
+	})
 }
 
 func testGetObjectAttributesBasic(t *testing.T, cluster *TestCluster) {
@@ -347,4 +350,109 @@ func testGetObjectAttributesVersioned(t *testing.T, cluster *TestCluster) {
 
 	t.Logf("Versioned GetObjectAttributes passed: v1 size=%d (id=%s), v2 size=%d (id=%s)",
 		*resp1.ObjectSize, versionId1, *resp.ObjectSize, versionId2)
+}
+
+// signedGetObjectAttributes creates a signed GET request for ?attributes with custom headers.
+func signedGetObjectAttributes(t *testing.T, cluster *TestCluster, bucketName, objectKey string, extraHeaders map[string]string) *http.Response {
+	reqURL := fmt.Sprintf("%s/%s/%s?attributes", cluster.s3Endpoint, bucketName, objectKey)
+	req, err := http.NewRequest("GET", reqURL, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Object-Attributes", "ETag,ObjectSize")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
+	signer := v1signer.NewSigner(v1credentials.NewStaticCredentials(testAccessKey, testSecretKey, ""))
+	_, err = signer.Sign(req, nil, "s3", testRegion, time.Now())
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+func testGetObjectAttributesConditionalHeaders(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-goa-cond-")
+	objectKey := "cond-test.txt"
+
+	_, err := cluster.s3Client.PutObject(&v1s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   bytes.NewReader([]byte("conditional headers test")),
+	})
+	require.NoError(t, err)
+
+	// Get the ETag and Last-Modified for the object
+	headResp, err := cluster.s3Client.HeadObject(&v1s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	etag := aws.StringValue(headResp.ETag)
+	lastModified := headResp.LastModified
+	require.NotNil(t, lastModified)
+
+	pastDate := lastModified.Add(-1 * time.Hour).UTC().Format(http.TimeFormat)
+	futureDate := lastModified.Add(1 * time.Hour).UTC().Format(http.TimeFormat)
+
+	// RFC 7232: If-Match true + If-Unmodified-Since false => 200 OK
+	// If-Unmodified-Since is ignored when If-Match is present
+	t.Run("IfMatch_true_IfUnmodifiedSince_false", func(t *testing.T) {
+		resp := signedGetObjectAttributes(t, cluster, bucketName, objectKey, map[string]string{
+			"If-Match":            etag,
+			"If-Unmodified-Since": pastDate, // object was modified after this => false
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 200, resp.StatusCode,
+			"If-Match=true should return 200 even when If-Unmodified-Since=false (RFC 7232 Section 3.4)")
+	})
+
+	// RFC 7232: If-None-Match false + If-Modified-Since true => 304 Not Modified
+	// If-Modified-Since is ignored when If-None-Match is present
+	t.Run("IfNoneMatch_false_IfModifiedSince_true", func(t *testing.T) {
+		resp := signedGetObjectAttributes(t, cluster, bucketName, objectKey, map[string]string{
+			"If-None-Match":     etag,
+			"If-Modified-Since": pastDate, // object was modified after this => true
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 304, resp.StatusCode,
+			"If-None-Match=false (ETag match) should return 304 even when If-Modified-Since=true (RFC 7232 Section 3.3)")
+	})
+
+	// If-Match succeeds, If-Unmodified-Since also succeeds => 200
+	t.Run("IfMatch_true_IfUnmodifiedSince_true", func(t *testing.T) {
+		resp := signedGetObjectAttributes(t, cluster, bucketName, objectKey, map[string]string{
+			"If-Match":            etag,
+			"If-Unmodified-Since": futureDate,
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 200, resp.StatusCode)
+	})
+
+	// If-None-Match passes (ETag differs), If-Modified-Since ignored => 200
+	// Per RFC 7232, If-Modified-Since is ignored when If-None-Match is present
+	t.Run("IfNoneMatch_true_IfModifiedSince_ignored", func(t *testing.T) {
+		resp := signedGetObjectAttributes(t, cluster, bucketName, objectKey, map[string]string{
+			"If-None-Match":     `"nonexistent-etag"`,
+			"If-Modified-Since": futureDate, // would fail alone, but is ignored
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 200, resp.StatusCode,
+			"If-None-Match=true means If-Modified-Since is ignored, should return 200 (RFC 7232 Section 3.3)")
+	})
+
+	// If-Match fails => 412 regardless of If-Unmodified-Since
+	t.Run("IfMatch_false", func(t *testing.T) {
+		resp := signedGetObjectAttributes(t, cluster, bucketName, objectKey, map[string]string{
+			"If-Match":            `"wrong-etag"`,
+			"If-Unmodified-Since": futureDate,
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 412, resp.StatusCode)
+	})
+
+	t.Logf("Conditional headers tests passed")
 }
