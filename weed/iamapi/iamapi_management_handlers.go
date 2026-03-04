@@ -468,7 +468,8 @@ func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url
 	return resp, nil
 }
 
-// DeletePolicy removes a managed policy and detaches it from all users.
+// DeletePolicy removes a managed policy. Rejects deletion if the policy is still attached to any user
+// (matching AWS IAM behavior: must detach before deleting).
 func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeletePolicyResponse, iamError *IamError) {
 	policyArn := values.Get("PolicyArn")
 	policyName, iamError := parsePolicyArn(policyArn)
@@ -485,25 +486,21 @@ func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 
+	// Reject deletion if the policy is still attached to any user
+	for _, ident := range s3cfg.Identities {
+		for _, name := range ident.PolicyNames {
+			if name == policyName {
+				return resp, &IamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("policy %s is still attached to user %s", policyName, ident.Name),
+				}
+			}
+		}
+	}
+
 	delete(policies.Policies, policyName)
 	if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-	}
-
-	// Detach from all users that have this policy attached and recompute their actions
-	for _, ident := range s3cfg.Identities {
-		for i, name := range ident.PolicyNames {
-			if name == policyName {
-				ident.PolicyNames = append(ident.PolicyNames[:i], ident.PolicyNames[i+1:]...)
-				aggregatedActions, err := computeAllActionsForUser(iama, ident.Name, &policies, ident)
-				if err != nil {
-					glog.Warningf("Failed to recompute actions for user %s after policy deletion: %v", ident.Name, err)
-				} else {
-					ident.Actions = aggregatedActions
-				}
-				break
-			}
-		}
 	}
 
 	return resp, nil
@@ -961,6 +958,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, iamError)
 			return
 		}
+		changed = false
 	case "ListPolicies":
 		response, iamError = iama.ListPolicies(s3cfg, values)
 		if iamError != nil {

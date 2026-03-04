@@ -328,27 +328,27 @@ func TestDeletePolicy(t *testing.T) {
 	}}
 	iama := &IamApiServer{s3ApiConfig: mock}
 
-	// Create a user with the policy attached and actions from it
+	// Reject deletion when policy is attached to a user (AWS-compatible behavior)
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{{
 			Name:        "alice",
 			PolicyNames: []string{"my-policy"},
-			Actions:     []string{"Read"},
 		}},
 	}
-
 	values := url.Values{"PolicyArn": []string{"arn:aws:iam:::policy/my-policy"}}
 	_, iamErr := iama.DeletePolicy(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeDeleteConflictException, iamErr.Code)
+
+	// Succeed when no users are attached
+	s3cfgEmpty := &iam_pb.S3ApiConfiguration{}
+	_, iamErr = iama.DeletePolicy(s3cfgEmpty, values)
 	assert.Nil(t, iamErr)
 
-	// Verify policy is deleted from storage
-	_, iamErr = iama.GetPolicy(s3cfg, values)
+	// Verify deleted
+	_, iamErr = iama.GetPolicy(s3cfgEmpty, values)
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
-
-	// Verify the policy was detached from Alice and actions were recomputed
-	assert.Empty(t, s3cfg.Identities[0].PolicyNames, "PolicyNames should be empty after policy deletion")
-	assert.Empty(t, s3cfg.Identities[0].Actions, "Actions should be empty after managed policy deletion (no inline policies)")
 }
 
 func TestListPolicies(t *testing.T) {
