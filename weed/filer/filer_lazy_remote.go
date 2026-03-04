@@ -71,10 +71,10 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 		if statErr != nil {
 			if errors.Is(statErr, remote_storage.ErrRemoteObjectNotFound) {
 				glog.V(3).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s not found in remote", p)
-			} else {
-				glog.Warningf("maybeLazyFetchFromRemote: stat %s failed: %v", p, statErr)
+				return lazyFetchResult{nil}, nil
 			}
-			return lazyFetchResult{nil}, nil
+			glog.Warningf("maybeLazyFetchFromRemote: stat %s failed: %v", p, statErr)
+			return lazyFetchResult{nil}, statErr
 		}
 		if remoteEntry == nil {
 			glog.V(3).InfofCtx(ctx, "maybeLazyFetchFromRemote: %s StatFile returned nil entry", p)

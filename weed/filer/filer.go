@@ -380,6 +380,7 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	if entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
 		if lazy, lazyErr := f.maybeLazyFetchFromRemote(ctx, p); lazyErr != nil {
 			glog.V(1).InfofCtx(ctx, "FindEntry lazy fetch %s: %v", p, lazyErr)
+			return nil, lazyErr
 		} else if lazy != nil {
 			return lazy, nil
 		}

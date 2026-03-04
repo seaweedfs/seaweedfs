@@ -368,3 +368,70 @@ func TestFindEntry_LazyFetchOnMiss(t *testing.T) {
 	require.NotNil(t, entry2)
 	assert.Equal(t, uint64(999), entry2.FileSize)
 }
+
+func TestMaybeLazyFetchFromRemote_NetworkErrorPropagated(t *testing.T) {
+	const storageType = "stub_lazy_neterr"
+	networkErr := fmt.Errorf("connection refused")
+	stub := &stubRemoteClient{statErr: networkErr}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "neterr", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name: "neterr", Bucket: "mybucket", Path: "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+
+	entry, err := f.maybeLazyFetchFromRemote(context.Background(), "/buckets/mybucket/file.txt")
+	assert.Nil(t, entry)
+	require.Error(t, err, "network error should be propagated")
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestFindEntry_RemoteErrorPropagated(t *testing.T) {
+	const storageType = "stub_findentry_err"
+	remoteErr := fmt.Errorf("remote auth failure")
+	stub := &stubRemoteClient{statErr: remoteErr}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "autherr", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name: "autherr", Bucket: "mybucket", Path: "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+
+	entry, err := f.FindEntry(context.Background(), "/buckets/mybucket/file.txt")
+	assert.Nil(t, entry)
+	require.Error(t, err, "FindEntry should propagate remote errors")
+	assert.Contains(t, err.Error(), "remote auth failure")
+	// Verify it's NOT ErrNotFound
+	assert.False(t, errors.Is(err, filer_pb.ErrNotFound), "should not be ErrNotFound")
+}
+
+func TestFindEntry_RemoteNotFoundStillReturnsErrNotFound(t *testing.T) {
+	const storageType = "stub_findentry_notfound"
+	stub := &stubRemoteClient{statErr: remote_storage.ErrRemoteObjectNotFound}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "notfound", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name: "notfound", Bucket: "mybucket", Path: "/",
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+
+	entry, err := f.FindEntry(context.Background(), "/buckets/mybucket/file.txt")
+	assert.Nil(t, entry)
+	// When remote says "not found", the original ErrNotFound from the store is returned
+	assert.True(t, errors.Is(err, filer_pb.ErrNotFound), "genuine not-found should still return ErrNotFound")
+}
