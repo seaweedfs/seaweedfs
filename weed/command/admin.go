@@ -45,6 +45,7 @@ type AdminOptions struct {
 	readOnlyPassword *string
 	dataDir          *string
 	icebergPort      *int
+	idleSleepSeconds *int
 }
 
 func init() {
@@ -60,6 +61,7 @@ func init() {
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
+	a.idleSleepSeconds = cmdAdmin.Flag.Int("scheduler.idleSleep", 0, "scheduler idle sleep in seconds between iterations when no work is found (0 = default 17 minutes)")
 }
 
 var cmdAdmin = &Command{
@@ -290,7 +292,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Create admin server (plugin is always enabled)
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
+	var idleSleep time.Duration
+	if options.idleSleepSeconds != nil && *options.idleSleepSeconds > 0 {
+		idleSleep = time.Duration(*options.idleSleepSeconds) * time.Second
+	}
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort, idleSleep)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

@@ -118,7 +118,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, idleSleepDuration time.Duration) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -229,7 +229,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	}
 
 	plugin, err := adminplugin.New(adminplugin.Options{
-		DataDir: dataDir,
+		DataDir:           dataDir,
+		IdleSleepDuration: idleSleepDuration,
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
@@ -238,7 +239,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
 		plugin, err = adminplugin.New(adminplugin.Options{
-			DataDir: "",
+			DataDir:           "",
+			IdleSleepDuration: idleSleepDuration,
 			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 				return server.buildDefaultPluginClusterContext(), nil
 			},

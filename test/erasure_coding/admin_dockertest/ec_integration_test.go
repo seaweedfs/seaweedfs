@@ -135,7 +135,7 @@ func ensureEnvironment(t *testing.T) {
 	// 6. Start Admin
 	os.RemoveAll(filepath.Join("tmp", "admin"))
 	os.MkdirAll(filepath.Join("tmp", "admin"), 0755)
-	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin")
+	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin", "-scheduler.idleSleep=2")
 	waitForUrl(t, AdminUrl+"/health", 60)
 
 	t.Log("Environment started successfully")
