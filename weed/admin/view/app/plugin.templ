@@ -2406,6 +2406,9 @@ templ Plugin(page string) {
             }
 
             function collectAdminSettings() {
+                var existingRuntime = (state.config && state.config.admin_runtime) ? state.config.admin_runtime : {};
+                var existingDetectionInterval = Number(existingRuntime.detection_interval_seconds || 0);
+
                 function getInt(id) {
                     var raw = String(document.getElementById(id).value || '').trim();
                     if (!raw) {
@@ -2420,6 +2423,7 @@ templ Plugin(page string) {
 
                 return {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
+                    detection_interval_seconds: existingDetectionInterval,
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
                     job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),
                     max_jobs_per_detection: getInt('plugin-admin-max-results'),
