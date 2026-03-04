@@ -103,8 +103,13 @@ func (r *Plugin) runSchedulerIteration() bool {
 			r.clearSchedulerJobType(jobType)
 			continue
 		}
+		interval := policy.DetectionInterval
+		if !r.shouldRunJobType(jobType, interval) {
+			continue
+		}
 
 		detected := r.runJobTypeIteration(jobType, policy)
+		r.recordJobTypeRun(jobType, interval)
 		if detected {
 			hadJobs = true
 		}
@@ -524,8 +529,37 @@ func (r *Plugin) clearSchedulerJobType(jobType string) {
 	r.schedulerMu.Lock()
 	delete(r.nextDetectionAt, jobType)
 	delete(r.detectionInFlight, jobType)
+	delete(r.schedulerLastRun, jobType)
 	r.schedulerMu.Unlock()
 	r.clearDetectorLease(jobType, "")
+}
+
+func (r *Plugin) shouldRunJobType(jobType string, interval time.Duration) bool {
+	if interval <= 0 {
+		return true
+	}
+	r.schedulerMu.Lock()
+	nextRun := r.nextDetectionAt[jobType]
+	r.schedulerMu.Unlock()
+	if nextRun.IsZero() {
+		return true
+	}
+	return !time.Now().UTC().Before(nextRun)
+}
+
+func (r *Plugin) recordJobTypeRun(jobType string, interval time.Duration) {
+	if jobType == "" {
+		return
+	}
+	now := time.Now().UTC()
+	r.schedulerMu.Lock()
+	r.schedulerLastRun[jobType] = now
+	if interval > 0 {
+		r.nextDetectionAt[jobType] = now.Add(interval)
+	} else {
+		delete(r.nextDetectionAt, jobType)
+	}
+	r.schedulerMu.Unlock()
 }
 
 func (r *Plugin) pruneDetectorLeases(activeJobTypes map[string]struct{}) {
