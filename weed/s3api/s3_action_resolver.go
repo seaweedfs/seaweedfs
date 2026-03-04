@@ -196,6 +196,11 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		return s3_constants.S3_ACTION_GET_BUCKET_LOCATION
 	}
 
+	// GetObjectAttributes (object-level only)
+	if hasObject && query.Has("attributes") && method == http.MethodGet {
+		return s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
+	}
+
 	// Object retention and legal hold operations (object-level only)
 	if hasObject {
 		if query.Has("retention") {

@@ -8,7 +8,8 @@ const (
 	S3_ACTION_PUT_OBJECT            = "s3:PutObject"
 	S3_ACTION_DELETE_OBJECT         = "s3:DeleteObject"
 	S3_ACTION_DELETE_OBJECT_VERSION = "s3:DeleteObjectVersion"
-	S3_ACTION_GET_OBJECT_VERSION    = "s3:GetObjectVersion"
+	S3_ACTION_GET_OBJECT_VERSION     = "s3:GetObjectVersion"
+	S3_ACTION_GET_OBJECT_ATTRIBUTES = "s3:GetObjectAttributes"
 
 	// Object ACL operations
 	S3_ACTION_GET_OBJECT_ACL = "s3:GetObjectAcl"
