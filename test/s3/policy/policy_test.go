@@ -435,8 +435,6 @@ func TestS3IAMManagedPolicyLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	defer cluster.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	iamClient := newIAMClient(t, cluster.s3Endpoint)
 
 	// Step 1: Create a user (this already worked per the issue)
@@ -547,8 +545,6 @@ func TestS3IAMManagedPolicyErrorCases(t *testing.T) {
 	cluster, err := startMiniCluster(t)
 	require.NoError(t, err)
 	defer cluster.Stop()
-
-	time.Sleep(500 * time.Millisecond)
 
 	iamClient := newIAMClient(t, cluster.s3Endpoint)
 

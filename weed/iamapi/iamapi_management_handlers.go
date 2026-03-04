@@ -255,8 +255,11 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
 	policies := Policies{}
 	// Note: Lock is already held by DoActions, no need to acquire here
-	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil {
+	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policies.Policies == nil {
+		policies.Policies = make(map[string]policy_engine.PolicyDocument)
 	}
 	policies.Policies[policyName] = policyDocument
 	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {

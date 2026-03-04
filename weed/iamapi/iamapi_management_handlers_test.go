@@ -292,6 +292,9 @@ func TestGetPolicy(t *testing.T) {
 	assert.Nil(t, iamErr)
 	assert.Equal(t, "my-policy", *resp.GetPolicyResult.Policy.PolicyName)
 	assert.Equal(t, "arn:aws:iam:::policy/my-policy", *resp.GetPolicyResult.Policy.Arn)
+	policyName := "my-policy"
+	expectedId := Hash(&policyName)
+	assert.Equal(t, expectedId, *resp.GetPolicyResult.Policy.PolicyId)
 
 	// Not found case
 	values = url.Values{"PolicyArn": []string{"arn:aws:iam:::policy/nonexistent"}}
@@ -381,6 +384,11 @@ func TestListPolicies(t *testing.T) {
 	resp, iamErr = iama.ListPolicies(s3cfg, url.Values{})
 	assert.Nil(t, iamErr)
 	assert.Equal(t, 2, len(resp.ListPoliciesResult.Policies))
+	for _, p := range resp.ListPoliciesResult.Policies {
+		name := *p.PolicyName
+		expectedId := Hash(&name)
+		assert.Equal(t, expectedId, *p.PolicyId, "PolicyId should be Hash(policyName) for %s", name)
+	}
 }
 
 func TestAttachUserPolicy(t *testing.T) {
