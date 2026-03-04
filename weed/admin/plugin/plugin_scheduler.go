@@ -194,7 +194,7 @@ func (r *Plugin) runJobTypeIteration(
 	if budget <= 0 {
 		budget = defaultMaxJobTypeDuration
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	ctx, cancel := context.WithTimeout(r.ctx, budget)
 	defer cancel()
 
 	start := time.Now().UTC()
@@ -750,8 +750,8 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 				Stage:      "retry",
 				OccurredAt: timeToPtr(time.Now().UTC()),
 			})
-			if !waitForShutdownOrTimer(r.shutdownCh, policy.RetryBackoff) {
-				return fmt.Errorf("plugin is shutting down")
+			if !waitForShutdownOrCtx(r.shutdownCh, parentCtx, policy.RetryBackoff) {
+				return fmt.Errorf("plugin is shutting down or context canceled")
 			}
 		}
 	}
