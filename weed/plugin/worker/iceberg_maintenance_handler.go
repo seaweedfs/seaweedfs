@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"path"
 	"sort"
@@ -1062,14 +1063,21 @@ func listFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, d
 			Limit:              limit,
 		})
 		if err != nil {
-			return entries, nil // directory may not exist
+			// Treat "not found" as empty directory; propagate other errors.
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+				return entries, nil
+			}
+			return entries, fmt.Errorf("list entries in %s: %w", dir, err)
 		}
 
 		count := 0
 		for {
-			entry, err := resp.Recv()
-			if err != nil {
-				break
+			entry, recvErr := resp.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return entries, fmt.Errorf("recv entry in %s: %w", dir, recvErr)
 			}
 			if entry.Entry != nil {
 				entries = append(entries, entry.Entry)
