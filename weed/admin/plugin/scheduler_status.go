@@ -10,6 +10,7 @@ type SchedulerStatus struct {
 	Now                  time.Time                `json:"now"`
 	SchedulerTickSeconds int                      `json:"scheduler_tick_seconds"`
 	IdleSleepSeconds     int                      `json:"idle_sleep_seconds,omitempty"`
+	NextDetectionAt      *time.Time               `json:"next_detection_at,omitempty"`
 	CurrentJobType       string                   `json:"current_job_type,omitempty"`
 	CurrentPhase         string                   `json:"current_phase,omitempty"`
 	LastIterationHadJobs bool                     `json:"last_iteration_had_jobs,omitempty"`
@@ -68,10 +69,10 @@ type schedulerRunInfo struct {
 }
 
 type schedulerLoopState struct {
-	currentJobType          string
-	currentPhase            string
-	lastIterationHadJobs    bool
-	lastIterationCompleted  time.Time
+	currentJobType         string
+	currentPhase           string
+	lastIterationHadJobs   bool
+	lastIterationCompleted time.Time
 }
 
 func (r *Plugin) recordSchedulerDetectionSuccess(jobType string, count int) {
@@ -224,6 +225,17 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 		CurrentJobType:       loopState.currentJobType,
 		CurrentPhase:         loopState.currentPhase,
 		LastIterationHadJobs: loopState.lastIterationHadJobs,
+	}
+	nextDetectionAt := r.earliestNextDetectionAt()
+	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
+		idleSleep := schedulerConfig.IdleSleepDuration()
+		if idleSleep > 0 {
+			nextDetectionAt = loopState.lastIterationCompleted.Add(idleSleep)
+		}
+	}
+	if !nextDetectionAt.IsZero() {
+		at := nextDetectionAt
+		status.NextDetectionAt = &at
 	}
 	if !loopState.lastIterationCompleted.IsZero() {
 		at := loopState.lastIterationCompleted
