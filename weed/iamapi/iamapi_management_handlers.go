@@ -41,6 +41,20 @@ const (
 
 var policyLock = sync.RWMutex{}
 
+const policyArnPrefix = "arn:aws:iam:::policy/"
+
+// parsePolicyArn validates an IAM policy ARN and extracts the policy name.
+func parsePolicyArn(policyArn string) (string, *IamError) {
+	if !strings.HasPrefix(policyArn, policyArnPrefix) {
+		return "", &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN: %s", policyArn)}
+	}
+	policyName := strings.TrimPrefix(policyArn, policyArnPrefix)
+	if policyName == "" {
+		return "", &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN: %s", policyArn)}
+	}
+	return policyName, nil
+}
+
 // userPolicyKey returns a namespaced key for inline user policies to prevent collision with managed policies.
 // getOrCreateUserPolicies returns the policy map for a user, creating it if needed.
 // Returns a pointer to the user's policy map from Policies.InlinePolicies.
@@ -234,15 +248,18 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	if err != nil {
 		return CreatePolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyId := Hash(&policyDocumentString)
+	policyId := Hash(&policyName)
 	arn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
 	resp.CreatePolicyResult.Policy.PolicyId = &policyId
 	policies := Policies{}
 	// Note: Lock is already held by DoActions, no need to acquire here
-	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil {
+	if err = iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if policies.Policies == nil {
+		policies.Policies = make(map[string]policy_engine.PolicyDocument)
 	}
 	policies.Policies[policyName] = policyDocument
 	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
@@ -265,9 +282,20 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	actions, err := GetActions(&policyDocument)
-	if err != nil {
+	if _, err := GetActions(&policyDocument); err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+
+	// Verify the user exists before persisting the policy
+	var targetIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			targetIdent = ident
+			break
+		}
+	}
+	if targetIdent == nil {
+		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
 	}
 
 	// Persist inline policy to storage using per-user indexed structure
@@ -276,32 +304,21 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Get or create user's policy map
 	userPolicies := policies.getOrCreateUserPolicies(userName)
 	userPolicies[policyName] = policyDocument
-	// policies.InlinePolicies[userName] now contains the updated map
 
 	if err = iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
 
-	// Compute aggregated actions from all user's inline policies, passing the local policies
-	// to avoid redundant I/O (reuses the just-written Policies map)
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
+	// Recompute aggregated actions (inline + managed)
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
 	if computeErr != nil {
-		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
-		aggregatedActions = actions // Fall back to current policy's actions
+		glog.Warningf("Failed to compute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
+	} else {
+		targetIdent.Actions = aggregatedActions
 	}
-
-	glog.V(3).Infof("PutUserPolicy: aggregated actions=%v", aggregatedActions)
-	for _, ident := range s3cfg.Identities {
-		if userName != ident.Name {
-			continue
-		}
-		ident.Actions = aggregatedActions
-		return resp, nil
-	}
-	return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
+	return resp, nil
 }
 
 func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetUserPolicyResponse, err *IamError) {
@@ -419,15 +436,245 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		}
 	}
 
-	// Recompute aggregated actions from remaining inline policies (passing policies to avoid redundant GetPolicies)
-	aggregatedActions, computeErr := computeAggregatedActionsForUser(iama, userName, &policies)
+	// Recompute aggregated actions from remaining inline + managed policies
+	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
 	if computeErr != nil {
-		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
+		glog.Warningf("Failed to recompute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
+	} else {
+		targetIdent.Actions = aggregatedActions
+	}
+	return resp, nil
+}
+
+// GetPolicy retrieves a managed policy by ARN.
+func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetPolicyResponse, iamError *IamError) {
+	policyArn := values.Get("PolicyArn")
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
 	}
 
-	// Update the found identity's actions
-	targetIdent.Actions = aggregatedActions
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	policyId := Hash(&policyName)
+	resp.GetPolicyResult.Policy.PolicyName = &policyName
+	resp.GetPolicyResult.Policy.Arn = &policyArn
+	resp.GetPolicyResult.Policy.PolicyId = &policyId
 	return resp, nil
+}
+
+// DeletePolicy removes a managed policy. Rejects deletion if the policy is still attached to any user
+// (matching AWS IAM behavior: must detach before deleting).
+func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeletePolicyResponse, iamError *IamError) {
+	policyArn := values.Get("PolicyArn")
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
+
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	// Reject deletion if the policy is still attached to any user
+	for _, ident := range s3cfg.Identities {
+		for _, name := range ident.PolicyNames {
+			if name == policyName {
+				return resp, &IamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("policy %s is still attached to user %s", policyName, ident.Name),
+				}
+			}
+		}
+	}
+
+	delete(policies.Policies, policyName)
+	if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	return resp, nil
+}
+
+// ListPolicies lists all managed policies.
+func (iama *IamApiServer) ListPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListPoliciesResponse, iamError *IamError) {
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	for policyName := range policies.Policies {
+		name := policyName
+		arn := fmt.Sprintf("arn:aws:iam:::policy/%s", name)
+		policyId := Hash(&name)
+		resp.ListPoliciesResult.Policies = append(resp.ListPoliciesResult.Policies, &iam.Policy{
+			PolicyName: &name,
+			Arn:        &arn,
+			PolicyId:   &policyId,
+		})
+	}
+	return resp, nil
+}
+
+// AttachUserPolicy attaches a managed policy to a user.
+func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp AttachUserPolicyResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
+
+	// Verify managed policy exists
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	if _, exists := policies.Policies[policyName]; !exists {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+
+	// Find user and attach policy
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		// Check if already attached
+		for _, name := range ident.PolicyNames {
+			if name == policyName {
+				return resp, nil // Already attached, idempotent
+			}
+		}
+		prevPolicyNames := ident.PolicyNames
+		ident.PolicyNames = append(ident.PolicyNames, policyName)
+
+		// Recompute aggregated actions (inline + managed)
+		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
+		if err != nil {
+			// Roll back PolicyNames to keep identity consistent
+			ident.PolicyNames = prevPolicyNames
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to compute actions after attaching policy: %w", err)}
+		}
+		ident.Actions = aggregatedActions
+		return resp, nil
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+}
+
+// DetachUserPolicy detaches a managed policy from a user.
+func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DetachUserPolicyResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	policyArn := values.Get("PolicyArn")
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
+
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		// Find and remove policy name from the list
+		prevPolicyNames := make([]string, len(ident.PolicyNames))
+		copy(prevPolicyNames, ident.PolicyNames)
+
+		found := false
+		for i, name := range ident.PolicyNames {
+			if name == policyName {
+				ident.PolicyNames = append(ident.PolicyNames[:i], ident.PolicyNames[i+1:]...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s is not attached to user %s", policyName, userName)}
+		}
+
+		// Recompute aggregated actions (inline + managed)
+		policies := Policies{}
+		if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			// Roll back PolicyNames on storage error
+			ident.PolicyNames = prevPolicyNames
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+		}
+		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
+		if err != nil {
+			// Roll back PolicyNames to keep identity consistent
+			ident.PolicyNames = prevPolicyNames
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to compute actions after detaching policy: %w", err)}
+		}
+		ident.Actions = aggregatedActions
+		return resp, nil
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+}
+
+// ListAttachedUserPolicies lists the managed policies attached to a user.
+func (iama *IamApiServer) ListAttachedUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp ListAttachedUserPoliciesResponse, iamError *IamError) {
+	userName := values.Get("UserName")
+	for _, ident := range s3cfg.Identities {
+		if ident.Name != userName {
+			continue
+		}
+		for _, policyName := range ident.PolicyNames {
+			name := policyName
+			arn := fmt.Sprintf("arn:aws:iam:::policy/%s", name)
+			resp.ListAttachedUserPoliciesResult.AttachedPolicies = append(
+				resp.ListAttachedUserPoliciesResult.AttachedPolicies,
+				&iam.AttachedPolicy{PolicyName: &name, PolicyArn: &arn},
+			)
+		}
+		return resp, nil
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+}
+
+// computeAllActionsForUser computes the union of actions from both inline and managed policies.
+func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Policies, ident *iam_pb.Identity) ([]string, error) {
+	actionSet := make(map[string]bool)
+	var aggregatedActions []string
+
+	addUniqueActions := func(actions []string) {
+		for _, action := range actions {
+			if !actionSet[action] {
+				actionSet[action] = true
+				aggregatedActions = append(aggregatedActions, action)
+			}
+		}
+	}
+
+	// Include inline policy actions
+	inlineActions, err := computeAggregatedActionsForUser(iama, userName, policies)
+	if err != nil {
+		return nil, err
+	}
+	addUniqueActions(inlineActions)
+
+	// Include managed policy actions
+	for _, policyName := range ident.PolicyNames {
+		if policyDoc, exists := policies.Policies[policyName]; exists {
+			actions, err := GetActions(&policyDoc)
+			if err != nil {
+				glog.Warningf("Failed to get actions from managed policy '%s' for user %s: %v", policyName, userName, err)
+				continue
+			}
+			addUniqueActions(actions)
+		}
+	}
+
+	return aggregatedActions, nil
 }
 
 func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
@@ -708,6 +955,46 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, iamError)
 			return
 		}
+	case "GetPolicy":
+		response, iamError = iama.GetPolicy(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "DeletePolicy":
+		response, iamError = iama.DeletePolicy(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "ListPolicies":
+		response, iamError = iama.ListPolicies(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
+	case "AttachUserPolicy":
+		response, iamError = iama.AttachUserPolicy(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+	case "DetachUserPolicy":
+		response, iamError = iama.DetachUserPolicy(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+	case "ListAttachedUserPolicies":
+		response, iamError = iama.ListAttachedUserPolicies(s3cfg, values)
+		if iamError != nil {
+			writeIamErrorResponse(w, r, iamError)
+			return
+		}
+		changed = false
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
 		errorResponse := ErrorResponse{}
