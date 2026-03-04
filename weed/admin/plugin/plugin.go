@@ -56,10 +56,9 @@ type Plugin struct {
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	lockManager            LockManager
 
-	schedulerMu        sync.Mutex
-	nextDetectionAt    map[string]time.Time
-	detectionInFlight  map[string]bool
-	schedulerLastRun   map[string]time.Time
+	schedulerMu       sync.Mutex
+	nextDetectionAt   map[string]time.Time
+	detectionInFlight map[string]bool
 
 	detectorLeaseMu sync.Mutex
 	detectorLeases  map[string]string
@@ -168,7 +167,6 @@ func New(options Options) (*Plugin, error) {
 		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
 		nextDetectionAt:           make(map[string]time.Time),
 		detectionInFlight:         make(map[string]bool),
-		schedulerLastRun:          make(map[string]time.Time),
 		detectorLeases:            make(map[string]string),
 		schedulerExecReservations: make(map[string]int),
 		schedulerDetection:        make(map[string]*schedulerDetectionInfo),

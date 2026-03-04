@@ -162,6 +162,28 @@ func TestEcEndToEnd(t *testing.T) {
 	// 1. Configure plugin job types for fast EC detection/execution.
 	t.Log("Configuring plugin job types via API...")
 
+	schedulerConfig := map[string]interface{}{
+		"idle_sleep_seconds": 1,
+	}
+	jsonBody, err := json.Marshal(schedulerConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal scheduler config: %v", err)
+	}
+	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/scheduler-config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create scheduler config request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to update scheduler config: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Failed to update scheduler config (status %d): %s", resp.StatusCode, string(body))
+	}
+	resp.Body.Close()
+
 	// Disable volume balance to reduce interference for this EC-focused test.
 	balanceConfig := map[string]interface{}{
 		"job_type": "volume_balance",
@@ -169,7 +191,7 @@ func TestEcEndToEnd(t *testing.T) {
 			"enabled": false,
 		},
 	}
-	jsonBody, err := json.Marshal(balanceConfig)
+	jsonBody, err = json.Marshal(balanceConfig)
 	if err != nil {
 		t.Fatalf("Failed to marshal volume_balance config: %v", err)
 	}
