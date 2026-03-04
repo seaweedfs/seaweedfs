@@ -65,12 +65,15 @@ echo "Test 6: Non-existent file returns 404"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REPLICA/buckets/testbucket/does_not_exist.bin")
 assert_eq "404" "$STATUS" "Missing file returns 404"
 
-# --- Test 7: Subdirectory on-demand access ---
-echo "Test 7: Subdirectory on-demand access"
+# --- Test 7: Subdirectory on-demand listing ---
+echo "Test 7: Subdirectory on-demand listing"
 echo "test content" > /tmp/nested.txt
 upload_file "$CENTRAL/buckets/testbucket/subdir/" /tmp/nested.txt
 sleep 3
-# Verify nested file is accessible on-demand via direct GET (lazy fetch)
+# Verify subdirectory listing works even when subdir doesn't exist locally
+LIST=$(curl -s "$REPLICA/buckets/testbucket/subdir/?pretty=y")
+assert_contains "$LIST" "nested.txt" "Subdirectory listing shows remote file"
+# Also verify direct GET works
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$REPLICA/buckets/testbucket/subdir/nested.txt")
 assert_eq "200" "$STATUS" "Nested file in subdir accessible via replica"
 
