@@ -35,18 +35,30 @@ func TestParseOperations(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected []string
+		wantErr  bool
 	}{
-		{"all", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
-		{"", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
-		{"expire_snapshots", []string{"expire_snapshots"}},
-		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}},
-		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}},
-		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}},
-		{"unknown_op", nil},
+		{"all", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"expire_snapshots", []string{"expire_snapshots"}, false},
+		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}, false},
+		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}, false},
+		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"unknown_op", nil, true},
+		{"expire_snapshots,bad_op", nil, true},
 	}
 
 	for _, tc := range tests {
-		result := parseOperations(tc.input)
+		result, err := parseOperations(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("parseOperations(%q) expected error, got %v", tc.input, result)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseOperations(%q) unexpected error: %v", tc.input, err)
+			continue
+		}
 		if len(result) != len(tc.expected) {
 			t.Errorf("parseOperations(%q) = %v, want %v", tc.input, result, tc.expected)
 			continue

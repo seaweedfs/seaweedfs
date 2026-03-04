@@ -330,7 +330,10 @@ func (h *IcebergMaintenanceHandler) Execute(ctx context.Context, request *plugin
 	}
 
 	workerConfig := parseIcebergMaintenanceConfig(request.GetWorkerConfigValues())
-	ops := parseOperations(workerConfig.Operations)
+	ops, opsErr := parseOperations(workerConfig.Operations)
+	if opsErr != nil {
+		return fmt.Errorf("invalid operations config: %w", opsErr)
+	}
 
 	// Send initial progress
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -1333,29 +1336,45 @@ func parseIcebergMaintenanceConfig(values map[string]*plugin_pb.ConfigValue) ice
 }
 
 // parseOperations returns the ordered list of maintenance operations to execute.
-// Order follows Iceberg best practices: expire_snapshots → remove_orphans → rewrite_manifests
-func parseOperations(ops string) []string {
+// Order follows Iceberg best practices: expire_snapshots → remove_orphans → rewrite_manifests.
+// Returns an error if any unknown operation is specified or the result would be empty.
+func parseOperations(ops string) ([]string, error) {
 	ops = strings.TrimSpace(strings.ToLower(ops))
 	if ops == "" || ops == "all" {
-		return []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}
+		return []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, nil
 	}
 
-	allOps := []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}
+	validOps := map[string]struct{}{
+		"expire_snapshots":  {},
+		"remove_orphans":    {},
+		"rewrite_manifests": {},
+	}
+
 	requested := make(map[string]struct{})
 	for _, op := range strings.Split(ops, ",") {
 		op = strings.TrimSpace(op)
-		if op != "" {
-			requested[op] = struct{}{}
+		if op == "" {
+			continue
 		}
+		if _, ok := validOps[op]; !ok {
+			return nil, fmt.Errorf("unknown maintenance operation %q (valid: expire_snapshots, remove_orphans, rewrite_manifests)", op)
+		}
+		requested[op] = struct{}{}
 	}
 
+	// Return in canonical order
+	canonicalOrder := []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}
 	var result []string
-	for _, op := range allOps {
+	for _, op := range canonicalOrder {
 		if _, ok := requested[op]; ok {
 			result = append(result, op)
 		}
 	}
-	return result
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no valid maintenance operations specified")
+	}
+	return result, nil
 }
 
 func extractMetadataVersion(metadataFileName string) int {
