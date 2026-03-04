@@ -2786,7 +2786,7 @@ templ Plugin(page string) {
                 }
             }
 
-            async function saveSchedulerConfig() {
+            async function saveSchedulerConfig(sourceInput) {
                 var idleInputs = [
                     document.getElementById('plugin-scheduler-idle-sleep'),
                     document.getElementById('plugin-scheduler-idle-sleep-overview'),
@@ -2795,11 +2795,19 @@ templ Plugin(page string) {
                     return;
                 }
                 var raw = '';
-                for (var i = 0; i < idleInputs.length; i++) {
-                    var candidate = String(idleInputs[i].value || '').trim();
-                    if (candidate) {
-                        raw = candidate;
-                        break;
+                if (sourceInput) {
+                    raw = String(sourceInput.value || '').trim();
+                }
+                if (!raw) {
+                    for (var i = 0; i < idleInputs.length; i++) {
+                        if (idleInputs[i] === sourceInput) {
+                            continue;
+                        }
+                        var candidate = String(idleInputs[i].value || '').trim();
+                        if (candidate) {
+                            raw = candidate;
+                            break;
+                        }
                     }
                 }
                 var parsed = raw ? parseInt(raw, 10) : 0;
@@ -2993,13 +3001,13 @@ templ Plugin(page string) {
                 var saveSchedulerBtn = document.getElementById('plugin-save-scheduler-btn');
                 if (saveSchedulerBtn) {
                     saveSchedulerBtn.addEventListener('click', function() {
-                        saveSchedulerConfig();
+                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep'));
                     });
                 }
                 var saveSchedulerBtnOverview = document.getElementById('plugin-save-scheduler-btn-overview');
                 if (saveSchedulerBtnOverview) {
                     saveSchedulerBtnOverview.addEventListener('click', function() {
-                        saveSchedulerConfig();
+                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep-overview'));
                     });
                 }
 
