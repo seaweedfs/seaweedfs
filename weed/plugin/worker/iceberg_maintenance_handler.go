@@ -875,9 +875,13 @@ func (h *IcebergMaintenanceHandler) rewriteManifests(
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
 
+	manifestFileName := fmt.Sprintf("merged-%d-%d.avro", snapshotID, time.Now().UnixMilli())
+	manifestPath := path.Join("metadata", manifestFileName)
+	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
+
 	var manifestBuf bytes.Buffer
 	mergedManifest, err := iceberg.WriteManifest(
-		fmt.Sprintf("metadata/merged-%d-%d.avro", snapshotID, time.Now().UnixMilli()),
+		manifestPath,
 		&manifestBuf,
 		version,
 		spec,
@@ -890,8 +894,6 @@ func (h *IcebergMaintenanceHandler) rewriteManifests(
 	}
 
 	// Save the merged manifest file to filer
-	manifestFileName := fmt.Sprintf("merged-%d-%d.avro", snapshotID, time.Now().UnixMilli())
-	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
 		return "", fmt.Errorf("save merged manifest: %w", err)
 	}
