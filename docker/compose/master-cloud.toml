@@ -7,8 +7,9 @@
 
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
-# When running the admin server (weed admin), disable master-side scripts to avoid duplicate maintenance.
-# To run maintenance scripts without the admin server, uncomment the following block:
+# Master-side maintenance scripts are disabled by default.
+scripts = ""
+# Uncomment to run maintenance scripts:
 # scripts = """
 #   lock
 #   ec.encode -fullPercent=95 -quietFor=1h
