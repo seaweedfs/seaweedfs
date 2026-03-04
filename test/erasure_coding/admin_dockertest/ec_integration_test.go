@@ -195,12 +195,12 @@ func TestEcEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to marshal volume_balance config: %v", err)
 	}
-	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	req, err = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		t.Fatalf("Failed to create volume_balance config request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to update volume_balance config: %v", err)
 	}
