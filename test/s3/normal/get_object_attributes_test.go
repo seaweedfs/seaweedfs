@@ -254,7 +254,8 @@ func testGetObjectAttributesInvalid(t *testing.T, cluster *TestCluster) {
 	_, err = signer.Sign(req, nil, "s3", testRegion, time.Now())
 	require.NoError(t, err)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
@@ -364,7 +365,8 @@ func signedGetObjectAttributes(t *testing.T, cluster *TestCluster, bucketName, o
 	signer := v1signer.NewSigner(v1credentials.NewStaticCredentials(testAccessKey, testSecretKey, ""))
 	_, err = signer.Sign(req, nil, "s3", testRegion, time.Now())
 	require.NoError(t, err)
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	return resp
 }
