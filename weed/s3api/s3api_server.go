@@ -605,6 +605,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// ListMultipartUploads
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
 
+		// GetObjectAttributes
+		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAttributesHandler, ACTION_READ)), "GET")).Queries("attributes", "")
 		// GetObjectTagging
 		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
 		// PutObjectTagging
