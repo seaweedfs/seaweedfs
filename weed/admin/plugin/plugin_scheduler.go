@@ -151,7 +151,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	jobCtx, cancel := context.WithTimeout(context.Background(), maxRuntime)
 	defer cancel()
 
-	clusterContext, err := r.loadSchedulerClusterContext()
+	clusterContext, err := r.loadSchedulerClusterContext(jobCtx)
 	if err != nil {
 		r.recordSchedulerDetectionError(jobType, err)
 		r.appendActivity(JobActivity{
@@ -539,15 +539,18 @@ func (r *Plugin) pruneDetectorLeases(activeJobTypes map[string]struct{}) {
 	}
 }
 
-func (r *Plugin) loadSchedulerClusterContext() (*plugin_pb.ClusterContext, error) {
+func (r *Plugin) loadSchedulerClusterContext(ctx context.Context) (*plugin_pb.ClusterContext, error) {
 	if r.clusterContextProvider == nil {
 		return nil, fmt.Errorf("cluster context provider is not configured")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), defaultClusterContextTimeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	clusterCtx, cancel := context.WithTimeout(ctx, defaultClusterContextTimeout)
 	defer cancel()
 
-	clusterContext, err := r.clusterContextProvider(ctx)
+	clusterContext, err := r.clusterContextProvider(clusterCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -598,6 +601,7 @@ func (r *Plugin) dispatchScheduledProposals(
 		go func() {
 			defer wg.Done()
 
+		jobLoop:
 			for job := range jobQueue {
 				select {
 				case <-r.shutdownCh:
@@ -610,7 +614,7 @@ func (r *Plugin) dispatchScheduledProposals(
 					statsMu.Lock()
 					canceledCount++
 					statsMu.Unlock()
-					return
+					continue
 				}
 
 				for {
@@ -624,7 +628,7 @@ func (r *Plugin) dispatchScheduledProposals(
 						statsMu.Lock()
 						canceledCount++
 						statsMu.Unlock()
-						return
+						continue jobLoop
 					}
 
 					executor, release, reserveErr := r.reserveScheduledExecutor(ctx, jobType, policy)
@@ -634,7 +638,7 @@ func (r *Plugin) dispatchScheduledProposals(
 							statsMu.Lock()
 							canceledCount++
 							statsMu.Unlock()
-							return
+							continue jobLoop
 						}
 						statsMu.Lock()
 						errorCount++
@@ -664,7 +668,7 @@ func (r *Plugin) dispatchScheduledProposals(
 							statsMu.Lock()
 							canceledCount++
 							statsMu.Unlock()
-							return
+							continue jobLoop
 						}
 						statsMu.Lock()
 						errorCount++
@@ -885,7 +889,10 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 				Stage:      "retry",
 				OccurredAt: timeToPtr(time.Now().UTC()),
 			})
-			if !waitForShutdownOrTimer(r.shutdownCh, policy.RetryBackoff) {
+			if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.RetryBackoff) {
+				if ctx != nil && ctx.Err() != nil {
+					return ctx.Err()
+				}
 				return fmt.Errorf("plugin is shutting down")
 			}
 		}
