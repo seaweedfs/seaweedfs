@@ -81,6 +81,7 @@ type FilerOptions struct {
 	exposeDirectoryData       *bool
 	tusBasePath               *string
 	remoteMetaSyncInterval    *time.Duration
+	remoteEntryTTL            *time.Duration
 	certProvider              certprovider.Provider
 }
 
@@ -118,6 +119,7 @@ func init() {
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
 	f.remoteMetaSyncInterval = cmdFiler.Flag.Duration("remoteMetaSyncInterval", 0, "background sync interval for remote mount metadata, 0 to disable")
+	f.remoteEntryTTL = cmdFiler.Flag.Duration("remoteEntryTTL", 0, "TTL for cached remote entries before revalidation, 0 to disable")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -367,6 +369,7 @@ func (fo *FilerOptions) startFiler() {
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
 		RemoteMetaSyncInterval:    *fo.remoteMetaSyncInterval,
+		RemoteEntryTTL:            *fo.remoteEntryTTL,
 		CredentialManager:         credentialManager,
 	})
 	if nfs_err != nil {

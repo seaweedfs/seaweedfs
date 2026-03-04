@@ -56,6 +56,7 @@ type Filer struct {
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
 	RemoteMetaSyncer    *RemoteMetaSyncer
+	RemoteEntryTTL      time.Duration
 	lazyFetchGroup      singleflight.Group
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
@@ -364,6 +365,17 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		return Root, nil
 	}
 	entry, err = f.Store.FindEntry(ctx, p)
+	if entry != nil && entry.Remote != nil && f.remoteEntryNeedsRevalidation(entry) {
+		if revalidated, revalErr := f.revalidateRemoteEntry(ctx, p, entry); revalErr == nil && revalidated != nil {
+			entry = revalidated
+		} else if revalErr != nil {
+			// If remote says deleted, propagate the error
+			if errors.Is(revalErr, filer_pb.ErrNotFound) {
+				return nil, filer_pb.ErrNotFound
+			}
+			// Otherwise serve stale
+		}
+	}
 	if entry != nil && entry.TtlSec > 0 {
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
