@@ -105,12 +105,6 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		}
 	}
 
-	// Process conditional headers
-	result, handled := s3a.processConditionalHeaders(w, r, bucket, object, "GetObjectAttributesHandler")
-	if handled {
-		return
-	}
-
 	// Check for specific version ID
 	versionId := r.URL.Query().Get("versionId")
 
@@ -192,19 +186,33 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 
 		w.Header().Set("x-amz-version-id", targetVersionId)
 	} else {
-		// Non-versioned: reuse entry from conditional check or fetch
-		if result.Entry != nil {
-			entry = result.Entry
-		} else {
-			entry, err = s3a.fetchObjectEntry(bucket, object)
-			if err != nil {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return
+		entry, err = s3a.fetchObjectEntry(bucket, object)
+		if err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		}
+		if entry == nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+			return
+		}
+	}
+
+	// Evaluate conditional headers against the resolved entry (after version resolution)
+	// This ensures conditions are checked against the correct version, not always the latest
+	if s3a.hasConditionalHeaders(r) {
+		headers, errCode := parseConditionalHeaders(r)
+		if errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		result := s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
+		if result.ErrorCode != s3err.ErrNone {
+			glog.V(3).Infof("GetObjectAttributesHandler: Conditional header check failed for %s/%s with error %v", bucket, object, result.ErrorCode)
+			if result.ErrorCode == s3err.ErrNotModified && result.ETag != "" {
+				w.Header().Set("ETag", result.ETag)
 			}
-			if entry == nil {
-				s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
-				return
-			}
+			s3err.WriteErrorResponse(w, r, result.ErrorCode)
+			return
 		}
 	}
 
