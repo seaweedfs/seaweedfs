@@ -68,6 +68,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		}
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
+		mc.BeginRefresh(path)
 
 		// Phase 1: Collect all entries from filer into memory (no lock held).
 		// Network I/O happens here without blocking MetaCache operations.
@@ -86,6 +87,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		})
 
 		if fetchErr != nil {
+			mc.CancelRefresh(path)
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 

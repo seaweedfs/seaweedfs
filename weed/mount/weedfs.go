@@ -382,6 +382,7 @@ func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
 	}
 	wfs.refreshingDirs[dirPath] = struct{}{}
 	wfs.refreshMu.Unlock()
+	wfs.metaCache.BeginRefresh(dirPath)
 
 	go func() {
 		defer func() {
@@ -391,6 +392,7 @@ func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
 		}()
 		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
 		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
+			wfs.metaCache.CancelRefresh(dirPath)
 			glog.Warningf("refresh dir cache %s: %v", dirPath, err)
 			return
 		}

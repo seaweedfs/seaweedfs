@@ -29,6 +29,8 @@ type MetaCache struct {
 	invalidateFunc    func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate func(dir util.FullPath)
 	visitGroup        singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	// pendingDeletes tracks deleted entry names while a directory refresh is in progress.
+	pendingDeletes map[util.FullPath]map[string]struct{}
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
@@ -45,6 +47,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
+		pendingDeletes: make(map[util.FullPath]map[string]struct{}),
 	}
 }
 
@@ -85,6 +88,10 @@ func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+
+	if oldPath != "" && (newEntry == nil || oldPath != newEntry.FullPath) {
+		mc.recordPendingDelete(oldPath)
+	}
 
 	entry, err := mc.localStore.FindEntry(ctx, oldPath)
 	if err != nil && err != filer_pb.ErrNotFound {
@@ -143,6 +150,7 @@ func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *fi
 func (mc *MetaCache) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
 	mc.Lock()
 	defer mc.Unlock()
+	mc.recordPendingDelete(fp)
 	return mc.localStore.DeleteEntry(ctx, fp)
 }
 func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
@@ -158,6 +166,8 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 func (mc *MetaCache) ReplaceDirectoryEntries(ctx context.Context, dirPath util.FullPath, entries []*filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+	pendingDeletes := mc.pendingDeletes[dirPath]
+	delete(mc.pendingDeletes, dirPath)
 
 	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
 		return err
@@ -169,12 +179,53 @@ func (mc *MetaCache) ReplaceDirectoryEntries(ctx context.Context, dirPath util.F
 		if end > n {
 			end = n
 		}
-		if err := mc.leveldbStore.BatchInsertEntries(ctx, entries[i:end]); err != nil {
+		batch := entries[i:end]
+		if len(pendingDeletes) > 0 {
+			filtered := make([]*filer.Entry, 0, len(batch))
+			for _, entry := range batch {
+				if _, deleted := pendingDeletes[entry.Name()]; deleted {
+					glog.V(2).Infof("[ghost_trace] replace skip reinsert dir=%s name=%s", dirPath, entry.Name())
+					continue
+				}
+				filtered = append(filtered, entry)
+			}
+			batch = filtered
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		if err := mc.leveldbStore.BatchInsertEntries(ctx, batch); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func (mc *MetaCache) BeginRefresh(dirPath util.FullPath) {
+	mc.Lock()
+	defer mc.Unlock()
+	if _, exists := mc.pendingDeletes[dirPath]; exists {
+		return
+	}
+	mc.pendingDeletes[dirPath] = make(map[string]struct{})
+}
+
+func (mc *MetaCache) CancelRefresh(dirPath util.FullPath) {
+	mc.Lock()
+	defer mc.Unlock()
+	if _, exists := mc.pendingDeletes[dirPath]; exists {
+		delete(mc.pendingDeletes, dirPath)
+	}
+}
+
+func (mc *MetaCache) recordPendingDelete(fp util.FullPath) {
+	dir, name := fp.DirAndName()
+	pendingDeletes := mc.pendingDeletes[util.FullPath(dir)]
+	if pendingDeletes == nil {
+		return
+	}
+	pendingDeletes[name] = struct{}{}
 }
 
 func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) error {
