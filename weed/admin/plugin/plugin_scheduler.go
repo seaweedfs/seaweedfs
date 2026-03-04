@@ -131,6 +131,19 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		OccurredAt: timeToPtr(start),
 	})
 
+	if skip, waitingCount, waitingThreshold := r.shouldSkipDetectionForWaitingJobs(jobType, policy); skip {
+		r.recordSchedulerDetectionSkip(jobType, fmt.Sprintf("waiting backlog %d reached threshold %d", waitingCount, waitingThreshold))
+		r.appendActivity(JobActivity{
+			JobType:    jobType,
+			Source:     "admin_scheduler",
+			Message:    fmt.Sprintf("scheduled detection skipped: waiting backlog %d reached threshold %d", waitingCount, waitingThreshold),
+			Stage:      "skipped_waiting_backlog",
+			OccurredAt: timeToPtr(time.Now().UTC()),
+		})
+		r.recordSchedulerRunComplete(jobType, "skipped")
+		return false
+	}
+
 	maxRuntime := policy.JobTypeMaxRuntime
 	if maxRuntime <= 0 {
 		maxRuntime = defaultScheduledJobTypeMaxRuntime
