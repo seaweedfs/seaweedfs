@@ -766,19 +766,18 @@ func (h *IcebergMaintenanceHandler) removeOrphans(
 
 	for _, subdir := range []string{"metadata", "data"} {
 		dirPath := path.Join(tableBasePath, subdir)
-		entries, err := listFilerEntries(ctx, filerClient, dirPath, "")
+		fileEntries, err := walkFilerEntries(ctx, filerClient, dirPath)
 		if err != nil {
-			glog.V(2).Infof("iceberg maintenance: cannot list %s: %v", dirPath, err)
+			glog.V(2).Infof("iceberg maintenance: cannot walk %s: %v", dirPath, err)
 			continue
 		}
 
-		for _, entry := range entries {
-			if entry.IsDirectory {
-				continue
-			}
+		for _, fe := range fileEntries {
+			entry := fe.Entry
+			// Build relative path from the table base (e.g. "data/region=us/file.parquet")
+			fullPath := path.Join(fe.Dir, entry.Name)
+			relPath := strings.TrimPrefix(fullPath, tableBasePath+"/")
 
-			// Check if file is referenced (try multiple path formats)
-			relPath := path.Join(subdir, entry.Name)
 			isReferenced := false
 			for ref := range referencedFiles {
 				if ref == relPath || strings.HasSuffix(ref, "/"+entry.Name) {
@@ -801,8 +800,8 @@ func (h *IcebergMaintenanceHandler) removeOrphans(
 			}
 
 			// Delete orphan
-			if delErr := deleteFilerFile(ctx, filerClient, dirPath, entry.Name); delErr != nil {
-				glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", dirPath, entry.Name, delErr)
+			if delErr := deleteFilerFile(ctx, filerClient, fe.Dir, entry.Name); delErr != nil {
+				glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", fe.Dir, entry.Name, delErr)
 			} else {
 				orphanCount++
 			}
@@ -1092,6 +1091,36 @@ func listFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, d
 	}
 
 	return entries, nil
+}
+
+// filerFileEntry holds a non-directory entry with its full directory path.
+type filerFileEntry struct {
+	Dir   string
+	Entry *filer_pb.Entry
+}
+
+// walkFilerEntries recursively lists all non-directory entries under dir.
+func walkFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string) ([]filerFileEntry, error) {
+	entries, err := listFilerEntries(ctx, client, dir, "")
+	if err != nil {
+		return nil, err
+	}
+
+	var result []filerFileEntry
+	for _, entry := range entries {
+		if entry.IsDirectory {
+			subDir := path.Join(dir, entry.Name)
+			subEntries, err := walkFilerEntries(ctx, client, subDir)
+			if err != nil {
+				glog.V(2).Infof("iceberg maintenance: cannot walk %s: %v", subDir, err)
+				continue
+			}
+			result = append(result, subEntries...)
+		} else {
+			result = append(result, filerFileEntry{Dir: dir, Entry: entry})
+		}
+	}
+	return result, nil
 }
 
 // loadCurrentMetadata loads and parses the current Iceberg metadata from the table entry's xattr.
