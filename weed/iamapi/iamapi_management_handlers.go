@@ -41,6 +41,20 @@ const (
 
 var policyLock = sync.RWMutex{}
 
+const policyArnPrefix = "arn:aws:iam:::policy/"
+
+// parsePolicyArn validates an IAM policy ARN and extracts the policy name.
+func parsePolicyArn(policyArn string) (string, *IamError) {
+	if !strings.HasPrefix(policyArn, policyArnPrefix) {
+		return "", &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN: %s", policyArn)}
+	}
+	policyName := strings.TrimPrefix(policyArn, policyArnPrefix)
+	if policyName == "" {
+		return "", &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("invalid policy ARN: %s", policyArn)}
+	}
+	return policyName, nil
+}
+
 // userPolicyKey returns a namespaced key for inline user policies to prevent collision with managed policies.
 // getOrCreateUserPolicies returns the policy map for a user, creating it if needed.
 // Returns a pointer to the user's policy map from Policies.InlinePolicies.
@@ -234,7 +248,7 @@ func (iama *IamApiServer) CreatePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	if err != nil {
 		return CreatePolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	policyId := Hash(&policyDocumentString)
+	policyId := Hash(&policyName)
 	arn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 	resp.CreatePolicyResult.Policy.PolicyName = &policyName
 	resp.CreatePolicyResult.Policy.Arn = &arn
@@ -433,17 +447,14 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 // GetPolicy retrieves a managed policy by ARN.
 func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp GetPolicyResponse, iamError *IamError) {
 	policyArn := values.Get("PolicyArn")
-	// Extract policy name from ARN (last segment after '/')
-	parts := strings.Split(policyArn, "/")
-	policyName := parts[len(parts)-1]
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
 
 	policies := Policies{}
 	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-	}
-
-	if policies.Policies == nil {
-		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 
 	if _, exists := policies.Policies[policyName]; !exists {
@@ -457,19 +468,17 @@ func (iama *IamApiServer) GetPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url
 	return resp, nil
 }
 
-// DeletePolicy removes a managed policy.
+// DeletePolicy removes a managed policy and detaches it from all users.
 func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DeletePolicyResponse, iamError *IamError) {
 	policyArn := values.Get("PolicyArn")
-	parts := strings.Split(policyArn, "/")
-	policyName := parts[len(parts)-1]
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
 
 	policies := Policies{}
 	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-	}
-
-	if policies.Policies == nil {
-		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 
 	if _, exists := policies.Policies[policyName]; !exists {
@@ -480,6 +489,23 @@ func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
+
+	// Detach from all users that have this policy attached and recompute their actions
+	for _, ident := range s3cfg.Identities {
+		for i, name := range ident.PolicyNames {
+			if name == policyName {
+				ident.PolicyNames = append(ident.PolicyNames[:i], ident.PolicyNames[i+1:]...)
+				aggregatedActions, err := computeAllActionsForUser(iama, ident.Name, &policies, ident)
+				if err != nil {
+					glog.Warningf("Failed to recompute actions for user %s after policy deletion: %v", ident.Name, err)
+				} else {
+					ident.Actions = aggregatedActions
+				}
+				break
+			}
+		}
+	}
+
 	return resp, nil
 }
 
@@ -507,8 +533,10 @@ func (iama *IamApiServer) ListPolicies(s3cfg *iam_pb.S3ApiConfiguration, values 
 func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp AttachUserPolicyResponse, iamError *IamError) {
 	userName := values.Get("UserName")
 	policyArn := values.Get("PolicyArn")
-	parts := strings.Split(policyArn, "/")
-	policyName := parts[len(parts)-1]
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
 
 	// Verify managed policy exists
 	policies := Policies{}
@@ -548,8 +576,10 @@ func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp DetachUserPolicyResponse, iamError *IamError) {
 	userName := values.Get("UserName")
 	policyArn := values.Get("PolicyArn")
-	parts := strings.Split(policyArn, "/")
-	policyName := parts[len(parts)-1]
+	policyName, iamError := parsePolicyArn(policyArn)
+	if iamError != nil {
+		return resp, iamError
+	}
 
 	for _, ident := range s3cfg.Identities {
 		if ident.Name != userName {
@@ -609,17 +639,21 @@ func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Pol
 	actionSet := make(map[string]bool)
 	var aggregatedActions []string
 
+	addUniqueActions := func(actions []string) {
+		for _, action := range actions {
+			if !actionSet[action] {
+				actionSet[action] = true
+				aggregatedActions = append(aggregatedActions, action)
+			}
+		}
+	}
+
 	// Include inline policy actions
 	inlineActions, err := computeAggregatedActionsForUser(iama, userName, policies)
 	if err != nil {
 		return nil, err
 	}
-	for _, action := range inlineActions {
-		if !actionSet[action] {
-			actionSet[action] = true
-			aggregatedActions = append(aggregatedActions, action)
-		}
-	}
+	addUniqueActions(inlineActions)
 
 	// Include managed policy actions
 	for _, policyName := range ident.PolicyNames {
@@ -629,12 +663,7 @@ func computeAllActionsForUser(iama *IamApiServer, userName string, policies *Pol
 				glog.Warningf("Failed to get actions from managed policy '%s' for user %s: %v", policyName, userName, err)
 				continue
 			}
-			for _, action := range actions {
-				if !actionSet[action] {
-					actionSet[action] = true
-					aggregatedActions = append(aggregatedActions, action)
-				}
-			}
+			addUniqueActions(actions)
 		}
 	}
 
@@ -932,7 +961,6 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, iamError)
 			return
 		}
-		changed = false
 	case "ListPolicies":
 		response, iamError = iama.ListPolicies(s3cfg, values)
 		if iamError != nil {
