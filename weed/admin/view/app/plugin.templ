@@ -2852,7 +2852,12 @@ templ Plugin(page string) {
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
-                var schedulerStatus = await schedulerStatusPromise;
+                var schedulerStatus = null;
+                try {
+                    schedulerStatus = await schedulerStatusPromise;
+                } catch (e) {
+                    console.error('Failed to fetch scheduler status:', e);
+                }
 
                 state.jobs = Array.isArray(allJobs) ? allJobs : [];
                 state.activities = Array.isArray(allActivities) ? allActivities : [];

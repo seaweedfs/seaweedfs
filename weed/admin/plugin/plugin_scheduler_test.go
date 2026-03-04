@@ -834,19 +834,22 @@ func TestGracefulShutdownDuringIteration(t *testing.T) {
 
 	pluginSvc, err := New(Options{
 		IdleSleepDuration: time.Millisecond,
+		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+			return &plugin_pb.ClusterContext{}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Register an enabled job type.
+	// Register an enabled job type so the scheduler loop has work to consider.
 	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
 		JobType: "vacuum",
 		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
-			Enabled:                  true,
-			DetectionTimeoutSeconds:  5,
-			MaxJobsPerDetection:      10,
-			GlobalExecutionConcurrency: 1,
+			Enabled:                       true,
+			DetectionTimeoutSeconds:       5,
+			MaxJobsPerDetection:           10,
+			GlobalExecutionConcurrency:    1,
 			PerWorkerExecutionConcurrency: 1,
 		},
 	})
@@ -860,7 +863,7 @@ func TestGracefulShutdownDuringIteration(t *testing.T) {
 		},
 	})
 
-	// Shutdown immediately — the scheduler loop should exit cleanly.
+	// Shutdown while the scheduler loop is actively iterating.
 	done := make(chan struct{})
 	go func() {
 		pluginSvc.Shutdown()
