@@ -45,6 +45,12 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
+	// GetObjectAttributes headers
+	AmzObjectAttributes = "X-Amz-Object-Attributes"
+	AmzMaxParts         = "X-Amz-Max-Parts"
+	AmzPartNumberMarker = "X-Amz-Part-Number-Marker"
+	AmzDeleteMarker     = "X-Amz-Delete-Marker"
+
 	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
 	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
