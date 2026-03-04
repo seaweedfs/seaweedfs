@@ -255,16 +255,24 @@ func (s *AdminServer) UpdatePluginSchedulerConfigAPI(w http.ResponseWriter, r *h
 	}
 
 	var req struct {
-		IdleSleepSeconds int32 `json:"idle_sleep_seconds"`
+		IdleSleepSeconds *int32 `json:"idle_sleep_seconds"`
 	}
 
-	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil && err != io.EOF {
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		if errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "request body is required")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.IdleSleepSeconds == nil {
+		writeJSONError(w, http.StatusBadRequest, "idle_sleep_seconds is required")
 		return
 	}
 
 	updated, err := pluginSvc.UpdateSchedulerConfig(plugin.SchedulerConfig{
-		IdleSleepSeconds: req.IdleSleepSeconds,
+		IdleSleepSeconds: *req.IdleSleepSeconds,
 	})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
