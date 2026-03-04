@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -624,39 +625,31 @@ func (h *IcebergMaintenanceHandler) expireSnapshots(
 	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
 	nowMs := time.Now().UnixMilli()
 
-	// Sort snapshots by timestamp (most recent first) for keep-count logic
-	type snapInfo struct {
-		snap   table.Snapshot
-		age    int64
-		expire bool
-	}
-	infos := make([]snapInfo, 0, len(snapshots))
-	for _, s := range snapshots {
-		infos = append(infos, snapInfo{snap: s, age: nowMs - s.TimestampMs})
-	}
+	// Sort snapshots by timestamp descending (most recent first) so that
+	// the keep-count logic always preserves the newest snapshots.
+	sorted := make([]table.Snapshot, len(snapshots))
+	copy(sorted, snapshots)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].TimestampMs > sorted[j].TimestampMs
+	})
 
-	// Mark expired snapshots, but never the current snapshot
+	// Walk from newest to oldest. Keep the first MaxSnapshotsToKeep entries
+	// plus the current snapshot unconditionally; expire the rest if they
+	// exceed the retention window.
 	var toExpire []int64
-	kept := 0
-	for i := len(infos) - 1; i >= 0; i-- {
-		si := &infos[i]
-		if si.snap.SnapshotID == currentSnapID {
+	var kept int64
+	for _, snap := range sorted {
+		if snap.SnapshotID == currentSnapID {
 			kept++
 			continue
 		}
-		// Count how many we'd keep if we don't expire this one
-		wouldKeep := kept + 1
-		for j := i - 1; j >= 0; j-- {
-			wouldKeep++
-		}
-		if int64(wouldKeep) <= config.MaxSnapshotsToKeep {
-			// Would go below minimum, keep it
+		age := nowMs - snap.TimestampMs
+		if kept < config.MaxSnapshotsToKeep {
 			kept++
 			continue
 		}
-		if si.age > retentionMs {
-			si.expire = true
-			toExpire = append(toExpire, si.snap.SnapshotID)
+		if age > retentionMs {
+			toExpire = append(toExpire, snap.SnapshotID)
 		} else {
 			kept++
 		}
@@ -667,10 +660,14 @@ func (h *IcebergMaintenanceHandler) expireSnapshots(
 	}
 
 	// Collect manifest list files to clean up after commit
+	expireSet := make(map[int64]struct{}, len(toExpire))
+	for _, id := range toExpire {
+		expireSet[id] = struct{}{}
+	}
 	var manifestListsToDelete []string
-	for _, si := range infos {
-		if si.expire && si.snap.ManifestList != "" {
-			manifestListsToDelete = append(manifestListsToDelete, si.snap.ManifestList)
+	for _, snap := range sorted {
+		if _, ok := expireSet[snap.SnapshotID]; ok && snap.ManifestList != "" {
+			manifestListsToDelete = append(manifestListsToDelete, snap.ManifestList)
 		}
 	}
 
