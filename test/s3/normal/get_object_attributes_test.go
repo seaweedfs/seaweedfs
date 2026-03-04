@@ -56,6 +56,9 @@ func TestGetObjectAttributes(t *testing.T) {
 	t.Run("NonExistentObject", func(t *testing.T) {
 		testGetObjectAttributesNotFound(t, cluster)
 	})
+	t.Run("VersionedObject", func(t *testing.T) {
+		testGetObjectAttributesVersioned(t, cluster)
+	})
 }
 
 func testGetObjectAttributesBasic(t *testing.T, cluster *TestCluster) {
@@ -272,4 +275,76 @@ func testGetObjectAttributesNotFound(t *testing.T, cluster *TestCluster) {
 	assert.Contains(t, err.Error(), "NoSuchKey")
 
 	t.Logf("NotFound GetObjectAttributes passed")
+}
+
+func testGetObjectAttributesVersioned(t *testing.T, cluster *TestCluster) {
+	client := newS3V2Client(cluster)
+	bucketName := createTestBucket(t, cluster, "test-goa-ver-")
+
+	// Enable versioning
+	_, err := client.PutBucketVersioning(context.Background(), &v2s3.PutBucketVersioningInput{
+		Bucket: v2aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+	time.Sleep(200 * time.Millisecond)
+
+	// Put two versions of the same object
+	v1Data := "version 1 content"
+	putResp1, err := client.PutObject(context.Background(), &v2s3.PutObjectInput{
+		Bucket: v2aws.String(bucketName),
+		Key:    v2aws.String("versioned-key"),
+		Body:   strings.NewReader(v1Data),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp1.VersionId)
+	versionId1 := *putResp1.VersionId
+
+	v2Data := "version 2 content - longer"
+	putResp2, err := client.PutObject(context.Background(), &v2s3.PutObjectInput{
+		Bucket: v2aws.String(bucketName),
+		Key:    v2aws.String("versioned-key"),
+		Body:   strings.NewReader(v2Data),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp2.VersionId)
+	versionId2 := *putResp2.VersionId
+
+	assert.NotEqual(t, versionId1, versionId2, "versions should differ")
+
+	// GetObjectAttributes for latest version (v2)
+	resp, err := client.GetObjectAttributes(context.Background(), &v2s3.GetObjectAttributesInput{
+		Bucket: v2aws.String(bucketName),
+		Key:    v2aws.String("versioned-key"),
+		ObjectAttributes: []types.ObjectAttributes{
+			types.ObjectAttributesObjectSize,
+			types.ObjectAttributesEtag,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ObjectSize)
+	assert.Equal(t, int64(len(v2Data)), *resp.ObjectSize)
+	require.NotNil(t, resp.VersionId)
+	assert.Equal(t, versionId2, *resp.VersionId)
+
+	// GetObjectAttributes for specific older version (v1)
+	resp1, err := client.GetObjectAttributes(context.Background(), &v2s3.GetObjectAttributesInput{
+		Bucket:    v2aws.String(bucketName),
+		Key:       v2aws.String("versioned-key"),
+		VersionId: v2aws.String(versionId1),
+		ObjectAttributes: []types.ObjectAttributes{
+			types.ObjectAttributesObjectSize,
+			types.ObjectAttributesEtag,
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp1.ObjectSize)
+	assert.Equal(t, int64(len(v1Data)), *resp1.ObjectSize)
+	require.NotNil(t, resp1.VersionId)
+	assert.Equal(t, versionId1, *resp1.VersionId)
+
+	t.Logf("Versioned GetObjectAttributes passed: v1 size=%d (id=%s), v2 size=%d (id=%s)",
+		*resp1.ObjectSize, versionId1, *resp.ObjectSize, versionId2)
 }
