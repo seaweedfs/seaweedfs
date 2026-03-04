@@ -282,8 +282,7 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	if err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
-	actions, err := GetActions(&policyDocument)
-	if err != nil {
+	if _, err := GetActions(&policyDocument); err != nil {
 		return PutUserPolicyResponse{}, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
 
@@ -315,10 +314,10 @@ func (iama *IamApiServer) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 	// Recompute aggregated actions (inline + managed)
 	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
 	if computeErr != nil {
-		glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, computeErr)
-		aggregatedActions = actions // Fall back to current policy's actions
+		glog.Warningf("Failed to compute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
+	} else {
+		targetIdent.Actions = aggregatedActions
 	}
-	targetIdent.Actions = aggregatedActions
 	return resp, nil
 }
 
@@ -440,11 +439,10 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	// Recompute aggregated actions from remaining inline + managed policies
 	aggregatedActions, computeErr := computeAllActionsForUser(iama, userName, &policies, targetIdent)
 	if computeErr != nil {
-		glog.Warningf("Failed to recompute aggregated actions for user %s: %v", userName, computeErr)
+		glog.Warningf("Failed to recompute aggregated actions for user %s: %v; keeping existing actions", userName, computeErr)
+	} else {
+		targetIdent.Actions = aggregatedActions
 	}
-
-	// Update the found identity's actions
-	targetIdent.Actions = aggregatedActions
 	return resp, nil
 }
 
@@ -559,15 +557,17 @@ func (iama *IamApiServer) AttachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 				return resp, nil // Already attached, idempotent
 			}
 		}
+		prevPolicyNames := ident.PolicyNames
 		ident.PolicyNames = append(ident.PolicyNames, policyName)
 
 		// Recompute aggregated actions (inline + managed)
 		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
 		if err != nil {
-			glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, err)
-		} else {
-			ident.Actions = aggregatedActions
+			// Roll back PolicyNames to keep identity consistent
+			ident.PolicyNames = prevPolicyNames
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to compute actions after attaching policy: %w", err)}
 		}
+		ident.Actions = aggregatedActions
 		return resp, nil
 	}
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
@@ -586,7 +586,10 @@ func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		if ident.Name != userName {
 			continue
 		}
-		// Remove policy name from the list
+		// Find and remove policy name from the list
+		prevPolicyNames := make([]string, len(ident.PolicyNames))
+		copy(prevPolicyNames, ident.PolicyNames)
+
 		found := false
 		for i, name := range ident.PolicyNames {
 			if name == policyName {
@@ -602,14 +605,17 @@ func (iama *IamApiServer) DetachUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 		// Recompute aggregated actions (inline + managed)
 		policies := Policies{}
 		if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			// Roll back PolicyNames on storage error
+			ident.PolicyNames = prevPolicyNames
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 		}
 		aggregatedActions, err := computeAllActionsForUser(iama, userName, &policies, ident)
 		if err != nil {
-			glog.Warningf("Failed to compute aggregated actions for user %s: %v", userName, err)
-		} else {
-			ident.Actions = aggregatedActions
+			// Roll back PolicyNames to keep identity consistent
+			ident.PolicyNames = prevPolicyNames
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to compute actions after detaching policy: %w", err)}
 		}
+		ident.Actions = aggregatedActions
 		return resp, nil
 	}
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}

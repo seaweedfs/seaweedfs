@@ -263,7 +263,8 @@ func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	}
 }
 
-// Helper to create a mock IamApiServer with pre-populated managed policies
+// newTestIamApiServer creates a minimal IamApiServer for unit testing with only s3ApiConfig set.
+// Other fields (iam, masterClient, etc.) are left nil — tests must not call code paths that use them.
 func newTestIamApiServer(policies Policies) *IamApiServer {
 	return &IamApiServer{
 		s3ApiConfig: &mockIamS3ApiConfig{policies: policies},
