@@ -6,10 +6,8 @@
 
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
-# Master-side maintenance scripts are disabled by default.
-scripts = ""
-# Uncomment to run the default scripts:
-# scripts = """{{DEFAULT_MAINTENANCE_SCRIPTS}}"""
+# Scripts are skipped while an admin server is connected.
+scripts = """{{DEFAULT_MAINTENANCE_SCRIPTS}}"""
 sleep_minutes = 17          # sleep minutes between each script execution
 
 
