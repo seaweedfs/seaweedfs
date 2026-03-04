@@ -867,6 +867,9 @@ func applyDescriptorDefaultsToPersistedConfig(
 		if runtime.PerWorkerExecutionConcurrency <= 0 {
 			runtime.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
 		}
+		if runtime.JobTypeMaxRuntimeSeconds <= 0 {
+			runtime.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
+		}
 		if runtime.RetryBackoffSeconds <= 0 {
 			runtime.RetryBackoffSeconds = defaults.RetryBackoffSeconds
 		}

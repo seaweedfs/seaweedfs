@@ -1011,6 +1011,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 			PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
 			RetryLimit:                    defaults.RetryLimit,
 			RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+			JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
 		}
 	}
 
