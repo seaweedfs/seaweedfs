@@ -1,7 +1,9 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +54,9 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	}
 	if policy.RetryLimit != 4 {
 		t.Fatalf("unexpected retry limit: got=%d", policy.RetryLimit)
+	}
+	if policy.MaxJobTypeDuration != defaultMaxJobTypeDuration {
+		t.Fatalf("unexpected max job type duration: got=%v", policy.MaxJobTypeDuration)
 	}
 }
 
@@ -407,10 +412,9 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 		},
 	})
 
-	nextDetectionAt := time.Now().UTC().Add(2 * time.Minute).Round(time.Second)
+	// Mark this job type as currently processing to test DetectionInFlight.
 	pluginSvc.schedulerMu.Lock()
-	pluginSvc.nextDetectionAt[jobType] = nextDetectionAt
-	pluginSvc.detectionInFlight[jobType] = true
+	pluginSvc.currentJobType = jobType
 	pluginSvc.schedulerMu.Unlock()
 
 	states, err := pluginSvc.ListSchedulerStates()
@@ -429,22 +433,16 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 		t.Fatalf("unexpected policy error: %s", state.PolicyError)
 	}
 	if !state.DetectionInFlight {
-		t.Fatalf("expected detection in flight")
-	}
-	if state.NextDetectionAt == nil {
-		t.Fatalf("expected next detection time")
-	}
-	if state.NextDetectionAt.Unix() != nextDetectionAt.Unix() {
-		t.Fatalf("unexpected next detection time: got=%v want=%v", state.NextDetectionAt, nextDetectionAt)
-	}
-	if state.DetectionIntervalSeconds != 45 {
-		t.Fatalf("unexpected detection interval: got=%d", state.DetectionIntervalSeconds)
+		t.Fatalf("expected detection in flight when current job type matches")
 	}
 	if state.DetectionTimeoutSeconds != 30 {
 		t.Fatalf("unexpected detection timeout: got=%d", state.DetectionTimeoutSeconds)
 	}
 	if state.ExecutionTimeoutSeconds != 90 {
 		t.Fatalf("unexpected execution timeout: got=%d", state.ExecutionTimeoutSeconds)
+	}
+	if state.MaxJobTypeDurationSeconds != int32(defaultMaxJobTypeDuration/time.Second) {
+		t.Fatalf("unexpected max job type duration: got=%d", state.MaxJobTypeDurationSeconds)
 	}
 	if state.MaxJobsPerDetection != 80 {
 		t.Fatalf("unexpected max jobs per detection: got=%d", state.MaxJobsPerDetection)
@@ -466,6 +464,23 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 	}
 	if state.ExecutorWorkerCount != 1 {
 		t.Fatalf("unexpected executor worker count: got=%d", state.ExecutorWorkerCount)
+	}
+
+	// Clear the current job type and verify DetectionInFlight is false.
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.currentJobType = ""
+	pluginSvc.schedulerMu.Unlock()
+
+	states2, err := pluginSvc.ListSchedulerStates()
+	if err != nil {
+		t.Fatalf("ListSchedulerStates (2): %v", err)
+	}
+	state2 := findSchedulerState(states2, jobType)
+	if state2 == nil {
+		t.Fatalf("missing scheduler state for %s (2)", jobType)
+	}
+	if state2.DetectionInFlight {
+		t.Fatalf("expected detection not in flight when current job type is empty")
 	}
 }
 
@@ -579,5 +594,314 @@ func TestPickDetectorReassignsWhenLeaseIsStale(t *testing.T) {
 	lease := pluginSvc.getDetectorLease("vacuum")
 	if lease != "worker-a" {
 		t.Fatalf("expected detector lease to be updated to worker-a, got=%s", lease)
+	}
+}
+
+// mockLockManager records lock/release calls for testing.
+type mockLockManager struct {
+	mu           sync.Mutex
+	acquireCount int
+	releaseCount int
+	failAcquire  bool
+}
+
+func (m *mockLockManager) Acquire(reason string) (func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failAcquire {
+		return nil, fmt.Errorf("mock lock acquisition failed")
+	}
+	m.acquireCount++
+	return func() {
+		m.mu.Lock()
+		m.releaseCount++
+		m.mu.Unlock()
+	}, nil
+}
+
+func (m *mockLockManager) Status() interface{} {
+	return nil
+}
+
+func (m *mockLockManager) getAcquireCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.acquireCount
+}
+
+func (m *mockLockManager) getReleaseCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.releaseCount
+}
+
+func TestIterationAcquiresLockOnce(t *testing.T) {
+	t.Parallel()
+
+	lock := &mockLockManager{}
+	pluginSvc, err := New(Options{
+		LockManager: lock,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	// Register two enabled job types.
+	for _, jt := range []string{"vacuum", "balance"} {
+		err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+			JobType: jt,
+			AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+				Enabled:                  true,
+				DetectionTimeoutSeconds:  5,
+				MaxJobsPerDetection:      10,
+				GlobalExecutionConcurrency: 1,
+				PerWorkerExecutionConcurrency: 1,
+			},
+		})
+		if err != nil {
+			t.Fatalf("SaveJobTypeConfig(%s): %v", jt, err)
+		}
+		pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+			WorkerId: "worker-" + jt,
+			Capabilities: []*plugin_pb.JobTypeCapability{
+				{JobType: jt, CanDetect: true, CanExecute: true},
+			},
+		})
+	}
+
+	// runSchedulerIteration requires a cluster context provider.
+	pluginSvc.clusterContextProvider = func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+		return &plugin_pb.ClusterContext{}, nil
+	}
+
+	pluginSvc.runSchedulerIteration()
+
+	// Lock should have been acquired exactly once (not per-job-type).
+	if lock.getAcquireCount() != 1 {
+		t.Fatalf("expected 1 lock acquisition, got %d", lock.getAcquireCount())
+	}
+	if lock.getReleaseCount() != 1 {
+		t.Fatalf("expected 1 lock release, got %d", lock.getReleaseCount())
+	}
+}
+
+func TestIterationReturnsfalseWhenLockFails(t *testing.T) {
+	t.Parallel()
+
+	lock := &mockLockManager{failAcquire: true}
+	pluginSvc, err := New(Options{
+		LockManager: lock,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                  true,
+			DetectionTimeoutSeconds:  5,
+			MaxJobsPerDetection:      10,
+			GlobalExecutionConcurrency: 1,
+			PerWorkerExecutionConcurrency: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+		},
+	})
+
+	pluginSvc.clusterContextProvider = func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+		return &plugin_pb.ClusterContext{}, nil
+	}
+
+	result := pluginSvc.runSchedulerIteration()
+	if result {
+		t.Fatalf("expected false when lock acquisition fails")
+	}
+}
+
+func TestSchedulerPhaseTracking(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	// Initial phase should be idle.
+	pluginSvc.schedulerMu.Lock()
+	phase := pluginSvc.schedulerPhase
+	pluginSvc.schedulerMu.Unlock()
+
+	if phase != "idle" {
+		t.Fatalf("expected initial phase to be idle, got=%s", phase)
+	}
+
+	pluginSvc.setSchedulerPhase("processing", "vacuum")
+
+	pluginSvc.schedulerMu.Lock()
+	phase = pluginSvc.schedulerPhase
+	jobType := pluginSvc.currentJobType
+	pluginSvc.schedulerMu.Unlock()
+
+	if phase != "processing" {
+		t.Fatalf("expected phase processing, got=%s", phase)
+	}
+	if jobType != "vacuum" {
+		t.Fatalf("expected current job type vacuum, got=%s", jobType)
+	}
+
+	pluginSvc.finishIteration(true)
+
+	pluginSvc.schedulerMu.Lock()
+	phase = pluginSvc.schedulerPhase
+	jobType = pluginSvc.currentJobType
+	workDetected := pluginSvc.lastIterationWorkDetected
+	lastEnded := pluginSvc.lastIterationEndedAt
+	pluginSvc.schedulerMu.Unlock()
+
+	if phase != "idle" {
+		t.Fatalf("expected phase idle after finish, got=%s", phase)
+	}
+	if jobType != "" {
+		t.Fatalf("expected empty job type after finish, got=%s", jobType)
+	}
+	if !workDetected {
+		t.Fatalf("expected last iteration work detected to be true")
+	}
+	if lastEnded.IsZero() {
+		t.Fatalf("expected last iteration ended at to be set")
+	}
+}
+
+func TestGetSchedulerStatusIncludesIterationFields(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{
+		IdleSleepDuration: 10 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	now := time.Now().UTC()
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.schedulerPhase = "processing"
+	pluginSvc.currentJobType = "vacuum"
+	pluginSvc.iterationStartedAt = now.Add(-5 * time.Second)
+	pluginSvc.lastIterationEndedAt = now.Add(-20 * time.Second)
+	pluginSvc.lastIterationWorkDetected = true
+	pluginSvc.schedulerMu.Unlock()
+
+	status := pluginSvc.GetSchedulerStatus()
+
+	if status.Phase != "processing" {
+		t.Fatalf("expected phase processing, got=%s", status.Phase)
+	}
+	if status.CurrentJobType != "vacuum" {
+		t.Fatalf("expected current job type vacuum, got=%s", status.CurrentJobType)
+	}
+	if status.IdleSleepSeconds != 600 {
+		t.Fatalf("expected idle sleep 600s, got=%d", status.IdleSleepSeconds)
+	}
+	if status.IterationStartedAt == nil {
+		t.Fatalf("expected iteration started at to be set")
+	}
+	if status.LastIterationEndedAt == nil {
+		t.Fatalf("expected last iteration ended at to be set")
+	}
+	if !status.LastIterationWorkDetected {
+		t.Fatalf("expected last iteration work detected to be true")
+	}
+	// SchedulerTickSeconds should match IdleSleepSeconds for backward compat.
+	if status.SchedulerTickSeconds != 600 {
+		t.Fatalf("expected scheduler tick seconds to match idle sleep, got=%d", status.SchedulerTickSeconds)
+	}
+}
+
+func TestGracefulShutdownDuringIteration(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{
+		IdleSleepDuration: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Register an enabled job type.
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                  true,
+			DetectionTimeoutSeconds:  5,
+			MaxJobsPerDetection:      10,
+			GlobalExecutionConcurrency: 1,
+			PerWorkerExecutionConcurrency: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+		},
+	})
+
+	// Shutdown immediately — the scheduler loop should exit cleanly.
+	done := make(chan struct{})
+	go func() {
+		pluginSvc.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Good — clean shutdown.
+	case <-time.After(5 * time.Second):
+		t.Fatalf("shutdown did not complete in time")
+	}
+}
+
+func TestIdleSleepDurationDefault(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	if pluginSvc.idleSleepDuration != defaultIdleSleepDuration {
+		t.Fatalf("expected default idle sleep %v, got=%v", defaultIdleSleepDuration, pluginSvc.idleSleepDuration)
+	}
+}
+
+func TestIdleSleepDurationCustom(t *testing.T) {
+	t.Parallel()
+
+	customDuration := 5 * time.Minute
+	pluginSvc, err := New(Options{
+		IdleSleepDuration: customDuration,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	if pluginSvc.idleSleepDuration != customDuration {
+		t.Fatalf("expected custom idle sleep %v, got=%v", customDuration, pluginSvc.idleSleepDuration)
 	}
 }
