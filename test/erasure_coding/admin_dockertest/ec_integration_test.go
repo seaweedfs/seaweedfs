@@ -392,9 +392,9 @@ func TestEcEndToEnd(t *testing.T) {
 			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-states", &schedulerStates); err == nil {
 				for _, state := range schedulerStates {
 					if state["job_type"] == "erasure_coding" {
-						t.Logf("EC scheduler state: enabled=%v detection_in_flight=%v detector_available=%v executor_workers=%v last_run_status=%v last_run_started_at=%v last_run_completed_at=%v",
+						t.Logf("EC scheduler state: enabled=%v detection_in_flight=%v detector_available=%v executor_workers=%v next_detection_at=%v last_run_status=%v last_run_started_at=%v last_run_completed_at=%v",
 							state["enabled"], state["detection_in_flight"], state["detector_available"],
-							state["executor_worker_count"], state["last_run_status"],
+							state["executor_worker_count"], state["next_detection_at"], state["last_run_status"],
 							state["last_run_started_at"], state["last_run_completed_at"])
 						break
 					}
