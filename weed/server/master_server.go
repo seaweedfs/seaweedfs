@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/telemetry"
 
@@ -342,6 +343,7 @@ func (ms *MasterServer) isAdminServerConnected() bool {
 
 func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
+	v.SetDefault("master.maintenance.scripts", maintenance.DefaultMasterMaintenanceScripts)
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
