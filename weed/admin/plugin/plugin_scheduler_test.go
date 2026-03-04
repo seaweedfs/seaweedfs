@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 			PerWorkerExecutionConcurrency: 2,
 			RetryLimit:                    4,
 			RetryBackoffSeconds:           7,
+			JobTypeMaxRuntimeSeconds:      1800,
 		},
 	})
 	if err != nil {
@@ -53,6 +55,9 @@ func TestLoadSchedulerPolicyUsesAdminConfig(t *testing.T) {
 	if policy.RetryLimit != 4 {
 		t.Fatalf("unexpected retry limit: got=%d", policy.RetryLimit)
 	}
+	if policy.JobTypeMaxRuntime != 30*time.Minute {
+		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
+	}
 }
 
 func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T) {
@@ -75,6 +80,7 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 			PerWorkerExecutionConcurrency: 2,
 			RetryLimit:                    3,
 			RetryBackoffSeconds:           6,
+			JobTypeMaxRuntimeSeconds:      1200,
 		},
 	})
 	if err != nil {
@@ -96,6 +102,9 @@ func TestLoadSchedulerPolicyUsesDescriptorDefaultsWhenConfigMissing(t *testing.T
 	}
 	if policy.PerWorkerConcurrency != 2 {
 		t.Fatalf("unexpected per-worker concurrency: got=%d", policy.PerWorkerConcurrency)
+	}
+	if policy.JobTypeMaxRuntime != 20*time.Minute {
+		t.Fatalf("unexpected max runtime: got=%v", policy.JobTypeMaxRuntime)
 	}
 }
 
@@ -126,13 +135,13 @@ func TestReserveScheduledExecutorRespectsPerWorkerLimit(t *testing.T) {
 		ExecutorReserveBackoff: time.Millisecond,
 	}
 
-	executor1, release1, err := pluginSvc.reserveScheduledExecutor("balance", policy)
+	executor1, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
 	defer release1()
 
-	executor2, release2, err := pluginSvc.reserveScheduledExecutor("balance", policy)
+	executor2, release2, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
 	if err != nil {
 		t.Fatalf("reserve executor 2: %v", err)
 	}
@@ -254,7 +263,7 @@ func TestReserveScheduledExecutorTimesOutWhenNoExecutor(t *testing.T) {
 
 	start := time.Now()
 	pluginSvc.Shutdown()
-	_, _, err = pluginSvc.reserveScheduledExecutor("missing-job-type", policy)
+	_, _, err = pluginSvc.reserveScheduledExecutor(context.Background(), "missing-job-type", policy)
 	if err == nil {
 		t.Fatalf("expected reservation shutdown error")
 	}
@@ -285,7 +294,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 		ExecutorReserveBackoff: 5 * time.Millisecond,
 	}
 
-	_, release1, err := pluginSvc.reserveScheduledExecutor("balance", policy)
+	_, release1, err := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
 	if err != nil {
 		t.Fatalf("reserve executor 1: %v", err)
 	}
@@ -296,7 +305,7 @@ func TestReserveScheduledExecutorWaitsForWorkerCapacity(t *testing.T) {
 	}
 	secondReserveCh := make(chan reserveResult, 1)
 	go func() {
-		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor("balance", policy)
+		_, release2, reserveErr := pluginSvc.reserveScheduledExecutor(context.Background(), "balance", policy)
 		if release2 != nil {
 			release2()
 		}
@@ -394,6 +403,7 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 			PerWorkerExecutionConcurrency: 2,
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           9,
+			JobTypeMaxRuntimeSeconds:      900,
 		},
 	})
 	if err != nil {
@@ -445,6 +455,9 @@ func TestListSchedulerStatesIncludesPolicyAndState(t *testing.T) {
 	}
 	if state.ExecutionTimeoutSeconds != 90 {
 		t.Fatalf("unexpected execution timeout: got=%d", state.ExecutionTimeoutSeconds)
+	}
+	if state.JobTypeMaxRuntimeSeconds != 900 {
+		t.Fatalf("unexpected job type max runtime: got=%d", state.JobTypeMaxRuntimeSeconds)
 	}
 	if state.MaxJobsPerDetection != 80 {
 		t.Fatalf("unexpected max jobs per detection: got=%d", state.MaxJobsPerDetection)

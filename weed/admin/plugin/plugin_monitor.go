@@ -861,6 +861,79 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	})
 }
 
+func (r *Plugin) cancelQueuedJob(job *plugin_pb.JobSpec, cause error) {
+	reason := "job canceled"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	r.markJobCanceled(job, reason)
+}
+
+func (r *Plugin) markJobCanceled(job *plugin_pb.JobSpec, reason string) {
+	if job == nil || strings.TrimSpace(job.JobId) == "" {
+		return
+	}
+
+	now := time.Now().UTC()
+	if strings.TrimSpace(reason) == "" {
+		reason = "job canceled"
+	}
+
+	r.jobsMu.Lock()
+	tracked := r.jobs[job.JobId]
+	if tracked == nil {
+		tracked = &TrackedJob{
+			JobID:     job.JobId,
+			CreatedAt: timeToPtr(now),
+		}
+		r.jobs[job.JobId] = tracked
+	}
+
+	if job.JobType != "" {
+		tracked.JobType = job.JobType
+	}
+	tracked.State = StateCanceled
+	tracked.Stage = "canceled"
+	tracked.Message = reason
+	tracked.ErrorMessage = reason
+	tracked.Progress = 0
+	if tracked.CreatedAt == nil || tracked.CreatedAt.IsZero() {
+		tracked.CreatedAt = timeToPtr(now)
+	}
+	tracked.UpdatedAt = timeToPtr(now)
+	tracked.CompletedAt = timeToPtr(now)
+	trackedSnapshot := cloneTrackedJob(*tracked)
+	r.pruneTrackedJobsLocked()
+	r.dirtyJobs = true
+	r.jobsMu.Unlock()
+
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+		detail.JobID = job.JobId
+		if job.JobType != "" {
+			detail.JobType = job.JobType
+		}
+		detail.State = trackedSnapshot.State
+		detail.Stage = trackedSnapshot.Stage
+		detail.Message = trackedSnapshot.Message
+		detail.ErrorMessage = trackedSnapshot.ErrorMessage
+		detail.Progress = trackedSnapshot.Progress
+		if detail.CreatedAt == nil || detail.CreatedAt.IsZero() {
+			detail.CreatedAt = trackedSnapshot.CreatedAt
+		}
+		detail.UpdatedAt = trackedSnapshot.UpdatedAt
+		detail.CompletedAt = trackedSnapshot.CompletedAt
+	})
+
+	r.appendActivity(JobActivity{
+		JobID:      job.JobId,
+		JobType:    job.JobType,
+		Source:     "admin_scheduler",
+		Message:    reason,
+		Stage:      "canceled",
+		OccurredAt: timeToPtr(now),
+	})
+}
+
 func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
 	if completed == nil || strings.TrimSpace(completed.JobId) == "" {
 		return nil

@@ -4,12 +4,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
 )
 
 const (
-	adminLockName       = "shell"
+	adminLockName       = cluster.AdminShellLockName
 	adminLockClientName = "admin-plugin"
 )
 
