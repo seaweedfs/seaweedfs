@@ -32,6 +32,7 @@ type Options struct {
 	OutgoingBufferSize     int
 	SendTimeout            time.Duration
 	SchedulerTick          time.Duration
+	IdleSleepDuration      time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	LockManager            LockManager
 }
@@ -53,12 +54,16 @@ type Plugin struct {
 	sendTimeout    time.Duration
 
 	schedulerTick          time.Duration
+	idleSleepDuration      time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	lockManager            LockManager
 
-	schedulerMu       sync.Mutex
-	nextDetectionAt   map[string]time.Time
-	detectionInFlight map[string]bool
+	schedulerMu                sync.Mutex
+	schedulerPhase             string
+	currentJobType             string
+	iterationStartedAt         time.Time
+	lastIterationEndedAt       time.Time
+	lastIterationWorkDetected  bool
 
 	detectorLeaseMu sync.Mutex
 	detectorLeases  map[string]string
@@ -146,6 +151,10 @@ func New(options Options) (*Plugin, error) {
 	if schedulerTick <= 0 {
 		schedulerTick = defaultSchedulerTick
 	}
+	idleSleepDuration := options.IdleSleepDuration
+	if idleSleepDuration <= 0 {
+		idleSleepDuration = defaultIdleSleepDuration
+	}
 
 	plugin := &Plugin{
 		store:                     store,
@@ -153,14 +162,14 @@ func New(options Options) (*Plugin, error) {
 		outgoingBuffer:            bufferSize,
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
+		idleSleepDuration:         idleSleepDuration,
 		clusterContextProvider:    options.ClusterContextProvider,
 		lockManager:               options.LockManager,
+		schedulerPhase:            "idle",
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
 		pendingExecution:          make(map[string]chan *plugin_pb.JobCompleted),
-		nextDetectionAt:           make(map[string]time.Time),
-		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
 		schedulerExecReservations: make(map[string]int),
 		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
