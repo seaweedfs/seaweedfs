@@ -83,6 +83,7 @@ type FilerOption struct {
 	ExposeDirectoryData       bool
 	TusBasePath               string
 	RemoteMetaSyncInterval    time.Duration
+	RemoteEntryTTL            time.Duration
 	CredentialManager         *credential.CredentialManager
 }
 
@@ -252,6 +253,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	if option.RemoteMetaSyncInterval > 0 {
 		fs.filer.StartRemoteMetaSyncer(option.RemoteMetaSyncInterval)
+	}
+	if option.RemoteEntryTTL > 0 {
+		fs.filer.RemoteEntryTTL = option.RemoteEntryTTL
 	}
 
 	grace.OnReload(fs.Reload)
