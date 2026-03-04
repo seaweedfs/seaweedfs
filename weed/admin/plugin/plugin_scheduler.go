@@ -136,6 +136,7 @@ func (r *Plugin) runSchedulerIteration() bool {
 
 func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {
 	r.recordSchedulerRunStart(jobType)
+	r.clearWaitingJobQueue(jobType)
 	r.setSchedulerLoopState(jobType, "detecting")
 	r.markJobTypeInFlight(jobType)
 	defer r.finishDetection(jobType)
@@ -981,6 +982,53 @@ func (r *Plugin) countWaitingTrackedJobs(jobType string) int {
 	r.jobsMu.RUnlock()
 
 	return waiting
+}
+
+func (r *Plugin) clearWaitingJobQueue(jobType string) int {
+	normalizedJobType := strings.TrimSpace(jobType)
+	if normalizedJobType == "" {
+		return 0
+	}
+
+	jobIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	r.jobsMu.RLock()
+	for _, job := range r.jobs {
+		if job == nil {
+			continue
+		}
+		if strings.TrimSpace(job.JobType) != normalizedJobType {
+			continue
+		}
+		if !isWaitingTrackedJobState(job.State) {
+			continue
+		}
+		jobID := strings.TrimSpace(job.JobID)
+		if jobID == "" {
+			continue
+		}
+		if _, ok := seen[jobID]; ok {
+			continue
+		}
+		seen[jobID] = struct{}{}
+		jobIDs = append(jobIDs, jobID)
+	}
+	r.jobsMu.RUnlock()
+
+	if len(jobIDs) == 0 {
+		return 0
+	}
+
+	reason := fmt.Sprintf("cleared queued job before %s run", normalizedJobType)
+	for _, jobID := range jobIDs {
+		r.markJobCanceled(&plugin_pb.JobSpec{
+			JobId:   jobID,
+			JobType: normalizedJobType,
+		}, reason)
+	}
+
+	return len(jobIDs)
 }
 
 func waitingBacklogThreshold(policy schedulerPolicy) int {
