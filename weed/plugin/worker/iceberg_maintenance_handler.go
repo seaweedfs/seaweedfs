@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1330,8 +1331,7 @@ func extractMetadataVersion(metadataFileName string) int {
 	// Parse "v3.metadata.json" → 3
 	name := strings.TrimPrefix(metadataFileName, "v")
 	name = strings.TrimSuffix(name, ".metadata.json")
-	var version int
-	fmt.Sscanf(name, "%d", &version)
+	version, _ := strconv.Atoi(name)
 	return version
 }
 
