@@ -1,0 +1,77 @@
+version: '3.9'
+
+services:
+  # === CENTRAL CLUSTER (source of truth) ===
+  central-master:
+    image: chrislusf/seaweedfs:local
+    command: "master -ip=central-master -volumeSizeLimitMB=100"
+    ports:
+      - 9333:9333
+      - 19333:19333
+
+  central-volume:
+    image: chrislusf/seaweedfs:local
+    command: "volume -mserver=central-master:9333 -port=8080 -ip=central-volume -max=100"
+    depends_on:
+      - central-master
+
+  central-filer:
+    image: chrislusf/seaweedfs:local
+    command: 'filer -master="central-master:9333" -ip=central-filer'
+    depends_on:
+      - central-master
+      - central-volume
+
+  central-s3:
+    image: chrislusf/seaweedfs:local
+    command: 's3 -filer="central-filer:8888" -ip.bind=0.0.0.0'
+    ports:
+      - 8333:8333
+    depends_on:
+      - central-filer
+
+  # === REPLICA CLUSTER (on-demand consumer) ===
+  replica-master:
+    image: chrislusf/seaweedfs:local
+    command: "master -ip=replica-master -volumeSizeLimitMB=100"
+    ports:
+      - 9334:9333
+      - 19334:19333
+
+  replica-volume:
+    image: chrislusf/seaweedfs:local
+    command: "volume -mserver=replica-master:9333 -port=8080 -ip=replica-volume -max=100"
+    depends_on:
+      - replica-master
+
+  replica-filer:
+    image: chrislusf/seaweedfs:local
+    command: 'filer -master="replica-master:9333" -ip=replica-filer'
+    depends_on:
+      - replica-master
+      - replica-volume
+
+  replica-s3:
+    image: chrislusf/seaweedfs:local
+    command: 's3 -filer="replica-filer:8888" -ip.bind=0.0.0.0'
+    ports:
+      - 8334:8333
+    depends_on:
+      - replica-filer
+
+  # === TEST RUNNER ===
+  test-runner:
+    image: chrislusf/seaweedfs:local
+    entrypoint: /bin/sh
+    command: /tests/run_tests.sh
+    volumes:
+      - ../../test/remote_ondemand:/tests
+    depends_on:
+      - central-s3
+      - replica-s3
+    environment:
+      CENTRAL_S3: "http://central-s3:8333"
+      REPLICA_S3: "http://replica-s3:8333"
+      CENTRAL_FILER: "central-filer:8888"
+      REPLICA_FILER: "replica-filer:8888"
+      REPLICA_MASTER: "replica-master:9333"

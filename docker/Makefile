@@ -127,6 +127,11 @@ test_tarantool: tags = tarantool
 test_tarantool: build_tarantool_dev_env build
 	docker compose -f compose/test-tarantool-filer.yml -p seaweedfs up
 
+test_remote_ondemand: build
+	docker compose -f compose/local-remote-ondemand-compose.yml -p seaweedfs-ondemand up \
+		--abort-on-container-exit --exit-code-from test-runner
+	docker compose -f compose/local-remote-ondemand-compose.yml -p seaweedfs-ondemand down -v
+
 clean:
 	rm ./weed
 
