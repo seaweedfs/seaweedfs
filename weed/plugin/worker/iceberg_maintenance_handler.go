@@ -649,7 +649,7 @@ func (h *IcebergMaintenanceHandler) expireSnapshots(
 		for j := i - 1; j >= 0; j-- {
 			wouldKeep++
 		}
-		if wouldKeep <= int(config.MaxSnapshotsToKeep) {
+		if int64(wouldKeep) <= config.MaxSnapshotsToKeep {
 			// Would go below minimum, keep it
 			kept++
 			continue
