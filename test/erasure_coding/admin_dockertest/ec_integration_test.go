@@ -166,6 +166,25 @@ func fetchJSON(url string, out interface{}) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+func mapField(obj map[string]interface{}, key string) (interface{}, bool) {
+	if obj == nil {
+		return nil, false
+	}
+	if value, ok := obj[key]; ok {
+		return value, true
+	}
+	return nil, false
+}
+
+func mapFieldAny(obj map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := mapField(obj, key); ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
 func TestEcEndToEnd(t *testing.T) {
 	defer cleanup()
 	ensureEnvironment(t)
@@ -346,7 +365,11 @@ func TestEcEndToEnd(t *testing.T) {
 		if err := fetchJSON(AdminUrl+"/api/plugin/workers", &workers); err == nil {
 			workerCount = len(workers)
 			for _, worker := range workers {
-				caps, ok := worker["capabilities"].(map[string]interface{})
+				capsValue, ok := mapFieldAny(worker, "capabilities", "Capabilities")
+				if !ok {
+					continue
+				}
+				caps, ok := capsValue.(map[string]interface{})
 				if !ok {
 					continue
 				}
@@ -381,11 +404,21 @@ func TestEcEndToEnd(t *testing.T) {
 			workerCount, ecDetectorCount, ecExecutorCount, taskCount, ecTaskCount, ecTaskStates)
 
 		if debugTick%3 == 0 {
+			var pluginStatus map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/status", &pluginStatus); err == nil {
+				t.Logf("Plugin status: enabled=%v worker_count=%v worker_grpc_port=%v configured=%v",
+					pluginStatus["enabled"], pluginStatus["worker_count"], pluginStatus["worker_grpc_port"], pluginStatus["configured"])
+			}
+
 			var schedulerStatus map[string]interface{}
 			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-status", &schedulerStatus); err == nil {
-				t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v",
-					schedulerStatus["current_job_type"], schedulerStatus["current_phase"],
-					schedulerStatus["last_iteration_had_jobs"], schedulerStatus["idle_sleep_seconds"])
+				if schedValue, ok := schedulerStatus["scheduler"].(map[string]interface{}); ok {
+					t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v last_iteration_done_at=%v",
+						schedValue["current_job_type"], schedValue["current_phase"],
+						schedValue["last_iteration_had_jobs"], schedValue["idle_sleep_seconds"], schedValue["last_iteration_done_at"])
+				} else {
+					t.Logf("Scheduler status: %v", schedulerStatus)
+				}
 			}
 
 			var schedulerStates []map[string]interface{}
@@ -399,6 +432,17 @@ func TestEcEndToEnd(t *testing.T) {
 						break
 					}
 				}
+			}
+
+			var jobTypes []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/job-types", &jobTypes); err == nil {
+				var names []string
+				for _, jobType := range jobTypes {
+					if name, ok := jobType["job_type"].(string); ok && name != "" {
+						names = append(names, name)
+					}
+				}
+				t.Logf("Plugin job types: %v", names)
 			}
 
 			var activities []map[string]interface{}
