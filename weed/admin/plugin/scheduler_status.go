@@ -7,11 +7,17 @@ import (
 )
 
 type SchedulerStatus struct {
-	Now                  time.Time                `json:"now"`
-	SchedulerTickSeconds int                      `json:"scheduler_tick_seconds"`
-	Waiting              []SchedulerWaitingStatus `json:"waiting,omitempty"`
-	InProcessJobs        []SchedulerJobStatus     `json:"in_process_jobs,omitempty"`
-	JobTypes             []SchedulerJobTypeStatus `json:"job_types,omitempty"`
+	Now                       time.Time                `json:"now"`
+	SchedulerTickSeconds      int                      `json:"scheduler_tick_seconds"`
+	IdleSleepSeconds          int                      `json:"idle_sleep_seconds"`
+	Phase                     string                   `json:"phase"`
+	CurrentJobType            string                   `json:"current_job_type,omitempty"`
+	IterationStartedAt        *time.Time               `json:"iteration_started_at,omitempty"`
+	LastIterationEndedAt      *time.Time               `json:"last_iteration_ended_at,omitempty"`
+	LastIterationWorkDetected bool                     `json:"last_iteration_work_detected"`
+	Waiting                   []SchedulerWaitingStatus `json:"waiting,omitempty"`
+	InProcessJobs             []SchedulerJobStatus     `json:"in_process_jobs,omitempty"`
+	JobTypes                  []SchedulerJobTypeStatus `json:"job_types,omitempty"`
 }
 
 type SchedulerWaitingStatus struct {
@@ -36,15 +42,14 @@ type SchedulerJobStatus struct {
 }
 
 type SchedulerJobTypeStatus struct {
-	JobType                  string     `json:"job_type"`
-	Enabled                  bool       `json:"enabled"`
-	DetectionInFlight        bool       `json:"detection_in_flight"`
-	NextDetectionAt          *time.Time `json:"next_detection_at,omitempty"`
-	DetectionIntervalSeconds int32      `json:"detection_interval_seconds,omitempty"`
-	LastDetectedAt           *time.Time `json:"last_detected_at,omitempty"`
-	LastDetectedCount        int        `json:"last_detected_count,omitempty"`
-	LastDetectionError       string     `json:"last_detection_error,omitempty"`
-	LastDetectionSkipped     string     `json:"last_detection_skipped,omitempty"`
+	JobType                      string     `json:"job_type"`
+	Enabled                      bool       `json:"enabled"`
+	DetectionInFlight            bool       `json:"detection_in_flight"`
+	MaxJobTypeDurationSeconds    int32      `json:"max_job_type_duration_seconds,omitempty"`
+	LastDetectedAt               *time.Time `json:"last_detected_at,omitempty"`
+	LastDetectedCount            int        `json:"last_detected_count,omitempty"`
+	LastDetectionError           string     `json:"last_detection_error,omitempty"`
+	LastDetectionSkipped         string     `json:"last_detection_skipped,omitempty"`
 }
 
 type schedulerDetectionInfo struct {
@@ -124,10 +129,29 @@ func (r *Plugin) snapshotSchedulerDetection(jobType string) schedulerDetectionIn
 
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 	now := time.Now().UTC()
+
+	r.schedulerMu.Lock()
+	phase := r.schedulerPhase
+	currentJobType := r.currentJobType
+	iterationStartedAt := r.iterationStartedAt
+	lastIterationEndedAt := r.lastIterationEndedAt
+	lastIterationWorkDetected := r.lastIterationWorkDetected
+	r.schedulerMu.Unlock()
+
 	status := SchedulerStatus{
-		Now:                  now,
-		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
-		InProcessJobs:        r.listInProcessJobs(now),
+		Now:                       now,
+		SchedulerTickSeconds:      int(secondsFromDuration(r.idleSleepDuration)),
+		IdleSleepSeconds:          int(secondsFromDuration(r.idleSleepDuration)),
+		Phase:                     phase,
+		CurrentJobType:            currentJobType,
+		LastIterationWorkDetected: lastIterationWorkDetected,
+		InProcessJobs:             r.listInProcessJobs(now),
+	}
+	if !iterationStartedAt.IsZero() {
+		status.IterationStartedAt = timeToPtr(iterationStartedAt)
+	}
+	if !lastIterationEndedAt.IsZero() {
+		status.LastIterationEndedAt = timeToPtr(lastIterationEndedAt)
 	}
 
 	states, err := r.ListSchedulerStates()
@@ -143,11 +167,10 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 		info := r.snapshotSchedulerDetection(jobType)
 
 		jobStatus := SchedulerJobTypeStatus{
-			JobType:                  jobType,
-			Enabled:                  state.Enabled,
-			DetectionInFlight:        state.DetectionInFlight,
-			NextDetectionAt:          state.NextDetectionAt,
-			DetectionIntervalSeconds: state.DetectionIntervalSeconds,
+			JobType:                   jobType,
+			Enabled:                   state.Enabled,
+			DetectionInFlight:         state.DetectionInFlight,
+			MaxJobTypeDurationSeconds: state.MaxJobTypeDurationSeconds,
 		}
 		if !info.lastDetectedAt.IsZero() {
 			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)
@@ -163,16 +186,16 @@ func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 
 		if state.DetectionInFlight {
 			waiting = append(waiting, SchedulerWaitingStatus{
-				Reason:  "detection_in_flight",
+				Reason:  "processing",
 				JobType: jobType,
-			})
-		} else if state.Enabled && state.NextDetectionAt != nil && now.Before(*state.NextDetectionAt) {
-			waiting = append(waiting, SchedulerWaitingStatus{
-				Reason:  "next_detection_at",
-				JobType: jobType,
-				Until:   state.NextDetectionAt,
 			})
 		}
+	}
+
+	if phase == "idle" && !lastIterationEndedAt.IsZero() {
+		waiting = append(waiting, SchedulerWaitingStatus{
+			Reason: "idle_sleep",
+		})
 	}
 
 	sort.Slice(jobTypes, func(i, j int) bool {
