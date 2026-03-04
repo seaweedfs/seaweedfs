@@ -62,6 +62,9 @@ func TestGetObjectAttributes(t *testing.T) {
 	t.Run("ConditionalHeaders", func(t *testing.T) {
 		testGetObjectAttributesConditionalHeaders(t, cluster)
 	})
+	t.Run("VersionedConditionalHeaders", func(t *testing.T) {
+		testGetObjectAttributesVersionedConditionalHeaders(t, cluster)
+	})
 }
 
 func testGetObjectAttributesBasic(t *testing.T, cluster *TestCluster) {
@@ -457,4 +460,114 @@ func testGetObjectAttributesConditionalHeaders(t *testing.T, cluster *TestCluste
 	})
 
 	t.Logf("Conditional headers tests passed")
+}
+
+// signedGetObjectAttributesVersioned creates a signed GET request for ?attributes&versionId=... with custom headers.
+func signedGetObjectAttributesVersioned(t *testing.T, cluster *TestCluster, bucketName, objectKey, versionId string, extraHeaders map[string]string) *http.Response {
+	reqURL := fmt.Sprintf("%s/%s/%s?attributes&versionId=%s", cluster.s3Endpoint, bucketName, objectKey, versionId)
+	req, err := http.NewRequest("GET", reqURL, nil)
+	require.NoError(t, err)
+	req.Header.Set("X-Amz-Object-Attributes", "ETag,ObjectSize")
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
+	signer := v1signer.NewSigner(v1credentials.NewStaticCredentials(testAccessKey, testSecretKey, ""))
+	_, err = signer.Sign(req, nil, "s3", testRegion, time.Now())
+	require.NoError(t, err)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
+func testGetObjectAttributesVersionedConditionalHeaders(t *testing.T, cluster *TestCluster) {
+	client := newS3V2Client(cluster)
+	bucketName := createTestBucket(t, cluster, "test-goa-vcond-")
+
+	// Enable versioning
+	_, err := client.PutBucketVersioning(context.Background(), &v2s3.PutBucketVersioningInput{
+		Bucket: v2aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{
+			Status: types.BucketVersioningStatusEnabled,
+		},
+	})
+	require.NoError(t, err)
+	time.Sleep(200 * time.Millisecond)
+
+	// Put two versions with different content (different ETags)
+	v1Data := "version 1 - original"
+	putResp1, err := client.PutObject(context.Background(), &v2s3.PutObjectInput{
+		Bucket: v2aws.String(bucketName),
+		Key:    v2aws.String("vcond-key"),
+		Body:   strings.NewReader(v1Data),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp1.VersionId)
+	vid1 := *putResp1.VersionId
+
+	v2Data := "version 2 - updated content"
+	putResp2, err := client.PutObject(context.Background(), &v2s3.PutObjectInput{
+		Bucket: v2aws.String(bucketName),
+		Key:    v2aws.String("vcond-key"),
+		Body:   strings.NewReader(v2Data),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putResp2.VersionId)
+	vid2 := *putResp2.VersionId
+
+	// Get ETags for each version
+	headV1, err := client.HeadObject(context.Background(), &v2s3.HeadObjectInput{
+		Bucket:    v2aws.String(bucketName),
+		Key:       v2aws.String("vcond-key"),
+		VersionId: v2aws.String(vid1),
+	})
+	require.NoError(t, err)
+	etagV1 := *headV1.ETag
+
+	headV2, err := client.HeadObject(context.Background(), &v2s3.HeadObjectInput{
+		Bucket:    v2aws.String(bucketName),
+		Key:       v2aws.String("vcond-key"),
+		VersionId: v2aws.String(vid2),
+	})
+	require.NoError(t, err)
+	etagV2 := *headV2.ETag
+	require.NotEqual(t, etagV1, etagV2, "versions should have different ETags")
+
+	// If-Match with v1's ETag + versionId=v1 => 200
+	// Before the fix, this would fail with 412 because conditional headers
+	// were evaluated against the latest version (v2) whose ETag differs
+	t.Run("IfMatch_v1_etag_versionId_v1", func(t *testing.T) {
+		resp := signedGetObjectAttributesVersioned(t, cluster, bucketName, "vcond-key", vid1, map[string]string{
+			"If-Match": etagV1,
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 200, resp.StatusCode,
+			"If-Match with v1 ETag targeting versionId=v1 should return 200")
+	})
+
+	// If-Match with v2's ETag + versionId=v1 => 412
+	// The ETag doesn't match v1, so this should fail
+	t.Run("IfMatch_v2_etag_versionId_v1", func(t *testing.T) {
+		resp := signedGetObjectAttributesVersioned(t, cluster, bucketName, "vcond-key", vid1, map[string]string{
+			"If-Match": etagV2,
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 412, resp.StatusCode,
+			"If-Match with v2 ETag targeting versionId=v1 should return 412")
+	})
+
+	// If-None-Match with v1's ETag + versionId=v1 => 304
+	t.Run("IfNoneMatch_v1_etag_versionId_v1", func(t *testing.T) {
+		resp := signedGetObjectAttributesVersioned(t, cluster, bucketName, "vcond-key", vid1, map[string]string{
+			"If-None-Match": etagV1,
+		})
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		assert.Equal(t, 304, resp.StatusCode,
+			"If-None-Match with v1 ETag targeting versionId=v1 should return 304")
+	})
+
+	t.Logf("Versioned conditional headers tests passed: vid1=%s, vid2=%s", vid1, vid2)
 }
