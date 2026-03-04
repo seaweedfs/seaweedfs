@@ -231,6 +231,11 @@ func (s3a *S3ApiServer) GetObjectAttributesHandler(w http.ResponseWriter, r *htt
 		resp.StorageClass = storageClass
 	}
 
+	// Checksum: accepted in validation so clients don't get a 400, but SeaweedFS
+	// does not yet store S3 checksums (CRC32, CRC32C, SHA1, SHA256), so
+	// resp.Checksum is intentionally left nil. When checksum storage is added,
+	// populate resp.Checksum here.
+
 	if _, ok := requestedAttrs["ObjectSize"]; ok {
 		var size int64
 		if entry.Attributes != nil {
