@@ -188,8 +188,8 @@ func (r *Plugin) setSchedulerLoopState(jobType, phase string) {
 		return
 	}
 	r.schedulerLoopMu.Lock()
-	r.schedulerLoop.currentJobType = jobType
-	r.schedulerLoop.currentPhase = phase
+	r.schedulerLoopState.currentJobType = jobType
+	r.schedulerLoopState.currentPhase = phase
 	r.schedulerLoopMu.Unlock()
 }
 
@@ -198,8 +198,8 @@ func (r *Plugin) recordSchedulerIterationComplete(hadJobs bool) {
 		return
 	}
 	r.schedulerLoopMu.Lock()
-	r.schedulerLoop.lastIterationHadJobs = hadJobs
-	r.schedulerLoop.lastIterationCompleted = time.Now().UTC()
+	r.schedulerLoopState.lastIterationHadJobs = hadJobs
+	r.schedulerLoopState.lastIterationCompleted = time.Now().UTC()
 	r.schedulerLoopMu.Unlock()
 }
 
@@ -209,7 +209,7 @@ func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 	}
 	r.schedulerLoopMu.Lock()
 	defer r.schedulerLoopMu.Unlock()
-	return r.schedulerLoop
+	return r.schedulerLoopState
 }
 
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {

@@ -71,7 +71,7 @@ type Plugin struct {
 	schedulerRunMu            sync.Mutex
 	schedulerRun              map[string]*schedulerRunInfo
 	schedulerLoopMu           sync.Mutex
-	schedulerLoop             schedulerLoopState
+	schedulerLoopState        schedulerLoopState
 	schedulerConfigMu         sync.RWMutex
 	schedulerConfig           SchedulerConfig
 
