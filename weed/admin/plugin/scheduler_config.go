@@ -3,7 +3,7 @@ package plugin
 import "time"
 
 const (
-	defaultSchedulerIdleSleep = 17 * time.Minute
+	defaultSchedulerIdleSleep = 613 * time.Second
 )
 
 type SchedulerConfig struct {
