@@ -16,7 +16,7 @@ metadata:
     {{- toYaml .Values.master.annotations | nindent 4 }}
 {{- end }}
 spec:
-  clusterIP: None
+  type: {{ .Values.master.service.type }}
   publishNotReadyAddresses: true
   ports:
   - name: "swfs-master"
