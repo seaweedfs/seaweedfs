@@ -55,6 +55,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	RemoteMetaSyncer    *RemoteMetaSyncer
 	lazyFetchGroup      singleflight.Group
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
@@ -544,6 +545,9 @@ func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bo
 
 func (f *Filer) Shutdown() {
 	close(f.deletionQuit)
+	if f.RemoteMetaSyncer != nil {
+		f.RemoteMetaSyncer.Stop()
+	}
 	if f.EmptyFolderCleaner != nil {
 		f.EmptyFolderCleaner.Stop()
 	}
