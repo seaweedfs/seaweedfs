@@ -63,6 +63,10 @@ message RemoteConf {
   string contabo_secret_key = 69;
   string contabo_endpoint = 70;
   string contabo_region = 71;
+
+  int32 download_concurrency = 80;     // S3 SDK part download concurrency (default 1)
+  int32 cache_concurrency = 81;        // chunk download parallelism (default 8)
+  int32 read_timeout_seconds = 82;     // per-chunk read timeout in seconds (default 300)
 }
 
 message RemoteStorageMapping {

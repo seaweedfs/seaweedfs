@@ -206,11 +206,18 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 	key := loc.Path[1:]
 	blobClient := az.client.ServiceClient().NewContainerClient(loc.Bucket).NewBlockBlobClient(key)
 
+	readTimeout := 300 * time.Second
+	if az.conf.ReadTimeoutSeconds > 0 {
+		readTimeout = time.Duration(az.conf.ReadTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+
 	count := size
 	if count == 0 {
 		count = blob.CountToEnd
 	}
-	downloadResp, err := blobClient.DownloadStream(context.Background(), &blob.DownloadStreamOptions{
+	downloadResp, err := blobClient.DownloadStream(ctx, &blob.DownloadStreamOptions{
 		Range: blob.HTTPRange{
 			Offset: offset,
 			Count:  count,

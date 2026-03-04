@@ -129,7 +129,11 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	var fetchAndWriteErr error
 	var wg sync.WaitGroup
 
-	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(8)
+	cacheConcurrency := 8
+	if storageConf.CacheConcurrency > 0 {
+		cacheConcurrency = int(storageConf.CacheConcurrency)
+	}
+	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(cacheConcurrency)
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
 		localOffset := offset
 

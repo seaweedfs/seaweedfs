@@ -153,7 +153,13 @@ func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
-	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(context.Background(), offset, size)
+	readTimeout := 300 * time.Second
+	if gcs.conf.ReadTimeoutSeconds > 0 {
+		readTimeout = time.Duration(gcs.conf.ReadTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+	rangeReader, readErr := gcs.client.Bucket(loc.Bucket).Object(key).NewRangeReader(ctx, offset, size)
 	if readErr != nil {
 		return nil, readErr
 	}
