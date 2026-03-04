@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -36,6 +37,10 @@ const (
 	defaultMinInputFiles          = 5
 	defaultOperations             = "all"
 )
+
+// errStalePlan is returned by a commit mutation when the table head has
+// advanced since planning. The caller should not retry the same plan.
+var errStalePlan = errors.New("stale plan: table head changed since planning")
 
 // IcebergMaintenanceHandler implements the JobHandler interface for
 // Iceberg table maintenance: snapshot expiration, orphan file removal,
@@ -680,6 +685,11 @@ func (h *IcebergMaintenanceHandler) expireSnapshots(
 
 	// Use MetadataBuilder to remove snapshots and create new metadata
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+		// Guard: verify table head hasn't changed since we planned
+		cs := currentMeta.CurrentSnapshot()
+		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
+			return errStalePlan
+		}
 		return builder.RemoveSnapshots(toExpire)
 	})
 	if err != nil {
@@ -932,10 +942,18 @@ func (h *IcebergMaintenanceHandler) rewriteManifests(
 	newSnapshotID := time.Now().UnixMilli()
 
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+		// Guard: verify table head hasn't advanced since we planned.
+		// The merged manifest and manifest list were built against snapshotID;
+		// if the head moved, they reference stale state.
+		cs := currentMeta.CurrentSnapshot()
+		if cs == nil || cs.SnapshotID != snapshotID {
+			return errStalePlan
+		}
+
 		newSnapshot := &table.Snapshot{
 			SnapshotID:       newSnapshotID,
 			ParentSnapshotID: &snapshotID,
-			SequenceNumber:   currentSnap.SequenceNumber + 1,
+			SequenceNumber:   cs.SequenceNumber + 1,
 			TimestampMs:      time.Now().UnixMilli(),
 			ManifestList:     manifestListLocation,
 			Summary: &table.Summary{
