@@ -167,6 +167,18 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
+                <div class="col-lg-6 mb-3">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
+                            <small class="text-muted">Scheduler</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
+                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="row mb-4">
                 <div class="col-12">
@@ -307,6 +319,17 @@ templ Plugin(page string) {
                             <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn">
                                 <i class="fas fa-save me-1"></i>Save Scheduler Settings
                             </button>
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm mt-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
+                            <small class="text-muted">Scheduler</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
+                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
                         </div>
                     </div>
                 </div>
@@ -608,6 +631,7 @@ templ Plugin(page string) {
                 jobs: [],
                 activities: [],
                 schedulerStates: [],
+                schedulerStatus: null,
                 schedulerConfig: null,
                 schedulerConfigLoaded: false,
                 allJobs: [],
@@ -1520,6 +1544,26 @@ templ Plugin(page string) {
                 }
 
                 tbody.innerHTML = rows;
+            }
+
+            function renderSchedulerStatus() {
+                var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
+                if (!valueNodes.length) {
+                    return;
+                }
+                var metaNodes = document.querySelectorAll('.plugin-scheduler-next-run-meta');
+                var status = state.schedulerStatus || {};
+                var nextRun = parseTime(status.next_detection_at);
+                var display = nextRun || '-';
+                valueNodes.forEach(function(node) {
+                    node.textContent = display;
+                });
+                var metaText = nextRun ? 'Local time' : 'Not scheduled';
+                if (metaNodes.length) {
+                    metaNodes.forEach(function(node) {
+                        node.textContent = metaText;
+                    });
+                }
             }
 
             function renderWorkers() {
@@ -2906,21 +2950,30 @@ templ Plugin(page string) {
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
                 var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
+                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status');
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
+                var schedulerStatus = null;
+                try {
+                    schedulerStatus = await schedulerStatusPromise;
+                } catch (e) {
+                    schedulerStatus = null;
+                }
 
                 state.jobs = Array.isArray(allJobs) ? allJobs : [];
                 state.activities = Array.isArray(allActivities) ? allActivities : [];
                 state.allJobs = state.jobs;
                 state.allActivities = state.activities;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
+                state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 renderQueueJobs();
                 renderDetectionJobs();
                 renderExecutionJobs();
                 renderExecutionActivities();
                 renderSchedulerStates();
+                renderSchedulerStatus();
                 renderStatus();
                 renderJobTypeSummary();
             }
