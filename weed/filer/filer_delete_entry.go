@@ -253,6 +253,9 @@ func (f *Filer) reconcilePendingRemoteMetadataDeletions(ctx context.Context) err
 }
 
 func (f *Filer) markRemoteMetadataDeletionPending(ctx context.Context, path util.FullPath) error {
+	f.remoteMetadataDeletionIndexMu.Lock()
+	defer f.remoteMetadataDeletionIndexMu.Unlock()
+
 	txnCtx, beginErr := f.BeginTransaction(ctx)
 	if beginErr != nil {
 		return beginErr
@@ -289,6 +292,9 @@ func (f *Filer) markRemoteMetadataDeletionPending(ctx context.Context, path util
 }
 
 func (f *Filer) clearRemoteMetadataDeletionPending(ctx context.Context, path util.FullPath) error {
+	f.remoteMetadataDeletionIndexMu.Lock()
+	defer f.remoteMetadataDeletionIndexMu.Unlock()
+
 	txnCtx, beginErr := f.BeginTransaction(ctx)
 	if beginErr != nil {
 		return beginErr

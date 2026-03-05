@@ -62,7 +62,8 @@ type Filer struct {
 	deletionQuit        chan struct{}
 	DeletionRetryQueue  *DeletionRetryQueue
 	EmptyFolderCleaner  *empty_folder_cleanup.EmptyFolderCleaner
-	remoteDeletionLoop  sync.Once
+	remoteDeletionLoop            sync.Once
+	remoteMetadataDeletionIndexMu sync.Mutex
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
