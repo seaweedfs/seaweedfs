@@ -374,6 +374,28 @@ func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
 		assert.Equal(t, s3err.ErrNone, errCode)
 	})
 
+	t.Run("valid policy updated to invalid denies access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("myPolicy", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"myPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+
+		// Update to invalid JSON — should revoke access.
+		err = iam.PutPolicy("myPolicy", "{broken")
+		assert.NoError(t, err)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
 	t.Run("actions based path still works", func(t *testing.T) {
 		iam := &IdentityAccessManagement{}
 		identity := &Identity{

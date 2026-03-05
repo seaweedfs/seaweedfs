@@ -68,6 +68,10 @@ type IdentityAccessManagement struct {
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
 
+	// Cached policy engine for IAM policy fallback evaluation.
+	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
+	iamPolicyEngine *policy_engine.PolicyEngine
+
 	// background polling
 	stopChan     chan struct{}
 	shutdownOnce sync.Once
@@ -659,6 +663,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.rebuildIAMPolicyEngineLocked()
 
 	// Re-add environment-based identities that were preserved
 	for _, envIdent := range envIdentities {
@@ -915,6 +920,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1661,8 +1667,17 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 
 // evaluateIAMPolicies evaluates attached IAM policies for a user identity.
 // Returns true if any matching statement explicitly allows the action.
+// Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
 func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
 	if identity == nil || len(identity.PolicyNames) == 0 {
+		return false
+	}
+
+	iam.m.RLock()
+	engine := iam.iamPolicyEngine
+	iam.m.RUnlock()
+
+	if engine == nil {
 		return false
 	}
 
@@ -1676,16 +1691,6 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	}
 
 	for _, policyName := range identity.PolicyNames {
-		policy, err := iam.GetPolicy(policyName)
-		if err != nil {
-			continue
-		}
-
-		engine := policy_engine.NewPolicyEngine()
-		if err := engine.SetBucketPolicy(policyName, policy.Content); err != nil {
-			continue
-		}
-
 		result := engine.EvaluatePolicy(policyName, &policy_engine.PolicyEvaluationArgs{
 			Action:     s3Action,
 			Resource:   resource,
@@ -1808,6 +1813,12 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
 	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	iam.ensureIAMPolicyEngine()
+	// Remove old entry first so that a parse failure doesn't leave a stale allow.
+	_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
+		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
+	}
 	return nil
 }
 
@@ -1826,7 +1837,34 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
 	defer iam.m.Unlock()
 	delete(iam.policies, name)
+	if iam.iamPolicyEngine != nil {
+		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	}
 	return nil
+}
+
+// ensureIAMPolicyEngine lazily initializes the shared IAM policy engine.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {
+	if iam.iamPolicyEngine == nil {
+		iam.iamPolicyEngine = policy_engine.NewPolicyEngine()
+	}
+}
+
+// rebuildIAMPolicyEngineLocked rebuilds the entire IAM policy engine cache
+// from the current policies map. Must be called with iam.m held.
+func (iam *IdentityAccessManagement) rebuildIAMPolicyEngineLocked() {
+	if len(iam.policies) == 0 {
+		iam.iamPolicyEngine = nil
+		return
+	}
+	engine := policy_engine.NewPolicyEngine()
+	for name, p := range iam.policies {
+		if err := engine.SetBucketPolicy(name, p.Content); err != nil {
+			glog.Warningf("IAM policy cache rebuild: skipping invalid policy %q: %v", name, err)
+		}
+	}
+	iam.iamPolicyEngine = engine
 }
 
 // ListPolicies lists all policies
