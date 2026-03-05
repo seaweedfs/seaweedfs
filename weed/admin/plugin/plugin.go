@@ -1079,11 +1079,21 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		UpdatedBy:          "plugin",
 	}
 
+	// Check existence first to avoid calling configDefaultsProvider unnecessarily
+	// (e.g., it may make a blocking gRPC call to fetch master config).
+	existing, err := r.store.LoadJobTypeConfig(jobType)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
 	if r.configDefaultsProvider != nil {
 		cfg = r.configDefaultsProvider(cfg)
 	}
 
-	_, err := r.store.SaveJobTypeConfigIfNotExists(cfg)
+	_, err = r.store.SaveJobTypeConfigIfNotExists(cfg)
 	return err
 }
 
