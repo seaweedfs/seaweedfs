@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -1658,6 +1659,73 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
+// evaluateIAMPolicies evaluates attached IAM policies for a user identity.
+// Returns true if any matching statement explicitly allows the action.
+func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil || len(identity.PolicyNames) == 0 {
+		return false
+	}
+
+	resource := buildResourceARN(bucket, object)
+	s3Action := ResolveS3Action(r, string(action), bucket, object)
+
+	// AWS IAM semantics: explicit deny overrides explicit allow.
+	explicitDeny := false
+	explicitAllow := false
+
+	for _, policyName := range identity.PolicyNames {
+		policy, err := iam.GetPolicy(policyName)
+		if err != nil {
+			continue
+		}
+
+		var policyDoc policy_engine.PolicyDocument
+		if err := json.Unmarshal([]byte(policy.Content), &policyDoc); err != nil {
+			continue
+		}
+
+		for _, statement := range policyDoc.Statement {
+			actionMatches := false
+			for _, policyAction := range statement.Action.Strings() {
+				if wildcard.MatchesWildcard(policyAction, s3Action) {
+					actionMatches = true
+					break
+				}
+			}
+			if !actionMatches {
+				continue
+			}
+
+			resourceMatches := false
+			if len(statement.Resource.Strings()) == 0 {
+				resourceMatches = true
+			} else {
+				for _, policyResource := range statement.Resource.Strings() {
+					if wildcard.MatchesWildcard(policyResource, resource) {
+						resourceMatches = true
+						break
+					}
+				}
+			}
+			if !resourceMatches {
+				continue
+			}
+
+			if statement.Effect == policy_engine.PolicyEffectDeny {
+				explicitDeny = true
+			} else if statement.Effect == policy_engine.PolicyEffectAllow {
+				explicitAllow = true
+			}
+		}
+	}
+
+	if explicitDeny {
+		return false
+	}
+
+	return explicitAllow
+}
+
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
@@ -1679,11 +1747,20 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
 	}
 
+	// Traditional actions-based authorization from static S3 config.
 	if len(identity.Actions) > 0 {
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone
+	}
+
+	// IAM policy fallback for identities with attached policies but without IAM integration.
+	if len(identity.PolicyNames) > 0 {
+		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
 	}
 
 	return s3err.ErrAccessDenied
