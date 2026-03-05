@@ -71,14 +71,14 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"><link rel=\"icon\" href=\"/static/favicon.ico\" type=\"image/x-icon\"><!-- Bootstrap CSS --><link href=\"/static/css/bootstrap.min.css\" rel=\"stylesheet\"><!-- Font Awesome CSS --><link href=\"/static/css/fontawesome.min.css\" rel=\"stylesheet\"><!-- HTMX --><script src=\"/static/js/htmx.min.js\"></script><!-- Custom CSS --><link rel=\"stylesheet\" href=\"/static/css/admin.css\"></head><body><div class=\"container-fluid p-0\"><!-- Header --><header class=\"navbar navbar-expand-lg navbar-dark bg-primary sticky-top\"><div class=\"container-fluid\"><a class=\"navbar-brand fw-bold\" href=\"/admin\"><i class=\"fas fa-server me-2\"></i> SeaweedFS Admin <span class=\"badge bg-warning text-dark ms-2\">ALPHA</span></a> <button class=\"navbar-toggler\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#navbarNav\"><span class=\"navbar-toggler-icon\"></span></button><div class=\"collapse navbar-collapse\" id=\"navbarNav\"><ul class=\"navbar-nav ms-auto\"><li class=\"nav-item dropdown\"><a class=\"nav-link dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-user me-1\"></i>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\"><link rel=\"icon\" href=\"/static/favicon.ico\" type=\"image/x-icon\"><!-- Bootstrap CSS --><link href=\"/static/css/bootstrap.min.css\" rel=\"stylesheet\"><!-- Font Awesome CSS --><link href=\"/static/css/fontawesome.min.css\" rel=\"stylesheet\"><!-- HTMX --><script src=\"/static/js/htmx.min.js\"></script><!-- Custom CSS --><link rel=\"stylesheet\" href=\"/static/css/admin.css\"></head><body><div class=\"container-fluid p-0\"><!-- Header --><header class=\"navbar navbar-expand-lg navbar-dark bg-primary sticky-top\"><div class=\"container-fluid\"><a class=\"navbar-brand fw-bold\" href=\"/admin\"><i class=\"fas fa-server me-2\"></i> SeaweedFS Admin</a> <button class=\"navbar-toggler\" type=\"button\" data-bs-toggle=\"collapse\" data-bs-target=\"#navbarNav\"><span class=\"navbar-toggler-icon\"></span></button><div class=\"collapse navbar-collapse\" id=\"navbarNav\"><ul class=\"navbar-nav ms-auto\"><li class=\"nav-item dropdown\"><a class=\"nav-link dropdown-toggle\" href=\"#\" role=\"button\" data-bs-toggle=\"dropdown\"><i class=\"fas fa-user me-1\"></i>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var3 string
 		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(username)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 72, Col: 73}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 71, Col: 73}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
@@ -113,7 +113,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", isClusterPage))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 99, Col: 207}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 98, Col: 207}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var11 string
 		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%t", isStoragePage))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 124, Col: 207}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 123, Col: 207}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
@@ -254,7 +254,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</li><!-- Commented out for later --><!--\n                        <li class=\"nav-item\">\n                            <a class=\"nav-link\" href=\"/metrics\">\n                                <i class=\"fas fa-chart-line me-2\"></i>Metrics\n                            </a>\n                        </li>\n                        <li class=\"nav-item\">\n                            <a class=\"nav-link\" href=\"/logs\">\n                                <i class=\"fas fa-file-alt me-2\"></i>Logs\n                            </a>\n                        </li>\n                        --></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>WORKERS</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</li></ul><h6 class=\"sidebar-heading px-3 mt-4 mb-1 text-muted\"><span>WORKERS</span></h6><ul class=\"nav flex-column\"><li class=\"nav-item\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -344,7 +344,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var14 string
 		templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", time.Now().Year()))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 339, Col: 60}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 325, Col: 60}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 		if templ_7745c5c3_Err != nil {
@@ -357,7 +357,7 @@ func Layout(view ViewContext, content templ.Component) templ.Component {
 		var templ_7745c5c3_Var15 string
 		templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(version.VERSION_NUMBER)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 339, Col: 102}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 325, Col: 102}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 		if templ_7745c5c3_Err != nil {
@@ -409,7 +409,7 @@ func LoginForm(title string, errorMessage string, csrfToken string) templ.Compon
 		var templ_7745c5c3_Var17 string
 		templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 367, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 353, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 		if templ_7745c5c3_Err != nil {
@@ -422,7 +422,7 @@ func LoginForm(title string, errorMessage string, csrfToken string) templ.Compon
 		var templ_7745c5c3_Var18 string
 		templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 381, Col: 57}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 367, Col: 57}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 		if templ_7745c5c3_Err != nil {
@@ -440,7 +440,7 @@ func LoginForm(title string, errorMessage string, csrfToken string) templ.Compon
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(errorMessage)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 388, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 374, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
@@ -458,7 +458,7 @@ func LoginForm(title string, errorMessage string, csrfToken string) templ.Compon
 		var templ_7745c5c3_Var20 string
 		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(csrfToken)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 393, Col: 84}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/layout/layout.templ`, Line: 379, Col: 84}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 		if templ_7745c5c3_Err != nil {
