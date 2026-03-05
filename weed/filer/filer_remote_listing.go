@@ -19,9 +19,9 @@ import (
 func (f *Filer) maybeMergeRemoteListings(ctx context.Context, dir util.FullPath,
 	localNames map[string]struct{}, startFileName string, limit int64, prefix string,
 	eachEntryFunc ListEachEntryFunc,
-) (additionalCount int64) {
+) (additionalCount int64, mergeErr error) {
 	if f.RemoteStorage == nil {
-		return 0
+		return 0, nil
 	}
 
 	// FindMountDirectory requires a child path (the stored key has trailing /).
@@ -29,12 +29,12 @@ func (f *Filer) maybeMergeRemoteListings(ctx context.Context, dir util.FullPath,
 	lookupPath := util.FullPath(string(dir) + "/")
 	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(lookupPath)
 	if remoteLoc == nil {
-		return 0
+		return 0, nil
 	}
 
 	client, _, found := f.RemoteStorage.FindRemoteStorageClient(lookupPath)
 	if !found {
-		return 0
+		return 0, nil
 	}
 
 	// Build remote path for this directory
@@ -53,10 +53,14 @@ func (f *Filer) maybeMergeRemoteListings(ctx context.Context, dir util.FullPath,
 		if err != nil {
 			glog.V(1).InfofCtx(ctx, "maybeMergeRemoteListings %s: %v", dir, err)
 		}
-		return 0
+		return 0, nil
 	}
 
+	sem := make(chan struct{}, 8)
 	for _, re := range remoteEntries {
+		if re == nil || re.Name == "" {
+			continue
+		}
 		if _, exists := localNames[re.Name]; exists {
 			continue
 		}
@@ -69,18 +73,23 @@ func (f *Filer) maybeMergeRemoteListings(ctx context.Context, dir util.FullPath,
 
 		entry := buildRemoteOnlyEntry(dir, re)
 
-		go f.persistRemoteListingEntry(entry)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			f.persistRemoteListingEntry(entry)
+		}()
 
 		ok, callbackErr := eachEntryFunc(entry)
 		if callbackErr != nil {
-			break
+			return additionalCount, callbackErr
 		}
 		additionalCount++
+		localNames[re.Name] = struct{}{}
 		if !ok || additionalCount >= limit {
 			break
 		}
 	}
-	return
+	return additionalCount, nil
 }
 
 func buildRemoteOnlyEntry(dir util.FullPath, re *remote_storage.RemoteListing) *Entry {

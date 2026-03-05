@@ -42,7 +42,7 @@ func TestMaybeMergeRemoteListings_AddsNewRemoteEntries(t *testing.T) {
 
 	localNames := map[string]struct{}{}
 	var collected []*Entry
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", localNames, "", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", localNames, "", 100, "",
 		func(entry *Entry) (bool, error) {
 			collected = append(collected, entry)
 			return true, nil
@@ -71,7 +71,7 @@ func TestMaybeMergeRemoteListings_DeduplicatesExisting(t *testing.T) {
 		"existing.txt": {},
 	}
 	var collected []*Entry
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", localNames, "", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", localNames, "", 100, "",
 		func(entry *Entry) (bool, error) {
 			collected = append(collected, entry)
 			return true, nil
@@ -92,7 +92,7 @@ func TestMaybeMergeRemoteListings_NotUnderMount(t *testing.T) {
 	f, cleanup := setupRemoteListingFiler(t, storageType, stub)
 	defer cleanup()
 
-	count := f.maybeMergeRemoteListings(context.Background(), "/not/a/mount", map[string]struct{}{}, "", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/not/a/mount", map[string]struct{}{}, "", 100, "",
 		func(entry *Entry) (bool, error) {
 			t.Error("should not be called for non-mounted path")
 			return true, nil
@@ -108,7 +108,7 @@ func TestMaybeMergeRemoteListings_RemoteErrorGraceful(t *testing.T) {
 	f, cleanup := setupRemoteListingFiler(t, storageType, stub)
 	defer cleanup()
 
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 100, "",
 		func(entry *Entry) (bool, error) {
 			t.Error("should not be called on error")
 			return true, nil
@@ -128,7 +128,7 @@ func TestMaybeMergeRemoteListings_PrefixFiltering(t *testing.T) {
 	defer cleanup()
 
 	var collected []*Entry
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 100, "abc",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 100, "abc",
 		func(entry *Entry) (bool, error) {
 			collected = append(collected, entry)
 			return true, nil
@@ -153,7 +153,7 @@ func TestMaybeMergeRemoteListings_PaginationRespected(t *testing.T) {
 
 	// startFileName="a.txt" should skip "a.txt"
 	var collected []*Entry
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "a.txt", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "a.txt", 100, "",
 		func(entry *Entry) (bool, error) {
 			collected = append(collected, entry)
 			return true, nil
@@ -178,7 +178,7 @@ func TestMaybeMergeRemoteListings_LimitRespected(t *testing.T) {
 	defer cleanup()
 
 	var collected []*Entry
-	count := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 2, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/buckets/mybucket", map[string]struct{}{}, "", 2, "",
 		func(entry *Entry) (bool, error) {
 			collected = append(collected, entry)
 			return true, nil
@@ -192,7 +192,7 @@ func TestMaybeMergeRemoteListings_NilRemoteStorage(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, nil)
 
-	count := f.maybeMergeRemoteListings(context.Background(), "/any/path", map[string]struct{}{}, "", 100, "",
+	count, _ := f.maybeMergeRemoteListings(context.Background(), "/any/path", map[string]struct{}{}, "", 100, "",
 		func(entry *Entry) (bool, error) {
 			t.Error("should not be called")
 			return true, nil

@@ -294,10 +294,20 @@ func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocati
 			if name == "" {
 				continue
 			}
-			results = append(results, &remote_storage.RemoteListing{
-				Name: name, Size: *obj.Size, Mtime: obj.LastModified.Unix(),
-				ETag: *obj.ETag, StorageName: s.conf.Name,
-			})
+			listing := &remote_storage.RemoteListing{
+				Name:        name,
+				StorageName: s.conf.Name,
+			}
+			if obj.Size != nil {
+				listing.Size = *obj.Size
+			}
+			if obj.LastModified != nil {
+				listing.Mtime = obj.LastModified.Unix()
+			}
+			if obj.ETag != nil {
+				listing.ETag = *obj.ETag
+			}
+			results = append(results, listing)
 		}
 		return true
 	})

@@ -432,7 +432,9 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 	// After local store scan, merge remote entries if under a mount
 	if f.RemoteStorage != nil && localCount < limit {
 		remaining := limit - localCount
-		f.maybeMergeRemoteListings(ctx, p, localNames, startFileName, remaining, prefix, eachEntryFunc)
+		if _, mergeErr := f.maybeMergeRemoteListings(ctx, p, localNames, startFileName, remaining, prefix, eachEntryFunc); mergeErr != nil {
+			return expiredCount, lastFileName, mergeErr
+		}
 	}
 
 	// Delete expired entries after iteration completes to avoid DB connection deadlock
