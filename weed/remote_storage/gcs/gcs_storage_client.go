@@ -163,6 +163,7 @@ func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation
 	if readErr != nil {
 		return nil, readErr
 	}
+	defer rangeReader.Close()
 	data, err = io.ReadAll(rangeReader)
 
 	if err != nil {

@@ -128,9 +128,11 @@ test_tarantool: build_tarantool_dev_env build
 	docker compose -f compose/test-tarantool-filer.yml -p seaweedfs up
 
 test_remote_ondemand: build
+	@rc=0; \
 	docker compose -f compose/local-remote-ondemand-compose.yml -p seaweedfs-ondemand up \
-		--abort-on-container-exit --exit-code-from test-runner
-	docker compose -f compose/local-remote-ondemand-compose.yml -p seaweedfs-ondemand down -v
+		--abort-on-container-exit --exit-code-from test-runner || rc=$$?; \
+	docker compose -f compose/local-remote-ondemand-compose.yml -p seaweedfs-ondemand down -v; \
+	exit $$rc
 
 clean:
 	rm ./weed

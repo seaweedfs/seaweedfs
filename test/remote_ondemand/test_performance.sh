@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 # Performance benchmarks for on-demand remote storage
 # Uses filer HTTP API.
 
@@ -12,7 +13,7 @@ for SIZE_MB in 1 10 50; do
   FILENAME="perftest_${SIZE_MB}mb.bin"
   echo "Uploading ${SIZE_MB}MB file to central..."
   dd if=/dev/urandom of="/tmp/$FILENAME" bs=1M count=$SIZE_MB 2>/dev/null
-  curl -s -F "file=@/tmp/$FILENAME" "$CENTRAL/buckets/testbucket/" > /dev/null 2>&1
+  curl -sf -F "file=@/tmp/$FILENAME" "$CENTRAL/buckets/testbucket/" > /dev/null
 done
 
 echo ""
@@ -20,7 +21,7 @@ echo "=== Cold Read (first access, triggers on-demand cache) ==="
 for SIZE_MB in 1 10 50; do
   FILENAME="perftest_${SIZE_MB}mb.bin"
   START=$(date +%s%N)
-  curl -s -o /dev/null "$REPLICA/buckets/testbucket/$FILENAME"
+  curl -sf -o /dev/null "$REPLICA/buckets/testbucket/$FILENAME"
   END=$(date +%s%N)
   DURATION_MS=$(( (END - START) / 1000000 ))
   if [ "$DURATION_MS" -gt 0 ]; then
@@ -36,7 +37,7 @@ echo "=== Warm Read (cached, served from local volumes) ==="
 for SIZE_MB in 1 10 50; do
   FILENAME="perftest_${SIZE_MB}mb.bin"
   START=$(date +%s%N)
-  curl -s -o /dev/null "$REPLICA/buckets/testbucket/$FILENAME"
+  curl -sf -o /dev/null "$REPLICA/buckets/testbucket/$FILENAME"
   END=$(date +%s%N)
   DURATION_MS=$(( (END - START) / 1000000 ))
   if [ "$DURATION_MS" -gt 0 ]; then
@@ -53,14 +54,14 @@ echo "=== LIST Performance ==="
 echo "Uploading 50 files for LIST test..."
 for i in $(seq 1 50); do
   echo "content_$i" > "/tmp/listfile_$(printf '%03d' $i).txt"
-  curl -s -F "file=@/tmp/listfile_$(printf '%03d' $i).txt" "$CENTRAL/buckets/testbucket/listtest/" > /dev/null 2>&1 &
+  curl -sf -F "file=@/tmp/listfile_$(printf '%03d' $i).txt" "$CENTRAL/buckets/testbucket/listtest/" > /dev/null &
   [ $((i % 10)) -eq 0 ] && wait
 done
 wait
 sleep 2
 
 START=$(date +%s%N)
-curl -s -o /dev/null "$REPLICA/buckets/testbucket/listtest/?pretty=y"
+curl -sf -o /dev/null "$REPLICA/buckets/testbucket/listtest/?pretty=y"
 END=$(date +%s%N)
 DURATION_MS=$(( (END - START) / 1000000 ))
 echo "  LIST 50 files (hybrid): ${DURATION_MS}ms"

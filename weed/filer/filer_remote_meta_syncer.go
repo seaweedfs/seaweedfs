@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -16,6 +17,7 @@ type RemoteMetaSyncer struct {
 	filer    *Filer
 	interval time.Duration
 	quit     chan struct{}
+	stopOnce sync.Once
 }
 
 func (f *Filer) StartRemoteMetaSyncer(interval time.Duration) {
@@ -29,7 +31,9 @@ func (f *Filer) StartRemoteMetaSyncer(interval time.Duration) {
 }
 
 func (s *RemoteMetaSyncer) Stop() {
-	close(s.quit)
+	s.stopOnce.Do(func() {
+		close(s.quit)
+	})
 }
 
 func (s *RemoteMetaSyncer) loop() {

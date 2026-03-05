@@ -40,6 +40,7 @@ echo "Verifying central filer..."
 echo "hello" | curl -s -X POST -T - "$CENTRAL/buckets/testbucket/healthcheck.txt"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$CENTRAL/buckets/testbucket/healthcheck.txt")
 echo "Central filer healthcheck: HTTP $STATUS"
+[ "$STATUS" = "200" ] || { echo "Central filer healthcheck failed"; exit 1; }
 
 # Configure remote storage on replica (pointing at central's S3 endpoint)
 echo "Configuring remote storage..."

@@ -133,6 +133,9 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	if storageConf.CacheConcurrency > 0 {
 		cacheConcurrency = int(storageConf.CacheConcurrency)
 	}
+	if cacheConcurrency > 128 {
+		cacheConcurrency = 128
+	}
 	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(cacheConcurrency)
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
 		localOffset := offset

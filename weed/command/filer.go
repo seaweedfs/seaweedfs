@@ -314,6 +314,13 @@ func (fo *FilerOptions) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Cer
 	return &certs.Certs[0], err
 }
 
+func durationOrZero(d *time.Duration) time.Duration {
+	if d == nil {
+		return 0
+	}
+	return *d
+}
+
 func (fo *FilerOptions) startFiler() {
 
 	defaultMux := http.NewServeMux()
@@ -368,8 +375,8 @@ func (fo *FilerOptions) startFiler() {
 		DiskType:                  *fo.diskType,
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
-		RemoteMetaSyncInterval:    *fo.remoteMetaSyncInterval,
-		RemoteEntryTTL:            *fo.remoteEntryTTL,
+		RemoteMetaSyncInterval:    durationOrZero(fo.remoteMetaSyncInterval),
+		RemoteEntryTTL:            durationOrZero(fo.remoteEntryTTL),
 		CredentialManager:         credentialManager,
 	})
 	if nfs_err != nil {
