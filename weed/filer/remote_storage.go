@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -22,6 +23,7 @@ const REMOTE_STORAGE_CONF_SUFFIX = ".conf"
 const REMOTE_STORAGE_MOUNT_FILE = "mount.mapping"
 
 type FilerRemoteStorage struct {
+	mu                sync.RWMutex
 	rules             ptrie.Trie[*remote_pb.RemoteStorageLocation]
 	storageNameToConf map[string]*remote_pb.RemoteConf
 }
@@ -35,6 +37,8 @@ func NewFilerRemoteStorage() (rs *FilerRemoteStorage) {
 }
 
 func (rs *FilerRemoteStorage) Reset() {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
 	rs.rules = ptrie.New[*remote_pb.RemoteStorageLocation]()
 	rs.storageNameToConf = make(map[string]*remote_pb.RemoteConf)
 }
@@ -53,6 +57,8 @@ func (rs *FilerRemoteStorage) LoadRemoteStorageConfigurationsAndMapping(filer *F
 		return
 	}
 
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
 	for _, entry := range entries {
 		if entry.Name() == REMOTE_STORAGE_MOUNT_FILE {
 			if err := rs.loadRemoteStorageMountMapping(entry.Content); err != nil {
@@ -91,6 +97,8 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc
 // mounts match (e.g. /buckets/b and /buckets/b/prefix), ptrie MatchPrefix visits
 // shorter prefixes first, so the last match is the longest prefix.
 func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *remote_pb.RemoteStorageLocation) {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		mountDir = util.FullPath(string(key[:len(key)-1]))
 		remoteLocation = value
@@ -100,11 +108,13 @@ func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util
 }
 
 func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client remote_storage.RemoteStorageClient, remoteConf *remote_pb.RemoteConf, found bool) {
+	rs.mu.RLock()
 	var storageLocation *remote_pb.RemoteStorageLocation
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		storageLocation = value
 		return true
 	})
+	rs.mu.RUnlock()
 
 	if storageLocation == nil {
 		found = false
@@ -115,7 +125,9 @@ func (rs *FilerRemoteStorage) FindRemoteStorageClient(p util.FullPath) (client r
 }
 
 func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client remote_storage.RemoteStorageClient, remoteConf *remote_pb.RemoteConf, found bool) {
+	rs.mu.RLock()
 	remoteConf, found = rs.storageNameToConf[storageName]
+	rs.mu.RUnlock()
 	if !found {
 		return
 	}

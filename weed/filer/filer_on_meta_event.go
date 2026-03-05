@@ -130,11 +130,11 @@ func (f *Filer) LoadRemoteStorageConfAndMapping() {
 	}
 }
 func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.SubscribeMetadataResponse) {
-	dir := event.Directory
-	if event.EventNotification.NewParentPath != "" {
-		dir = event.EventNotification.NewParentPath
+	msg := event.GetEventNotification()
+	if msg == nil {
+		return
 	}
-	if dir != DirectoryEtcRemote {
+	if event.Directory != DirectoryEtcRemote && msg.NewParentPath != DirectoryEtcRemote {
 		return
 	}
 	glog.V(0).Infof("remote storage configuration changed, reloading...")
