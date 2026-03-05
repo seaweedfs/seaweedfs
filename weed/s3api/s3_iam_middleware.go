@@ -248,7 +248,11 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrNone // Fallback to existing authorization
 	}
 
-	if identity.SessionToken == "" {
+	// SessionToken is optional here.
+	// - STS/JWT identities provide a session token and may include session policies.
+	// - Static IAM users authenticated by access key do not have a session token.
+	// Requiring a token would incorrectly deny all static IAM user requests.
+	if identity == nil || identity.Principal == "" {
 		return s3err.ErrAccessDenied
 	}
 

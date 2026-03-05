@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -502,4 +503,72 @@ func TestIAMIdentityIsAdmin(t *testing.T) {
 	// is determined by policies, not identity
 	result := identity.IsAdmin()
 	assert.False(t, result)
+}
+
+func TestAuthorizeAction_StaticIAMUserWithoutSessionToken(t *testing.T) {
+	iamManager := integration.NewIAMManager()
+
+	err := iamManager.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{
+			DefaultEffect: "Deny",
+			StoreType:     "memory",
+		},
+		Roles: &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	allowPutDoc := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{{
+			Effect:   "Allow",
+			Action:   []string{"s3:PutObject"},
+			Resource: []string{"arn:aws:s3:::cli-test-bucket/*"},
+		}},
+	}
+
+	err = iamManager.CreatePolicy(context.Background(), "", "cli-test-policy", allowPutDoc)
+	require.NoError(t, err)
+
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+	require.NotNil(t, s3iam)
+
+	req := httptest.NewRequest(http.MethodPut, "/cli-test-bucket/test.txt", http.NoBody)
+
+	identity := &IAMIdentity{
+		Name:         "cli-test-user",
+		Principal:    "arn:aws:iam::000000000000:user/cli-test-user",
+		SessionToken: "",
+		PolicyNames:  []string{"cli-test-policy"},
+	}
+
+	errCode := s3iam.AuthorizeAction(context.Background(), identity, s3_constants.ACTION_WRITE, "cli-test-bucket", "test.txt", req)
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestAuthorizeAction_DenyWhenPrincipalMissing(t *testing.T) {
+	iamManager := integration.NewIAMManager()
+	err := iamManager.Initialize(&integration.IAMConfig{
+		STS: &sts.STSConfig{
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: 12 * time.Hour},
+			Issuer:           "test-sts",
+			SigningKey:       []byte("test-signing-key-32-characters-long"),
+		},
+		Policy: &policy.PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"},
+		Roles:  &integration.RoleStoreConfig{StoreType: "memory"},
+	}, func() string { return "localhost:8888" })
+	require.NoError(t, err)
+
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+	req := httptest.NewRequest(http.MethodPut, "/cli-test-bucket/test.txt", http.NoBody)
+
+	identity := &IAMIdentity{Name: "cli-test-user", Principal: "", SessionToken: "", PolicyNames: []string{"cli-test-policy"}}
+	errCode := s3iam.AuthorizeAction(context.Background(), identity, s3_constants.ACTION_WRITE, "cli-test-bucket", "test.txt", req)
+	assert.Equal(t, s3err.ErrAccessDenied, errCode)
 }
