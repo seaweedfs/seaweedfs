@@ -402,6 +402,19 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	return nil
 }
 
+// SaveJobTypeConfigIfNotExists atomically saves config only if no config
+// exists yet for the job type. Returns true if saved, false if already exists.
+func (r *Plugin) SaveJobTypeConfigIfNotExists(config *plugin_pb.PersistedJobTypeConfig) (bool, error) {
+	saved, err := r.store.SaveJobTypeConfigIfNotExists(config)
+	if err != nil {
+		return false, err
+	}
+	if saved {
+		r.wakeScheduler()
+	}
+	return saved, nil
+}
+
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
 }
