@@ -98,7 +98,7 @@ func (s *RemoteMetaSyncer) syncOneMount(localDir string, remoteLoc *remote_pb.Re
 				Remote: remoteEntry,
 			}
 			if isDirectory {
-				entry.Attr.Mode = 0755 | 0040000 // os.ModeDir
+				entry.Attr.Mode = os.ModeDir | 0755
 				entry.Remote = nil
 			}
 
