@@ -45,6 +45,21 @@ func TestCleanMaintenanceScript(t *testing.T) {
 			expected: "ec.balance -apply",
 		},
 		{
+			name:     "lock with inline comment",
+			input:    "lock # migration\nec.balance -apply\nunlock # done",
+			expected: "ec.balance -apply",
+		},
+		{
+			name:     "command with inline comment preserved",
+			input:    "lock\nec.balance -apply # rebalance shards\nunlock",
+			expected: "ec.balance -apply",
+		},
+		{
+			name:     "only inline comment after stripping",
+			input:    "# full line comment\n  # indented comment\n",
+			expected: "",
+		},
+		{
 			name:     "typical master default",
 			input:    "\n  lock\n  ec.encode -fullPercent=95 -quietFor=1h\n  ec.rebuild -apply\n  ec.balance -apply\n  fs.log.purge -daysAgo=7\n  volume.deleteEmpty -quietFor=24h -apply\n  volume.balance -apply\n  volume.fix.replication -apply\n  s3.clean.uploads -timeAgo=24h\n  unlock\n",
 			expected: "ec.encode -fullPercent=95 -quietFor=1h\nec.rebuild -apply\nec.balance -apply\nfs.log.purge -daysAgo=7\nvolume.deleteEmpty -quietFor=24h -apply\nvolume.balance -apply\nvolume.fix.replication -apply\ns3.clean.uploads -timeAgo=24h",

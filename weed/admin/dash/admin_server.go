@@ -338,8 +338,15 @@ func cleanMaintenanceScript(script string) string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		lower := strings.ToLower(trimmed)
-		if lower == "lock" || lower == "unlock" {
+		// Strip inline comments (e.g., "lock # migration note")
+		if idx := strings.Index(trimmed, "#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+			if trimmed == "" {
+				continue
+			}
+		}
+		firstToken := strings.ToLower(strings.Fields(trimmed)[0])
+		if firstToken == "lock" || firstToken == "unlock" {
 			continue
 		}
 		lines = append(lines, trimmed)
