@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // tableInfo captures metadata about a table for detection/execution.
@@ -26,13 +27,21 @@ type tableInfo struct {
 
 // scanTablesForMaintenance enumerates table buckets and their tables,
 // evaluating which ones need maintenance based on metadata thresholds.
+// When limit > 0 the scan stops after collecting limit+1 results so the
+// caller can determine whether more tables remain (HasMore).
 func (h *Handler) scanTablesForMaintenance(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
 	config Config,
 	bucketFilter, namespaceFilter, tableFilter string,
+	limit int,
 ) ([]tableInfo, error) {
 	var tables []tableInfo
+
+	// Compile wildcard matchers once (nil = match all)
+	bucketMatchers := wildcard.CompileWildcardMatchers(bucketFilter)
+	nsMatchers := wildcard.CompileWildcardMatchers(namespaceFilter)
+	tableMatchers := wildcard.CompileWildcardMatchers(tableFilter)
 
 	// List entries under /buckets to find table buckets
 	bucketsPath := s3tables.TablesPath
@@ -42,11 +51,17 @@ func (h *Handler) scanTablesForMaintenance(
 	}
 
 	for _, bucketEntry := range bucketEntries {
+		select {
+		case <-ctx.Done():
+			return tables, ctx.Err()
+		default:
+		}
+
 		if !bucketEntry.IsDirectory || !s3tables.IsTableBucketEntry(bucketEntry) {
 			continue
 		}
 		bucketName := bucketEntry.Name
-		if bucketFilter != "" && bucketName != bucketFilter {
+		if !wildcard.MatchesAnyWildcard(bucketMatchers, bucketName) {
 			continue
 		}
 
@@ -59,11 +74,17 @@ func (h *Handler) scanTablesForMaintenance(
 		}
 
 		for _, nsEntry := range nsEntries {
+			select {
+			case <-ctx.Done():
+				return tables, ctx.Err()
+			default:
+			}
+
 			if !nsEntry.IsDirectory {
 				continue
 			}
 			nsName := nsEntry.Name
-			if namespaceFilter != "" && nsName != namespaceFilter {
+			if !wildcard.MatchesAnyWildcard(nsMatchers, nsName) {
 				continue
 			}
 			// Skip internal directories
@@ -84,7 +105,7 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 				tblName := tableEntry.Name
-				if tableFilter != "" && tblName != tableFilter {
+				if !wildcard.MatchesAnyWildcard(tableMatchers, tblName) {
 					continue
 				}
 
@@ -122,6 +143,9 @@ func (h *Handler) scanTablesForMaintenance(
 						TablePath:  path.Join(nsName, tblName),
 						Metadata:   icebergMeta,
 					})
+					if limit > 0 && len(tables) > limit {
+						return tables, nil
+					}
 				}
 			}
 		}

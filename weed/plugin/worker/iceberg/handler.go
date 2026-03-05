@@ -57,24 +57,24 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "bucket_filter",
 							Label:       "Bucket Filter",
-							Description: "Only maintain tables in this table bucket (blank = all).",
-							Placeholder: "all buckets",
+							Description: "Comma-separated wildcard patterns for table buckets (* and ? supported). Blank = all.",
+							Placeholder: "prod-*, staging-*",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
 						{
 							Name:        "namespace_filter",
 							Label:       "Namespace Filter",
-							Description: "Only maintain tables in this namespace (blank = all).",
-							Placeholder: "all namespaces",
+							Description: "Comma-separated wildcard patterns for namespaces (* and ? supported). Blank = all.",
+							Placeholder: "analytics, events-*",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
 						{
 							Name:        "table_filter",
 							Label:       "Table Filter",
-							Description: "Only maintain this specific table (blank = all).",
-							Placeholder: "all tables",
+							Description: "Comma-separated wildcard patterns for table names (* and ? supported). Blank = all.",
+							Placeholder: "clicks, orders-*",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -251,7 +251,8 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
 
-	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter)
+	maxResults := int(request.MaxResults)
+	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, maxResults)
 	if err != nil {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
 		return fmt.Errorf("scan tables: %w", err)
@@ -263,7 +264,6 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 			"tables_found": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(tables))}},
 		}))
 
-	maxResults := int(request.MaxResults)
 	hasMore := false
 	if maxResults > 0 && len(tables) > maxResults {
 		hasMore = true

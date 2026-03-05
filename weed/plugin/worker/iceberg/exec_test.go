@@ -797,6 +797,7 @@ func TestDetectWithFakeFiler(t *testing.T) {
 		client,
 		config,
 		"", "", "", // no filters
+		0,          // no limit
 	)
 	if err != nil {
 		t.Fatalf("scanTablesForMaintenance failed: %v", err)
@@ -849,7 +850,7 @@ func TestDetectWithFilters(t *testing.T) {
 	}
 
 	// Without filter: should find both
-	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "")
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
@@ -858,7 +859,7 @@ func TestDetectWithFilters(t *testing.T) {
 	}
 
 	// With bucket filter: should find only one
-	tables, err = handler.scanTablesForMaintenance(context.Background(), client, config, "bucket-a", "", "")
+	tables, err = handler.scanTablesForMaintenance(context.Background(), client, config, "bucket-a", "", "", 0)
 	if err != nil {
 		t.Fatalf("scan with filter failed: %v", err)
 	}
