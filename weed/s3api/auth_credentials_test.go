@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"sync"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
 
@@ -258,6 +261,130 @@ func TestMatchWildcardPattern(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
+	buildRequest := func(t *testing.T, method string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+		assert.NoError(t, err)
+		return req
+	}
+
+	t.Run("policy allow grants access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowGet"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("explicit deny overrides allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("denySecret", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/secret.txt"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denySecret"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("implicit deny when no statement matches", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowOtherBucket", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::other-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowOtherBucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("invalid policy document does not allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("invalidPolicy", "{not-json")
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"invalidPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("notresource excludes denied object", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("denyNotResource", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","NotResource":"arn:aws:s3:::test-bucket/public/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denyNotResource"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "private/secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "public/readme.txt")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("condition securetransport enforced", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowTLSOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*","Condition":{"Bool":{"aws:SecureTransport":"true"}}}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowTLSOnly"},
+		}
+
+		httpReq := buildRequest(t, http.MethodGet)
+		errCode := iam.VerifyActionPermission(httpReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		httpsReq := buildRequest(t, http.MethodGet)
+		httpsReq.TLS = &tls.ConnectionState{}
+		errCode = iam.VerifyActionPermission(httpsReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("actions based path still works", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		identity := &Identity{
+			Name:    "legacy-user",
+			Account: &AccountAdmin,
+			Actions: []Action{"Read:test-bucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "any-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
 }
 
 type LoadS3ApiConfigurationTestCase struct {
