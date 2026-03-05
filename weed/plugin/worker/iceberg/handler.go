@@ -223,9 +223,7 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
 
-	if pluginworker.ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), 0) {
-		return h.sendEmptyDetection(sender)
-	}
+	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
 
 	// Get filer addresses from cluster context
 	filerAddresses := make([]string, 0)
@@ -309,8 +307,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	tablePath := readStringConfig(params, "table_path", "")
 	filerAddress := readStringConfig(params, "filer_address", "")
 
-	if bucketName == "" || tableName == "" || filerAddress == "" {
-		return fmt.Errorf("missing required parameters: bucket_name=%q, table_name=%q, filer_address=%q", bucketName, tableName, filerAddress)
+	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
+		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
 	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
