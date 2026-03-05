@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -229,7 +228,7 @@ func TestQA_Master_DeleteVSUnreachable(t *testing.T) {
 	}
 
 	// Make VS delete fail.
-	ms.blockVSDelete = func(ctx context.Context, server pb.ServerAddress, name string) error {
+	ms.blockVSDelete = func(ctx context.Context, server string, name string) error {
 		return fmt.Errorf("connection refused")
 	}
 
@@ -320,8 +319,8 @@ func TestQA_Master_AllVSFailNoOrphan(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 	ms.blockRegistry.MarkBlockCapable("vs3:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
-		return "", "", "", fmt.Errorf("disk full on %s", server)
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		return nil, fmt.Errorf("disk full on %s", server)
 	}
 
 	_, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
@@ -349,12 +348,14 @@ func TestQA_Master_SlowAllocateBlocksSecond(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var allocCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
 		allocCount.Add(1)
 		time.Sleep(100 * time.Millisecond) // simulate slow VS
-		return fmt.Sprintf("/data/%s.blk", name),
-			fmt.Sprintf("iqn.test:%s", name),
-			string(server), nil
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
 	}
 
 	var wg sync.WaitGroup

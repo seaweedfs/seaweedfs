@@ -184,6 +184,12 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 					}
 				}
 			}
+			// Process block volume assignments from master.
+			if len(in.BlockVolumeAssignments) > 0 && vs.blockService != nil {
+				assignments := blockvol.AssignmentsFromProto(in.BlockVolumeAssignments)
+				vs.blockService.ProcessAssignments(assignments)
+			}
+
 			if in.GetLeader() != "" && string(vs.currentMaster) != in.GetLeader() {
 				glog.V(0).Infof("Volume Server found a new master newLeader: %v instead of %v", in.GetLeader(), vs.currentMaster)
 				newLeader = pb.ServerAddress(in.GetLeader())
@@ -213,12 +219,21 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 	port := uint32(vs.store.Port)
 
 	// Send block volume full heartbeat if block service is enabled.
+	// R1-3: Also set up periodic block heartbeat so assignments get confirmed.
+	var blockVolTickChan *time.Ticker
 	if vs.blockService != nil {
 		blockBeat := vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)
 		if err = stream.Send(blockBeat); err != nil {
 			glog.V(0).Infof("Volume Server Failed to send block volume heartbeat to master %s: %v", masterAddress, err)
 			return "", err
 		}
+		blockVolTickChan = time.NewTicker(5 * sleepInterval)
+		defer blockVolTickChan.Stop()
+	}
+	// blockVolTickC is nil-safe: select on nil channel never fires.
+	var blockVolTickC <-chan time.Time
+	if blockVolTickChan != nil {
+		blockVolTickC = blockVolTickChan.C
 	}
 	for {
 		select {
@@ -297,6 +312,13 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
+		case <-blockVolTickC:
+			// R1-3: Periodic full block heartbeat enables assignment confirmation on master.
+			glog.V(4).Infof("volume server %s:%d block volume heartbeat", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)); err != nil {
+				glog.V(0).Infof("Volume Server Failed to send block volume heartbeat to master %s: %v", masterAddress, err)
+				return "", err
+			}
 		case <-volumeTickChan.C:
 			glog.V(4).Infof("volume server %s:%d heartbeat", vs.store.Ip, vs.store.Port)
 			vs.store.MaybeAdjustVolumeMax()
@@ -336,8 +358,9 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 }
 
 // collectBlockVolumeHeartbeat builds a heartbeat with the full list of block volumes.
+// Uses BlockService.CollectBlockVolumeHeartbeat which includes replication addresses (R1-4).
 func (vs *VolumeServer) collectBlockVolumeHeartbeat(ip string, port uint32, dc, rack string) *master_pb.Heartbeat {
-	msgs := vs.blockService.Store().CollectBlockVolumeHeartbeat()
+	msgs := vs.blockService.CollectBlockVolumeHeartbeat()
 	return &master_pb.Heartbeat{
 		Ip:                ip,
 		Port:              port,

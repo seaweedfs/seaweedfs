@@ -94,9 +94,11 @@ type MasterServer struct {
 	telemetryCollector *telemetry.Collector
 
 	// block volume support
-	blockRegistry    *BlockVolumeRegistry
-	blockVSAllocate  func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error)
-	blockVSDelete    func(ctx context.Context, server pb.ServerAddress, name string) error
+	blockRegistry        *BlockVolumeRegistry
+	blockAssignmentQueue *BlockAssignmentQueue
+	blockFailover        *blockFailoverState
+	blockVSAllocate func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error)
+	blockVSDelete   func(ctx context.Context, server string, name string) error
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
@@ -146,6 +148,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	}
 
 	ms.blockRegistry = NewBlockVolumeRegistry()
+	ms.blockAssignmentQueue = NewBlockAssignmentQueue()
+	ms.blockFailover = newBlockFailoverState()
 	ms.blockVSAllocate = ms.defaultBlockVSAllocate
 	ms.blockVSDelete = ms.defaultBlockVSDelete
 
@@ -514,9 +518,20 @@ func (ms *MasterServer) Reload() {
 	)
 }
 
+// blockAllocResult holds the result of a block volume allocation.
+type blockAllocResult struct {
+	Path             string
+	IQN              string
+	ISCSIAddr        string
+	ReplicaDataAddr  string
+	ReplicaCtrlAddr  string
+	RebuildListenAddr string
+}
+
 // defaultBlockVSAllocate calls a volume server's AllocateBlockVolume RPC.
-func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error) {
-	err = operation.WithVolumeServerClient(false, server, ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	var result blockAllocResult
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, rerr := client.AllocateBlockVolume(ctx, &volume_server_pb.AllocateBlockVolumeRequest{
 			Name:      name,
 			SizeBytes: sizeBytes,
@@ -525,17 +540,20 @@ func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server pb.Se
 		if rerr != nil {
 			return rerr
 		}
-		path = resp.Path
-		iqn = resp.Iqn
-		iscsiAddr = resp.IscsiAddr
+		result.Path = resp.Path
+		result.IQN = resp.Iqn
+		result.ISCSIAddr = resp.IscsiAddr
+		result.ReplicaDataAddr = resp.ReplicaDataAddr
+		result.ReplicaCtrlAddr = resp.ReplicaCtrlAddr
+		result.RebuildListenAddr = resp.RebuildListenAddr
 		return nil
 	})
-	return
+	return &result, err
 }
 
 // defaultBlockVSDelete calls a volume server's VolumeServerDeleteBlockVolume RPC.
-func (ms *MasterServer) defaultBlockVSDelete(ctx context.Context, server pb.ServerAddress, name string) error {
-	return operation.WithVolumeServerClient(false, server, ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+func (ms *MasterServer) defaultBlockVSDelete(ctx context.Context, server string, name string) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		_, err := client.VolumeServerDeleteBlockVolume(ctx, &volume_server_pb.VolumeServerDeleteBlockVolumeRequest{
 			Name: name,
 		})

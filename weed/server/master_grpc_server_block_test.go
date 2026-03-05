@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -15,16 +14,18 @@ import (
 func testMasterServer(t *testing.T) *MasterServer {
 	t.Helper()
 	ms := &MasterServer{
-		blockRegistry: NewBlockVolumeRegistry(),
+		blockRegistry:        NewBlockVolumeRegistry(),
+		blockAssignmentQueue: NewBlockAssignmentQueue(),
 	}
 	// Default mock: succeed with deterministic values.
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
-		return fmt.Sprintf("/data/%s.blk", name),
-			fmt.Sprintf("iqn.2024.test:%s", name),
-			string(server),
-			nil
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
 	}
-	ms.blockVSDelete = func(ctx context.Context, server pb.ServerAddress, name string) error {
+	ms.blockVSDelete = func(ctx context.Context, server string, name string) error {
 		return nil
 	}
 	return ms
@@ -137,14 +138,16 @@ func TestMaster_CreateVSFailure_Retry(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
 	var callCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
 		n := callCount.Add(1)
 		if n == 1 {
-			return "", "", "", fmt.Errorf("disk full")
+			return nil, fmt.Errorf("disk full")
 		}
-		return fmt.Sprintf("/data/%s.blk", name),
-			fmt.Sprintf("iqn.2024.test:%s", name),
-			string(server), nil
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
 	}
 
 	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
@@ -166,8 +169,8 @@ func TestMaster_CreateVSFailure_Cleanup(t *testing.T) {
 	ms := testMasterServer(t)
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
-		return "", "", "", fmt.Errorf("all servers broken")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		return nil, fmt.Errorf("all servers broken")
 	}
 
 	_, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
@@ -189,11 +192,13 @@ func TestMaster_CreateConcurrentSameName(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var callCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server pb.ServerAddress, name string, sizeBytes uint64, diskType string) (string, string, string, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
 		callCount.Add(1)
-		return fmt.Sprintf("/data/%s.blk", name),
-			fmt.Sprintf("iqn.2024.test:%s", name),
-			string(server), nil
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
 	}
 
 	var wg sync.WaitGroup
@@ -260,6 +265,230 @@ func TestMaster_DeleteNotFound(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("delete nonexistent should succeed (idempotent): %v", err)
+	}
+}
+
+func TestMaster_CreateWithReplica(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+
+	var allocServers []string
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		allocServers = append(allocServers, server)
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":14260",
+			ReplicaCtrlAddr: server + ":14261",
+		}, nil
+	}
+
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+
+	// Should have called allocate twice (primary + replica).
+	if len(allocServers) != 2 {
+		t.Fatalf("expected 2 alloc calls, got %d", len(allocServers))
+	}
+	if allocServers[0] == allocServers[1] {
+		t.Fatalf("primary and replica should be on different servers, both on %s", allocServers[0])
+	}
+
+	// Response should include replica server.
+	if resp.ReplicaServer == "" {
+		t.Fatal("ReplicaServer should be set")
+	}
+	if resp.ReplicaServer == resp.VolumeServer {
+		t.Fatalf("replica should differ from primary: both %q", resp.VolumeServer)
+	}
+
+	// Registry entry should have replica info.
+	entry, ok := ms.blockRegistry.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 not in registry")
+	}
+	if entry.ReplicaServer == "" {
+		t.Fatal("registry ReplicaServer should be set")
+	}
+	if entry.ReplicaPath == "" {
+		t.Fatal("registry ReplicaPath should be set")
+	}
+}
+
+func TestMaster_CreateSingleServer_NoReplica(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	var allocCount atomic.Int32
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		allocCount.Add(1)
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
+	}
+
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+
+	// Only 1 server → single-copy mode, only 1 alloc call.
+	if allocCount.Load() != 1 {
+		t.Fatalf("expected 1 alloc call, got %d", allocCount.Load())
+	}
+	if resp.ReplicaServer != "" {
+		t.Fatalf("ReplicaServer should be empty in single-copy mode, got %q", resp.ReplicaServer)
+	}
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.ReplicaServer != "" {
+		t.Fatalf("registry ReplicaServer should be empty, got %q", entry.ReplicaServer)
+	}
+}
+
+func TestMaster_CreateReplica_SecondFails_SingleCopy(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+
+	var callCount atomic.Int32
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		n := callCount.Add(1)
+		if n == 2 {
+			// Replica allocation fails.
+			return nil, fmt.Errorf("replica disk full")
+		}
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
+	}
+
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume should succeed in single-copy mode: %v", err)
+	}
+
+	// Volume created, but without replica (F4).
+	if resp.ReplicaServer != "" {
+		t.Fatalf("ReplicaServer should be empty when replica fails, got %q", resp.ReplicaServer)
+	}
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.ReplicaServer != "" {
+		t.Fatal("registry should have no replica")
+	}
+}
+
+func TestMaster_CreateEnqueuesAssignments(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":14260",
+			ReplicaCtrlAddr: server + ":14261",
+		}, nil
+	}
+
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+
+	// Primary server should have 1 pending assignment.
+	primaryPending := ms.blockAssignmentQueue.Pending(resp.VolumeServer)
+	if primaryPending != 1 {
+		t.Fatalf("primary pending assignments: got %d, want 1", primaryPending)
+	}
+
+	// Replica server should have 1 pending assignment.
+	if resp.ReplicaServer == "" {
+		t.Fatal("expected replica server")
+	}
+	replicaPending := ms.blockAssignmentQueue.Pending(resp.ReplicaServer)
+	if replicaPending != 1 {
+		t.Fatalf("replica pending assignments: got %d, want 1", replicaPending)
+	}
+}
+
+func TestMaster_CreateSingleCopy_NoReplicaAssignment(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	_, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+
+	// Only primary assignment, no replica.
+	primaryPending := ms.blockAssignmentQueue.Pending("vs1:9333")
+	if primaryPending != 1 {
+		t.Fatalf("primary pending: got %d, want 1", primaryPending)
+	}
+
+	// No other server should have pending assignments.
+	// (No way to enumerate all servers, but we know there's only 1 server.)
+}
+
+func TestMaster_LookupReturnsReplicaServer(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+		}, nil
+	}
+
+	_, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "vol1",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	resp, err := ms.LookupBlockVolume(context.Background(), &master_pb.LookupBlockVolumeRequest{
+		Name: "vol1",
+	})
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if resp.ReplicaServer == "" {
+		t.Fatal("LookupBlockVolume should return ReplicaServer")
+	}
+	if resp.ReplicaServer == resp.VolumeServer {
+		t.Fatalf("replica should differ from primary")
 	}
 }
 

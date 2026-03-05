@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
@@ -91,6 +92,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.UnRegisterUuids(dn.Ip, dn.Port)
 			if ms.blockRegistry != nil {
 				ms.blockRegistry.UnmarkBlockCapable(dn.Url())
+				ms.failoverBlockVolumes(dn.Url())
 			}
 
 			if ms.Topo.IsLeader() && (len(message.DeletedVids) > 0 || len(message.DeletedEcVids) > 0) {
@@ -162,6 +164,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			}
 			stats.MasterReceivedHeartbeatCounter.WithLabelValues("dataNode").Inc()
 			dn.Counter++
+
+			// Check for pending block volume rebuilds from a previous disconnect.
+			ms.recoverBlockVolumes(dn.Url())
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
@@ -275,6 +280,27 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos)
 		} else if len(heartbeat.NewBlockVolumes) > 0 || len(heartbeat.DeletedBlockVolumes) > 0 {
 			ms.blockRegistry.UpdateDeltaHeartbeat(dn.Url(), heartbeat.NewBlockVolumes, heartbeat.DeletedBlockVolumes)
+		}
+
+		// Deliver pending block volume assignments (retain-until-confirmed, F1).
+		if ms.blockAssignmentQueue != nil {
+			// Confirm assignments that VS has applied (reported in heartbeat).
+			if len(heartbeat.BlockVolumeInfos) > 0 {
+				infos := blockvol.InfoMessagesFromProto(heartbeat.BlockVolumeInfos)
+				ms.blockAssignmentQueue.ConfirmFromHeartbeat(dn.Url(), infos)
+			}
+
+			// Send remaining pending assignments.
+			pending := ms.blockAssignmentQueue.Peek(dn.Url())
+			if len(pending) > 0 {
+				assignProtos := blockvol.AssignmentsToProto(pending)
+				if err := stream.Send(&master_pb.HeartbeatResponse{
+					BlockVolumeAssignments: assignProtos,
+				}); err != nil {
+					glog.Warningf("SendHeartbeat.Send block assignments to %s:%d: %v", dn.Ip, dn.Port, err)
+					return err
+				}
+			}
 		}
 	}
 }

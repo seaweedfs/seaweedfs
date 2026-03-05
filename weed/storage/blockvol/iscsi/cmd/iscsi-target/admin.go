@@ -46,8 +46,10 @@ type replicaRequest struct {
 
 // rebuildRequest is the JSON body for POST /rebuild.
 type rebuildRequest struct {
-	Action     string `json:"action"`
-	ListenAddr string `json:"listen_addr"`
+	Action      string `json:"action"`
+	ListenAddr  string `json:"listen_addr"`  // for "start"
+	RebuildAddr string `json:"rebuild_addr"` // for "connect"
+	Epoch       uint64 `json:"epoch"`        // for "connect"
 }
 
 // snapshotRequest is the JSON body for POST /snapshot.
@@ -205,8 +207,22 @@ func (a *adminServer) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	case "stop":
 		a.vol.StopRebuildServer()
 		a.logger.Printf("admin: rebuild server stopped")
+	case "connect":
+		if req.RebuildAddr == "" {
+			jsonError(w, "rebuild_addr required for connect", http.StatusBadRequest)
+			return
+		}
+		fromLSN := a.vol.Status().WALHeadLSN
+		go func() {
+			if err := blockvol.StartRebuild(a.vol, req.RebuildAddr, fromLSN, req.Epoch); err != nil {
+				a.logger.Printf("admin: rebuild connect to %s failed: %v", req.RebuildAddr, err)
+			} else {
+				a.logger.Printf("admin: rebuild from %s completed", req.RebuildAddr)
+			}
+		}()
+		a.logger.Printf("admin: rebuild connect started (addr=%s epoch=%d fromLSN=%d)", req.RebuildAddr, req.Epoch, fromLSN)
 	default:
-		jsonError(w, "action must be 'start' or 'stop'", http.StatusBadRequest)
+		jsonError(w, "action must be 'start', 'stop', or 'connect'", http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

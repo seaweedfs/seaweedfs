@@ -44,6 +44,14 @@ func HandleAssignment(vol *BlockVol, newEpoch uint64, newRole Role, leaseTTL tim
 	case current == RoleStale && newRole == RoleRebuilding:
 		// Rebuild started externally via StartRebuild.
 		return vol.SetRole(RoleRebuilding)
+	case current == RoleNone && newRole == RoleRebuilding:
+		// After VS restart, volume is RoleNone. Master may send Rebuilding
+		// assignment if this was a stale replica that needs rebuild.
+		if err := vol.SetEpoch(newEpoch); err != nil {
+			return fmt.Errorf("assign rebuilding: set epoch: %w", err)
+		}
+		vol.SetMasterEpoch(newEpoch)
+		return vol.SetRole(RoleRebuilding)
 	case current == RoleNone && newRole == RolePrimary:
 		return promote(vol, newEpoch, leaseTTL)
 	case current == RoleNone && newRole == RoleReplica:

@@ -2,16 +2,24 @@ package weed_server
 
 import (
 	"fmt"
+	"hash/fnv"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 )
+
+// volReplState tracks active replication addresses per volume.
+type volReplState struct {
+	replicaDataAddr string
+	replicaCtrlAddr string
+}
 
 // BlockService manages block volumes and the iSCSI target server.
 type BlockService struct {
@@ -20,6 +28,10 @@ type BlockService struct {
 	iqnPrefix    string
 	blockDir     string
 	listenAddr   string
+
+	// Replication state (CP6-3).
+	replMu     sync.RWMutex
+	replStates map[string]*volReplState // keyed by volume path
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -197,6 +209,157 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 
 	glog.V(0).Infof("block service: deleted %s", path)
 	return nil
+}
+
+// ProcessAssignments applies assignments from master, including replication setup.
+func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAssignment) {
+	for _, a := range assignments {
+		role := blockvol.RoleFromWire(a.Role)
+		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
+
+		// 1. Apply role/epoch/lease.
+		if err := bs.blockStore.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
+			return vol.HandleAssignment(a.Epoch, role, ttl)
+		}); err != nil {
+			glog.Warningf("block service: assignment %s epoch=%d role=%s: %v", a.Path, a.Epoch, role, err)
+			continue
+		}
+
+		// 2. Replication setup based on role + addresses.
+		switch role {
+		case blockvol.RolePrimary:
+			if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
+				bs.setupPrimaryReplication(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr)
+			}
+		case blockvol.RoleReplica:
+			if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
+				bs.setupReplicaReceiver(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr)
+			}
+		case blockvol.RoleRebuilding:
+			if a.RebuildAddr != "" {
+				bs.startRebuild(a.Path, a.RebuildAddr, a.Epoch)
+			}
+		}
+	}
+}
+
+// setupPrimaryReplication configures WAL shipping from primary to replica
+// and starts the rebuild server (R1-2).
+func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCtrlAddr string) {
+	// Compute deterministic rebuild listen address.
+	_, _, rebuildPort := bs.ReplicationPorts(path)
+	host := bs.listenAddr
+	if idx := strings.LastIndex(host, ":"); idx >= 0 {
+		host = host[:idx]
+	}
+	rebuildAddr := fmt.Sprintf("%s:%d", host, rebuildPort)
+
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		vol.SetReplicaAddr(replicaDataAddr, replicaCtrlAddr)
+		// R1-2: Start rebuild server so replicas can catch up after failover.
+		if err := vol.StartRebuildServer(rebuildAddr); err != nil {
+			glog.Warningf("block service: start rebuild server %s on %s: %v", path, rebuildAddr, err)
+			// Non-fatal: WAL shipping can work without rebuild server.
+		}
+		return nil
+	}); err != nil {
+		glog.Warningf("block service: setup primary replication %s: %v", path, err)
+		return
+	}
+	// Track replication state for heartbeat reporting (R1-4).
+	bs.replMu.Lock()
+	if bs.replStates == nil {
+		bs.replStates = make(map[string]*volReplState)
+	}
+	bs.replStates[path] = &volReplState{
+		replicaDataAddr: replicaDataAddr,
+		replicaCtrlAddr: replicaCtrlAddr,
+	}
+	bs.replMu.Unlock()
+	glog.V(0).Infof("block service: primary %s shipping WAL to %s/%s (rebuild=%s)", path, replicaDataAddr, replicaCtrlAddr, rebuildAddr)
+}
+
+// setupReplicaReceiver starts the replica WAL receiver.
+func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		return vol.StartReplicaReceiver(dataAddr, ctrlAddr)
+	}); err != nil {
+		glog.Warningf("block service: setup replica receiver %s: %v", path, err)
+		return
+	}
+	bs.replMu.Lock()
+	if bs.replStates == nil {
+		bs.replStates = make(map[string]*volReplState)
+	}
+	bs.replStates[path] = &volReplState{
+		replicaDataAddr: dataAddr,
+		replicaCtrlAddr: ctrlAddr,
+	}
+	bs.replMu.Unlock()
+	glog.V(0).Infof("block service: replica %s receiving on %s/%s", path, dataAddr, ctrlAddr)
+}
+
+// startRebuild starts a rebuild in the background.
+// R2-F7: Rebuild success/failure is logged but not reported back to master.
+// Future work: VS could report rebuild completion via heartbeat so master
+// can update registry state (e.g., promote from Rebuilding to Replica).
+func (bs *BlockService) startRebuild(path, rebuildAddr string, epoch uint64) {
+	go func() {
+		vol, ok := bs.blockStore.GetBlockVolume(path)
+		if !ok {
+			glog.Warningf("block service: rebuild %s: volume not found", path)
+			return
+		}
+		if err := blockvol.StartRebuild(vol, rebuildAddr, 0, epoch); err != nil {
+			glog.Warningf("block service: rebuild %s from %s: %v", path, rebuildAddr, err)
+			return
+		}
+		glog.V(0).Infof("block service: rebuild %s from %s completed", path, rebuildAddr)
+	}()
+}
+
+// GetReplState returns the replication state for a volume path.
+func (bs *BlockService) GetReplState(path string) (dataAddr, ctrlAddr string) {
+	bs.replMu.RLock()
+	defer bs.replMu.RUnlock()
+	if s, ok := bs.replStates[path]; ok {
+		return s.replicaDataAddr, s.replicaCtrlAddr
+	}
+	return "", ""
+}
+
+// CollectBlockVolumeHeartbeat returns heartbeat info for all block volumes,
+// with replication addresses filled in from BlockService state (R1-4).
+func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfoMessage {
+	msgs := bs.blockStore.CollectBlockVolumeHeartbeat()
+	bs.replMu.RLock()
+	defer bs.replMu.RUnlock()
+	for i := range msgs {
+		if s, ok := bs.replStates[msgs[i].Path]; ok {
+			msgs[i].ReplicaDataAddr = s.replicaDataAddr
+			msgs[i].ReplicaCtrlAddr = s.replicaCtrlAddr
+		}
+	}
+	return msgs
+}
+
+// ReplicationPorts computes deterministic replication ports for a volume.
+// Ports are derived from a hash of the volume path offset from the iSCSI base port.
+func (bs *BlockService) ReplicationPorts(volPath string) (dataPort, ctrlPort, rebuildPort int) {
+	basePort := 3260
+	if idx := strings.LastIndex(bs.listenAddr, ":"); idx >= 0 {
+		var p int
+		if _, err := fmt.Sscanf(bs.listenAddr[idx+1:], "%d", &p); err == nil && p > 0 {
+			basePort = p
+		}
+	}
+	h := fnv.New32a()
+	h.Write([]byte(volPath))
+	offset := int(h.Sum32()%500) * 3
+	dataPort = basePort + 1000 + offset
+	ctrlPort = dataPort + 1
+	rebuildPort = dataPort + 2
+	return
 }
 
 // Shutdown gracefully stops the iSCSI target and closes all block volumes.

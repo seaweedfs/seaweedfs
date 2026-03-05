@@ -491,6 +491,8 @@ message BlockVolumeInfoMessage {
   uint64 checkpoint_lsn = 7;
   bool has_lease = 8;
   string disk_type = 9;
+  string replica_data_addr = 10;
+  string replica_ctrl_addr = 11;
 }
 
 message BlockVolumeShortInfoMessage {
@@ -505,6 +507,9 @@ message BlockVolumeAssignment {
   uint64 epoch = 2;
   uint32 role = 3;
   uint32 lease_ttl_ms = 4;
+  string replica_data_addr = 5;
+  string replica_ctrl_addr = 6;
+  string rebuild_addr = 7;
 }
 
 message CreateBlockVolumeRequest {
@@ -518,6 +523,7 @@ message CreateBlockVolumeResponse {
   string iscsi_addr = 3;
   string iqn = 4;
   uint64 capacity_bytes = 5;
+  string replica_server = 6;
 }
 
 message DeleteBlockVolumeRequest {
@@ -534,4 +540,5 @@ message LookupBlockVolumeResponse {
   string iscsi_addr = 2;
   string iqn = 3;
   uint64 capacity_bytes = 4;
+  string replica_server = 5;
 }

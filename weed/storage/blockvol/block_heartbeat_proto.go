@@ -7,15 +7,17 @@ import (
 // InfoMessageToProto converts a Go wire type to proto.
 func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMessage {
 	return &master_pb.BlockVolumeInfoMessage{
-		Path:          m.Path,
-		VolumeSize:    m.VolumeSize,
-		BlockSize:     m.BlockSize,
-		Epoch:         m.Epoch,
-		Role:          m.Role,
-		WalHeadLsn:    m.WalHeadLsn,
-		CheckpointLsn: m.CheckpointLsn,
-		HasLease:      m.HasLease,
-		DiskType:      m.DiskType,
+		Path:            m.Path,
+		VolumeSize:      m.VolumeSize,
+		BlockSize:       m.BlockSize,
+		Epoch:           m.Epoch,
+		Role:            m.Role,
+		WalHeadLsn:      m.WalHeadLsn,
+		CheckpointLsn:   m.CheckpointLsn,
+		HasLease:        m.HasLease,
+		DiskType:        m.DiskType,
+		ReplicaDataAddr: m.ReplicaDataAddr,
+		ReplicaCtrlAddr: m.ReplicaCtrlAddr,
 	}
 }
 
@@ -25,15 +27,17 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		return BlockVolumeInfoMessage{}
 	}
 	return BlockVolumeInfoMessage{
-		Path:          p.Path,
-		VolumeSize:    p.VolumeSize,
-		BlockSize:     p.BlockSize,
-		Epoch:         p.Epoch,
-		Role:          p.Role,
-		WalHeadLsn:    p.WalHeadLsn,
-		CheckpointLsn: p.CheckpointLsn,
-		HasLease:      p.HasLease,
-		DiskType:      p.DiskType,
+		Path:            p.Path,
+		VolumeSize:      p.VolumeSize,
+		BlockSize:       p.BlockSize,
+		Epoch:           p.Epoch,
+		Role:            p.Role,
+		WalHeadLsn:      p.WalHeadLsn,
+		CheckpointLsn:   p.CheckpointLsn,
+		HasLease:        p.HasLease,
+		DiskType:        p.DiskType,
+		ReplicaDataAddr: p.ReplicaDataAddr,
+		ReplicaCtrlAddr: p.ReplicaCtrlAddr,
 	}
 }
 
@@ -81,10 +85,13 @@ func ShortInfoFromProto(p *master_pb.BlockVolumeShortInfoMessage) BlockVolumeSho
 // AssignmentToProto converts a Go assignment to proto.
 func AssignmentToProto(a BlockVolumeAssignment) *master_pb.BlockVolumeAssignment {
 	return &master_pb.BlockVolumeAssignment{
-		Path:       a.Path,
-		Epoch:      a.Epoch,
-		Role:       a.Role,
-		LeaseTtlMs: a.LeaseTtlMs,
+		Path:            a.Path,
+		Epoch:           a.Epoch,
+		Role:            a.Role,
+		LeaseTtlMs:      a.LeaseTtlMs,
+		ReplicaDataAddr: a.ReplicaDataAddr,
+		ReplicaCtrlAddr: a.ReplicaCtrlAddr,
+		RebuildAddr:     a.RebuildAddr,
 	}
 }
 
@@ -94,11 +101,23 @@ func AssignmentFromProto(p *master_pb.BlockVolumeAssignment) BlockVolumeAssignme
 		return BlockVolumeAssignment{}
 	}
 	return BlockVolumeAssignment{
-		Path:       p.Path,
-		Epoch:      p.Epoch,
-		Role:       p.Role,
-		LeaseTtlMs: p.LeaseTtlMs,
+		Path:            p.Path,
+		Epoch:           p.Epoch,
+		Role:            p.Role,
+		LeaseTtlMs:      p.LeaseTtlMs,
+		ReplicaDataAddr: p.ReplicaDataAddr,
+		ReplicaCtrlAddr: p.ReplicaCtrlAddr,
+		RebuildAddr:     p.RebuildAddr,
 	}
+}
+
+// AssignmentsToProto converts a slice of Go assignments to proto.
+func AssignmentsToProto(as []BlockVolumeAssignment) []*master_pb.BlockVolumeAssignment {
+	out := make([]*master_pb.BlockVolumeAssignment, len(as))
+	for i, a := range as {
+		out[i] = AssignmentToProto(a)
+	}
+	return out
 }
 
 // AssignmentsFromProto converts a slice of proto assignments to Go wire types.

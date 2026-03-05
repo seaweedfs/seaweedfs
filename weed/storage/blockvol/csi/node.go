@@ -57,12 +57,19 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	// Determine iSCSI target info: from volume_context (remote) or local mgr.
+	// Determine iSCSI target info.
+	// Priority: publish_context (fresh from ControllerPublish, reflects failover)
+	//         > volume_context (from CreateVolume, may be stale after failover)
+	//         > local volume manager fallback.
 	var iqn, portal string
 	isLocal := false
 
-	if req.VolumeContext != nil && req.VolumeContext["iscsiAddr"] != "" && req.VolumeContext["iqn"] != "" {
-		// Remote target: iSCSI info from volume_context (set by controller via master).
+	if req.PublishContext != nil && req.PublishContext["iscsiAddr"] != "" && req.PublishContext["iqn"] != "" {
+		// Fresh address from ControllerPublishVolume (reflects current primary).
+		portal = req.PublishContext["iscsiAddr"]
+		iqn = req.PublishContext["iqn"]
+	} else if req.VolumeContext != nil && req.VolumeContext["iscsiAddr"] != "" && req.VolumeContext["iqn"] != "" {
+		// Fallback: volume_context from CreateVolume (may be stale after failover).
 		portal = req.VolumeContext["iscsiAddr"]
 		iqn = req.VolumeContext["iqn"]
 	} else if s.mgr != nil {

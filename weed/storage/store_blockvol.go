@@ -96,10 +96,10 @@ func (bs *BlockVolumeStore) CollectBlockVolumeHeartbeat() []blockvol.BlockVolume
 	return msgs
 }
 
-// withVolume looks up a volume by path and calls fn while holding RLock.
+// WithVolume looks up a volume by path and calls fn while holding RLock.
 // This prevents RemoveBlockVolume from closing the volume while fn runs
 // (BUG-CP4B3-1: TOCTOU between GetBlockVolume and HandleAssignment).
-func (bs *BlockVolumeStore) withVolume(path string, fn func(*blockvol.BlockVol) error) error {
+func (bs *BlockVolumeStore) WithVolume(path string, fn func(*blockvol.BlockVol) error) error {
 	bs.mu.RLock()
 	defer bs.mu.RUnlock()
 	vol, ok := bs.volumes[path]
@@ -120,7 +120,7 @@ func (bs *BlockVolumeStore) ProcessBlockVolumeAssignments(
 	for i, a := range assignments {
 		role := blockvol.RoleFromWire(a.Role)
 		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
-		if err := bs.withVolume(a.Path, func(vol *blockvol.BlockVol) error {
+		if err := bs.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
 			return vol.HandleAssignment(a.Epoch, role, ttl)
 		}); err != nil {
 			errs[i] = err

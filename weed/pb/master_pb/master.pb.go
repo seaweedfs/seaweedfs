@@ -3883,18 +3883,20 @@ func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
 }
 
 type BlockVolumeInfoMessage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	VolumeSize    uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
-	BlockSize     uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
-	Epoch         uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Role          uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
-	WalHeadLsn    uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
-	CheckpointLsn uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
-	HasLease      bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
-	DiskType      string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Path            string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	VolumeSize      uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
+	BlockSize       uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
+	Epoch           uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Role            uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
+	WalHeadLsn      uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
+	CheckpointLsn   uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
+	HasLease        bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
+	DiskType        string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	ReplicaDataAddr string                 `protobuf:"bytes,10,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
+	ReplicaCtrlAddr string                 `protobuf:"bytes,11,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BlockVolumeInfoMessage) Reset() {
@@ -3990,6 +3992,20 @@ func (x *BlockVolumeInfoMessage) GetDiskType() string {
 	return ""
 }
 
+func (x *BlockVolumeInfoMessage) GetReplicaDataAddr() string {
+	if x != nil {
+		return x.ReplicaDataAddr
+	}
+	return ""
+}
+
+func (x *BlockVolumeInfoMessage) GetReplicaCtrlAddr() string {
+	if x != nil {
+		return x.ReplicaCtrlAddr
+	}
+	return ""
+}
+
 type BlockVolumeShortInfoMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
@@ -4059,13 +4075,16 @@ func (x *BlockVolumeShortInfoMessage) GetDiskType() string {
 }
 
 type BlockVolumeAssignment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Epoch         uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Role          uint32                 `protobuf:"varint,3,opt,name=role,proto3" json:"role,omitempty"`
-	LeaseTtlMs    uint32                 `protobuf:"varint,4,opt,name=lease_ttl_ms,json=leaseTtlMs,proto3" json:"lease_ttl_ms,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Path            string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Epoch           uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Role            uint32                 `protobuf:"varint,3,opt,name=role,proto3" json:"role,omitempty"`
+	LeaseTtlMs      uint32                 `protobuf:"varint,4,opt,name=lease_ttl_ms,json=leaseTtlMs,proto3" json:"lease_ttl_ms,omitempty"`
+	ReplicaDataAddr string                 `protobuf:"bytes,5,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
+	ReplicaCtrlAddr string                 `protobuf:"bytes,6,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
+	RebuildAddr     string                 `protobuf:"bytes,7,opt,name=rebuild_addr,json=rebuildAddr,proto3" json:"rebuild_addr,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BlockVolumeAssignment) Reset() {
@@ -4124,6 +4143,27 @@ func (x *BlockVolumeAssignment) GetLeaseTtlMs() uint32 {
 		return x.LeaseTtlMs
 	}
 	return 0
+}
+
+func (x *BlockVolumeAssignment) GetReplicaDataAddr() string {
+	if x != nil {
+		return x.ReplicaDataAddr
+	}
+	return ""
+}
+
+func (x *BlockVolumeAssignment) GetReplicaCtrlAddr() string {
+	if x != nil {
+		return x.ReplicaCtrlAddr
+	}
+	return ""
+}
+
+func (x *BlockVolumeAssignment) GetRebuildAddr() string {
+	if x != nil {
+		return x.RebuildAddr
+	}
+	return ""
 }
 
 type CreateBlockVolumeRequest struct {
@@ -4193,6 +4233,7 @@ type CreateBlockVolumeResponse struct {
 	IscsiAddr     string                 `protobuf:"bytes,3,opt,name=iscsi_addr,json=iscsiAddr,proto3" json:"iscsi_addr,omitempty"`
 	Iqn           string                 `protobuf:"bytes,4,opt,name=iqn,proto3" json:"iqn,omitempty"`
 	CapacityBytes uint64                 `protobuf:"varint,5,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`
+	ReplicaServer string                 `protobuf:"bytes,6,opt,name=replica_server,json=replicaServer,proto3" json:"replica_server,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4260,6 +4301,13 @@ func (x *CreateBlockVolumeResponse) GetCapacityBytes() uint64 {
 		return x.CapacityBytes
 	}
 	return 0
+}
+
+func (x *CreateBlockVolumeResponse) GetReplicaServer() string {
+	if x != nil {
+		return x.ReplicaServer
+	}
+	return ""
 }
 
 type DeleteBlockVolumeRequest struct {
@@ -4392,6 +4440,7 @@ type LookupBlockVolumeResponse struct {
 	IscsiAddr     string                 `protobuf:"bytes,2,opt,name=iscsi_addr,json=iscsiAddr,proto3" json:"iscsi_addr,omitempty"`
 	Iqn           string                 `protobuf:"bytes,3,opt,name=iqn,proto3" json:"iqn,omitempty"`
 	CapacityBytes uint64                 `protobuf:"varint,4,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`
+	ReplicaServer string                 `protobuf:"bytes,5,opt,name=replica_server,json=replicaServer,proto3" json:"replica_server,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4452,6 +4501,13 @@ func (x *LookupBlockVolumeResponse) GetCapacityBytes() uint64 {
 		return x.CapacityBytes
 	}
 	return 0
+}
+
+func (x *LookupBlockVolumeResponse) GetReplicaServer() string {
+	if x != nil {
+		return x.ReplicaServer
+	}
+	return ""
 }
 
 type SuperBlockExtra_ErasureCoding struct {

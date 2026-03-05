@@ -776,6 +776,9 @@ message AllocateBlockVolumeResponse {
     string path = 1;
     string iqn = 2;
     string iscsi_addr = 3;
+    string replica_data_addr = 4;
+    string replica_ctrl_addr = 5;
+    string rebuild_listen_addr = 6;
 }
 
 message VolumeServerDeleteBlockVolumeRequest {

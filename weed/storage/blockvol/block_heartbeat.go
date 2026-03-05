@@ -8,15 +8,17 @@ import (
 // BlockVolumeInfoMessage is the heartbeat status for one block volume.
 // Mirrors the proto message that will be generated from master.proto.
 type BlockVolumeInfoMessage struct {
-	Path          string // volume file path (unique ID on this server)
-	VolumeSize    uint64 // logical size in bytes
-	BlockSize     uint32 // block size in bytes
-	Epoch         uint64 // current fencing epoch
-	Role          uint32 // blockvol.Role as uint32 for wire compat
-	WalHeadLsn    uint64 // WAL head LSN
-	CheckpointLsn uint64 // last flushed LSN
-	HasLease      bool   // whether volume holds a valid lease
-	DiskType      string // e.g., "ssd", "hdd"
+	Path            string // volume file path (unique ID on this server)
+	VolumeSize      uint64 // logical size in bytes
+	BlockSize       uint32 // block size in bytes
+	Epoch           uint64 // current fencing epoch
+	Role            uint32 // blockvol.Role as uint32 for wire compat
+	WalHeadLsn      uint64 // WAL head LSN
+	CheckpointLsn   uint64 // last flushed LSN
+	HasLease        bool   // whether volume holds a valid lease
+	DiskType        string // e.g., "ssd", "hdd"
+	ReplicaDataAddr string // receiver data listen addr (VS reports in heartbeat)
+	ReplicaCtrlAddr string // receiver ctrl listen addr
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats
@@ -31,10 +33,13 @@ type BlockVolumeShortInfoMessage struct {
 // BlockVolumeAssignment carries a role/epoch/lease assignment
 // from master to volume server for one block volume.
 type BlockVolumeAssignment struct {
-	Path       string // which block volume
-	Epoch      uint64 // new epoch
-	Role       uint32 // target role (blockvol.Role as uint32)
-	LeaseTtlMs uint32 // lease TTL in milliseconds (0 = no lease)
+	Path            string // which block volume
+	Epoch           uint64 // new epoch
+	Role            uint32 // target role (blockvol.Role as uint32)
+	LeaseTtlMs      uint32 // lease TTL in milliseconds (0 = no lease)
+	ReplicaDataAddr string // where primary ships WAL data
+	ReplicaCtrlAddr string // where primary sends barriers
+	RebuildAddr     string // where rebuild server listens
 }
 
 // ToBlockVolumeInfoMessage converts a BlockVol's current state

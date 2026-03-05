@@ -335,6 +335,100 @@ func TestNode_UnstageRemoteTarget(t *testing.T) {
 	}
 }
 
+// TestNode_StagePrefersPublishContext verifies that publish_context takes priority
+// over volume_context (reflects current primary after failover).
+func TestNode_StagePrefersPublishContext(t *testing.T) {
+	mi := newMockISCSIUtil()
+	mi.getDeviceResult = "/dev/sdb"
+	mm := newMockMountUtil()
+
+	ns := &nodeServer{
+		mgr:       nil,
+		nodeID:    "test-node-1",
+		iqnPrefix: "iqn.2024.com.seaweedfs",
+		iscsiUtil: mi,
+		mountUtil: mm,
+		logger:    log.New(os.Stderr, "[test-node] ", log.LstdFlags),
+		staged:    make(map[string]*stagedVolumeInfo),
+	}
+
+	stagingPath := t.TempDir()
+
+	// publish_context has fresh address (after failover), volume_context has stale.
+	_, err := ns.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "failover-vol",
+		StagingTargetPath: stagingPath,
+		VolumeCapability:  testVolCap(),
+		PublishContext: map[string]string{
+			"iscsiAddr": "10.0.0.99:3260",
+			"iqn":       "iqn.2024.com.seaweedfs:failover-vol-new",
+		},
+		VolumeContext: map[string]string{
+			"iscsiAddr": "10.0.0.1:3260",
+			"iqn":       "iqn.2024.com.seaweedfs:failover-vol-old",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NodeStageVolume: %v", err)
+	}
+
+	// Should have used publish_context (new primary address).
+	if len(mi.calls) < 1 || mi.calls[0] != "discovery:10.0.0.99:3260" {
+		t.Fatalf("expected discovery with publish_context portal, got: %v", mi.calls)
+	}
+
+	ns.stagedMu.Lock()
+	info := ns.staged["failover-vol"]
+	ns.stagedMu.Unlock()
+	if info == nil {
+		t.Fatal("expected failover-vol in staged map")
+	}
+	if info.iqn != "iqn.2024.com.seaweedfs:failover-vol-new" {
+		t.Fatalf("expected IQN from publish_context, got %q", info.iqn)
+	}
+	if info.iscsiAddr != "10.0.0.99:3260" {
+		t.Fatalf("expected iscsiAddr from publish_context, got %q", info.iscsiAddr)
+	}
+}
+
+// TestNode_StageFallbackToVolumeContext verifies that volume_context is used
+// when publish_context is not set (backward compatibility).
+func TestNode_StageFallbackToVolumeContext(t *testing.T) {
+	mi := newMockISCSIUtil()
+	mi.getDeviceResult = "/dev/sdb"
+	mm := newMockMountUtil()
+
+	ns := &nodeServer{
+		mgr:       nil,
+		nodeID:    "test-node-1",
+		iqnPrefix: "iqn.2024.com.seaweedfs",
+		iscsiUtil: mi,
+		mountUtil: mm,
+		logger:    log.New(os.Stderr, "[test-node] ", log.LstdFlags),
+		staged:    make(map[string]*stagedVolumeInfo),
+	}
+
+	stagingPath := t.TempDir()
+
+	_, err := ns.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "compat-vol",
+		StagingTargetPath: stagingPath,
+		VolumeCapability:  testVolCap(),
+		VolumeContext: map[string]string{
+			"iscsiAddr": "10.0.0.5:3260",
+			"iqn":       "iqn.2024.com.seaweedfs:compat-vol",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NodeStageVolume: %v", err)
+	}
+
+	// Should have used volume_context.
+	if len(mi.calls) < 1 || mi.calls[0] != "discovery:10.0.0.5:3260" {
+		t.Fatalf("expected discovery with volume_context portal, got: %v", mi.calls)
+	}
+}
+
 // TestNode_UnstageAfterRestart verifies IQN derivation when staged map is empty.
 func TestNode_UnstageAfterRestart(t *testing.T) {
 	mi := newMockISCSIUtil()

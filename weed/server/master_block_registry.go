@@ -3,8 +3,10 @@ package weed_server
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // VolumeStatus tracks the lifecycle of a block volume entry.
@@ -26,6 +28,19 @@ type BlockVolumeEntry struct {
 	Epoch        uint64
 	Role         uint32
 	Status       VolumeStatus
+
+	// Replica tracking (CP6-3).
+	ReplicaServer     string // replica VS address
+	ReplicaPath       string // file path on replica VS
+	ReplicaISCSIAddr  string
+	ReplicaIQN        string
+	ReplicaDataAddr   string // replica receiver data listen addr
+	ReplicaCtrlAddr   string // replica receiver ctrl listen addr
+	RebuildListenAddr string // rebuild server listen addr on primary
+
+	// Lease tracking for failover (CP6-3 F2).
+	LastLeaseGrant time.Time
+	LeaseTTL       time.Duration
 }
 
 // BlockVolumeRegistry is the in-memory registry of block volumes.
@@ -151,6 +166,15 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			existing.Epoch = info.Epoch
 			existing.Role = info.Role
 			existing.Status = StatusActive
+			// R1-5: Refresh lease on heartbeat — VS is alive and running this volume.
+			existing.LastLeaseGrant = time.Now()
+			// F5: update replica addresses from heartbeat info.
+			if info.ReplicaDataAddr != "" {
+				existing.ReplicaDataAddr = info.ReplicaDataAddr
+			}
+			if info.ReplicaCtrlAddr != "" {
+				existing.ReplicaCtrlAddr = info.ReplicaCtrlAddr
+			}
 		}
 		// If no existing entry found by path, it was created outside master
 		// (e.g., manually). We don't auto-register unknown volumes — they
@@ -248,6 +272,95 @@ func (r *BlockVolumeRegistry) removeFromServer(server, name string) {
 			delete(r.byServer, server)
 		}
 	}
+}
+
+// SetReplica sets replica info for a registered volume.
+func (r *BlockVolumeRegistry) SetReplica(name, server, path, iscsiAddr, iqn string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return fmt.Errorf("block volume %q not found", name)
+	}
+	// Remove old replica from byServer index before replacing.
+	if entry.ReplicaServer != "" && entry.ReplicaServer != server {
+		r.removeFromServer(entry.ReplicaServer, name)
+	}
+	entry.ReplicaServer = server
+	entry.ReplicaPath = path
+	entry.ReplicaISCSIAddr = iscsiAddr
+	entry.ReplicaIQN = iqn
+	// Also add to byServer index for the replica server.
+	r.addToServer(server, name)
+	return nil
+}
+
+// ClearReplica removes replica info for a registered volume.
+func (r *BlockVolumeRegistry) ClearReplica(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return fmt.Errorf("block volume %q not found", name)
+	}
+	if entry.ReplicaServer != "" {
+		r.removeFromServer(entry.ReplicaServer, name)
+	}
+	entry.ReplicaServer = ""
+	entry.ReplicaPath = ""
+	entry.ReplicaISCSIAddr = ""
+	entry.ReplicaIQN = ""
+	entry.ReplicaDataAddr = ""
+	entry.ReplicaCtrlAddr = ""
+	return nil
+}
+
+// SwapPrimaryReplica promotes the replica to primary and clears the old replica.
+// The old primary becomes the new replica (if it reconnects, rebuild will handle it).
+// Epoch is atomically computed as entry.Epoch+1 inside the lock (R2-F5).
+// Returns the new epoch for use in assignment messages.
+func (r *BlockVolumeRegistry) SwapPrimaryReplica(name string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return 0, fmt.Errorf("block volume %q not found", name)
+	}
+	if entry.ReplicaServer == "" {
+		return 0, fmt.Errorf("block volume %q has no replica", name)
+	}
+
+	// Remove old primary from byServer index.
+	r.removeFromServer(entry.VolumeServer, name)
+
+	oldPrimaryServer := entry.VolumeServer
+	oldPrimaryPath := entry.Path
+	oldPrimaryIQN := entry.IQN
+	oldPrimaryISCSI := entry.ISCSIAddr
+
+	// Atomically bump epoch inside lock (R2-F5: prevents race with heartbeat updates).
+	newEpoch := entry.Epoch + 1
+
+	// Promote replica to primary.
+	entry.VolumeServer = entry.ReplicaServer
+	entry.Path = entry.ReplicaPath
+	entry.IQN = entry.ReplicaIQN
+	entry.ISCSIAddr = entry.ReplicaISCSIAddr
+	entry.Epoch = newEpoch
+	entry.Role = blockvol.RoleToWire(blockvol.RolePrimary) // R2-F3
+	entry.LastLeaseGrant = time.Now()
+
+	// Old primary becomes stale replica (will be rebuilt when it reconnects).
+	entry.ReplicaServer = oldPrimaryServer
+	entry.ReplicaPath = oldPrimaryPath
+	entry.ReplicaIQN = oldPrimaryIQN
+	entry.ReplicaISCSIAddr = oldPrimaryISCSI
+	entry.ReplicaDataAddr = ""
+	entry.ReplicaCtrlAddr = ""
+
+	// Update byServer index: new primary server now hosts this volume.
+	r.addToServer(entry.VolumeServer, name)
+	return newEpoch, nil
 }
 
 // MarkBlockCapable records that the given server supports block volumes.

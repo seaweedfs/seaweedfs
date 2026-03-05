@@ -39,7 +39,7 @@ func (r Role) String() string {
 
 // validTransitions maps each role to the set of roles it can transition to.
 var validTransitions = map[Role]map[Role]bool{
-	RoleNone:       {RolePrimary: true, RoleReplica: true},
+	RoleNone:       {RolePrimary: true, RoleReplica: true, RoleRebuilding: true},
 	RolePrimary:    {RoleDraining: true},
 	RoleReplica:    {RolePrimary: true},
 	RoleStale:      {RoleRebuilding: true, RoleReplica: true},

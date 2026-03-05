@@ -97,6 +97,35 @@ func (s *controllerServer) DeleteVolume(_ context.Context, req *csi.DeleteVolume
 	return &csi.DeleteVolumeResponse{}, nil
 }
 
+func (s *controllerServer) ControllerPublishVolume(_ context.Context, req *csi.ControllerPublishVolumeRequest) (*csi.ControllerPublishVolumeResponse, error) {
+	if req.VolumeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
+	}
+	if req.NodeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "node ID is required")
+	}
+
+	info, err := s.backend.LookupVolume(context.Background(), req.VolumeId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "volume %q not found: %v", req.VolumeId, err)
+	}
+
+	return &csi.ControllerPublishVolumeResponse{
+		PublishContext: map[string]string{
+			"iscsiAddr": info.ISCSIAddr,
+			"iqn":       info.IQN,
+		},
+	}, nil
+}
+
+func (s *controllerServer) ControllerUnpublishVolume(_ context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
+	if req.VolumeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
+	}
+	// No-op: RWO enforced by iSCSI initiator single-login.
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
+}
+
 func (s *controllerServer) ControllerGetCapabilities(_ context.Context, _ *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: []*csi.ControllerServiceCapability{
@@ -104,6 +133,13 @@ func (s *controllerServer) ControllerGetCapabilities(_ context.Context, _ *csi.C
 				Type: &csi.ControllerServiceCapability_Rpc{
 					Rpc: &csi.ControllerServiceCapability_RPC{
 						Type: csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
+					},
+				},
+			},
+			{
+				Type: &csi.ControllerServiceCapability_Rpc{
+					Rpc: &csi.ControllerServiceCapability_RPC{
+						Type: csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 					},
 				},
 			},

@@ -290,3 +290,147 @@ func TestRegistry_ConcurrentAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistry_SetReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	err := r.SetReplica("vol1", "s2", "/replica/v1.blk", "10.0.0.2:3260", "iqn.2024.test:vol1-replica")
+	if err != nil {
+		t.Fatalf("SetReplica: %v", err)
+	}
+
+	e, _ := r.Lookup("vol1")
+	if e.ReplicaServer != "s2" {
+		t.Fatalf("ReplicaServer: got %q, want s2", e.ReplicaServer)
+	}
+	if e.ReplicaPath != "/replica/v1.blk" {
+		t.Fatalf("ReplicaPath: got %q", e.ReplicaPath)
+	}
+	if e.ReplicaISCSIAddr != "10.0.0.2:3260" {
+		t.Fatalf("ReplicaISCSIAddr: got %q", e.ReplicaISCSIAddr)
+	}
+	if e.ReplicaIQN != "iqn.2024.test:vol1-replica" {
+		t.Fatalf("ReplicaIQN: got %q", e.ReplicaIQN)
+	}
+
+	// Replica server should appear in byServer index.
+	s2Vols := r.ListByServer("s2")
+	if len(s2Vols) != 1 || s2Vols[0].Name != "vol1" {
+		t.Fatalf("ListByServer(s2): got %v, want [vol1]", s2Vols)
+	}
+}
+
+func TestRegistry_ClearReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+	r.SetReplica("vol1", "s2", "/replica/v1.blk", "10.0.0.2:3260", "iqn.2024.test:vol1-replica")
+
+	err := r.ClearReplica("vol1")
+	if err != nil {
+		t.Fatalf("ClearReplica: %v", err)
+	}
+
+	e, _ := r.Lookup("vol1")
+	if e.ReplicaServer != "" {
+		t.Fatalf("ReplicaServer should be empty, got %q", e.ReplicaServer)
+	}
+	if e.ReplicaPath != "" || e.ReplicaISCSIAddr != "" || e.ReplicaIQN != "" {
+		t.Fatal("replica fields should be empty after ClearReplica")
+	}
+
+	// Replica server should be gone from byServer index.
+	s2Vols := r.ListByServer("s2")
+	if len(s2Vols) != 0 {
+		t.Fatalf("ListByServer(s2) after clear: got %d, want 0", len(s2Vols))
+	}
+}
+
+func TestRegistry_SetReplicaNotFound(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	err := r.SetReplica("nonexistent", "s2", "/r.blk", "addr", "iqn")
+	if err == nil {
+		t.Fatal("SetReplica on nonexistent volume should return error")
+	}
+}
+
+func TestRegistry_SwapPrimaryReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:             "vol1",
+		VolumeServer:     "s1",
+		Path:             "/v1.blk",
+		IQN:              "iqn:vol1-primary",
+		ISCSIAddr:        "10.0.0.1:3260",
+		ReplicaServer:    "s2",
+		ReplicaPath:      "/replica/v1.blk",
+		ReplicaIQN:       "iqn:vol1-replica",
+		ReplicaISCSIAddr: "10.0.0.2:3260",
+		Epoch:            3,
+		Role:             1,
+	})
+
+	newEpoch, err := r.SwapPrimaryReplica("vol1")
+	if err != nil {
+		t.Fatalf("SwapPrimaryReplica: %v", err)
+	}
+	if newEpoch != 4 {
+		t.Fatalf("newEpoch: got %d, want 4", newEpoch)
+	}
+
+	e, _ := r.Lookup("vol1")
+	// New primary should be the old replica.
+	if e.VolumeServer != "s2" {
+		t.Fatalf("VolumeServer after swap: got %q, want s2", e.VolumeServer)
+	}
+	if e.Path != "/replica/v1.blk" {
+		t.Fatalf("Path after swap: got %q", e.Path)
+	}
+	if e.Epoch != 4 {
+		t.Fatalf("Epoch after swap: got %d, want 4", e.Epoch)
+	}
+	// Old primary should become replica.
+	if e.ReplicaServer != "s1" {
+		t.Fatalf("ReplicaServer after swap: got %q, want s1", e.ReplicaServer)
+	}
+	if e.ReplicaPath != "/v1.blk" {
+		t.Fatalf("ReplicaPath after swap: got %q", e.ReplicaPath)
+	}
+}
+
+func TestFullHeartbeat_UpdatesReplicaAddrs(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "server1",
+		Path:         "/data/vol1.blk",
+		SizeBytes:    1 << 30,
+		Status:       StatusPending,
+	})
+
+	// Full heartbeat includes replica addresses.
+	r.UpdateFullHeartbeat("server1", []*master_pb.BlockVolumeInfoMessage{
+		{
+			Path:            "/data/vol1.blk",
+			VolumeSize:      1 << 30,
+			Epoch:           5,
+			Role:            1,
+			ReplicaDataAddr: "10.0.0.2:14260",
+			ReplicaCtrlAddr: "10.0.0.2:14261",
+		},
+	})
+
+	entry, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 not found after heartbeat")
+	}
+	if entry.Status != StatusActive {
+		t.Fatalf("expected Active, got %v", entry.Status)
+	}
+	if entry.ReplicaDataAddr != "10.0.0.2:14260" {
+		t.Fatalf("ReplicaDataAddr: got %q, want 10.0.0.2:14260", entry.ReplicaDataAddr)
+	}
+	if entry.ReplicaCtrlAddr != "10.0.0.2:14261" {
+		t.Fatalf("ReplicaCtrlAddr: got %q, want 10.0.0.2:14261", entry.ReplicaCtrlAddr)
+	}
+}

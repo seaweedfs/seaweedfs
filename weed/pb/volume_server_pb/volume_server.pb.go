@@ -6246,12 +6246,15 @@ func (x *AllocateBlockVolumeRequest) GetDiskType() string {
 }
 
 type AllocateBlockVolumeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Iqn           string                 `protobuf:"bytes,2,opt,name=iqn,proto3" json:"iqn,omitempty"`
-	IscsiAddr     string                 `protobuf:"bytes,3,opt,name=iscsi_addr,json=iscsiAddr,proto3" json:"iscsi_addr,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Path               string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Iqn                string                 `protobuf:"bytes,2,opt,name=iqn,proto3" json:"iqn,omitempty"`
+	IscsiAddr          string                 `protobuf:"bytes,3,opt,name=iscsi_addr,json=iscsiAddr,proto3" json:"iscsi_addr,omitempty"`
+	ReplicaDataAddr    string                 `protobuf:"bytes,4,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
+	ReplicaCtrlAddr    string                 `protobuf:"bytes,5,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
+	RebuildListenAddr  string                 `protobuf:"bytes,6,opt,name=rebuild_listen_addr,json=rebuildListenAddr,proto3" json:"rebuild_listen_addr,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AllocateBlockVolumeResponse) Reset() {
@@ -6301,6 +6304,27 @@ func (x *AllocateBlockVolumeResponse) GetIqn() string {
 func (x *AllocateBlockVolumeResponse) GetIscsiAddr() string {
 	if x != nil {
 		return x.IscsiAddr
+	}
+	return ""
+}
+
+func (x *AllocateBlockVolumeResponse) GetReplicaDataAddr() string {
+	if x != nil {
+		return x.ReplicaDataAddr
+	}
+	return ""
+}
+
+func (x *AllocateBlockVolumeResponse) GetReplicaCtrlAddr() string {
+	if x != nil {
+		return x.ReplicaCtrlAddr
+	}
+	return ""
+}
+
+func (x *AllocateBlockVolumeResponse) GetRebuildListenAddr() string {
+	if x != nil {
+		return x.RebuildListenAddr
 	}
 	return ""
 }

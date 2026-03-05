@@ -244,6 +244,26 @@ func (h *HATarget) StartRebuildEndpoint(ctx context.Context, listenAddr string) 
 	return nil
 }
 
+// StartRebuildClient sends POST /rebuild {action:"connect"} to start the
+// rebuild client. The client connects to the primary's rebuild server,
+// streams WAL/extent data, and transitions from RoleRebuilding to RoleReplica.
+// This is non-blocking on the target side; poll WaitForRole("replica") to
+// check completion.
+func (h *HATarget) StartRebuildClient(ctx context.Context, rebuildAddr string, epoch uint64) error {
+	code, body, err := h.curlPost(ctx, "/rebuild", map[string]interface{}{
+		"action":       "connect",
+		"rebuild_addr": rebuildAddr,
+		"epoch":        epoch,
+	})
+	if err != nil {
+		return fmt.Errorf("rebuild connect: %w", err)
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("rebuild connect failed (HTTP %d): %s", code, body)
+	}
+	return nil
+}
+
 // StopRebuildEndpoint sends POST /rebuild {action:"stop"}.
 func (h *HATarget) StopRebuildEndpoint(ctx context.Context) error {
 	code, body, err := h.curlPost(ctx, "/rebuild", map[string]string{"action": "stop"})

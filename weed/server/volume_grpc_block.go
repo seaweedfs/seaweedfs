@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
@@ -24,10 +25,20 @@ func (vs *VolumeServer) AllocateBlockVolume(_ context.Context, req *volume_serve
 		return nil, fmt.Errorf("create block volume %q: %w", req.Name, err)
 	}
 
+	// R1-1: Return deterministic replication ports so master can wire WAL shipping.
+	dataPort, ctrlPort, rebuildPort := vs.blockService.ReplicationPorts(path)
+	host := vs.blockService.ListenAddr()
+	if idx := strings.LastIndex(host, ":"); idx >= 0 {
+		host = host[:idx]
+	}
+
 	return &volume_server_pb.AllocateBlockVolumeResponse{
-		Path:      path,
-		Iqn:       iqn,
-		IscsiAddr: iscsiAddr,
+		Path:              path,
+		Iqn:               iqn,
+		IscsiAddr:         iscsiAddr,
+		ReplicaDataAddr:   fmt.Sprintf("%s:%d", host, dataPort),
+		ReplicaCtrlAddr:   fmt.Sprintf("%s:%d", host, ctrlPort),
+		RebuildListenAddr: fmt.Sprintf("%s:%d", host, rebuildPort),
 	}, nil
 }
 
