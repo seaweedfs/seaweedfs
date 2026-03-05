@@ -16,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // compactionBin groups small data files from the same partition for merging.
@@ -75,6 +77,7 @@ func (h *Handler) compactDataFiles(
 	}
 
 	// Build compaction bins: group small files by partition
+	// MinInputFiles is clamped by ParseConfig to [2, ...] so int conversion is safe.
 	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
 	if len(bins) == 0 {
 		return "no files eligible for compaction", nil
@@ -84,6 +87,10 @@ func (h *Handler) compactDataFiles(
 	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
+
+	// Compute the snapshot ID for the commit up front so all manifest entries
+	// reference the same snapshot that will actually be committed.
+	newSnapID := time.Now().UnixMilli()
 
 	// Process each bin: read source Parquet files, merge, write output
 	var newManifestEntries []iceberg.ManifestEntry
@@ -100,7 +107,7 @@ func (h *Handler) compactDataFiles(
 		default:
 		}
 
-		mergedFileName := fmt.Sprintf("compact-%d-%d-%d.parquet", snapshotID, time.Now().UnixMilli(), binIdx)
+		mergedFileName := fmt.Sprintf("compact-%d-%d-%d.parquet", snapshotID, newSnapID, binIdx)
 		mergedFilePath := path.Join("data", mergedFileName)
 
 		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries)
@@ -135,10 +142,9 @@ func (h *Handler) compactDataFiles(
 			continue
 		}
 
-		newSnapshotID := time.Now().UnixMilli() + int64(binIdx)
 		newEntry := iceberg.NewManifestEntry(
 			iceberg.EntryStatusADDED,
-			&newSnapshotID,
+			&newSnapID,
 			nil, nil,
 			dfBuilder.Build(),
 		)
@@ -148,7 +154,7 @@ func (h *Handler) compactDataFiles(
 		for _, entry := range bin.Entries {
 			delEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusDELETED,
-				&newSnapshotID,
+				&newSnapID,
 				nil, nil,
 				entry.DataFile(),
 			)
@@ -189,7 +195,6 @@ func (h *Handler) compactDataFiles(
 	}
 
 	// Write new manifest
-	newSnapID := time.Now().UnixMilli()
 	var manifestBuf bytes.Buffer
 	manifestFileName := fmt.Sprintf("compact-%d.avro", newSnapID)
 	newManifest, err := iceberg.WriteManifest(
@@ -304,11 +309,16 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 		bin.TotalSize += df.FileSizeBytes()
 	}
 
-	// Filter to bins with enough files
+	// Filter to bins with enough files, splitting oversized bins
 	var result []compactionBin
 	for _, bin := range groups {
-		if len(bin.Entries) >= minFiles {
+		if len(bin.Entries) < minFiles {
+			continue
+		}
+		if bin.TotalSize <= targetSize {
 			result = append(result, *bin)
+		} else {
+			result = append(result, splitOversizedBin(*bin, targetSize, minFiles)...)
 		}
 	}
 
@@ -318,6 +328,31 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 	})
 
 	return result
+}
+
+// splitOversizedBin splits a bin whose total size exceeds targetSize into
+// sub-bins that each stay under targetSize while meeting minFiles.
+func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []compactionBin {
+	var bins []compactionBin
+	current := compactionBin{
+		PartitionKey: bin.PartitionKey,
+		Partition:    bin.Partition,
+	}
+	for _, entry := range bin.Entries {
+		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize && len(current.Entries) >= minFiles {
+			bins = append(bins, current)
+			current = compactionBin{
+				PartitionKey: bin.PartitionKey,
+				Partition:    bin.Partition,
+			}
+		}
+		current.Entries = append(current.Entries, entry)
+		current.TotalSize += entry.DataFile().FileSizeBytes()
+	}
+	if len(current.Entries) >= minFiles {
+		bins = append(bins, current)
+	}
+	return bins
 }
 
 // partitionKey creates a string key from a partition map for grouping.
@@ -438,6 +473,9 @@ func ensureFilerDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 	})
 	if err == nil {
 		return nil // already exists
+	}
+	if status.Code(err) != codes.NotFound {
+		return fmt.Errorf("lookup dir %s: %w", dirPath, err)
 	}
 
 	resp, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
