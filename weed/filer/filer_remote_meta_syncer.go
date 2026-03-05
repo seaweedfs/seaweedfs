@@ -2,6 +2,8 @@ package filer
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -72,6 +74,9 @@ func (s *RemoteMetaSyncer) syncOneMount(localDir string, remoteLoc *remote_pb.Re
 	}
 
 	return client.Traverse(remote, func(remoteDir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
+		if strings.Contains(name, "/") || name == ".." || name == "." || name == "" {
+			return nil
+		}
 		localPath := MapRemoteStorageLocationPathToFullPath(
 			util.FullPath(localDir), remoteLoc, remoteDir,
 		)
@@ -98,7 +103,7 @@ func (s *RemoteMetaSyncer) syncOneMount(localDir string, remoteLoc *remote_pb.Re
 				Remote: remoteEntry,
 			}
 			if isDirectory {
-				entry.Attr.Mode = 0755 | 0040000 // os.ModeDir
+				entry.Attr.Mode = os.ModeDir | 0755
 				entry.Remote = nil
 			}
 

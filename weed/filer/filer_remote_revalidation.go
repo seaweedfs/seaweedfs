@@ -23,6 +23,9 @@ func (f *Filer) remoteEntryNeedsRevalidation(entry *Entry) bool {
 }
 
 func (f *Filer) revalidateRemoteEntry(ctx context.Context, p util.FullPath, existing *Entry) (*Entry, error) {
+	if f.RemoteStorage == nil {
+		return existing, nil
+	}
 	client, _, found := f.RemoteStorage.FindRemoteStorageClient(p)
 	if !found {
 		return existing, nil

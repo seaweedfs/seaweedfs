@@ -141,6 +141,8 @@ func (rs *FilerRemoteStorage) GetRemoteStorageClient(storageName string) (client
 }
 
 func (rs *FilerRemoteStorage) GetAllMountMappings() map[string]*remote_pb.RemoteStorageLocation {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
 	result := make(map[string]*remote_pb.RemoteStorageLocation)
 	rs.rules.Walk(func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		dir := string(key[:len(key)-1]) // strip trailing "/"

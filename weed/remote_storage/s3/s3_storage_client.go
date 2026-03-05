@@ -278,6 +278,7 @@ func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocati
 		Prefix:    aws.String(prefix),
 		Delimiter: aws.String("/"),
 	}
+	const maxListEntries = 10000
 	var results []*remote_storage.RemoteListing
 	err := s.conn.ListObjectsV2Pages(input, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
 		for _, cp := range page.CommonPrefixes {
@@ -309,7 +310,7 @@ func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocati
 			}
 			results = append(results, listing)
 		}
-		return true
+		return len(results) < maxListEntries
 	})
 	return results, err
 }

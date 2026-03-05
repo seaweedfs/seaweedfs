@@ -61,6 +61,9 @@ func (f *Filer) maybeMergeRemoteListings(ctx context.Context, dir util.FullPath,
 		if re == nil || re.Name == "" {
 			continue
 		}
+		if strings.Contains(re.Name, "/") || re.Name == ".." || re.Name == "." {
+			continue
+		}
 		if _, exists := localNames[re.Name]; exists {
 			continue
 		}

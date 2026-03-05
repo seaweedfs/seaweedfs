@@ -138,8 +138,10 @@ func (f *Filer) maybeReloadRemoteStorageConfigurationAndMapping(event *filer_pb.
 		return
 	}
 	glog.V(0).Infof("remote storage configuration changed, reloading...")
-	f.RemoteStorage.Reset()
-	if err := f.RemoteStorage.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
+	next := NewFilerRemoteStorage()
+	if err := next.LoadRemoteStorageConfigurationsAndMapping(f); err != nil {
 		glog.Errorf("reload remote storage config: %v", err)
+		return
 	}
+	f.RemoteStorage = next
 }
