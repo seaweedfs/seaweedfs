@@ -1048,14 +1048,6 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		return nil
 	}
 
-	existing, err := r.store.LoadJobTypeConfig(jobType)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return nil
-	}
-
 	workerDefaults := CloneConfigValueMap(descriptor.WorkerDefaultValues)
 	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
 		workerDefaults = CloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
@@ -1092,7 +1084,8 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		UpdatedBy:          "plugin",
 	}
 
-	return r.store.SaveJobTypeConfig(cfg)
+	_, err := r.store.SaveJobTypeConfigIfNotExists(cfg)
+	return err
 }
 
 func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.DetectionProposals) {
