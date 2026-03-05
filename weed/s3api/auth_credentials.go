@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,12 +50,14 @@ type IdentityAccessManagement struct {
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
 	policies          map[string]*iam_pb.Policy
+	iamPolicyCache    map[iamPolicyCacheKey]*policy_engine.PolicyEngine
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
 	hashCounters      map[string]*int32
 	identityAnonymous *Identity
 	hashMu            sync.RWMutex
+	policyCacheMu     sync.RWMutex
 	domain            string
 	externalHost      string // pre-computed host for S3 signature verification (from ExternalUrl)
 	isAuthEnabled     bool
@@ -132,6 +135,11 @@ type Credential struct {
 	Expiration int64  // Unix timestamp when credential expires (0 = no expiration)
 }
 
+type iamPolicyCacheKey struct {
+	name        string
+	contentHash [32]byte
+}
+
 // isCredentialExpired checks if a credential has expired
 func (c *Credential) isCredentialExpired() bool {
 	return c.Expiration > 0 && c.Expiration < time.Now().Unix()
@@ -206,11 +214,12 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	}
 
 	iam := &IdentityAccessManagement{
-		domain:       option.DomainName,
-		externalHost: externalHost,
-		hashes:       make(map[string]*sync.Pool),
-		hashCounters: make(map[string]*int32),
-		filerClient:  filerClient,
+		domain:         option.DomainName,
+		externalHost:   externalHost,
+		hashes:         make(map[string]*sync.Pool),
+		hashCounters:   make(map[string]*int32),
+		iamPolicyCache: make(map[iamPolicyCacheKey]*policy_engine.PolicyEngine),
+		filerClient:    filerClient,
 	}
 
 	// Always initialize credential manager with fallback to defaults
@@ -684,6 +693,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(iam.identities))
 	iam.m.Unlock()
+	iam.clearIAMPolicyCache()
 
 	if authJustEnabled {
 		glog.V(1).Infof("S3 authentication enabled - credentials were added dynamically")
@@ -919,6 +929,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
 	iam.m.Unlock()
+	iam.clearIAMPolicyCache()
 
 	if authJustEnabled {
 		glog.V(1).Infof("S3 authentication enabled because credentials were added dynamically")
@@ -1659,6 +1670,58 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
+func newIAMPolicyCacheKey(name, content string) iamPolicyCacheKey {
+	return iamPolicyCacheKey{
+		name:        name,
+		contentHash: sha256.Sum256([]byte(content)),
+	}
+}
+
+func (iam *IdentityAccessManagement) getOrCreateIAMPolicyEngine(policyName, content string) (*policy_engine.PolicyEngine, error) {
+	cacheKey := newIAMPolicyCacheKey(policyName, content)
+
+	iam.policyCacheMu.RLock()
+	if engine, ok := iam.iamPolicyCache[cacheKey]; ok {
+		iam.policyCacheMu.RUnlock()
+		return engine, nil
+	}
+	iam.policyCacheMu.RUnlock()
+
+	engine := policy_engine.NewPolicyEngine()
+	if err := engine.SetBucketPolicy(policyName, content); err != nil {
+		return nil, err
+	}
+
+	iam.policyCacheMu.Lock()
+	defer iam.policyCacheMu.Unlock()
+
+	if engine, ok := iam.iamPolicyCache[cacheKey]; ok {
+		return engine, nil
+	}
+	if iam.iamPolicyCache == nil {
+		iam.iamPolicyCache = make(map[iamPolicyCacheKey]*policy_engine.PolicyEngine)
+	}
+	iam.iamPolicyCache[cacheKey] = engine
+	return engine, nil
+}
+
+func (iam *IdentityAccessManagement) invalidateIAMPolicyCache(policyName string) {
+	iam.policyCacheMu.Lock()
+	defer iam.policyCacheMu.Unlock()
+
+	for cacheKey := range iam.iamPolicyCache {
+		if cacheKey.name == policyName {
+			delete(iam.iamPolicyCache, cacheKey)
+		}
+	}
+}
+
+func (iam *IdentityAccessManagement) clearIAMPolicyCache() {
+	iam.policyCacheMu.Lock()
+	defer iam.policyCacheMu.Unlock()
+	iam.iamPolicyCache = make(map[iamPolicyCacheKey]*policy_engine.PolicyEngine)
+}
+
 // evaluateIAMPolicies evaluates attached IAM policies for a user identity.
 // Returns true if any matching statement explicitly allows the action.
 func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
@@ -1681,8 +1744,8 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 			continue
 		}
 
-		engine := policy_engine.NewPolicyEngine()
-		if err := engine.SetBucketPolicy(policyName, policy.Content); err != nil {
+		engine, err := iam.getOrCreateIAMPolicyEngine(policyName, policy.Content)
+		if err != nil {
 			continue
 		}
 
@@ -1803,11 +1866,13 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 // PutPolicy adds or updates a policy
 func (iam *IdentityAccessManagement) PutPolicy(name string, content string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	if iam.policies == nil {
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
 	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	iam.m.Unlock()
+
+	iam.invalidateIAMPolicyCache(name)
 	return nil
 }
 
@@ -1824,8 +1889,10 @@ func (iam *IdentityAccessManagement) GetPolicy(name string) (*iam_pb.Policy, err
 // DeletePolicy removes a policy
 func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
-	defer iam.m.Unlock()
 	delete(iam.policies, name)
+	iam.m.Unlock()
+
+	iam.invalidateIAMPolicyCache(name)
 	return nil
 }
 

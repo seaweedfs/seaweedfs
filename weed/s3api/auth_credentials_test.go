@@ -387,6 +387,136 @@ func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
 	})
 }
 
+func TestVerifyActionPermissionPolicyFallbackCachesParsedPolicies(t *testing.T) {
+	buildRequest := func(t *testing.T, method string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+		assert.NoError(t, err)
+		return req
+	}
+
+	iam := &IdentityAccessManagement{}
+	content := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`
+	assert.NoError(t, iam.PutPolicy("allowGet", content))
+
+	identity := &Identity{
+		Name:        "policy-user",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"allowGet"},
+	}
+
+	errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+
+	cacheKey := newIAMPolicyCacheKey("allowGet", content)
+	iam.policyCacheMu.RLock()
+	firstEngine := iam.iamPolicyCache[cacheKey]
+	firstCacheSize := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.NotNil(t, firstEngine)
+	assert.Equal(t, 1, firstCacheSize)
+
+	errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+
+	iam.policyCacheMu.RLock()
+	secondEngine := iam.iamPolicyCache[cacheKey]
+	secondCacheSize := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.Same(t, firstEngine, secondEngine)
+	assert.Equal(t, 1, secondCacheSize)
+}
+
+func TestPutPolicyInvalidatesCachedPolicyEngine(t *testing.T) {
+	buildRequest := func(t *testing.T, method string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+		assert.NoError(t, err)
+		return req
+	}
+
+	iam := &IdentityAccessManagement{}
+	initialContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`
+	assert.NoError(t, iam.PutPolicy("allowGet", initialContent))
+
+	identity := &Identity{
+		Name:        "policy-user",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"allowGet"},
+	}
+
+	errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+
+	initialCacheKey := newIAMPolicyCacheKey("allowGet", initialContent)
+	iam.policyCacheMu.RLock()
+	initialEngine := iam.iamPolicyCache[initialCacheKey]
+	initialCacheSize := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.NotNil(t, initialEngine)
+	assert.Equal(t, 1, initialCacheSize)
+
+	updatedContent := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::other-bucket/*"}]}`
+	assert.NoError(t, iam.PutPolicy("allowGet", updatedContent))
+
+	iam.policyCacheMu.RLock()
+	_, oldEntryStillCached := iam.iamPolicyCache[initialCacheKey]
+	cacheSizeAfterUpdate := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.False(t, oldEntryStillCached)
+	assert.Equal(t, 0, cacheSizeAfterUpdate)
+
+	errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+	updatedCacheKey := newIAMPolicyCacheKey("allowGet", updatedContent)
+	iam.policyCacheMu.RLock()
+	updatedEngine := iam.iamPolicyCache[updatedCacheKey]
+	updatedCacheSize := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.NotNil(t, updatedEngine)
+	assert.NotSame(t, initialEngine, updatedEngine)
+	assert.Equal(t, 1, updatedCacheSize)
+}
+
+func TestReplaceS3ApiConfigurationClearsCachedPolicyEngines(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+
+	iam := &IdentityAccessManagement{}
+	content := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`
+	_, err := iam.getOrCreateIAMPolicyEngine("allowGet", content)
+	assert.NoError(t, err)
+
+	cacheKey := newIAMPolicyCacheKey("allowGet", content)
+	iam.policyCacheMu.RLock()
+	_, existsBeforeReload := iam.iamPolicyCache[cacheKey]
+	iam.policyCacheMu.RUnlock()
+	assert.True(t, existsBeforeReload)
+
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "replacement",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::test-bucket"}]}`,
+			},
+		},
+	}
+
+	assert.NoError(t, iam.ReplaceS3ApiConfiguration(config))
+
+	iam.policyCacheMu.RLock()
+	cacheSizeAfterReload := len(iam.iamPolicyCache)
+	iam.policyCacheMu.RUnlock()
+
+	assert.Equal(t, 0, cacheSizeAfterReload)
+}
+
 type LoadS3ApiConfigurationTestCase struct {
 	pbAccount   *iam_pb.Account
 	pbIdent     *iam_pb.Identity
