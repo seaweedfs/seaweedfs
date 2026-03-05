@@ -343,15 +343,16 @@ func (ms *MasterServer) isAdminServerConnected() bool {
 
 func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
-	v.SetDefault("master.maintenance.scripts", maintenance.DefaultMasterMaintenanceScripts)
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
-	v.SetDefault("master.maintenance.sleep_minutes", maintenance.DefaultMaintenanceSleepMinutes)
 	sleepMinutes := v.GetFloat64("master.maintenance.sleep_minutes")
+	if sleepMinutes <= 0 {
+		sleepMinutes = float64(maintenance.DefaultMaintenanceSleepMinutes)
+	}
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
