@@ -383,6 +383,9 @@ message GetMasterConfigurationResponse {
   string leader = 5;
   uint32 volume_size_limit_m_b = 6;
   bool volume_preallocate = 7;
+  // MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
+  string maintenance_scripts = 8;
+  uint32 maintenance_sleep_minutes = 9;
 }
 
 message ListClusterNodesRequest {
