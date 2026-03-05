@@ -44,6 +44,7 @@ func (h *VolumeBalanceHandler) Capability() *plugin_pb.JobTypeCapability {
 		MaxExecutionConcurrency: 1,
 		DisplayName:             "Volume Balance",
 		Description:             "Moves volumes between servers to reduce skew in volume distribution",
+		Weight:                  50,
 	}
 }
 
@@ -143,6 +144,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			PerWorkerExecutionConcurrency: 4,
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           15,
+			JobTypeMaxRuntimeSeconds:      1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold": {

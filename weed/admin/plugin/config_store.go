@@ -30,6 +30,7 @@ const (
 	runsJSONFileName        = "runs.json"
 	trackedJobsJSONFileName = "tracked_jobs.json"
 	activitiesJSONFileName  = "activities.json"
+	schedulerJSONFileName   = "scheduler.json"
 	defaultDirPerm          = 0o755
 	defaultFilePerm         = 0o644
 )
@@ -53,6 +54,7 @@ type ConfigStore struct {
 	memTrackedJobs []TrackedJob
 	memActivities  []JobActivity
 	memJobDetails  map[string]TrackedJob
+	memScheduler   *SchedulerConfig
 }
 
 func NewConfigStore(adminDataDir string) (*ConfigStore, error) {
@@ -91,6 +93,60 @@ func (s *ConfigStore) IsConfigured() bool {
 
 func (s *ConfigStore) BaseDir() string {
 	return s.baseDir
+}
+
+func (s *ConfigStore) LoadSchedulerConfig() (*SchedulerConfig, error) {
+	s.mu.RLock()
+	if !s.configured {
+		cfg := s.memScheduler
+		s.mu.RUnlock()
+		if cfg == nil {
+			return nil, nil
+		}
+		clone := *cfg
+		return &clone, nil
+	}
+	s.mu.RUnlock()
+
+	path := filepath.Join(s.baseDir, schedulerJSONFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read scheduler config: %w", err)
+	}
+
+	var cfg SchedulerConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal scheduler config: %w", err)
+	}
+	return &cfg, nil
+}
+
+func (s *ConfigStore) SaveSchedulerConfig(config *SchedulerConfig) error {
+	if config == nil {
+		return fmt.Errorf("scheduler config is nil")
+	}
+	normalized := normalizeSchedulerConfig(*config)
+
+	s.mu.Lock()
+	if !s.configured {
+		s.memScheduler = &normalized
+		s.mu.Unlock()
+		return nil
+	}
+	s.mu.Unlock()
+
+	payload, err := json.MarshalIndent(normalized, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal scheduler config: %w", err)
+	}
+	path := filepath.Join(s.baseDir, schedulerJSONFileName)
+	if err := os.WriteFile(path, payload, defaultFilePerm); err != nil {
+		return fmt.Errorf("save scheduler config: %w", err)
+	}
+	return nil
 }
 
 func (s *ConfigStore) SaveDescriptor(jobType string, descriptor *plugin_pb.JobTypeDescriptor) error {

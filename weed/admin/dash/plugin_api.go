@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,6 +131,47 @@ func (s *AdminServer) GetPluginJobDetailAPI(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// ExpirePluginJobAPI marks a job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJobAPI(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimSpace(mux.Vars(r)["jobId"])
+	if jobID == "" {
+		writeJSONError(w, http.StatusBadRequest, "jobId is required")
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil && err != io.EOF {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	job, expired, err := s.ExpirePluginJob(jobID, req.Reason)
+	if err != nil {
+		if errors.Is(err, plugin.ErrJobNotFound) {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	response := map[string]interface{}{
+		"job_id":  jobID,
+		"expired": expired,
+	}
+	if job != nil {
+		response["job"] = job
+	}
+	if !expired {
+		response["message"] = "job is not active"
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
 // GetPluginActivitiesAPI returns recent plugin activities.
 func (s *AdminServer) GetPluginActivitiesAPI(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
@@ -170,6 +212,74 @@ func (s *AdminServer) GetPluginSchedulerStatesAPI(w http.ResponseWriter, r *http
 	}
 
 	writeJSON(w, http.StatusOK, states)
+}
+
+// GetPluginSchedulerStatusAPI returns scheduler status including in-process jobs and lock state.
+func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http.Request) {
+	pluginSvc := s.GetPlugin()
+	if pluginSvc == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"enabled": false,
+		})
+		return
+	}
+
+	response := map[string]interface{}{
+		"enabled":   true,
+		"scheduler": pluginSvc.GetSchedulerStatus(),
+	}
+	if s.pluginLock != nil {
+		response["lock"] = s.pluginLock.Status()
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+// GetPluginSchedulerConfigAPI returns scheduler configuration.
+func (s *AdminServer) GetPluginSchedulerConfigAPI(w http.ResponseWriter, r *http.Request) {
+	pluginSvc := s.GetPlugin()
+	if pluginSvc == nil {
+		writeJSONError(w, http.StatusNotFound, "plugin is not enabled")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pluginSvc.GetSchedulerConfig())
+}
+
+// UpdatePluginSchedulerConfigAPI updates scheduler configuration.
+func (s *AdminServer) UpdatePluginSchedulerConfigAPI(w http.ResponseWriter, r *http.Request) {
+	pluginSvc := s.GetPlugin()
+	if pluginSvc == nil {
+		writeJSONError(w, http.StatusNotFound, "plugin is not enabled")
+		return
+	}
+
+	var req struct {
+		IdleSleepSeconds *int32 `json:"idle_sleep_seconds"`
+	}
+
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		if errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "request body is required")
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.IdleSleepSeconds == nil {
+		writeJSONError(w, http.StatusBadRequest, "idle_sleep_seconds is required")
+		return
+	}
+
+	updated, err := pluginSvc.UpdateSchedulerConfig(plugin.SchedulerConfig{
+		IdleSleepSeconds: *req.IdleSleepSeconds,
+	})
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updated)
 }
 
 // RequestPluginJobTypeSchemaAPI asks a worker for one job type schema.
@@ -234,6 +344,9 @@ func (s *AdminServer) GetPluginJobTypeConfigAPI(w http.ResponseWriter, r *http.R
 			WorkerConfigValues: map[string]*plugin_pb.ConfigValue{},
 			AdminRuntime:       &plugin_pb.AdminRuntimeConfig{},
 		}
+	}
+	if descriptor, err := s.LoadPluginJobTypeDescriptor(jobType); err == nil && descriptor != nil {
+		applyDescriptorDefaultsToPersistedConfig(config, descriptor)
 	}
 
 	renderProtoJSON(w, http.StatusOK, config)
@@ -412,6 +525,14 @@ func (s *AdminServer) RunPluginJobTypeAPI(w http.ResponseWriter, r *http.Request
 	if jobType == "" {
 		writeJSONError(w, http.StatusBadRequest, "jobType is required")
 		return
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detect+execute %s", jobType))
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if releaseLock != nil {
+		defer releaseLock()
 	}
 
 	var req struct {
@@ -727,6 +848,93 @@ func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, i
 	}
 
 	return jobSpec
+}
+
+func applyDescriptorDefaultsToPersistedConfig(
+	config *plugin_pb.PersistedJobTypeConfig,
+	descriptor *plugin_pb.JobTypeDescriptor,
+) {
+	if config == nil || descriptor == nil {
+		return
+	}
+
+	if config.AdminConfigValues == nil {
+		config.AdminConfigValues = map[string]*plugin_pb.ConfigValue{}
+	}
+	if config.WorkerConfigValues == nil {
+		config.WorkerConfigValues = map[string]*plugin_pb.ConfigValue{}
+	}
+	if config.AdminRuntime == nil {
+		config.AdminRuntime = &plugin_pb.AdminRuntimeConfig{}
+	}
+
+	if descriptor.AdminConfigForm != nil {
+		for key, value := range descriptor.AdminConfigForm.DefaultValues {
+			if value == nil {
+				continue
+			}
+			current := config.AdminConfigValues[key]
+			if current == nil {
+				config.AdminConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+				continue
+			}
+			if strings.EqualFold(descriptor.JobType, "admin_script") &&
+				key == "script" &&
+				isBlankStringConfigValue(current) {
+				config.AdminConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+			}
+		}
+	}
+	if descriptor.WorkerConfigForm != nil {
+		for key, value := range descriptor.WorkerConfigForm.DefaultValues {
+			if value == nil {
+				continue
+			}
+			if config.WorkerConfigValues[key] != nil {
+				continue
+			}
+			config.WorkerConfigValues[key] = proto.Clone(value).(*plugin_pb.ConfigValue)
+		}
+	}
+	if descriptor.AdminRuntimeDefaults != nil {
+		runtime := config.AdminRuntime
+		defaults := descriptor.AdminRuntimeDefaults
+		if runtime.DetectionIntervalSeconds <= 0 {
+			runtime.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+		}
+		if runtime.DetectionTimeoutSeconds <= 0 {
+			runtime.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
+		}
+		if runtime.MaxJobsPerDetection <= 0 {
+			runtime.MaxJobsPerDetection = defaults.MaxJobsPerDetection
+		}
+		if runtime.GlobalExecutionConcurrency <= 0 {
+			runtime.GlobalExecutionConcurrency = defaults.GlobalExecutionConcurrency
+		}
+		if runtime.PerWorkerExecutionConcurrency <= 0 {
+			runtime.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
+		}
+		if runtime.JobTypeMaxRuntimeSeconds <= 0 {
+			runtime.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
+		}
+		if runtime.RetryBackoffSeconds <= 0 {
+			runtime.RetryBackoffSeconds = defaults.RetryBackoffSeconds
+		}
+		if runtime.RetryLimit < 0 {
+			runtime.RetryLimit = defaults.RetryLimit
+		}
+	}
+}
+
+func isBlankStringConfigValue(value *plugin_pb.ConfigValue) bool {
+	if value == nil {
+		return true
+	}
+	kind, ok := value.Kind.(*plugin_pb.ConfigValue_StringValue)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(kind.StringValue) == ""
 }
 
 func parsePositiveInt(raw string, defaultValue int) int {

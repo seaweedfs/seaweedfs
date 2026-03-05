@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Policy Engine Types
@@ -35,6 +37,17 @@ const (
 var (
 	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
 	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	// multipartActionSet contains all S3 multipart upload actions
+	// These are treated as equivalent to s3:PutObject for authorization purposes
+	multipartActionSet = map[string]bool{
+		s3const.S3_ACTION_CREATE_MULTIPART:       true,
+		s3const.S3_ACTION_UPLOAD_PART:            true,
+		s3const.S3_ACTION_COMPLETE_MULTIPART:     true,
+		s3const.S3_ACTION_ABORT_MULTIPART:        true,
+		s3const.S3_ACTION_LIST_PARTS:             true,
+		s3const.S3_ACTION_LIST_MULTIPART_UPLOADS: true,
+	}
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -168,9 +181,9 @@ type CompiledPolicy struct {
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
-	ActionMatchers    []*WildcardMatcher
-	ResourceMatchers  []*WildcardMatcher
-	PrincipalMatchers []*WildcardMatcher
+	ActionMatchers    []*wildcard.WildcardMatcher
+	ResourceMatchers  []*wildcard.WildcardMatcher
+	PrincipalMatchers []*wildcard.WildcardMatcher
 	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
@@ -183,7 +196,7 @@ type CompiledStatement struct {
 
 	// NotResource patterns (resource should NOT match these)
 	NotResourcePatterns        []*regexp.Regexp
-	NotResourceMatchers        []*WildcardMatcher
+	NotResourceMatchers        []*wildcard.WildcardMatcher
 	DynamicNotResourcePatterns []string
 }
 
@@ -316,7 +329,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ActionPatterns = append(compiled.ActionPatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(action)
+		matcher, err := wildcard.NewWildcardMatcher(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create action matcher %s: %v", action, err)
 		}
@@ -340,7 +353,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 		}
 		compiled.ResourcePatterns = append(compiled.ResourcePatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(resource)
+		matcher, err := wildcard.NewWildcardMatcher(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource matcher %s: %v", resource, err)
 		}
@@ -365,7 +378,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.PrincipalPatterns = append(compiled.PrincipalPatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(principal)
+			matcher, err := wildcard.NewWildcardMatcher(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
@@ -391,7 +404,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 			}
 			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(notResource)
+			matcher, err := wildcard.NewWildcardMatcher(notResource)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
 			}
@@ -407,7 +420,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 // compilePattern compiles a wildcard pattern to regex
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	return CompileWildcardPattern(pattern)
+	return wildcard.CompileWildcardPattern(pattern)
 }
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
@@ -455,55 +468,33 @@ func IsObjectResource(resource string) bool {
 	return strings.Contains(resource, "/")
 }
 
-// S3Actions contains common S3 actions
-var S3Actions = map[string]string{
-	"GetObject":                        "s3:GetObject",
-	"PutObject":                        "s3:PutObject",
-	"DeleteObject":                     "s3:DeleteObject",
-	"GetObjectVersion":                 "s3:GetObjectVersion",
-	"DeleteObjectVersion":              "s3:DeleteObjectVersion",
-	"ListBucket":                       "s3:ListBucket",
-	"ListBucketVersions":               "s3:ListBucketVersions",
-	"GetBucketLocation":                "s3:GetBucketLocation",
-	"GetBucketVersioning":              "s3:GetBucketVersioning",
-	"PutBucketVersioning":              "s3:PutBucketVersioning",
-	"GetBucketAcl":                     "s3:GetBucketAcl",
-	"PutBucketAcl":                     "s3:PutBucketAcl",
-	"GetObjectAcl":                     "s3:GetObjectAcl",
-	"PutObjectAcl":                     "s3:PutObjectAcl",
-	"GetBucketPolicy":                  "s3:GetBucketPolicy",
-	"PutBucketPolicy":                  "s3:PutBucketPolicy",
-	"DeleteBucketPolicy":               "s3:DeleteBucketPolicy",
-	"GetBucketCors":                    "s3:GetBucketCors",
-	"PutBucketCors":                    "s3:PutBucketCors",
-	"DeleteBucketCors":                 "s3:DeleteBucketCors",
-	"GetBucketNotification":            "s3:GetBucketNotification",
-	"PutBucketNotification":            "s3:PutBucketNotification",
-	"GetBucketTagging":                 "s3:GetBucketTagging",
-	"PutBucketTagging":                 "s3:PutBucketTagging",
-	"DeleteBucketTagging":              "s3:DeleteBucketTagging",
-	"GetObjectTagging":                 "s3:GetObjectTagging",
-	"PutObjectTagging":                 "s3:PutObjectTagging",
-	"DeleteObjectTagging":              "s3:DeleteObjectTagging",
-	"ListMultipartUploads":             "s3:ListMultipartUploads",
-	"AbortMultipartUpload":             "s3:AbortMultipartUpload",
-	"ListParts":                        "s3:ListParts",
-	"GetObjectRetention":               "s3:GetObjectRetention",
-	"PutObjectRetention":               "s3:PutObjectRetention",
-	"GetObjectLegalHold":               "s3:GetObjectLegalHold",
-	"PutObjectLegalHold":               "s3:PutObjectLegalHold",
-	"GetBucketObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
-	"PutBucketObjectLockConfiguration": "s3:PutBucketObjectLockConfiguration",
-	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
-}
-
-// MatchesAction checks if an action matches any of the compiled action matchers
+// MatchesAction checks if an action matches any of the compiled action matchers.
+// It also implicitly grants multipart upload actions if s3:PutObject is allowed,
+// since multipart upload is an implementation detail of putting objects.
 func (cs *CompiledStatement) MatchesAction(action string) bool {
+	var matchedAction, hasPutObjectPermission bool
+
+	// Scan all matchers to check for both direct action match and s3:PutObject grant
 	for _, matcher := range cs.ActionMatchers {
 		if matcher.Match(action) {
-			return true
+			matchedAction = true
+		}
+		if !hasPutObjectPermission && matcher.Match("s3:PutObject") {
+			hasPutObjectPermission = true
 		}
 	}
+
+	// Return true if action matched directly or if multipart action with PutObject permission
+	if matchedAction {
+		return true
+	}
+
+	// Multipart upload operations are part of s3:PutObject permission
+	// If s3:PutObject is allowed, implicitly allow multipart operations
+	if hasPutObjectPermission && multipartActionSet[action] {
+		return true
+	}
+
 	return false
 }
 
@@ -581,11 +572,11 @@ func (cp *CompiledPolicy) EvaluatePolicy(args *PolicyEvaluationArgs) (bool, Poli
 
 // FastMatchesWildcard uses cached WildcardMatcher for performance
 func FastMatchesWildcard(pattern, str string) bool {
-	matcher, err := GetCachedWildcardMatcher(pattern)
+	matcher, err := wildcard.GetCachedWildcardMatcher(pattern)
 	if err != nil {
 		glog.Errorf("Error getting cached WildcardMatcher for pattern %s: %v", pattern, err)
 		// Fall back to the original implementation
-		return MatchesWildcard(pattern, str)
+		return wildcard.MatchesWildcard(pattern, str)
 	}
 	return matcher.Match(str)
 }

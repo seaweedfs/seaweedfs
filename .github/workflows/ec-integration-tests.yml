@@ -52,7 +52,7 @@ jobs:
 
     - name: Archive logs
       if: failure()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ec-integration-test-logs
         path: |

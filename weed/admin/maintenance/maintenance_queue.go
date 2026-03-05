@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -131,6 +132,14 @@ func (mq *MaintenanceQueue) cleanupCompletedTasks() {
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
 
+	// Enforce one queued/active task per volume (across all task types).
+	if mq.hasQueuedOrActiveTaskForVolume(task.VolumeID) {
+		mq.mutex.Unlock()
+		glog.V(1).Infof("Task skipped (volume busy): %s for volume %d on %s (already queued or running)",
+			task.Type, task.VolumeID, task.Server)
+		return
+	}
+
 	// Check for duplicate tasks (same type + volume + not completed)
 	if mq.hasDuplicateTask(task) {
 		mq.mutex.Unlock()
@@ -188,6 +197,25 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		taskSnapshot.ID, taskSnapshot.Type, taskSnapshot.VolumeID, taskSnapshot.Server, taskSnapshot.Priority, scheduleInfo, taskSnapshot.Reason)
 }
 
+// hasQueuedOrActiveTaskForVolume checks if any pending/assigned/in-progress task already exists for this volume.
+// Caller must hold mq.mutex.
+func (mq *MaintenanceQueue) hasQueuedOrActiveTaskForVolume(volumeID uint32) bool {
+	if volumeID == 0 {
+		return false
+	}
+	for _, existingTask := range mq.tasks {
+		if existingTask.VolumeID != volumeID {
+			continue
+		}
+		if existingTask.Status == TaskStatusPending ||
+			existingTask.Status == TaskStatusAssigned ||
+			existingTask.Status == TaskStatusInProgress {
+			return true
+		}
+	}
+	return false
+}
+
 // hasDuplicateTask checks if a similar task already exists (same type, volume, and not completed)
 func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
 	for _, existingTask := range mq.tasks {
@@ -201,6 +229,46 @@ func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
 		}
 	}
 	return false
+}
+
+// CancelPendingTasksByType cancels all pending tasks of a given type.
+// This is called before each detection cycle to ensure stale proposals
+// from previous cycles are cleaned up before creating new ones.
+func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskType) int {
+	mq.mutex.Lock()
+
+	var remaining []*MaintenanceTask
+	var cancelledSnapshots []*MaintenanceTask
+	cancelled := 0
+	for _, task := range mq.pendingTasks {
+		if task.Type == taskType {
+			task.Status = TaskStatusCancelled
+			now := time.Now()
+			task.CompletedAt = &now
+			cancelled++
+			cancelledSnapshots = append(cancelledSnapshots, snapshotTask(task))
+			glog.V(1).Infof("Cancelled stale pending task %s (%s) for volume %d before re-detection",
+				task.ID, task.Type, task.VolumeID)
+
+			// Release capacity in ActiveTopology and remove pending operation
+			if mq.integration != nil {
+				if at := mq.integration.GetActiveTopology(); at != nil {
+					_ = at.CompleteTask(task.ID)
+				}
+			}
+			mq.removePendingOperation(task.ID)
+		} else {
+			remaining = append(remaining, task)
+		}
+	}
+	mq.pendingTasks = remaining
+	mq.mutex.Unlock()
+
+	// Persist cancelled state outside the lock to avoid blocking
+	for _, snapshot := range cancelledSnapshots {
+		mq.saveTaskState(snapshot)
+	}
+	return cancelled
 }
 
 // AddTasksFromResults converts detection results to tasks and adds them to the queue
@@ -260,6 +328,13 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 			continue
 		}
 
+		// Avoid scheduling concurrent operations on the same volume
+		if activeTaskID, activeTaskType, hasActive := mq.activeTaskForVolume(task.VolumeID, task.ID); hasActive {
+			glog.V(2).Infof("Task %s (%s) skipped for worker %s: volume %d is busy with task %s (%s)",
+				task.ID, task.Type, workerID, task.VolumeID, activeTaskID, activeTaskType)
+			continue
+		}
+
 		// Check if worker can handle this task type
 		if !mq.workerCanHandle(task.Type, capabilities) {
 			glog.V(3).Infof("Task %s (%s) skipped for worker %s: capability mismatch (worker has: %v)", task.ID, task.Type, workerID, capabilities)
@@ -301,6 +376,14 @@ func (mq *MaintenanceQueue) GetNextTask(workerID string, capabilities []Maintena
 	if selectedIndex >= len(mq.pendingTasks) || mq.pendingTasks[selectedIndex].ID != selectedTaskID {
 		mq.mutex.Unlock()
 		glog.V(2).Infof("Task %s no longer available for worker %s: assigned to another worker", selectedTaskID, workerID)
+		return nil
+	}
+
+	// Re-check volume conflict after acquiring write lock
+	if activeTaskID, activeTaskType, hasActive := mq.activeTaskForVolume(selectedTask.VolumeID, selectedTaskID); hasActive {
+		mq.mutex.Unlock()
+		glog.V(2).Infof("Task %s no longer available for worker %s: volume %d is busy with task %s (%s)",
+			selectedTaskID, workerID, selectedTask.VolumeID, activeTaskID, activeTaskType)
 		return nil
 	}
 
@@ -413,8 +496,8 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 		task.Status = TaskStatusFailed
 		task.Error = error
 
-		// Check if task should be retried
-		if task.RetryCount < task.MaxRetries {
+		// Check if task should be retried (skip retry for permanent errors)
+		if task.RetryCount < task.MaxRetries && !isNonRetriableError(error) {
 			// Record unassignment due to failure/retry
 			if task.WorkerID != "" && len(task.AssignmentHistory) > 0 {
 				lastAssignment := task.AssignmentHistory[len(task.AssignmentHistory)-1]
@@ -515,6 +598,12 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 			go mq.cleanupCompletedTasks()
 		}
 	}
+}
+
+// isNonRetriableError returns true for errors that will never succeed on retry,
+// such as when the volume doesn't exist on the source server.
+func isNonRetriableError(errMsg string) bool {
+	return strings.Contains(errMsg, "not found")
 }
 
 // UpdateTaskProgress updates the progress of a running task
@@ -875,6 +964,28 @@ func (mq *MaintenanceQueue) workerCanHandle(taskType MaintenanceTaskType, capabi
 		}
 	}
 	return false
+}
+
+// activeTaskForVolume returns the active task ID/type for a volume, if any.
+// Caller must hold mq.mutex (read or write).
+func (mq *MaintenanceQueue) activeTaskForVolume(volumeID uint32, excludeTaskID string) (string, MaintenanceTaskType, bool) {
+	if volumeID == 0 {
+		return "", "", false
+	}
+
+	for _, task := range mq.tasks {
+		if task.ID == excludeTaskID {
+			continue
+		}
+		if task.VolumeID != volumeID {
+			continue
+		}
+		if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
+			return task.ID, task.Type, true
+		}
+	}
+
+	return "", "", false
 }
 
 // canScheduleTaskNow determines if a task can be scheduled using task schedulers or fallback logic

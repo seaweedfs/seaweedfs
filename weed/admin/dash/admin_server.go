@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -97,6 +98,9 @@ type AdminServer struct {
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
 	plugin             *adminplugin.Plugin
+	pluginLock         *AdminLockManager
+	adminPresenceLock  *adminPresenceLock
+	expireJobHandler   func(jobID string, reason string) (*adminplugin.TrackedJob, bool, error)
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
@@ -133,6 +137,12 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	ctx := context.Background()
 	go masterClient.KeepConnectedToMaster(ctx)
 
+	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
+	presenceLock := newAdminPresenceLock(masterClient)
+	if presenceLock != nil {
+		presenceLock.Start()
+	}
+
 	server := &AdminServer{
 		masterClient:                  masterClient,
 		templateFS:                    templateFS,
@@ -144,6 +154,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
+		pluginLock:                    lockManager,
+		adminPresenceLock:             presenceLock,
 	}
 
 	// Initialize topic retention purger
@@ -227,6 +239,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
+		LockManager: lockManager,
 	})
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
@@ -235,6 +248,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 				return server.buildDefaultPluginClusterContext(), nil
 			},
+			LockManager: lockManager,
 		})
 	}
 	if err != nil {
@@ -888,6 +902,13 @@ func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
 }
 
+func (s *AdminServer) acquirePluginLock(reason string) (func(), error) {
+	if s == nil || s.pluginLock == nil {
+		return func() {}, nil
+	}
+	return s.pluginLock.Acquire(reason)
+}
+
 // RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
 func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
 	if s.plugin == nil {
@@ -930,6 +951,13 @@ func (s *AdminServer) RunPluginDetection(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
@@ -955,6 +983,13 @@ func (s *AdminServer) RunPluginDetectionWithReport(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
 }
 
@@ -968,6 +1003,17 @@ func (s *AdminServer) ExecutePluginJob(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	jobType := ""
+	if job != nil {
+		jobType = strings.TrimSpace(job.JobType)
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin execution %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.ExecuteJob(ctx, job, clusterContext, attempt)
 }
 
@@ -980,7 +1026,7 @@ func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeR
 }
 
 // ListPluginJobTypes returns known plugin job types from connected worker registry and persisted data.
-func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
+func (s *AdminServer) ListPluginJobTypes() ([]adminplugin.JobTypeInfo, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
@@ -1017,6 +1063,17 @@ func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLim
 		return nil, false, fmt.Errorf("plugin is not enabled")
 	}
 	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
+}
+
+// ExpirePluginJob marks an active plugin job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJob(jobID, reason string) (*adminplugin.TrackedJob, bool, error) {
+	if handler := s.expireJobHandler; handler != nil {
+		return handler(jobID, reason)
+	}
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ExpireJob(jobID, reason)
 }
 
 // ListPluginActivities returns plugin job activities for monitoring.
@@ -1235,6 +1292,9 @@ func (s *AdminServer) Shutdown() {
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+	if s.adminPresenceLock != nil {
+		s.adminPresenceLock.Stop()
+	}
 
 	if s.plugin != nil {
 		s.plugin.Shutdown()

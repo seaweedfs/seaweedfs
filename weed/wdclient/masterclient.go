@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -24,6 +26,22 @@ import (
 // This is rarely called since master pushes updates proactively via KeepConnected stream
 type masterVolumeProvider struct {
 	masterClient *MasterClient
+}
+
+func isCanceledErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if statusErr, ok := status.FromError(err); ok {
+		switch statusErr.Code() {
+		case codes.Canceled, codes.DeadlineExceeded:
+			return true
+		}
+	}
+	return false
 }
 
 // LookupVolumeIds queries the master for volume locations (fallback when cache misses)
@@ -194,8 +212,13 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 
 		resp, err := stream.Recv()
 		if err != nil {
-			glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
-			stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+			canceled := isCanceledErr(err) || ctx.Err() != nil
+			if canceled {
+				glog.V(1).Infof("%s.%s masterClient stream closed from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+			} else {
+				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+			}
 			return err
 		}
 
@@ -219,8 +242,13 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 		for {
 			resp, err := stream.Recv()
 			if err != nil {
-				glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
-				stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+				canceled := isCanceledErr(err) || ctx.Err() != nil
+				if canceled {
+					glog.V(1).Infof("%s.%s masterClient stream closed from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+				} else {
+					glog.V(0).Infof("%s.%s masterClient failed to receive from %s: %v", mc.FilerGroup, mc.clientType, master, err)
+					stats.MasterClientConnectCounter.WithLabelValues(stats.FailedToReceive).Inc()
+				}
 				return err
 			}
 
@@ -252,12 +280,20 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 				mc.OnPeerUpdateLock.RUnlock()
 			}
 			if err := ctx.Err(); err != nil {
-				glog.V(0).Infof("Connection attempt to master stopped: %v", err)
+				if isCanceledErr(err) {
+					glog.V(1).Infof("Connection attempt to master stopped: %v", err)
+				} else {
+					glog.V(0).Infof("Connection attempt to master stopped: %v", err)
+				}
 				return err
 			}
 		}
 	})
 	if gprcErr != nil {
+		if isCanceledErr(gprcErr) || ctx.Err() != nil {
+			glog.V(1).Infof("%s.%s masterClient connection closed to %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
+			return nextHintedLeader
+		}
 		stats.MasterClientConnectCounter.WithLabelValues(stats.Failed).Inc()
 		glog.V(1).Infof("%s.%s masterClient failed to connect with master %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)
 	}
@@ -387,7 +423,11 @@ func (mc *MasterClient) KeepConnectedToMaster(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			glog.V(0).Infof("Connection to masters stopped: %v", ctx.Err())
+			if isCanceledErr(ctx.Err()) {
+				glog.V(1).Infof("Connection to masters stopped: %v", ctx.Err())
+			} else {
+				glog.V(0).Infof("Connection to masters stopped: %v", ctx.Err())
+			}
 			return
 		default:
 			reconnectStart := time.Now()

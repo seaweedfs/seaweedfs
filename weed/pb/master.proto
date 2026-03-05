@@ -61,6 +61,11 @@ service Seaweed {
 
 //////////////////////////////////////////////////
 
+message DiskTag {
+  uint32 disk_id = 1;
+  repeated string tags = 2;
+}
+
 message Heartbeat {
   string ip = 1;
   uint32 port = 2;
@@ -89,6 +94,8 @@ message Heartbeat {
 
   // state flags
   volume_server_pb.VolumeServerState state = 23;
+
+  repeated DiskTag disk_tags = 24;
 }
 
 message HeartbeatResponse {
@@ -292,6 +299,7 @@ message DiskInfo {
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
   uint32 disk_id = 9;
+  repeated string tags = 10;
 }
 message DataNodeInfo {
   string id = 1;

@@ -53,6 +53,7 @@ type VolumeServerOptions struct {
 	whiteList                 []string
 	indexType                 *string
 	diskType                  *string
+	tags                      *string
 	fixJpgOrientation         *bool
 	readMode                  *string
 	cpuProfile                *string
@@ -94,6 +95,7 @@ func init() {
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	v.diskType = cmdVolume.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	v.tags = cmdVolume.Flag.String("tags", "", "comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive)")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readMode = cmdVolume.Flag.String("readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|proxy to remote node|redirect volume location'.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
@@ -219,6 +221,12 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
 	}
 
+	var tagsArg string
+	if v.tags != nil {
+		tagsArg = *v.tags
+	}
+	folderTags := parseVolumeTags(tagsArg, len(v.folders))
+
 	// security related white list configuration
 	v.whiteList = util.StringSplit(volumeWhiteListOption, ",")
 
@@ -269,7 +277,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
 		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
-		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
+		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
@@ -332,6 +340,36 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		}
 	}
 
+}
+
+func parseVolumeTags(tagsArg string, folderCount int) [][]string {
+	if folderCount <= 0 {
+		return nil
+	}
+	tagEntries := []string{}
+	if strings.TrimSpace(tagsArg) != "" {
+		tagEntries = strings.Split(tagsArg, ",")
+	}
+	folderTags := make([][]string, folderCount)
+	
+	// If exactly one tag entry provided, replicate it to all folders
+	if len(tagEntries) == 1 {
+		normalized := util.NormalizeTagList(strings.Split(tagEntries[0], ":"))
+		for i := 0; i < folderCount; i++ {
+			folderTags[i] = append([]string(nil), normalized...)
+		}
+	} else {
+		// Otherwise, assign tags to folders that have explicit entries
+		for i := 0; i < folderCount; i++ {
+			if i < len(tagEntries) {
+				folderTags[i] = util.NormalizeTagList(strings.Split(tagEntries[i], ":"))
+			} else {
+				// Initialize remaining folders with empty tag slice
+				folderTags[i] = []string{}
+			}
+		}
+	}
+	return folderTags
 }
 
 func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {

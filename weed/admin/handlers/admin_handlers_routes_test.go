@@ -21,6 +21,9 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 	if !hasRoute(router, http.MethodGet, "/api/plugin/jobs/example/detail") {
 		t.Fatalf("expected GET /api/plugin/jobs/:jobId/detail to be registered in no-auth mode")
 	}
+	if !hasRoute(router, http.MethodPost, "/api/plugin/jobs/example/expire") {
+		t.Fatalf("expected POST /api/plugin/jobs/:jobId/expire to be registered in no-auth mode")
+	}
 }
 
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
@@ -33,6 +36,9 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 	}
 	if !hasRoute(router, http.MethodGet, "/api/plugin/jobs/example/detail") {
 		t.Fatalf("expected GET /api/plugin/jobs/:jobId/detail to be registered in auth mode")
+	}
+	if !hasRoute(router, http.MethodPost, "/api/plugin/jobs/example/expire") {
+		t.Fatalf("expected POST /api/plugin/jobs/:jobId/expire to be registered in auth mode")
 	}
 }
 

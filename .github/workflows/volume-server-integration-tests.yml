@@ -90,7 +90,7 @@ jobs:
 
       - name: Archive logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: volume-server-integration-test-logs
           path: /tmp/volume-server-it-logs/

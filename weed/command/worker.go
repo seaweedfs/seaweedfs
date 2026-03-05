@@ -7,17 +7,17 @@ import (
 )
 
 var cmdWorker = &Command{
-	UsageLine: "worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=4] [-metricsPort=<port>] [-metricsIp=<ip>] [-debug]",
+	UsageLine: "worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding,admin_script] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=4] [-metricsPort=<port>] [-metricsIp=<ip>] [-debug]",
 	Short:     "start a plugin.proto worker process",
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
-This command provides vacuum, volume_balance, and erasure_coding job type
+This command provides vacuum, volume_balance, erasure_coding, and admin_script job type
 contracts with the plugin stream runtime, including descriptor delivery,
 heartbeat/load reporting, detection, and execution.
 
 Behavior:
   - Use -jobType to choose one or more plugin job handlers (comma-separated list)
-  - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
+  - Use -workingDir to persist worker.id for stable worker identity across restarts
   - Use -metricsPort/-metricsIp to expose /health, /ready, and /metrics
 
 Examples:
@@ -25,6 +25,7 @@ Examples:
   weed worker -admin=localhost:23646 -jobType=volume_balance
   weed worker -admin=localhost:23646 -jobType=vacuum,volume_balance
   weed worker -admin=localhost:23646 -jobType=erasure_coding
+  weed worker -admin=localhost:23646 -jobType=admin_script
   weed worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
   weed worker -admin=localhost:23646 -workingDir=/var/lib/seaweedfs-plugin
   weed worker -admin=localhost:23646 -metricsPort=9327 -metricsIp=0.0.0.0

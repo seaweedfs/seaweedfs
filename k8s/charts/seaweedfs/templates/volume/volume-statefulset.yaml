@@ -69,9 +69,7 @@ spec:
       priorityClassName: {{ $volume.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if $.Values.global.createClusterRole }}
       serviceAccountName: {{ $volume.serviceAccountName | default (include "seaweedfs.serviceAccountName" $) | quote }} # for deleting statefulset pods after migration
-      {{- end }}
       {{- $initContainers_exists := include "volume.initContainers_exists" $ -}}
       {{- if $initContainers_exists }}
       initContainers:
@@ -118,8 +116,10 @@ spec:
                   fieldPath: status.hostIP
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" $ }}"
-            {{- if $volume.extraEnvironmentVars }}
-            {{- range $key, $value := $volume.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" $.Values.global "component" $volume "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -127,18 +127,6 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if $.Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := $.Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           command:
             - "/bin/sh"

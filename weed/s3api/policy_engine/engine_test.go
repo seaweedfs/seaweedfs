@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // tagsToEntry converts a map of tag key-value pairs to the entry.Extended format
@@ -749,7 +750,7 @@ func TestWildcardMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesWildcard(tt.pattern, tt.str)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.str)
 			if result != tt.expected {
 				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.str, tt.expected, result)
 			}

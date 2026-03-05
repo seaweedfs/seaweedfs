@@ -24,6 +24,7 @@ const (
 	defaultHeartbeatInterval   = 30
 	defaultReconnectDelay      = 5
 	defaultPendingSchemaBuffer = 1
+	adminScriptJobType         = "admin_script"
 )
 
 type Options struct {
@@ -32,6 +33,14 @@ type Options struct {
 	SendTimeout            time.Duration
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	LockManager            LockManager
+}
+
+// JobTypeInfo contains metadata about a plugin job type.
+type JobTypeInfo struct {
+	JobType     string `json:"job_type"`
+	DisplayName string `json:"display_name"`
+	Weight      int32  `json:"weight"`
 }
 
 type Plugin struct {
@@ -45,6 +54,7 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
 	nextDetectionAt   map[string]time.Time
@@ -55,6 +65,16 @@ type Plugin struct {
 
 	schedulerExecMu           sync.Mutex
 	schedulerExecReservations map[string]int
+	adminScriptRunMu          sync.RWMutex
+	schedulerDetectionMu      sync.Mutex
+	schedulerDetection        map[string]*schedulerDetectionInfo
+	schedulerRunMu            sync.Mutex
+	schedulerRun              map[string]*schedulerRunInfo
+	schedulerLoopMu           sync.Mutex
+	schedulerLoopState        schedulerLoopState
+	schedulerConfigMu         sync.RWMutex
+	schedulerConfig           SchedulerConfig
+	schedulerWakeCh           chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -73,6 +93,8 @@ type Plugin struct {
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
+	// serialize stale job cleanup to avoid duplicate expirations
+	staleJobsMu sync.Mutex
 
 	jobDetailsMu sync.Mutex
 
@@ -139,6 +161,7 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
@@ -147,13 +170,31 @@ func New(options Options) (*Plugin, error) {
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
 		schedulerExecReservations: make(map[string]int),
+		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
+		schedulerRun:              make(map[string]*schedulerRunInfo),
 		recentDedupeByType:        make(map[string]map[string]time.Time),
 		jobs:                      make(map[string]*TrackedJob),
 		activities:                make([]JobActivity, 0, 256),
 		persistTicker:             time.NewTicker(2 * time.Second),
+		schedulerWakeCh:           make(chan struct{}, 1),
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
+
+	if cfg, err := plugin.store.LoadSchedulerConfig(); err != nil {
+		glog.Warningf("Plugin failed to load scheduler config: %v", err)
+		plugin.schedulerConfig = DefaultSchedulerConfig()
+	} else if cfg == nil {
+		defaults := DefaultSchedulerConfig()
+		plugin.schedulerConfig = defaults
+		if plugin.store.IsConfigured() {
+			if err := plugin.store.SaveSchedulerConfig(&defaults); err != nil {
+				glog.Warningf("Plugin failed to persist scheduler defaults: %v", err)
+			}
+		}
+	} else {
+		plugin.schedulerConfig = normalizeSchedulerConfig(*cfg)
+	}
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
@@ -354,7 +395,11 @@ func (r *Plugin) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeC
 }
 
 func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
-	return r.store.SaveJobTypeConfig(config)
+	if err := r.store.SaveJobTypeConfig(config); err != nil {
+		return err
+	}
+	r.wakeScheduler()
+	return nil
 }
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
@@ -373,6 +418,38 @@ func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
 }
 
+func (r *Plugin) GetSchedulerConfig() SchedulerConfig {
+	if r == nil {
+		return DefaultSchedulerConfig()
+	}
+	r.schedulerConfigMu.RLock()
+	cfg := r.schedulerConfig
+	r.schedulerConfigMu.RUnlock()
+	return normalizeSchedulerConfig(cfg)
+}
+
+func (r *Plugin) UpdateSchedulerConfig(cfg SchedulerConfig) (SchedulerConfig, error) {
+	if r == nil {
+		return DefaultSchedulerConfig(), fmt.Errorf("plugin is not initialized")
+	}
+	normalized := normalizeSchedulerConfig(cfg)
+	if err := r.store.SaveSchedulerConfig(&normalized); err != nil {
+		return SchedulerConfig{}, err
+	}
+	r.schedulerConfigMu.Lock()
+	r.schedulerConfig = normalized
+	r.schedulerConfigMu.Unlock()
+	r.wakeScheduler()
+	return normalized, nil
+}
+
+func (r *Plugin) acquireAdminLock(reason string) (func(), error) {
+	if r == nil || r.lockManager == nil {
+		return func() {}, nil
+	}
+	return r.lockManager.Acquire(reason)
+}
+
 // RunDetectionWithReport requests one detector worker and returns proposals with request metadata.
 func (r *Plugin) RunDetectionWithReport(
 	ctx context.Context,
@@ -380,6 +457,9 @@ func (r *Plugin) RunDetectionWithReport(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) (*DetectionReport, error) {
+	releaseGate := r.acquireDetectionExecutionGate(jobType, false)
+	defer releaseGate()
+
 	detector, err := r.pickDetector(jobType)
 	if err != nil {
 		return nil, err
@@ -394,7 +474,10 @@ func (r *Plugin) RunDetectionWithReport(
 	if err != nil {
 		return nil, err
 	}
-	lastSuccessfulRun := r.loadLastSuccessfulRun(jobType)
+	lastCompletedRun := r.loadLastSuccessfulRun(jobType)
+	if strings.EqualFold(strings.TrimSpace(jobType), adminScriptJobType) {
+		lastCompletedRun = r.loadLastCompletedRun(jobType)
+	}
 
 	state := &pendingDetectionState{
 		complete: make(chan *plugin_pb.DetectionComplete, 1),
@@ -435,7 +518,7 @@ func (r *Plugin) RunDetectionWithReport(
 				AdminConfigValues:  adminConfigValues,
 				WorkerConfigValues: workerConfigValues,
 				ClusterContext:     clusterContext,
-				LastSuccessfulRun:  lastSuccessfulRun,
+				LastSuccessfulRun:  lastCompletedRun,
 				MaxResults:         maxResults,
 			},
 		},
@@ -522,16 +605,36 @@ func (r *Plugin) ExecuteJob(
 	if job == nil {
 		return nil, fmt.Errorf("job is nil")
 	}
-	if strings.TrimSpace(job.JobType) == "" {
+	jobType := strings.TrimSpace(job.JobType)
+	if jobType == "" {
 		return nil, fmt.Errorf("job_type is required")
 	}
+	releaseGate := r.acquireDetectionExecutionGate(jobType, true)
+	defer releaseGate()
 
-	executor, err := r.registry.PickExecutor(job.JobType)
+	executor, err := r.registry.PickExecutor(jobType)
 	if err != nil {
 		return nil, err
 	}
 
 	return r.executeJobWithExecutor(ctx, executor, job, clusterContext, attempt)
+}
+
+func (r *Plugin) acquireDetectionExecutionGate(jobType string, execution bool) func() {
+	normalizedJobType := strings.ToLower(strings.TrimSpace(jobType))
+	if execution && normalizedJobType == adminScriptJobType {
+		r.adminScriptRunMu.Lock()
+		return func() {
+			r.adminScriptRunMu.Unlock()
+		}
+	}
+	if normalizedJobType != adminScriptJobType {
+		r.adminScriptRunMu.RLock()
+		return func() {
+			r.adminScriptRunMu.RUnlock()
+		}
+	}
+	return func() {}
 }
 
 func (r *Plugin) executeJobWithExecutor(
@@ -623,7 +726,7 @@ func (r *Plugin) ListWorkers() []*WorkerSession {
 	return r.registry.List()
 }
 
-func (r *Plugin) ListKnownJobTypes() ([]string, error) {
+func (r *Plugin) ListKnownJobTypes() ([]JobTypeInfo, error) {
 	registryJobTypes := r.registry.JobTypes()
 	storedJobTypes, err := r.store.ListJobTypes()
 	if err != nil {
@@ -638,12 +741,72 @@ func (r *Plugin) ListKnownJobTypes() ([]string, error) {
 		jobTypeSet[jobType] = struct{}{}
 	}
 
-	out := make([]string, 0, len(jobTypeSet))
+	jobTypeList := make([]string, 0, len(jobTypeSet))
 	for jobType := range jobTypeSet {
-		out = append(out, jobType)
+		jobTypeList = append(jobTypeList, jobType)
 	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(jobTypeList)
+
+	result := make([]JobTypeInfo, 0, len(jobTypeList))
+	workers := r.registry.List()
+
+	// Pre-calculate the best capability for each job type from available workers.
+	// Prefer capabilities with non-empty DisplayName, then higher Weight.
+	jobTypeToCap := make(map[string]*plugin_pb.JobTypeCapability)
+	for _, worker := range workers {
+		for jobType, cap := range worker.Capabilities {
+			if cap == nil {
+				continue
+			}
+			existing, exists := jobTypeToCap[jobType]
+			if !exists || existing == nil {
+				jobTypeToCap[jobType] = cap
+				continue
+			}
+			// Preserve existing if it has DisplayName but cap doesn't.
+			if existing.DisplayName != "" && cap.DisplayName == "" {
+				continue
+			}
+			// Prefer capabilities with a non-empty DisplayName.
+			if existing.DisplayName == "" && cap.DisplayName != "" {
+				jobTypeToCap[jobType] = cap
+				continue
+			}
+			// If DisplayName statuses are equal, prefer higher Weight.
+			if cap.Weight > existing.Weight {
+				jobTypeToCap[jobType] = cap
+			}
+		}
+	}
+
+	for _, jobType := range jobTypeList {
+		info := JobTypeInfo{JobType: jobType}
+
+		// Get display name and weight from pre-calculated capabilities
+		if cap, ok := jobTypeToCap[jobType]; ok && cap != nil {
+			if cap.DisplayName != "" {
+				info.DisplayName = cap.DisplayName
+			}
+			info.Weight = cap.Weight
+		}
+
+		// Default display name to job type if not set
+		if info.DisplayName == "" {
+			info.DisplayName = jobType
+		}
+
+		result = append(result, info)
+	}
+
+	// Sort by weight (descending) then by job type (ascending)
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Weight != result[j].Weight {
+			return result[i].Weight > result[j].Weight // higher weight first
+		}
+		return result[i].JobType < result[j].JobType // alphabetical as tiebreaker
+	})
+
+	return result, nil
 }
 
 // FilterProposalsWithActiveJobs drops proposals that are already assigned/running.
@@ -802,6 +965,7 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 	switch body := message.Body.(type) {
 	case *plugin_pb.WorkerToAdminMessage_Hello:
 		r.registry.UpsertFromHello(body.Hello)
+		r.wakeScheduler()
 	case *plugin_pb.WorkerToAdminMessage_Heartbeat:
 		r.registry.UpdateHeartbeat(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
@@ -901,6 +1065,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 			PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
 			RetryLimit:                    defaults.RetryLimit,
 			RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+			JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
 		}
 	}
 
@@ -1209,6 +1374,41 @@ func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
 	var latest time.Time
 	for i := range history.SuccessfulRuns {
 		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return timestamppb.New(latest.UTC())
+}
+
+func (r *Plugin) loadLastCompletedRun(jobType string) *timestamppb.Timestamp {
+	history, err := r.store.LoadRunHistory(jobType)
+	if err != nil {
+		glog.Warningf("Plugin failed to load run history for %s: %v", jobType, err)
+		return nil
+	}
+	if history == nil {
+		return nil
+	}
+
+	var latest time.Time
+	for i := range history.SuccessfulRuns {
+		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	for i := range history.ErrorRuns {
+		completedAt := history.ErrorRuns[i].CompletedAt
 		if completedAt == nil || completedAt.IsZero() {
 			continue
 		}

@@ -86,6 +86,23 @@ func (sa ServerAddress) ToGrpcAddress() string {
 	return ServerToGrpcAddress(string(sa))
 }
 
+// ToHost returns the host part only, without any port information.
+func (sa ServerAddress) ToHost() string {
+	httpAddr := sa.ToHttpAddress()
+
+	host, _, err := net.SplitHostPort(httpAddr)
+	if err == nil {
+		return host
+	}
+
+	// Fallback: if parsing fails, it's likely a host without a port.
+	// Handle bracketed IPv6 (e.g., "[::1]" without port) by trimming brackets.
+	if strings.HasPrefix(httpAddr, "[") && strings.HasSuffix(httpAddr, "]") {
+		return httpAddr[1 : len(httpAddr)-1]
+	}
+	return httpAddr
+}
+
 // LookUp may return an error for some records along with successful lookups - make sure you do not
 // discard `addresses` even if `err == nil`
 func (r ServerSrvAddress) LookUp() (addresses []ServerAddress, err error) {

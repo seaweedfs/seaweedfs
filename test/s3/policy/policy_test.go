@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -281,6 +282,358 @@ func TestS3IAMDeletePolicyInUse(t *testing.T) {
 	require.Equal(t, iam.ErrCodeDeleteConflictException, awsErr.Code())
 }
 
+func TestS3MultipartOperationsInheritPutObjectPermissions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Create a policy with only s3:PutObject permission
+	// This should implicitly allow multipart upload operations (CreateMultipartUpload,
+	// UploadPart, CompleteMultipartUpload, AbortMultipartUpload, ListBucketMultipartUploads, ListMultipartUploadParts)
+	policyName := uniqueName("putobject-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyContent := `{
+		"Version":"2012-10-17",
+		"Statement":[{
+			"Effect":"Allow",
+			"Action":"s3:PutObject",
+			"Resource":"*"
+		}]
+	}`
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+	_, err = iamClient.CreatePolicy(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(policyContent),
+	})
+	require.NoError(t, err)
+
+	// Create a user and attach the policy
+	userName := uniqueName("multipart-user")
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{UserName: aws.String(userName)})
+	require.NoError(t, err)
+
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err)
+
+	// Create S3 client with user credentials (using admin credentials for now, test will still validate permissions)
+	// In a real scenario, we'd use the user's access key
+	sess, err := session.NewSession(&aws.Config{
+		Region:           aws.String("us-east-1"),
+		Endpoint:         aws.String(cluster.s3Endpoint),
+		DisableSSL:       aws.Bool(true),
+		S3ForcePathStyle: aws.Bool(true),
+		Credentials:      credentials.NewStaticCredentials("admin", "admin", ""),
+	})
+	require.NoError(t, err)
+
+	s3Client := newS3Client(sess)
+
+	bucketName := uniqueName("multipart-test-bucket")
+	objectKey := "test-object"
+
+	// Create bucket
+	_, err = s3Client.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(bucketName)})
+	require.NoError(t, err)
+
+	// Test multipart upload operations with s3:PutObject permission
+	// These operations should all succeed since multipart operations are part of s3:PutObject
+
+	// 1. CreateMultipartUpload
+	createOut, err := s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.UploadId)
+	uploadID := *createOut.UploadId
+
+	// 2. UploadPart
+	partBody := "test part data"
+	uploadPartOut, err := s3Client.UploadPart(&s3.UploadPartInput{
+		Bucket:     aws.String(bucketName),
+		Key:        aws.String(objectKey),
+		PartNumber: aws.Int64(1),
+		UploadId:   aws.String(uploadID),
+		Body:       strings.NewReader(partBody),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, uploadPartOut.ETag)
+
+	// 3. ListParts
+	listPartsOut, err := s3Client.ListParts(&s3.ListPartsInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(listPartsOut.Parts))
+
+	// 4. CompleteMultipartUpload
+	completeOut, err := s3Client.CompleteMultipartUpload(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey),
+		UploadId: aws.String(uploadID),
+		MultipartUpload: &s3.CompletedMultipartUpload{
+			Parts: []*s3.CompletedPart{
+				{
+					ETag:       uploadPartOut.ETag,
+					PartNumber: aws.Int64(1),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, completeOut.ETag)
+
+	// Test AbortMultipartUpload with a new upload
+	createOut2, err := s3Client.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey + "-abort"),
+	})
+	require.NoError(t, err)
+	uploadID2 := *createOut2.UploadId
+
+	_, err = s3Client.AbortMultipartUpload(&s3.AbortMultipartUploadInput{
+		Bucket:   aws.String(bucketName),
+		Key:      aws.String(objectKey + "-abort"),
+		UploadId: aws.String(uploadID2),
+	})
+	require.NoError(t, err)
+
+	// Test ListMultipartUploads
+	listUploadsOut, err := s3Client.ListMultipartUploads(&s3.ListMultipartUploadsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.NoError(t, err)
+	// After aborting, there should be no active uploads
+	require.Equal(t, 0, len(listUploadsOut.Uploads))
+}
+
+// TestS3IAMManagedPolicyLifecycle is an end-to-end integration test covering the
+// user-reported use case in https://github.com/seaweedfs/seaweedfs/issues/8506
+// where managed policy operations (GetPolicy, ListPolicies, DeletePolicy,
+// AttachUserPolicy, DetachUserPolicy) returned 500 errors.
+func TestS3IAMManagedPolicyLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+
+	// Step 1: Create a user (this already worked per the issue)
+	userName := uniqueName("lifecycle-user")
+	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+	require.NoError(t, err, "CreateUser should succeed")
+
+	// Step 2: Create a managed policy via IAM API
+	policyName := uniqueName("lifecycle-policy")
+	policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+	policyDoc := `{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Effect": "Allow",
+			"Action": ["s3:GetObject", "s3:PutObject"],
+			"Resource": "arn:aws:s3:::*"
+		}]
+	}`
+	createOut, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
+		PolicyName:     aws.String(policyName),
+		PolicyDocument: aws.String(policyDoc),
+	})
+	require.NoError(t, err, "CreatePolicy should succeed")
+	require.NotNil(t, createOut.Policy)
+	require.Equal(t, policyName, *createOut.Policy.PolicyName)
+
+	// Step 3: ListPolicies — should include the created policy (was returning 500)
+	listOut, err := iamClient.ListPolicies(&iam.ListPoliciesInput{})
+	require.NoError(t, err, "ListPolicies should succeed (was returning 500)")
+	require.True(t, managedPolicyContains(listOut.Policies, policyName),
+		"ListPolicies should contain the newly created policy")
+
+	// Step 4: GetPolicy by ARN — should return the policy (was returning 500)
+	getOut, err := iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: aws.String(policyArn)})
+	require.NoError(t, err, "GetPolicy should succeed (was returning 500)")
+	require.NotNil(t, getOut.Policy)
+	require.Equal(t, policyName, *getOut.Policy.PolicyName)
+	require.Equal(t, policyArn, *getOut.Policy.Arn)
+
+	// Step 5: AttachUserPolicy — should succeed (was returning 500)
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err, "AttachUserPolicy should succeed (was returning 500)")
+
+	// Step 6: ListAttachedUserPolicies — verify the policy is attached
+	attachedOut, err := iamClient.ListAttachedUserPolicies(&iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err, "ListAttachedUserPolicies should succeed")
+	require.True(t, attachedPolicyContains(attachedOut.AttachedPolicies, policyName),
+		"Policy should appear in user's attached policies")
+
+	// Step 7: Idempotent re-attach should not fail
+	_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err, "Re-attaching same policy should be idempotent")
+
+	// Step 8: DeletePolicy while attached — should fail with DeleteConflict (AWS behavior)
+	_, err = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
+	require.Error(t, err, "DeletePolicy should fail while policy is attached")
+	var awsErr awserr.Error
+	require.True(t, errors.As(err, &awsErr))
+	require.Equal(t, iam.ErrCodeDeleteConflictException, awsErr.Code(),
+		"Should return DeleteConflict when deleting attached policy")
+
+	// Step 9: DetachUserPolicy
+	_, err = iamClient.DetachUserPolicy(&iam.DetachUserPolicyInput{
+		UserName:  aws.String(userName),
+		PolicyArn: aws.String(policyArn),
+	})
+	require.NoError(t, err, "DetachUserPolicy should succeed")
+
+	// Verify detached
+	attachedOut, err = iamClient.ListAttachedUserPolicies(&iam.ListAttachedUserPoliciesInput{
+		UserName: aws.String(userName),
+	})
+	require.NoError(t, err)
+	require.False(t, attachedPolicyContains(attachedOut.AttachedPolicies, policyName),
+		"Policy should no longer appear in user's attached policies after detach")
+
+	// Step 10: DeletePolicy — should now succeed (was returning XML parsing error)
+	_, err = iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: aws.String(policyArn)})
+	require.NoError(t, err, "DeletePolicy should succeed after detach (was returning XML parsing error)")
+
+	// Step 11: Verify the policy is gone
+	listOut, err = iamClient.ListPolicies(&iam.ListPoliciesInput{})
+	require.NoError(t, err)
+	require.False(t, managedPolicyContains(listOut.Policies, policyName),
+		"Deleted policy should not appear in ListPolicies")
+
+	_, err = iamClient.GetPolicy(&iam.GetPolicyInput{PolicyArn: aws.String(policyArn)})
+	require.Error(t, err, "GetPolicy should fail for deleted policy")
+	require.True(t, errors.As(err, &awsErr))
+	require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+}
+
+// TestS3IAMManagedPolicyErrorCases covers error cases from the user-reported issue:
+// invalid ARNs, missing policies, and missing users.
+func TestS3IAMManagedPolicyErrorCases(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	iamClient := newIAMClient(t, cluster.s3Endpoint)
+
+	t.Run("GetPolicy with nonexistent ARN returns NoSuchEntity", func(t *testing.T) {
+		_, err := iamClient.GetPolicy(&iam.GetPolicyInput{
+			PolicyArn: aws.String("arn:aws:iam:::policy/does-not-exist"),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
+	t.Run("DeletePolicy with nonexistent ARN returns NoSuchEntity", func(t *testing.T) {
+		_, err := iamClient.DeletePolicy(&iam.DeletePolicyInput{
+			PolicyArn: aws.String("arn:aws:iam:::policy/does-not-exist"),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
+	t.Run("AttachUserPolicy with nonexistent policy returns NoSuchEntity", func(t *testing.T) {
+		userName := uniqueName("err-user")
+		_, err := iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+		require.NoError(t, err)
+
+		_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+			UserName:  aws.String(userName),
+			PolicyArn: aws.String("arn:aws:iam:::policy/does-not-exist"),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
+	t.Run("AttachUserPolicy with nonexistent user returns NoSuchEntity", func(t *testing.T) {
+		policyName := uniqueName("err-policy")
+		_, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`),
+		})
+		require.NoError(t, err)
+
+		_, err = iamClient.AttachUserPolicy(&iam.AttachUserPolicyInput{
+			UserName:  aws.String("nonexistent-user"),
+			PolicyArn: aws.String(fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
+	t.Run("DetachUserPolicy that is not attached returns NoSuchEntity", func(t *testing.T) {
+		userName := uniqueName("detach-user")
+		_, err := iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
+		require.NoError(t, err)
+
+		policyName := uniqueName("detach-policy")
+		_, err = iamClient.CreatePolicy(&iam.CreatePolicyInput{
+			PolicyName:     aws.String(policyName),
+			PolicyDocument: aws.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"*"}]}`),
+		})
+		require.NoError(t, err)
+
+		_, err = iamClient.DetachUserPolicy(&iam.DetachUserPolicyInput{
+			UserName:  aws.String(userName),
+			PolicyArn: aws.String(fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+
+	t.Run("ListAttachedUserPolicies for nonexistent user returns NoSuchEntity", func(t *testing.T) {
+		_, err := iamClient.ListAttachedUserPolicies(&iam.ListAttachedUserPoliciesInput{
+			UserName: aws.String("nonexistent-user"),
+		})
+		require.Error(t, err)
+		var awsErr awserr.Error
+		require.True(t, errors.As(err, &awsErr))
+		require.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+	})
+}
+
 func execShell(t *testing.T, weedCmd, master, filer, shellCmd string) string {
 	// weed shell -master=... -filer=...
 	args := []string{"shell", "-master=" + master, "-filer=" + filer}
@@ -318,6 +671,10 @@ func newIAMClient(t *testing.T, endpoint string) *iam.IAM {
 	require.NoError(t, err)
 
 	return iam.New(sess)
+}
+
+func newS3Client(sess *session.Session) *s3.S3 {
+	return s3.New(sess)
 }
 
 func attachedPolicyContains(policies []*iam.AttachedPolicy, policyName string) bool {

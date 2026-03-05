@@ -2,9 +2,9 @@ package shell
 
 import (
 	"flag"
-	"fmt"
 	"io"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -66,7 +66,7 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 	} else {
 		collections = append(collections, *collection)
 	}
-	fmt.Printf("balanceEcVolumes collections %+v\n", len(collections))
+	glog.V(1).Infof("balanceEcVolumes collections %+v\n", len(collections))
 
 	rp, err := parseReplicaPlacementArg(commandEnv, *shardReplicaPlacement)
 	if err != nil {

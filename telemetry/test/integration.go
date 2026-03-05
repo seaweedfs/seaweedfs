@@ -148,7 +148,7 @@ func waitForServer(url string, timeout time.Duration) bool {
 func testProtobufMarshaling() error {
 	// Test protobuf marshaling/unmarshaling
 	testData := &proto.TelemetryData{
-		ClusterId:         "test-cluster-12345",
+		TopologyId:        "test-cluster-12345",
 		Version:           "test-3.45",
 		Os:                "linux/amd64",
 		VolumeServerCount: 2,

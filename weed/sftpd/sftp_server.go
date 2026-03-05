@@ -20,22 +20,26 @@ import (
 )
 
 type SftpServer struct {
-	filerAddr      pb.ServerAddress
-	grpcDialOption grpc.DialOption
-	dataCenter     string
-	filerGroup     string
-	user           *user.User
+	filerAddr                pb.ServerAddress
+	grpcDialOption           grpc.DialOption
+	dataCenter               string
+	filerGroup               string
+	user                     *user.User
+	filerSigningKey          []byte
+	filerSigningExpiresAfter int
 }
 
 // NewSftpServer constructs the server.
-func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, dataCenter, filerGroup string, user *user.User) SftpServer {
+func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, dataCenter, filerGroup string, user *user.User, filerSigningKey []byte, filerSigningExpiresAfter int) SftpServer {
 
 	return SftpServer{
-		filerAddr:      filerAddr,
-		grpcDialOption: grpcDialOption,
-		dataCenter:     dataCenter,
-		filerGroup:     filerGroup,
-		user:           user,
+		filerAddr:                filerAddr,
+		grpcDialOption:           grpcDialOption,
+		dataCenter:               dataCenter,
+		filerGroup:               filerGroup,
+		user:                     user,
+		filerSigningKey:          filerSigningKey,
+		filerSigningExpiresAfter: filerSigningExpiresAfter,
 	}
 }
 

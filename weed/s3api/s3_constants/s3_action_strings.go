@@ -8,7 +8,8 @@ const (
 	S3_ACTION_PUT_OBJECT            = "s3:PutObject"
 	S3_ACTION_DELETE_OBJECT         = "s3:DeleteObject"
 	S3_ACTION_DELETE_OBJECT_VERSION = "s3:DeleteObjectVersion"
-	S3_ACTION_GET_OBJECT_VERSION    = "s3:GetObjectVersion"
+	S3_ACTION_GET_OBJECT_VERSION     = "s3:GetObjectVersion"
+	S3_ACTION_GET_OBJECT_ATTRIBUTES = "s3:GetObjectAttributes"
 
 	// Object ACL operations
 	S3_ACTION_GET_OBJECT_ACL = "s3:GetObjectAcl"
@@ -27,18 +28,18 @@ const (
 	S3_ACTION_BYPASS_GOVERNANCE     = "s3:BypassGovernanceRetention"
 
 	// Multipart upload operations
-	S3_ACTION_CREATE_MULTIPART   = "s3:CreateMultipartUpload"
-	S3_ACTION_UPLOAD_PART        = "s3:UploadPart"
-	S3_ACTION_COMPLETE_MULTIPART = "s3:CompleteMultipartUpload"
-	S3_ACTION_ABORT_MULTIPART    = "s3:AbortMultipartUpload"
-	S3_ACTION_LIST_PARTS         = "s3:ListMultipartUploadParts"
+	S3_ACTION_CREATE_MULTIPART       = "s3:CreateMultipartUpload"
+	S3_ACTION_UPLOAD_PART            = "s3:UploadPart"
+	S3_ACTION_COMPLETE_MULTIPART     = "s3:CompleteMultipartUpload"
+	S3_ACTION_ABORT_MULTIPART        = "s3:AbortMultipartUpload"
+	S3_ACTION_LIST_PARTS             = "s3:ListMultipartUploadParts"
+	S3_ACTION_LIST_MULTIPART_UPLOADS = "s3:ListBucketMultipartUploads"
 
 	// Bucket operations
-	S3_ACTION_CREATE_BUCKET          = "s3:CreateBucket"
-	S3_ACTION_DELETE_BUCKET          = "s3:DeleteBucket"
-	S3_ACTION_LIST_BUCKET            = "s3:ListBucket"
-	S3_ACTION_LIST_BUCKET_VERSIONS   = "s3:ListBucketVersions"
-	S3_ACTION_LIST_MULTIPART_UPLOADS = "s3:ListBucketMultipartUploads"
+	S3_ACTION_CREATE_BUCKET        = "s3:CreateBucket"
+	S3_ACTION_DELETE_BUCKET        = "s3:DeleteBucket"
+	S3_ACTION_LIST_BUCKET          = "s3:ListBucket"
+	S3_ACTION_LIST_BUCKET_VERSIONS = "s3:ListBucketVersions"
 
 	// Bucket ACL operations
 	S3_ACTION_GET_BUCKET_ACL = "s3:GetBucketAcl"

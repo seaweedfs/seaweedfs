@@ -45,7 +45,7 @@ const (
 	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
 	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
-	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding"
+	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding,admin_script"
 )
 
 var (
@@ -204,6 +204,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.publicUrl = cmdMini.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	miniOptions.v.indexType = cmdMini.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	miniOptions.v.diskType = cmdMini.Flag.String("volume.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	miniOptions.v.tags = cmdMini.Flag.String("volume.tags", "", "comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive)")
 	miniOptions.v.fixJpgOrientation = cmdMini.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	miniOptions.v.readMode = cmdMini.Flag.String("volume.readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|read in remote node|redirect volume location'.")
 	miniOptions.v.compactionMBPerSecond = cmdMini.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
@@ -248,6 +249,7 @@ func initMiniS3Flags() {
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
+	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false
 	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
@@ -727,6 +729,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
+	*miniDataFolders = util.ResolvePath(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -1029,9 +1032,15 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
-	// Start worker after admin server is ready
-	startMiniWorker()
-	startMiniPluginWorker(ctx)
+	// Start consolidated worker runtime (both standard and plugin runtimes)
+	workerDir := filepath.Join(*miniDataFolders, "worker")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		glog.Fatalf("Failed to create unified worker directory: %v", err)
+	}
+
+	glog.Infof("Starting consolidated maintenance worker system (directory: %s)", workerDir)
+	startMiniWorker(workerDir)
+	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
@@ -1090,17 +1099,13 @@ func waitForWorkerReady(workerGrpcAddr string) {
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker() {
-	glog.Infof("Starting maintenance worker for admin server")
+func startMiniWorker(workerDir string) {
+	glog.V(1).Infof("Initializing standard worker runtime")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
 
-	// Use worker directory under main data folder
-	workerDir := filepath.Join(*miniDataFolders, "worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	glog.Infof("Worker connecting to admin server: %s", adminAddr)
 	glog.Infof("Worker capabilities: %s", capabilities)
@@ -1169,7 +1174,7 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-func startMiniPluginWorker(ctx context.Context) {
+func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	glog.Infof("Starting plugin worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -1178,15 +1183,12 @@ func startMiniPluginWorker(ctx context.Context) {
 		glog.Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
 	}
 
-	workerDir := filepath.Join(*miniDataFolders, "plugin_worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create plugin worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency))
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency), workerDir)
 	if err != nil {
 		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
 	}

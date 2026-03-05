@@ -22,8 +22,14 @@ type (
 	UpdateAccessKeyResponse      = iamlib.UpdateAccessKeyResponse
 	PutUserPolicyResponse        = iamlib.PutUserPolicyResponse
 	DeleteUserPolicyResponse     = iamlib.DeleteUserPolicyResponse
-	GetUserPolicyResponse        = iamlib.GetUserPolicyResponse
-	ErrorResponse                = iamlib.ErrorResponse
+	GetUserPolicyResponse            = iamlib.GetUserPolicyResponse
+	GetPolicyResponse                = iamlib.GetPolicyResponse
+	DeletePolicyResponse             = iamlib.DeletePolicyResponse
+	ListPoliciesResponse             = iamlib.ListPoliciesResponse
+	AttachUserPolicyResponse         = iamlib.AttachUserPolicyResponse
+	DetachUserPolicyResponse         = iamlib.DetachUserPolicyResponse
+	ListAttachedUserPoliciesResponse = iamlib.ListAttachedUserPoliciesResponse
+	ErrorResponse                    = iamlib.ErrorResponse
 	ServiceAccountInfo           = iamlib.ServiceAccountInfo
 	CreateServiceAccountResponse = iamlib.CreateServiceAccountResponse
 	DeleteServiceAccountResponse = iamlib.DeleteServiceAccountResponse
