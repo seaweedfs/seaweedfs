@@ -20,6 +20,7 @@ import (
 type AdminHandlers struct {
 	adminServer            *dash.AdminServer
 	sessionStore           sessions.Store
+	authConfig             AuthConfig
 	authHandlers           *AuthHandlers
 	clusterHandlers        *ClusterHandlers
 	fileBrowserHandlers    *FileBrowserHandlers
@@ -31,8 +32,8 @@ type AdminHandlers struct {
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
-func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *AdminHandlers {
-	authHandlers := NewAuthHandlers(adminServer, store)
+func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store, authConfig AuthConfig) *AdminHandlers {
+	authHandlers := NewAuthHandlers(adminServer, store, authConfig)
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
@@ -43,6 +44,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		sessionStore:           store,
+		authConfig:             authConfig,
 		authHandlers:           authHandlers,
 		clusterHandlers:        clusterHandlers,
 		fileBrowserHandlers:    fileBrowserHandlers,
@@ -55,7 +57,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
+func (h *AdminHandlers) SetupRoutes(r *mux.Router, enableUI bool) {
 	// Health check (no auth required)
 	r.HandleFunc("/health", h.HealthCheck).Methods(http.MethodGet)
 
@@ -72,10 +74,14 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 		return
 	}
 
-	if authRequired {
+	if h.authConfig.AuthRequired() {
 		// Authentication routes (no auth required)
 		r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
-		r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
+		r.Handle("/login", h.authHandlers.HandleLogin()).Methods(http.MethodPost)
+		if h.authConfig.OIDCAuthEnabled() {
+			r.HandleFunc("/login/oidc", h.authHandlers.HandleOIDCLogin).Methods(http.MethodGet)
+			r.HandleFunc("/login/oidc/callback", h.authHandlers.HandleOIDCCallback).Methods(http.MethodGet)
+		}
 		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
 
 		protected := r.NewRoute().Subrouter()

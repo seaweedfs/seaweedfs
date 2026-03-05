@@ -139,6 +139,9 @@ weed admin -port=8080 -masters="master1:9333,master2:9333"
 # Start with authentication
 weed admin -adminUser=admin -adminPassword=secret123
 
+# Start with OIDC authentication (configured in security.toml)
+weed admin
+
 # Start with HTTPS
 weed admin -port=443 -tlsCert=/path/to/cert.pem -tlsKey=/path/to/key.pem
 ```
@@ -153,6 +156,32 @@ weed admin -port=443 -tlsCert=/path/to/cert.pem -tlsKey=/path/to/key.pem
 | `-adminPassword` | "" | Admin password (empty = no auth) |
 | `-tlsCert` | "" | Path to TLS certificate |
 | `-tlsKey` | "" | Path to TLS private key |
+
+### OIDC Authentication (security.toml)
+
+The admin UI supports OIDC authorization code flow on the same login page as local credentials.
+Configure it in `security.toml`:
+
+```toml
+[admin.oidc]
+enabled = true
+issuer = "https://idp.example.com/realms/seaweed"
+client_id = "seaweedfs-admin-ui"
+client_secret = "your-client-secret"
+redirect_url = "https://admin.example.com/login/oidc/callback"
+scopes = ["openid", "profile", "email"]
+
+[admin.oidc.role_mapping]
+default_role = "readonly"
+
+[[admin.oidc.role_mapping.rules]]
+claim = "groups"
+value = "seaweedfs-admin"
+role = "admin"
+```
+
+Role mapping must resolve to either `admin` or `readonly`.
+OIDC sessions are capped to the ID token expiration time.
 
 ### Docker Usage
 
@@ -214,7 +243,7 @@ make fmt
 
 ### Security Considerations
 
-1. **Authentication**: Always set `adminPassword` in production
+1. **Authentication**: Use strong local credentials and/or OIDC with strict role mapping
 2. **HTTPS**: Use TLS certificates for encrypted connections
 3. **Firewall**: Restrict admin interface access to authorized networks
 

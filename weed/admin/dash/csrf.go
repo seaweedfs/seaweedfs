@@ -12,12 +12,21 @@ import (
 
 const sessionCSRFTokenKey = "csrf_token"
 
+func SessionCSRFTokenKey() string {
+	return sessionCSRFTokenKey
+}
+
 func generateCSRFToken() (string, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(tokenBytes), nil
+}
+
+// GenerateSessionToken creates a cryptographically secure token for session data.
+func GenerateSessionToken() (string, error) {
+	return generateCSRFToken()
 }
 
 func getOrCreateSessionCSRFToken(session *sessions.Session, r *http.Request, w http.ResponseWriter) (string, error) {

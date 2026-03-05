@@ -13,7 +13,7 @@ import (
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers(AuthConfig{}).SetupRoutes(router, true)
 
 	if !hasRoute(router, http.MethodGet, "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in no-auth mode")
@@ -29,7 +29,7 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers(AuthConfig{AdminUser: "admin", AdminPassword: "password"}).SetupRoutes(router, true)
 
 	if !hasRoute(router, http.MethodGet, "/api/plugin/scheduler-states") {
 		t.Fatalf("expected GET /api/plugin/scheduler-states to be registered in auth mode")
@@ -45,7 +45,7 @@ func TestSetupRoutes_RegistersPluginSchedulerStatesAPI_WithAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, false, "", "", "", "", true)
+	newRouteTestAdminHandlers(AuthConfig{}).SetupRoutes(router, true)
 
 	assertHasRoute(t, router, http.MethodGet, "/plugin")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/configuration")
@@ -58,7 +58,7 @@ func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
 	router := mux.NewRouter()
 
-	newRouteTestAdminHandlers().SetupRoutes(router, true, "admin", "password", "", "", true)
+	newRouteTestAdminHandlers(AuthConfig{AdminUser: "admin", AdminPassword: "password"}).SetupRoutes(router, true)
 
 	assertHasRoute(t, router, http.MethodGet, "/plugin")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/configuration")
@@ -68,13 +68,24 @@ func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
 	assertHasRoute(t, router, http.MethodGet, "/plugin/monitoring")
 }
 
-func newRouteTestAdminHandlers() *AdminHandlers {
+func TestSetupRoutes_RegistersOIDCRoutes_WhenEnabled(t *testing.T) {
+	router := mux.NewRouter()
+
+	newRouteTestAdminHandlers(AuthConfig{OIDCAuth: &dash.OIDCAuthService{}}).SetupRoutes(router, true)
+
+	assertHasRoute(t, router, http.MethodGet, "/login")
+	assertHasRoute(t, router, http.MethodGet, "/login/oidc")
+	assertHasRoute(t, router, http.MethodGet, "/login/oidc/callback")
+}
+
+func newRouteTestAdminHandlers(authConfig AuthConfig) *AdminHandlers {
 	adminServer := &dash.AdminServer{}
 	store := sessions.NewCookieStore([]byte("test-session-key"))
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		sessionStore:           store,
-		authHandlers:           &AuthHandlers{adminServer: adminServer, sessionStore: store},
+		authConfig:             authConfig,
+		authHandlers:           &AuthHandlers{adminServer: adminServer, sessionStore: store, authConfig: authConfig},
 		clusterHandlers:        &ClusterHandlers{adminServer: adminServer},
 		fileBrowserHandlers:    &FileBrowserHandlers{adminServer: adminServer},
 		userHandlers:           &UserHandlers{adminServer: adminServer},
