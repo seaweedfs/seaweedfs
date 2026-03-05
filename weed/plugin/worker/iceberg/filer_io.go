@@ -95,15 +95,8 @@ func walkFilerEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, d
 
 // loadCurrentMetadata loads and parses the current Iceberg metadata from the table entry's xattr.
 func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, tablePath string) (table.Metadata, string, error) {
-	parts := strings.SplitN(tablePath, "/", 2)
-	var dir, name string
-	if len(parts) == 2 {
-		dir = path.Join(s3tables.TablesPath, bucketName, parts[0])
-		name = parts[1]
-	} else {
-		dir = path.Join(s3tables.TablesPath, bucketName)
-		name = tablePath
-	}
+	dir := path.Join(s3tables.TablesPath, bucketName, path.Dir(tablePath))
+	name := path.Base(tablePath)
 
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
@@ -153,7 +146,11 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 // it into the correct filer directory + entry name, so nested sub-directories
 // are resolved properly.
 func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketName, tablePath, icebergPath string) ([]byte, error) {
-	relPath := normalizeIcebergPath(icebergPath, bucketName, tablePath)
+	relPath := path.Clean(normalizeIcebergPath(icebergPath, bucketName, tablePath))
+	relPath = strings.TrimPrefix(relPath, "/")
+	if relPath == "." || relPath == "" || strings.HasPrefix(relPath, "../") {
+		return nil, fmt.Errorf("invalid iceberg path %q", icebergPath)
+	}
 
 	dir := path.Join(s3tables.TablesPath, bucketName, tablePath, path.Dir(relPath))
 	fileName := path.Base(relPath)
@@ -265,13 +262,16 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 	}
 
 	// Compare-and-swap: verify the stored metadataVersion matches what we expect
-	if versionRaw, ok := internalMeta["metadataVersion"]; ok {
-		var storedVersion int
-		if err := json.Unmarshal(versionRaw, &storedVersion); err == nil {
-			if storedVersion != expectedVersion {
-				return fmt.Errorf("%w: expected version %d, found %d", errMetadataVersionConflict, expectedVersion, storedVersion)
-			}
-		}
+	versionRaw, ok := internalMeta["metadataVersion"]
+	if !ok {
+		return fmt.Errorf("%w: metadataVersion field missing from xattr", errMetadataVersionConflict)
+	}
+	var storedVersion int
+	if err := json.Unmarshal(versionRaw, &storedVersion); err != nil {
+		return fmt.Errorf("%w: cannot parse metadataVersion: %v", errMetadataVersionConflict, err)
+	}
+	if storedVersion != expectedVersion {
+		return fmt.Errorf("%w: expected version %d, found %d", errMetadataVersionConflict, expectedVersion, storedVersion)
 	}
 
 	// Update the metadata.fullMetadata field
