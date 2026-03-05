@@ -1,4 +1,4 @@
-// MIGRATION: Tests for seedAdminScriptFromMaster. Remove after March 2027.
+// MIGRATION: Tests for enrichConfigDefaults helpers. Remove after March 2027.
 package dash
 
 import "testing"

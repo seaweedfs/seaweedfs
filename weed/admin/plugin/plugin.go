@@ -34,6 +34,11 @@ type Options struct {
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	LockManager            LockManager
+	// ConfigDefaultsProvider is an optional callback invoked when a job type's
+	// config is being bootstrapped from its descriptor defaults. It can enrich
+	// or replace the default config before it is persisted. If nil, descriptor
+	// defaults are used as-is.
+	ConfigDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 }
 
 // JobTypeInfo contains metadata about a plugin job type.
@@ -54,6 +59,7 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	configDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
@@ -161,6 +167,7 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		configDefaultsProvider:    options.ConfigDefaultsProvider,
 		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
@@ -402,18 +409,6 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	return nil
 }
 
-// SaveJobTypeConfigIfNotExists atomically saves config only if no config
-// exists yet for the job type. Returns true if saved, false if already exists.
-func (r *Plugin) SaveJobTypeConfigIfNotExists(config *plugin_pb.PersistedJobTypeConfig) (bool, error) {
-	saved, err := r.store.SaveJobTypeConfigIfNotExists(config)
-	if err != nil {
-		return false, err
-	}
-	if saved {
-		r.wakeScheduler()
-	}
-	return saved, nil
-}
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
@@ -1082,6 +1077,10 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		AdminRuntime:       adminRuntime,
 		UpdatedAt:          timestamppb.Now(),
 		UpdatedBy:          "plugin",
+	}
+
+	if r.configDefaultsProvider != nil {
+		cfg = r.configDefaultsProvider(cfg)
 	}
 
 	_, err := r.store.SaveJobTypeConfigIfNotExists(cfg)

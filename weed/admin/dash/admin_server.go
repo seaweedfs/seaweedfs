@@ -235,30 +235,25 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
-	plugin, err := adminplugin.New(adminplugin.Options{
+	pluginOpts := adminplugin.Options{
 		DataDir: dataDir,
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
-		LockManager: lockManager,
-	})
+		LockManager:            lockManager,
+		ConfigDefaultsProvider: server.enrichConfigDefaults,
+	}
+	plugin, err := adminplugin.New(pluginOpts)
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
-		plugin, err = adminplugin.New(adminplugin.Options{
-			DataDir: "",
-			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
-				return server.buildDefaultPluginClusterContext(), nil
-			},
-			LockManager: lockManager,
-		})
+		pluginOpts.DataDir = ""
+		plugin, err = adminplugin.New(pluginOpts)
 	}
 	if err != nil {
 		glog.Errorf("Failed to initialize plugin: %v", err)
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
-
-		go server.seedAdminScriptFromMaster()
 	}
 
 	return server
@@ -276,23 +271,15 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
 }
 
-// seedAdminScriptFromMaster fetches maintenance scripts from the master's
-// configuration and uses them as the default admin_script plugin config,
-// if the plugin does not already have a saved config for admin_script.
+// enrichConfigDefaults is called by the plugin when bootstrapping a job type's
+// default config from its descriptor. For admin_script, it fetches maintenance
+// scripts from the master and uses them as the script default.
 //
 // MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
 // to the admin script plugin worker. Remove after March 2027.
-func (s *AdminServer) seedAdminScriptFromMaster() {
-	if s.plugin == nil {
-		return
-	}
-
-	// Wait for master connection with a bounded timeout
-	waitCtx, waitCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer waitCancel()
-	if s.masterClient.GetMaster(waitCtx) == "" {
-		glog.V(1).Infof("Timed out waiting for master connection for admin_script seeding")
-		return
+func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	if cfg.JobType != "admin_script" {
+		return cfg
 	}
 
 	var maintenanceScripts string
@@ -309,13 +296,13 @@ func (s *AdminServer) seedAdminScriptFromMaster() {
 		return nil
 	})
 	if err != nil {
-		glog.V(1).Infof("Could not fetch master configuration for admin_script seeding: %v", err)
-		return
+		glog.V(1).Infof("Could not fetch master configuration for admin_script defaults: %v", err)
+		return cfg
 	}
 
 	script := cleanMaintenanceScript(maintenanceScripts)
 	if script == "" {
-		return
+		return cfg
 	}
 
 	interval := int64(sleepMinutes)
@@ -323,42 +310,26 @@ func (s *AdminServer) seedAdminScriptFromMaster() {
 		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
 	}
 
-	cfg := &plugin_pb.PersistedJobTypeConfig{
-		JobType: "admin_script",
-		AdminConfigValues: map[string]*plugin_pb.ConfigValue{
-			"script": {
-				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
-			},
-			"run_interval_minutes": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
-			},
-		},
-		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
-			Enabled:                       true,
-			DetectionIntervalSeconds:      60,
-			DetectionTimeoutSeconds:       300,
-			MaxJobsPerDetection:           1,
-			GlobalExecutionConcurrency:    1,
-			PerWorkerExecutionConcurrency: 1,
-			JobTypeMaxRuntimeSeconds:      1800,
-		},
-		UpdatedBy: "master_migration",
-	}
+	glog.V(0).Infof("Enriching admin_script defaults from master maintenance scripts (interval=%dm)", interval)
 
-	saved, err := s.plugin.SaveJobTypeConfigIfNotExists(cfg)
-	if err != nil {
-		glog.Warningf("Failed to seed admin_script plugin config from master: %v", err)
-		return
+	if cfg.AdminConfigValues == nil {
+		cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
 	}
-	if saved {
-		glog.V(0).Infof("Seeded admin_script plugin config from master maintenance scripts (interval=%dm)", interval)
+	cfg.AdminConfigValues["script"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
 	}
+	cfg.AdminConfigValues["run_interval_minutes"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+	}
+	cfg.UpdatedBy = "master_migration"
+
+	return cfg
 }
 
 // cleanMaintenanceScript strips lock/unlock commands and normalizes a
 // maintenance script string for use with the admin script plugin worker.
 //
-// MIGRATION: Used by seedAdminScriptFromMaster. Remove after March 2027.
+// MIGRATION: Used by enrichConfigDefaults. Remove after March 2027.
 func cleanMaintenanceScript(script string) string {
 	script = strings.ReplaceAll(script, "\r\n", "\n")
 	var lines []string
