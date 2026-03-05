@@ -236,9 +236,9 @@ func (mq *MaintenanceQueue) hasDuplicateTask(newTask *MaintenanceTask) bool {
 // from previous cycles are cleaned up before creating new ones.
 func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskType) int {
 	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
 
 	var remaining []*MaintenanceTask
+	var cancelledSnapshots []*MaintenanceTask
 	cancelled := 0
 	for _, task := range mq.pendingTasks {
 		if task.Type == taskType {
@@ -246,6 +246,7 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 			now := time.Now()
 			task.CompletedAt = &now
 			cancelled++
+			cancelledSnapshots = append(cancelledSnapshots, snapshotTask(task))
 			glog.V(1).Infof("Cancelled stale pending task %s (%s) for volume %d before re-detection",
 				task.ID, task.Type, task.VolumeID)
 
@@ -261,6 +262,12 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 		}
 	}
 	mq.pendingTasks = remaining
+	mq.mutex.Unlock()
+
+	// Persist cancelled state outside the lock to avoid blocking
+	for _, snapshot := range cancelledSnapshots {
+		mq.saveTaskState(snapshot)
+	}
 	return cancelled
 }
 
