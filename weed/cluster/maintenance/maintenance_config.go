@@ -1,5 +1,7 @@
 package maintenance
 
+const DefaultMaintenanceSleepMinutes = 17
+
 const DefaultMasterMaintenanceScripts = `
   lock
   ec.encode -fullPercent=95 -quietFor=1h

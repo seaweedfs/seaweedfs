@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -256,6 +257,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
+
+		go server.seedAdminScriptFromMaster()
 	}
 
 	return server
@@ -271,6 +274,113 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	// Load task configurations dynamically using the config update registry
 	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
+}
+
+// seedAdminScriptFromMaster fetches maintenance scripts from the master's
+// configuration and uses them as the default admin_script plugin config,
+// if the plugin does not already have a saved config for admin_script.
+//
+// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
+// to the admin script plugin worker. Remove after March 2027.
+func (s *AdminServer) seedAdminScriptFromMaster() {
+	if s.plugin == nil {
+		return
+	}
+
+	// Wait for master connection to be available
+	for i := 0; i < 30; i++ {
+		if s.masterClient.GetMaster(context.Background()) != "" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+
+	var maintenanceScripts string
+	var sleepMinutes uint32
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		maintenanceScripts = resp.MaintenanceScripts
+		sleepMinutes = resp.MaintenanceSleepMinutes
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("Could not fetch master configuration for admin_script seeding: %v", err)
+		return
+	}
+
+	script := cleanMaintenanceScript(maintenanceScripts)
+	if script == "" {
+		return
+	}
+
+	// Only seed if the admin_script plugin does not already have a saved config
+	existing, err := s.plugin.LoadJobTypeConfig("admin_script")
+	if err != nil {
+		glog.Warningf("Failed to check admin_script plugin config: %v", err)
+		return
+	}
+	if existing != nil {
+		return
+	}
+
+	interval := int64(sleepMinutes)
+	if interval <= 0 {
+		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
+	}
+
+	cfg := &plugin_pb.PersistedJobTypeConfig{
+		JobType: "admin_script",
+		AdminConfigValues: map[string]*plugin_pb.ConfigValue{
+			"script": {
+				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
+			},
+			"run_interval_minutes": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+			},
+		},
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                       true,
+			DetectionIntervalSeconds:      60,
+			DetectionTimeoutSeconds:       300,
+			MaxJobsPerDetection:           1,
+			GlobalExecutionConcurrency:    1,
+			PerWorkerExecutionConcurrency: 1,
+			JobTypeMaxRuntimeSeconds:      1800,
+		},
+		UpdatedBy: "master_migration",
+	}
+
+	if err := s.plugin.SaveJobTypeConfig(cfg); err != nil {
+		glog.Warningf("Failed to seed admin_script plugin config from master: %v", err)
+		return
+	}
+	glog.V(0).Infof("Seeded admin_script plugin config from master maintenance scripts (interval=%dm)", interval)
+}
+
+// cleanMaintenanceScript strips lock/unlock commands and normalizes a
+// maintenance script string for use with the admin script plugin worker.
+//
+// MIGRATION: Used by seedAdminScriptFromMaster. Remove after March 2027.
+func cleanMaintenanceScript(script string) string {
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if lower == "lock" || lower == "unlock" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetCredentialManager returns the credential manager
