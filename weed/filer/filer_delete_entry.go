@@ -227,7 +227,7 @@ func (f *Filer) reconcilePendingRemoteMetadataDeletions(ctx context.Context) err
 	}
 
 	for _, pendingPath := range pendingPaths {
-		entry, findErr := f.FindEntry(ctx, pendingPath)
+		entry, findErr := f.FindEntryLocal(ctx, pendingPath)
 		if errors.Is(findErr, filer_pb.ErrNotFound) || entry == nil {
 			if clearErr := f.clearRemoteMetadataDeletionPending(ctx, pendingPath); clearErr != nil {
 				glog.Warningf("clear remote metadata deletion pending %s: %v", pendingPath, clearErr)

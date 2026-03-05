@@ -363,7 +363,14 @@ var (
 )
 
 func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
+	return f.findEntry(ctx, p, true)
+}
 
+func (f *Filer) FindEntryLocal(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
+	return f.findEntry(ctx, p, false)
+}
+
+func (f *Filer) findEntry(ctx context.Context, p util.FullPath, allowLazyFetch bool) (entry *Entry, err error) {
 	if string(p) == "/" {
 		return Root, nil
 	}
@@ -382,7 +389,7 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		}
 	}
 
-	if entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
+	if allowLazyFetch && entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
 		if lazy, lazyErr := f.maybeLazyFetchFromRemote(ctx, p); lazyErr != nil {
 			glog.V(1).InfofCtx(ctx, "FindEntry lazy fetch %s: %v", p, lazyErr)
 		} else if lazy != nil {
