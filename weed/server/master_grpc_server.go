@@ -456,11 +456,7 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 	leader, _ := ms.Topo.Leader()
 
 	// MIGRATION: expose maintenance scripts for admin server seeding. Remove after March 2027.
-	// Apply defaults here rather than relying on startAdminScripts having called SetDefault,
-	// since this gRPC handler can be reached before startAdminScripts runs.
 	v := util.GetViper()
-	v.SetDefault("master.maintenance.scripts", maintenance.DefaultMasterMaintenanceScripts)
-	v.SetDefault("master.maintenance.sleep_minutes", maintenance.DefaultMaintenanceSleepMinutes)
 	maintenanceScripts := v.GetString("master.maintenance.scripts")
 	maintenanceSleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
 	if maintenanceSleepMinutes <= 0 {
