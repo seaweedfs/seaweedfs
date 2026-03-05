@@ -17,20 +17,30 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 		return fmt.Errorf("pending task %s not found", taskID)
 	}
 
-	// Check if all destination disks have sufficient capacity to reserve
-	for _, dest := range task.Destinations {
-		targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
-		if targetDisk, exists := at.disks[targetKey]; exists {
-			availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
+	// Skip capacity check if topology hasn't been populated yet
+	if len(at.disks) == 0 {
+		glog.Warningf("AssignTask %s: topology has no disks yet, skipping capacity check", taskID)
+	} else {
+		// Check if all destination disks have sufficient capacity to reserve
+		for _, dest := range task.Destinations {
+			targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
+			if targetDisk, exists := at.disks[targetKey]; exists {
+				availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
 
-			// Check if we have enough total capacity using the improved unified comparison
-			if !availableCapacity.CanAccommodate(dest.StorageChange) {
-				return fmt.Errorf("insufficient capacity on target disk %s:%d. Available: %+v, Required: %+v",
-					dest.TargetServer, dest.TargetDisk, availableCapacity, dest.StorageChange)
+				// Check if we have enough total capacity using the improved unified comparison
+				if !availableCapacity.CanAccommodate(dest.StorageChange) {
+					return fmt.Errorf("insufficient capacity on target disk %s:%d. Available: %+v, Required: %+v",
+						dest.TargetServer, dest.TargetDisk, availableCapacity, dest.StorageChange)
+				}
+			} else if dest.TargetServer != "" {
+				// Fail fast if destination disk is not found in topology
+				var existingKeys []string
+				for k := range at.disks {
+					existingKeys = append(existingKeys, k)
+				}
+				glog.Warningf("destination disk %s not found in topology. Existing disk keys: %v", targetKey, existingKeys)
+				return fmt.Errorf("destination disk %s not found in topology", targetKey)
 			}
-		} else if dest.TargetServer != "" {
-			// Fail fast if destination disk is not found in topology
-			return fmt.Errorf("destination disk %s not found in topology", targetKey)
 		}
 	}
 

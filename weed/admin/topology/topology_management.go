@@ -87,6 +87,8 @@ func (at *ActiveTopology) UpdateTopology(topologyInfo *master_pb.TopologyInfo) e
 					}
 
 					diskKey := fmt.Sprintf("%s:%d", nodeInfo.Id, diskInfo.DiskId)
+					glog.V(0).Infof("UpdateTopology: adding disk key=%q nodeId=%q diskId=%d diskType=%q address=%q grpcPort=%d volumes=%d maxVolumes=%d",
+						diskKey, nodeInfo.Id, diskInfo.DiskId, diskType, nodeInfo.Address, nodeInfo.GrpcPort, diskInfo.VolumeCount, diskInfo.MaxVolumeCount)
 					node.disks[diskInfo.DiskId] = disk
 					at.disks[diskKey] = disk
 				}
