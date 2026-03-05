@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -330,6 +331,47 @@ func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
 
 		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
 		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("notresource excludes denied object", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("denyNotResource", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","NotResource":"arn:aws:s3:::test-bucket/public/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denyNotResource"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "private/secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "public/readme.txt")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("condition securetransport enforced", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowTLSOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*","Condition":{"Bool":{"aws:SecureTransport":"true"}}}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowTLSOnly"},
+		}
+
+		httpReq := buildRequest(t, http.MethodGet)
+		errCode := iam.VerifyActionPermission(httpReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		httpsReq := buildRequest(t, http.MethodGet)
+		httpsReq.TLS = &tls.ConnectionState{}
+		errCode = iam.VerifyActionPermission(httpsReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
 	})
 
 	t.Run("actions based path still works", func(t *testing.T) {

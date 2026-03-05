@@ -1667,11 +1667,13 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	}
 
 	resource := buildResourceARN(bucket, object)
+	principal := buildPrincipalARN(identity, r)
 	s3Action := ResolveS3Action(r, string(action), bucket, object)
-
-	// AWS IAM semantics: explicit deny overrides explicit allow.
-	explicitDeny := false
 	explicitAllow := false
+	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
+	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
+		conditions[k] = v
+	}
 
 	for _, policyName := range identity.PolicyNames {
 		policy, err := iam.GetPolicy(policyName)
@@ -1679,48 +1681,25 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 			continue
 		}
 
-		var policyDoc policy_engine.PolicyDocument
-		if err := json.Unmarshal([]byte(policy.Content), &policyDoc); err != nil {
+		engine := policy_engine.NewPolicyEngine()
+		if err := engine.SetBucketPolicy(policyName, policy.Content); err != nil {
 			continue
 		}
 
-		for _, statement := range policyDoc.Statement {
-			actionMatches := false
-			for _, policyAction := range statement.Action.Strings() {
-				if wildcard.MatchesWildcard(policyAction, s3Action) {
-					actionMatches = true
-					break
-				}
-			}
-			if !actionMatches {
-				continue
-			}
+		result := engine.EvaluatePolicy(policyName, &policy_engine.PolicyEvaluationArgs{
+			Action:     s3Action,
+			Resource:   resource,
+			Principal:  principal,
+			Conditions: conditions,
+			Claims:     identity.Claims,
+		})
 
-			resourceMatches := false
-			if len(statement.Resource.Strings()) == 0 {
-				resourceMatches = true
-			} else {
-				for _, policyResource := range statement.Resource.Strings() {
-					if wildcard.MatchesWildcard(policyResource, resource) {
-						resourceMatches = true
-						break
-					}
-				}
-			}
-			if !resourceMatches {
-				continue
-			}
-
-			if statement.Effect == policy_engine.PolicyEffectDeny {
-				explicitDeny = true
-			} else if statement.Effect == policy_engine.PolicyEffectAllow {
-				explicitAllow = true
-			}
+		if result == policy_engine.PolicyResultDeny {
+			return false
 		}
-	}
-
-	if explicitDeny {
-		return false
+		if result == policy_engine.PolicyResultAllow {
+			explicitAllow = true
+		}
 	}
 
 	return explicitAllow
