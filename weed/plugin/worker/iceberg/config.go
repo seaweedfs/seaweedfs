@@ -32,8 +32,9 @@ type Config struct {
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
+// Values are clamped to safe minimums to prevent misconfiguration.
 func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
-	return Config{
+	cfg := Config{
 		SnapshotRetentionHours: readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
 		MaxSnapshotsToKeep:     readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
 		OrphanOlderThanHours:   readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
@@ -42,10 +43,32 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
 	}
+
+	// Clamp to safe minimums using the default constants
+	if cfg.SnapshotRetentionHours <= 0 {
+		cfg.SnapshotRetentionHours = defaultSnapshotRetentionHours
+	}
+	if cfg.MaxSnapshotsToKeep <= 0 {
+		cfg.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
+	}
+	if cfg.OrphanOlderThanHours <= 0 {
+		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
+	}
+	if cfg.MaxCommitRetries <= 0 {
+		cfg.MaxCommitRetries = defaultMaxCommitRetries
+	}
+	if cfg.TargetFileSizeBytes <= 0 {
+		cfg.TargetFileSizeBytes = defaultTargetFileSizeBytes
+	}
+	if cfg.MinInputFiles < 2 {
+		cfg.MinInputFiles = defaultMinInputFiles
+	}
+
+	return cfg
 }
 
 // parseOperations returns the ordered list of maintenance operations to execute.
-// Order follows Iceberg best practices: expire_snapshots → remove_orphans → rewrite_manifests.
+// Order follows Iceberg best practices: compact → expire_snapshots → remove_orphans → rewrite_manifests.
 // Returns an error if any unknown operation is specified or the result would be empty.
 func parseOperations(ops string) ([]string, error) {
 	ops = strings.TrimSpace(strings.ToLower(ops))
