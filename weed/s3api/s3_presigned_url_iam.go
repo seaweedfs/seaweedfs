@@ -102,6 +102,12 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 		return nil, fmt.Errorf("IAM integration not enabled")
 	}
 
+	// This API path is explicitly session-token based (JWT/STS).
+	// Static IAM users without a session token should use the regular signing path.
+	if strings.TrimSpace(req.SessionToken) == "" {
+		return nil, fmt.Errorf("IAM authorization failed: missing session token")
+	}
+
 	// Validate session token and get identity
 	// Use a proper ARN format for the principal
 	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/PresignedUser/presigned-session")

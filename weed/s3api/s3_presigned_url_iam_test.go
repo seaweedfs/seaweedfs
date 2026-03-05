@@ -193,7 +193,7 @@ func TestPresignedURLGeneration(t *testing.T) {
 				Expiration: time.Hour,
 			},
 			shouldSucceed: false,
-			expectedError: "IAM authorization failed",
+			expectedError: "missing session token",
 		},
 	}
 
@@ -211,8 +211,10 @@ func TestPresignedURLGeneration(t *testing.T) {
 					t.Errorf("Response should not be nil when generation should succeed")
 				}
 			} else {
-				assert.Error(t, err, "Presigned URL generation should fail")
-				if tt.expectedError != "" {
+				if !assert.Error(t, err, "Presigned URL generation should fail") {
+					return
+				}
+				if tt.expectedError != "" && err != nil {
 					assert.Contains(t, err.Error(), tt.expectedError, "Error message should contain expected text")
 				}
 			}
