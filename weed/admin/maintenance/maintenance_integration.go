@@ -541,7 +541,7 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 		// Strip the gRPC port suffix via ToHttpAddress() to match the topology key.
 		for _, src := range task.TypedParams.Sources {
 			resolvedSrc := pb.ServerAddress(src.Node).ToHttpAddress()
-			glog.V(0).Infof("SyncTask %s: source proto Node=%q resolved to %q, diskId=%d", task.ID, src.Node, resolvedSrc, src.DiskId)
+			glog.V(2).Infof("SyncTask %s: source proto Node=%q resolved to %q, diskId=%d", task.ID, src.Node, resolvedSrc, src.DiskId)
 			sources = append(sources, topology.TaskSource{
 				SourceServer:  resolvedSrc,
 				SourceDisk:    src.DiskId,
@@ -552,7 +552,7 @@ func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
 		}
 		for _, target := range task.TypedParams.Targets {
 			resolvedTarget := pb.ServerAddress(target.Node).ToHttpAddress()
-			glog.V(0).Infof("SyncTask %s: target proto Node=%q resolved to %q, diskId=%d", task.ID, target.Node, resolvedTarget, target.DiskId)
+			glog.V(2).Infof("SyncTask %s: target proto Node=%q resolved to %q, diskId=%d", task.ID, target.Node, resolvedTarget, target.DiskId)
 			destinations = append(destinations, topology.TaskDestination{
 				TargetServer:  resolvedTarget,
 				TargetDisk:    target.DiskId,
