@@ -114,3 +114,45 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	}
 	return result.entry, nil
 }
+
+func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) error {
+	if entry == nil || f.RemoteStorage == nil {
+		return nil
+	}
+
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(entry.FullPath)
+	if remoteLoc == nil {
+		return nil
+	}
+
+	client, _, found := f.RemoteStorage.FindRemoteStorageClient(entry.FullPath)
+	if !found {
+		return nil
+	}
+
+	objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, entry.FullPath)
+
+	if entry.IsDirectory() {
+		if err := client.RemoveDirectory(objectLoc); err != nil {
+			if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+				return nil
+			}
+			return fmt.Errorf("remove remote directory %s: %w", entry.FullPath, err)
+		}
+		return nil
+	}
+
+	if !entry.IsInRemoteOnly() {
+		return nil
+	}
+
+	if err := client.DeleteFile(objectLoc); err != nil {
+		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+			return nil
+		}
+		return fmt.Errorf("delete remote file %s: %w", entry.FullPath, err)
+	}
+
+	glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted %s from remote", entry.FullPath)
+	return nil
+}
