@@ -45,8 +45,8 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		return nil, raft.NotLeaderError
 	}
 
-	if ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
-		return nil, status.Errorf(codes.Unavailable, "master is warming up, retry with other masters")
+	if ms.Topo.IsWarmingUp() {
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
 	if req.Count == 0 {

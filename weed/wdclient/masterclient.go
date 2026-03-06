@@ -381,11 +381,6 @@ func (mc *MasterClient) GetMaster(ctx context.Context) pb.ServerAddress {
 	return mc.getCurrentMaster()
 }
 
-// GetMasterCount returns the number of configured master peers without blocking.
-func (mc *MasterClient) GetMasterCount() int {
-	return len(mc.masters.GetInstances())
-}
-
 // GetMasters returns all configured master addresses, blocking until connected.
 // See GetMaster() for important initialization contract details.
 func (mc *MasterClient) GetMasters(ctx context.Context) []pb.ServerAddress {

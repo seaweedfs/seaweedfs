@@ -131,9 +131,10 @@ func (t *Topology) GetLastLeaderChangeTime() time.Time {
 }
 
 // IsWarmingUp returns true if the master recently became leader and may not yet
-// have a complete topology. After a leader change, volume servers need up to
-// WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
-// Returns false for fresh clusters (no prior volumes) since there is nothing to warm up.
+// have a complete topology. After a leader change or restart, volume servers need
+// up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
+// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
+// existing volumes to wait for.
 func (t *Topology) IsWarmingUp() bool {
 	if t.GetMaxVolumeId() == 0 {
 		return false
