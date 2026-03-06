@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -342,6 +343,9 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 		}
 		if !bufferFull && len(entries) < int(batchSize) {
 			dh.isFinished = true
+			// After a full successful read-through listing, exit direct mode
+			// so subsequent reads can use the cache instead of hitting the filer.
+			wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, time.Now())
 		}
 	}
 
