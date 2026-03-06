@@ -72,14 +72,17 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		if err := mc.BeginDirectoryBuild(ctx, path); err != nil {
 			return nil, fmt.Errorf("begin build %s: %w", path, err)
 		}
+		cleanupBuild := func(reason string) {
+			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+				glog.V(2).Infof("clear %s build %s: %v", reason, path, deleteErr)
+			}
+			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+				glog.V(2).Infof("abort %s build %s: %v", reason, path, abortErr)
+			}
+		}
 		defer func() {
 			if ctx.Err() != nil {
-				if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
-					glog.V(2).Infof("clear canceled build %s: %v", path, deleteErr)
-				}
-				if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
-					glog.V(2).Infof("abort canceled build %s: %v", path, abortErr)
-				}
+				cleanupBuild("canceled")
 			}
 		}()
 
@@ -117,34 +120,19 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		})
 
 		if fetchErr != nil {
-			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
-				glog.V(2).Infof("clear failed build %s: %v", path, deleteErr)
-			}
-			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
-				glog.V(2).Infof("abort failed build %s: %v", path, abortErr)
-			}
+			cleanupBuild("failed")
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
 		// Flush any remaining entries in the batch
 		if len(batch) > 0 {
 			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
-				if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
-					glog.V(2).Infof("clear incomplete build %s: %v", path, deleteErr)
-				}
-				if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
-					glog.V(2).Infof("abort incomplete build %s: %v", path, abortErr)
-				}
+				cleanupBuild("incomplete")
 				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
 			}
 		}
 		if err := mc.CompleteDirectoryBuild(ctx, path, snapshotTsNs); err != nil {
-			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
-				glog.V(2).Infof("clear unreplayed build %s: %v", path, deleteErr)
-			}
-			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
-				glog.V(2).Infof("abort unreplayed build %s: %v", path, abortErr)
-			}
+			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)
 		}
 		return nil, nil
