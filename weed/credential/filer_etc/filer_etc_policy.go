@@ -180,7 +180,7 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFilerWithContext(ctx, client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
 					continue
@@ -310,7 +310,7 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 
 	var policy *policy_engine.PolicyDocument
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json")
+		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamPoliciesDirectory, name+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return nil

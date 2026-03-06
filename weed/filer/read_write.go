@@ -28,7 +28,7 @@ func ReadEntry(masterClient *wdclient.MasterClient, filerClient filer_pb.Seaweed
 
 }
 
-func ReadInsideFilerWithContext(ctx context.Context, filerClient filer_pb.SeaweedFilerClient, dir, name string) (content []byte, err error) {
+func ReadInsideFiler(ctx context.Context, filerClient filer_pb.SeaweedFilerClient, dir, name string) (content []byte, err error) {
 	request := &filer_pb.LookupDirectoryEntryRequest{
 		Directory: dir,
 		Name:      name,
@@ -39,10 +39,6 @@ func ReadInsideFilerWithContext(ctx context.Context, filerClient filer_pb.Seawee
 	}
 	content = respLookupEntry.Entry.Content
 	return
-}
-
-func ReadInsideFiler(filerClient filer_pb.SeaweedFilerClient, dir, name string) (content []byte, err error) {
-	return ReadInsideFilerWithContext(context.Background(), filerClient, dir, name)
 }
 
 func SaveInsideFiler(client filer_pb.SeaweedFilerClient, dir, name string, content []byte) error {

@@ -93,7 +93,7 @@ func (store *FilerEtcStore) loadFromMultiFile(ctx context.Context, s3cfg *iam_pb
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read identity file %s: %v", entry.Name, err)
 					continue
@@ -249,7 +249,7 @@ func (store *FilerEtcStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 func (store *FilerEtcStore) GetUser(ctx context.Context, username string) (*iam_pb.Identity, error) {
 	var identity *iam_pb.Identity
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, username+".json")
+		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamIdentitiesDirectory, username+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return credential.ErrUserNotFound
@@ -350,7 +350,7 @@ func (store *FilerEtcStore) GetUserByAccessKey(ctx context.Context, accessKey st
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					continue
 				}
@@ -439,7 +439,7 @@ func (store *FilerEtcStore) readInsideFiler(ctx context.Context, dir string, nam
 	var content []byte
 	found := false
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		c, err := filer.ReadInsideFilerWithContext(ctx, client, dir, name)
+		c, err := filer.ReadInsideFiler(ctx, client, dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return nil

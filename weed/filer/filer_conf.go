@@ -47,7 +47,7 @@ func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOpti
 			data = buf.Bytes()
 			return nil
 		}
-		content, err := ReadInsideFiler(client, DirectoryEtcSeaweedFS, FilerConfName)
+		content, err := ReadInsideFiler(context.Background(), client, DirectoryEtcSeaweedFS, FilerConfName)
 		if err != nil {
 			return err
 		}

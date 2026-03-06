@@ -284,7 +284,7 @@ func (c *BrokerClient) GetTopicSchema(ctx context.Context, namespace, topicName 
 		}
 
 		// Read the topic.conf file content
-		data, err := filer.ReadInsideFiler(client, topicDir, "topic.conf")
+		data, err := filer.ReadInsideFiler(ctx, client, topicDir, "topic.conf")
 		if err != nil {
 			return fmt.Errorf("failed to read topic.conf for %s.%s: %v", namespace, topicName, err)
 		}
