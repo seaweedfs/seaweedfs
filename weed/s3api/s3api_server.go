@@ -34,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -540,6 +541,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
+	apiRouter.Use(request_id.Middleware)
 
 	// S3 Tables API endpoint
 	// POST / with X-Amz-Target: S3Tables.<OperationName>

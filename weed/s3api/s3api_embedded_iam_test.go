@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -156,6 +158,15 @@ func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) 
 	return "", ""
 }
 
+func extractEmbeddedIamRequestID(response *httptest.ResponseRecorder) string {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(response.Body.String())
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
+}
+
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
 func TestEmbeddedIamCreateUser(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -199,6 +210,8 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 
 	// Verify response contains the users
 	assert.Len(t, out.ListUsersResult.Users, 2)
+	assert.NotEmpty(t, response.Header().Get(request_id.AmzRequestIDHeader))
+	assert.Equal(t, response.Header().Get(request_id.AmzRequestIDHeader), out.ResponseMetadata.RequestId)
 }
 
 // TestEmbeddedIamListAccessKeys tests listing access keys via the embedded IAM API
@@ -1216,6 +1229,7 @@ func TestEmbeddedIamNotImplementedAction(t *testing.T) {
 	assert.Equal(t, http.StatusNotImplemented, rr.Code)
 	assert.Contains(t, rr.Body.String(), "<RequestId>")
 	assert.NotContains(t, rr.Body.String(), "<ResponseMetadata>")
+	assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractEmbeddedIamRequestID(rr))
 }
 
 // TestGetPolicyDocument tests parsing of policy documents
@@ -1900,11 +1914,11 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(context.Background(), vals, false)
+	resp, iamErr := api.ExecuteAction(context.Background(), vals, false, "")
 	assert.Nil(t, iamErr)
 
 	// Verify response type
-	createResp, ok := resp.(iamCreateUserResponse)
+	createResp, ok := resp.(*iamCreateUserResponse)
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
