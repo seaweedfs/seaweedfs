@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -23,17 +24,32 @@ import (
 
 type policyTestFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	mu      sync.RWMutex
-	entries map[string]*filer_pb.Entry
+	mu                   sync.RWMutex
+	entries              map[string]*filer_pb.Entry
+	contentlessListEntry map[string]struct{}
+	beforeLookup         func(context.Context, string, string) error
+	afterListEntry       func(string, string)
+	beforeDelete         func(string, string) error
+	beforeUpdate         func(string, string) error
 }
 
 func newPolicyTestFilerServer() *policyTestFilerServer {
 	return &policyTestFilerServer{
-		entries: make(map[string]*filer_pb.Entry),
+		entries:              make(map[string]*filer_pb.Entry),
+		contentlessListEntry: make(map[string]struct{}),
 	}
 }
 
-func (s *policyTestFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+func (s *policyTestFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	s.mu.RLock()
+	beforeLookup := s.beforeLookup
+	s.mu.RUnlock()
+	if beforeLookup != nil {
+		if err := beforeLookup(ctx, req.Directory, req.Name); err != nil {
+			return nil, err
+		}
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -61,8 +77,14 @@ func (s *policyTestFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, st
 
 	for _, name := range names {
 		entry := cloneEntry(s.entries[filerEntryKey(req.Directory, name)])
+		if _, found := s.contentlessListEntry[filerEntryKey(req.Directory, name)]; found {
+			entry.Content = nil
+		}
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
 			return err
+		}
+		if s.afterListEntry != nil {
+			s.afterListEntry(req.Directory, name)
 		}
 	}
 
@@ -78,6 +100,15 @@ func (s *policyTestFilerServer) CreateEntry(_ context.Context, req *filer_pb.Cre
 }
 
 func (s *policyTestFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	s.mu.RLock()
+	beforeUpdate := s.beforeUpdate
+	s.mu.RUnlock()
+	if beforeUpdate != nil {
+		if err := beforeUpdate(req.Directory, req.Entry.Name); err != nil {
+			return nil, err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -86,6 +117,15 @@ func (s *policyTestFilerServer) UpdateEntry(_ context.Context, req *filer_pb.Upd
 }
 
 func (s *policyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	s.mu.RLock()
+	beforeDelete := s.beforeDelete
+	s.mu.RUnlock()
+	if beforeDelete != nil {
+		if err := beforeDelete(req.Directory, req.Name); err != nil {
+			return nil, err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -99,13 +139,19 @@ func (s *policyTestFilerServer) DeleteEntry(_ context.Context, req *filer_pb.Del
 }
 
 func newPolicyTestStore(t *testing.T) *FilerEtcStore {
+	store, _ := newPolicyTestStoreWithServer(t)
+	return store
+}
+
+func newPolicyTestStoreWithServer(t *testing.T) (*FilerEtcStore, *policyTestFilerServer) {
 	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
+	server := newPolicyTestFilerServer()
 	grpcServer := pb.NewGrpcServer()
-	filer_pb.RegisterSeaweedFilerServer(grpcServer, newPolicyTestFilerServer())
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, server)
 	go func() {
 		_ = grpcServer.Serve(lis)
 	}()
@@ -124,7 +170,7 @@ func newPolicyTestStore(t *testing.T) *FilerEtcStore {
 		return pb.NewServerAddress(host, 1, grpcPort)
 	}, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
-	return store
+	return store, server
 }
 
 func TestFilerEtcStoreListPolicyNamesIncludesLegacyPolicies(t *testing.T) {
@@ -176,6 +222,28 @@ func TestFilerEtcStoreDeletePolicyRemovesLegacyManagedCopy(t *testing.T) {
 	require.True(t, foundLegacy)
 	assert.Empty(t, loadedLegacyPolicies.Policies)
 	assertInlinePolicyPreserved(t, loadedLegacyPolicies.InlinePolicies, "inline-user", "PutOnly")
+}
+
+func TestFilerEtcStoreLoadManagedPoliciesRespectsReadContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store, server := newPolicyTestStoreWithServer(t)
+
+	require.NoError(t, store.savePolicy(context.Background(), "cancel-me", testPolicyDocument("s3:GetObject", "arn:aws:s3:::cancel-me/*")))
+
+	server.mu.Lock()
+	server.contentlessListEntry[filerEntryKey(filer.IamConfigDirectory+"/"+IamPoliciesDirectory, "cancel-me.json")] = struct{}{}
+	server.beforeLookup = func(ctx context.Context, dir string, name string) error {
+		if dir == filer.IamConfigDirectory+"/"+IamPoliciesDirectory && name == "cancel-me.json" {
+			cancel()
+			return status.Error(codes.Canceled, context.Canceled.Error())
+		}
+		return nil
+	}
+	server.mu.Unlock()
+
+	managedPolicies, err := store.LoadManagedPolicies(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, managedPolicies)
 }
 
 func testPolicyDocument(action string, resource string) policy_engine.PolicyDocument {

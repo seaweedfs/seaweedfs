@@ -180,7 +180,7 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFilerWithContext(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read policy file %s: %v", entry.Name, err)
 					continue
@@ -197,7 +197,7 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 
 				// The file name is "policyName.json"
 				policyName := entry.Name
-				if len(policyName) > 5 && policyName[len(policyName)-5:] == ".json" {
+				if strings.HasSuffix(policyName, ".json") {
 					policyName = policyName[:len(policyName)-5]
 					policies[policyName] = policy
 				}
