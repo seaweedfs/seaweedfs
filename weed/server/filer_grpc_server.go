@@ -318,8 +318,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
+	} else {
+		resp.MetadataEvent = eventSink.Last()
 	}
-	resp.MetadataEvent = eventSink.Last()
 	return resp, nil
 }
 
