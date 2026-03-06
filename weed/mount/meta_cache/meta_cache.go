@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 // need to have logic similar to FilerStoreWrapper
@@ -29,12 +31,41 @@ type MetaCache struct {
 	invalidateFunc    func(fullpath util.FullPath, entry *filer_pb.Entry)
 	onDirectoryUpdate func(dir util.FullPath)
 	visitGroup        singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	applyCh           chan metadataApplyRequest
+	applyDone         chan struct{}
+	applyStateMu      sync.Mutex
+	applyClosed       bool
+}
+
+var errMetaCacheClosed = errors.New("metadata cache is shut down")
+
+type MetadataResponseApplyOptions struct {
+	NotifyDirectories bool
+	InvalidateEntries bool
+}
+
+var (
+	LocalMetadataResponseApplyOptions = MetadataResponseApplyOptions{
+		NotifyDirectories: true,
+	}
+	SubscriberMetadataResponseApplyOptions = MetadataResponseApplyOptions{
+		NotifyDirectories: true,
+		InvalidateEntries: true,
+	}
+)
+
+type metadataApplyRequest struct {
+	ctx      context.Context
+	resp     *filer_pb.SubscribeMetadataResponse
+	options  MetadataResponseApplyOptions
+	done     chan error
+	shutdown bool
 }
 
 func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
-	return &MetaCache{
+	mc := &MetaCache{
 		root:              root,
 		localStore:        virtualStore,
 		leveldbStore:      leveldbStore,
@@ -45,7 +76,11 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
+		applyCh:   make(chan metadataApplyRequest, 128),
+		applyDone: make(chan struct{}),
 	}
+	go mc.runApplyLoop()
+	return mc
 }
 
 func openMetaStore(dbFolder string) (*leveldb.LevelDBStore, filer.VirtualFilerStore) {
@@ -85,7 +120,10 @@ func (mc *MetaCache) doBatchInsertEntries(ctx context.Context, entries []*filer.
 func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+	return mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry)
+}
 
+func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPath util.FullPath, newEntry *filer.Entry) error {
 	entry, err := mc.localStore.FindEntry(ctx, oldPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		glog.Errorf("Metacache: find entry error: %v", err)
@@ -118,6 +156,31 @@ func (mc *MetaCache) AtomicUpdateEntryFromFiler(ctx context.Context, oldPath uti
 		}
 	}
 	return nil
+}
+
+func (mc *MetaCache) ApplyMetadataResponse(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
+	if resp == nil || resp.EventNotification == nil {
+		return nil
+	}
+
+	clonedResp := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+	req := metadataApplyRequest{
+		ctx:     ctx,
+		resp:    clonedResp,
+		options: options,
+		done:    make(chan error, 1),
+	}
+
+	if err := mc.enqueueApplyRequest(req); err != nil {
+		return err
+	}
+
+	select {
+	case err := <-req.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
@@ -174,6 +237,25 @@ func (mc *MetaCache) ListDirectoryEntries(ctx context.Context, dirPath util.Full
 }
 
 func (mc *MetaCache) Shutdown() {
+	done := make(chan error, 1)
+
+	mc.applyStateMu.Lock()
+	if !mc.applyClosed {
+		mc.applyClosed = true
+		mc.applyCh <- metadataApplyRequest{
+			done:     done,
+			shutdown: true,
+		}
+	}
+	mc.applyStateMu.Unlock()
+
+	select {
+	case <-done:
+	case <-mc.applyDone:
+	}
+
+	<-mc.applyDone
+
 	mc.Lock()
 	defer mc.Unlock()
 	mc.localStore.Shutdown()
@@ -200,4 +282,155 @@ func (mc *MetaCache) noteDirectoryUpdate(dirPath util.FullPath) {
 	if mc.onDirectoryUpdate != nil {
 		mc.onDirectoryUpdate(dirPath)
 	}
+}
+
+func (mc *MetaCache) enqueueApplyRequest(req metadataApplyRequest) error {
+	mc.applyStateMu.Lock()
+	defer mc.applyStateMu.Unlock()
+
+	if mc.applyClosed {
+		return errMetaCacheClosed
+	}
+	mc.applyCh <- req
+	return nil
+}
+
+func (mc *MetaCache) runApplyLoop() {
+	defer close(mc.applyDone)
+
+	for req := range mc.applyCh {
+		if req.shutdown {
+			req.done <- nil
+			close(req.done)
+			return
+		}
+
+		req.done <- mc.applyMetadataResponseNow(req.ctx, req.resp, req.options)
+		close(req.done)
+	}
+}
+
+type metadataInvalidation struct {
+	path  util.FullPath
+	entry *filer_pb.Entry
+}
+
+type metadataResponseSideEffects struct {
+	dirsToNotify  []util.FullPath
+	invalidations []metadataInvalidation
+}
+
+func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
+	sideEffects, err := mc.applyMetadataResponseLocked(ctx, resp, options)
+	if err != nil {
+		return err
+	}
+
+	for _, dirPath := range sideEffects.dirsToNotify {
+		mc.noteDirectoryUpdate(dirPath)
+	}
+	for _, invalidation := range sideEffects.invalidations {
+		mc.invalidateFunc(invalidation.path, invalidation.entry)
+	}
+
+	return nil
+}
+
+func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) (metadataResponseSideEffects, error) {
+	message := resp.GetEventNotification()
+	if message == nil {
+		return metadataResponseSideEffects{}, nil
+	}
+
+	var oldPath util.FullPath
+	var newEntry *filer.Entry
+	if message.OldEntry != nil {
+		oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
+	}
+
+	if message.NewEntry != nil {
+		dir := resp.Directory
+		if message.NewParentPath != "" {
+			dir = message.NewParentPath
+		}
+		newEntry = filer.FromPbEntry(dir, message.NewEntry)
+	}
+
+	mc.Lock()
+	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry)
+	mc.Unlock()
+	if err != nil {
+		return metadataResponseSideEffects{}, err
+	}
+
+	sideEffects := metadataResponseSideEffects{}
+	if options.NotifyDirectories && (message.NewEntry != nil || message.OldEntry != nil) {
+		sideEffects.dirsToNotify = collectDirectoryNotifications(resp)
+	}
+	if options.InvalidateEntries {
+		sideEffects.invalidations = collectEntryInvalidations(resp)
+	}
+
+	return sideEffects, nil
+}
+
+func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []util.FullPath {
+	message := resp.GetEventNotification()
+	if message == nil {
+		return nil
+	}
+
+	dirsToNotify := make(map[util.FullPath]struct{})
+	if message.OldEntry != nil {
+		oldPath := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+		parent, _ := oldPath.DirAndName()
+		dirsToNotify[util.FullPath(parent)] = struct{}{}
+	}
+	if message.NewEntry != nil {
+		newDir := resp.Directory
+		if message.NewParentPath != "" {
+			newDir = message.NewParentPath
+		}
+		newPath := util.NewFullPath(newDir, message.NewEntry.Name)
+		parent, _ := newPath.DirAndName()
+		dirsToNotify[util.FullPath(parent)] = struct{}{}
+		if message.NewEntry.IsDirectory {
+			dirsToNotify[newPath] = struct{}{}
+		}
+	}
+
+	orderedDirs := make([]util.FullPath, 0, len(dirsToNotify))
+	for dirPath := range dirsToNotify {
+		orderedDirs = append(orderedDirs, dirPath)
+	}
+	return orderedDirs
+}
+
+func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metadataInvalidation {
+	message := resp.GetEventNotification()
+	if message == nil {
+		return nil
+	}
+
+	var invalidations []metadataInvalidation
+	if message.OldEntry != nil && message.NewEntry != nil {
+		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
+		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != message.NewParentPath {
+			newDir := resp.Directory
+			if message.NewParentPath != "" {
+				newDir = message.NewParentPath
+			}
+			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
+			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
+		}
+		return invalidations
+	}
+
+	if filer_pb.IsDelete(resp) && message.OldEntry != nil {
+		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
+		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
+	}
+
+	return invalidations
 }
