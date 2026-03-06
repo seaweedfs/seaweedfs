@@ -918,8 +918,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		var err *IamError
 		response, err = iama.UpdateUser(s3cfg, values)
 		if err != nil {
-			glog.Errorf("UpdateUser: %+v", err.Error)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
 	case "DeleteUser":
@@ -954,8 +953,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		var err *IamError
 		response, err = iama.CreatePolicy(s3cfg, values)
 		if err != nil {
-			glog.Errorf("CreatePolicy:  %+v", err.Error)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
 		// CreatePolicy persists the policy document via iama.s3ApiConfig.PutPolicies().

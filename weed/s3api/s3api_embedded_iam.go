@@ -1546,7 +1546,11 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 // ExecuteAction executes an IAM action with the given values.
 // If skipPersist is true, the changed configuration is not saved to the persistent store.
-func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool) (iamlib.RequestIDSetter, *iamError) {
+// reqID is set on the response; if empty, a new request ID is generated.
+func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool, reqID string) (iamlib.RequestIDSetter, *iamError) {
+	if reqID == "" {
+		reqID = request_id.New()
+	}
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
@@ -1763,6 +1767,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after managed policy mutation: %v", err)
 		}
 	}
+	response.SetRequestId(reqID)
 	return response, nil
 }
 
@@ -1784,12 +1789,11 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		values.Set("CreatedBy", createdBy)
 	}
 
-	response, iamErr := e.ExecuteAction(r.Context(), values, false)
+	response, iamErr := e.ExecuteAction(r.Context(), values, false, reqID)
 	if iamErr != nil {
 		e.writeIamErrorResponse(w, r, reqID, iamErr)
 		return
 	}
 
-	response.SetRequestId(reqID)
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
