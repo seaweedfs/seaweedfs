@@ -6,7 +6,21 @@ type requestIDSetter interface {
 	SetRequestId(string)
 }
 
-// SetResponseRequestID populates the request ID on either pointer or value responses.
+// WithRequestID sets the request ID on a response of known type. It uses
+// generics to take the address of the value, satisfying the pointer receiver
+// on SetRequestId without reflection.
+func WithRequestID[T any, PT interface {
+	*T
+	SetRequestId(string)
+}](response T, requestID string) T {
+	PT(&response).SetRequestId(requestID)
+	return response
+}
+
+// SetResponseRequestID sets the request ID on a response stored in interface{}.
+// This is used by callers that build responses via a type switch and cannot use
+// the generic WithRequestID. It uses reflection to take the address of value
+// types whose SetRequestId method has a pointer receiver.
 func SetResponseRequestID(response interface{}, requestID string) interface{} {
 	if response == nil || requestID == "" {
 		return response
