@@ -95,6 +95,42 @@ func TestS3IAMMiddlewareStaticV4ManagedPolicies(t *testing.T) {
 	assert.Equal(t, s3err.ErrNone, listErrCode)
 }
 
+func TestS3IAMMiddlewareAttachedPoliciesRestrictDefaultAllow(t *testing.T) {
+	ctx := context.Background()
+	iamManager := newTestS3IAMManagerWithDefaultEffect(t, "Allow")
+
+	allowPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Effect:   "Allow",
+				Action:   policy.StringList{"s3:PutObject", "s3:ListBucket"},
+				Resource: policy.StringList{"arn:aws:s3:::cli-allowed-bucket", "arn:aws:s3:::cli-allowed-bucket/*"},
+			},
+		},
+	}
+	require.NoError(t, iamManager.CreatePolicy(ctx, "localhost:8888", "cli-bucket-access-policy", allowPolicy))
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	identity := &IAMIdentity{
+		Name:        "cli-test-user",
+		Principal:   "arn:aws:iam::000000000000:user/cli-test-user",
+		PolicyNames: []string{"cli-bucket-access-policy"},
+	}
+
+	allowedReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-allowed-bucket/test-file.txt", http.NoBody)
+	allowedErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-allowed-bucket", "test-file.txt", allowedReq)
+	assert.Equal(t, s3err.ErrNone, allowedErrCode)
+
+	forbiddenReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-forbidden-bucket/forbidden-file.txt", http.NoBody)
+	forbiddenErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-forbidden-bucket", "forbidden-file.txt", forbiddenReq)
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenErrCode)
+
+	forbiddenListReq := httptest.NewRequest(http.MethodGet, "http://example.com/cli-forbidden-bucket/", http.NoBody)
+	forbiddenListErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_LIST, "cli-forbidden-bucket", "", forbiddenListReq)
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenListErrCode)
+}
+
 // TestS3IAMMiddlewareJWTAuth tests JWT authentication
 func TestS3IAMMiddlewareJWTAuth(t *testing.T) {
 	// Skip for now since it requires full setup

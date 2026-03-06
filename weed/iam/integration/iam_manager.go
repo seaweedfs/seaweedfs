@@ -422,6 +422,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	var baseResult *policy.EvaluationResult
 	var err error
+	subjectPolicyCount := 0
 
 	if isAdmin {
 		// Admin always has base access allowed
@@ -454,6 +455,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				policies = roleDef.AttachedPolicies
 			}
 		}
+		subjectPolicyCount = len(policies)
 
 		if bucketPolicyName != "" {
 			// Enforce an upper bound on the number of policies to avoid excessive allocations
@@ -474,6 +476,14 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	// Base policy must allow; if it doesn't, deny immediately (session policy can only further restrict)
 	if baseResult.Effect != policy.EffectAllow {
+		return false, nil
+	}
+
+	// Zero-config IAM uses DefaultEffect=Allow to preserve open-by-default behavior
+	// for requests without any subject policies. Once a user or role has attached
+	// policies, "no matching statement" must fall back to deny so the attachment
+	// actually scopes access.
+	if subjectPolicyCount > 0 && len(baseResult.MatchingStatements) == 0 {
 		return false, nil
 	}
 
