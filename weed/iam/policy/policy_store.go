@@ -239,23 +239,30 @@ func (s *FilerPolicyStore) GetPolicy(ctx context.Context, filerAddress string, n
 
 	var policyData []byte
 	err := s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s.basePath,
-			Name:      s.getPolicyFileName(name),
+		for _, fileName := range s.getPolicyLookupFileNames(name) {
+			request := &filer_pb.LookupDirectoryEntryRequest{
+				Directory: s.basePath,
+				Name:      fileName,
+			}
+
+			glog.V(3).Infof("Looking up policy %s as %s", name, fileName)
+			response, err := client.LookupDirectoryEntry(ctx, request)
+			if err != nil {
+				if strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+					continue
+				}
+				return fmt.Errorf("policy lookup failed: %v", err)
+			}
+
+			if response.Entry == nil {
+				continue
+			}
+
+			policyData = response.Entry.Content
+			return nil
 		}
 
-		glog.V(3).Infof("Looking up policy %s", name)
-		response, err := client.LookupDirectoryEntry(ctx, request)
-		if err != nil {
-			return fmt.Errorf("policy not found: %v", err)
-		}
-
-		if response.Entry == nil {
-			return fmt.Errorf("policy not found")
-		}
-
-		policyData = response.Entry.Content
-		return nil
+		return fmt.Errorf("policy not found")
 	})
 
 	if err != nil {
@@ -285,31 +292,27 @@ func (s *FilerPolicyStore) DeletePolicy(ctx context.Context, filerAddress string
 	}
 
 	return s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.DeleteEntryRequest{
-			Directory:            s.basePath,
-			Name:                 s.getPolicyFileName(name),
-			IsDeleteData:         true,
-			IsRecursive:          false,
-			IgnoreRecursiveError: false,
-		}
-
-		glog.V(3).Infof("Deleting policy %s", name)
-		resp, err := client.DeleteEntry(ctx, request)
-		if err != nil {
-			// Ignore "not found" errors - policy may already be deleted
-			if strings.Contains(err.Error(), "not found") {
-				return nil
+		for _, fileName := range s.getPolicyLookupFileNames(name) {
+			request := &filer_pb.DeleteEntryRequest{
+				Directory:            s.basePath,
+				Name:                 fileName,
+				IsDeleteData:         true,
+				IsRecursive:          false,
+				IgnoreRecursiveError: false,
 			}
-			return fmt.Errorf("failed to delete policy %s: %v", name, err)
-		}
 
-		// Check response error
-		if resp.Error != "" {
-			// Ignore "not found" errors - policy may already be deleted
-			if strings.Contains(resp.Error, "not found") {
-				return nil
+			glog.V(3).Infof("Deleting policy %s as %s", name, fileName)
+			resp, err := client.DeleteEntry(ctx, request)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+					continue
+				}
+				return fmt.Errorf("failed to delete policy %s: %v", name, err)
 			}
-			return fmt.Errorf("failed to delete policy %s: %s", name, resp.Error)
+
+			if resp.Error != "" && !strings.Contains(resp.Error, "not found") {
+				return fmt.Errorf("failed to delete policy %s: %s", name, resp.Error)
+			}
 		}
 
 		return nil
@@ -332,7 +335,7 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 		// List all entries in the policy directory
 		request := &filer_pb.ListEntriesRequest{
 			Directory:          s.basePath,
-			Prefix:             "policy_",
+			Prefix:             "",
 			StartFromFileName:  "",
 			InclusiveStartFrom: false,
 			Limit:              1000, // Process in batches of 1000
@@ -353,11 +356,7 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 				continue
 			}
 
-			// Extract policy name from filename
-			filename := resp.Entry.Name
-			if strings.HasPrefix(filename, "policy_") && strings.HasSuffix(filename, ".json") {
-				// Remove "policy_" prefix and ".json" suffix
-				policyName := strings.TrimSuffix(strings.TrimPrefix(filename, "policy_"), ".json")
+			if policyName, ok := s.policyNameFromFileName(resp.Entry.Name); ok {
 				policyNames = append(policyNames, policyName)
 			}
 		}
@@ -369,7 +368,17 @@ func (s *FilerPolicyStore) ListPolicies(ctx context.Context, filerAddress string
 		return nil, err
 	}
 
-	return policyNames, nil
+	uniquePolicyNames := make([]string, 0, len(policyNames))
+	seen := make(map[string]struct{}, len(policyNames))
+	for _, policyName := range policyNames {
+		if _, found := seen[policyName]; found {
+			continue
+		}
+		seen[policyName] = struct{}{}
+		uniquePolicyNames = append(uniquePolicyNames, policyName)
+	}
+
+	return uniquePolicyNames, nil
 }
 
 // Helper methods
@@ -392,4 +401,25 @@ func (s *FilerPolicyStore) getPolicyPath(policyName string) string {
 // getPolicyFileName returns the filename for a policy
 func (s *FilerPolicyStore) getPolicyFileName(policyName string) string {
 	return "policy_" + policyName + ".json"
+}
+
+func (s *FilerPolicyStore) getCanonicalPolicyFileName(policyName string) string {
+	return policyName + ".json"
+}
+
+func (s *FilerPolicyStore) getPolicyLookupFileNames(policyName string) []string {
+	return []string{
+		s.getCanonicalPolicyFileName(policyName),
+		s.getPolicyFileName(policyName),
+	}
+}
+
+func (s *FilerPolicyStore) policyNameFromFileName(fileName string) (string, bool) {
+	if !strings.HasSuffix(fileName, ".json") {
+		return "", false
+	}
+	if strings.HasPrefix(fileName, "policy_") {
+		return strings.TrimSuffix(strings.TrimPrefix(fileName, "policy_"), ".json"), true
+	}
+	return strings.TrimSuffix(fileName, ".json"), true
 }
