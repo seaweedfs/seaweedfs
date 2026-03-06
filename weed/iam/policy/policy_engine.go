@@ -353,6 +353,27 @@ func (e *PolicyEngine) AddPolicy(filerAddress string, name string, policy *Polic
 	return e.store.StorePolicy(context.Background(), filerAddress, name, policy)
 }
 
+// DeletePolicy removes a policy from the configured store.
+func (e *PolicyEngine) DeletePolicy(ctx context.Context, filerAddress string, name string) error {
+	if !e.initialized {
+		return fmt.Errorf("policy engine not initialized")
+	}
+
+	if name == "" {
+		return fmt.Errorf("policy name cannot be empty")
+	}
+
+	return e.store.DeletePolicy(ctx, filerAddress, name)
+}
+
+// StoreType returns the configured backend type for the policy store.
+func (e *PolicyEngine) StoreType() string {
+	if e.config == nil {
+		return ""
+	}
+	return e.config.StoreType
+}
+
 // Evaluate evaluates policies against a request context (filerAddress ignored for memory stores)
 func (e *PolicyEngine) Evaluate(ctx context.Context, filerAddress string, evalCtx *EvaluationContext, policyNames []string) (*EvaluationResult, error) {
 	if !e.initialized {

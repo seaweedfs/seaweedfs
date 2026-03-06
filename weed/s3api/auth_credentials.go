@@ -1688,6 +1688,24 @@ func (iam *IdentityAccessManagement) hydrateRuntimePolicies(ctx context.Context,
 	return nil
 }
 
+func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context.Context, policies []*iam_pb.Policy) error {
+	if iam == nil || iam.iamIntegration == nil {
+		return nil
+	}
+
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
+	if !ok {
+		return nil
+	}
+
+	manager := provider.GetIAMManager()
+	if manager == nil {
+		return nil
+	}
+
+	return manager.SyncRuntimePolicies(ctx, policies)
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
@@ -1703,6 +1721,10 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 
 	if err := iam.hydrateRuntimePolicies(context.Background(), s3ApiConfiguration); err != nil {
 		glog.Errorf("Failed to hydrate runtime IAM policies: %v", err)
+		return err
+	}
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), s3ApiConfiguration.Policies); err != nil {
+		glog.Errorf("Failed to sync runtime IAM policies to advanced IAM manager: %v", err)
 		return err
 	}
 

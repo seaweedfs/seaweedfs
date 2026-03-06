@@ -519,6 +519,54 @@ func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPolicies(t *t
 	assert.Equal(t, s3err.ErrNone, errCode)
 }
 
+func TestLoadS3ApiConfigurationFromCredentialManagerSyncsPoliciesToIAMManager(t *testing.T) {
+	ctx := context.Background()
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	cm := &credential.CredentialManager{Store: baseStore}
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedPut"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000002", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedPut",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::cli-allowed-bucket","arn:aws:s3:::cli-allowed-bucket/*"]}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(ctx, config))
+
+	iamManager, err := loadIAMManagerFromConfig("", func() string { return "localhost:8888" }, func() string {
+		return "fallback-key-for-zero-config"
+	})
+	assert.NoError(t, err)
+	iamManager.SetUserStore(cm)
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	iam.SetIAMIntegration(NewS3IAMIntegration(iamManager, ""))
+
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	allowedErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-allowed-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, allowedErrCode)
+
+	forbiddenErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-forbidden-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenErrCode)
+}
+
 func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePolicies(t *testing.T) {
 	baseStore := &memory.MemoryStore{}
 	assert.NoError(t, baseStore.Initialize(nil, ""))

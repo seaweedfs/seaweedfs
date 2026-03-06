@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -28,6 +29,8 @@ type IAMManager struct {
 	userStore            UserStore
 	filerAddressProvider func() string // Function to get current filer address
 	initialized          bool
+	runtimePolicyMu      sync.Mutex
+	runtimePolicyNames   map[string]struct{}
 }
 
 // IAMConfig holds configuration for all IAM components
@@ -103,6 +106,57 @@ func NewIAMManager() *IAMManager {
 // SetUserStore assigns the user store used to resolve IAM user policy attachments.
 func (m *IAMManager) SetUserStore(store UserStore) {
 	m.userStore = store
+}
+
+// SyncRuntimePolicies keeps zero-config runtime policies available to the
+// in-memory policy engine used by the advanced IAM authorizer.
+func (m *IAMManager) SyncRuntimePolicies(ctx context.Context, policies []*iam_pb.Policy) error {
+	if !m.initialized || m.policyEngine == nil {
+		return nil
+	}
+	if m.policyEngine.StoreType() != sts.StoreTypeMemory {
+		return nil
+	}
+
+	desiredPolicies := make(map[string]*policy.PolicyDocument, len(policies))
+	for _, runtimePolicy := range policies {
+		if runtimePolicy == nil || runtimePolicy.Name == "" {
+			continue
+		}
+
+		var document policy.PolicyDocument
+		if err := json.Unmarshal([]byte(runtimePolicy.Content), &document); err != nil {
+			return fmt.Errorf("failed to parse runtime policy %q: %w", runtimePolicy.Name, err)
+		}
+
+		desiredPolicies[runtimePolicy.Name] = &document
+	}
+
+	m.runtimePolicyMu.Lock()
+	defer m.runtimePolicyMu.Unlock()
+
+	filerAddress := m.getFilerAddress()
+	for policyName := range m.runtimePolicyNames {
+		if _, keep := desiredPolicies[policyName]; keep {
+			continue
+		}
+		if err := m.policyEngine.DeletePolicy(ctx, filerAddress, policyName); err != nil {
+			return fmt.Errorf("failed to delete runtime policy %q: %w", policyName, err)
+		}
+	}
+
+	for policyName, document := range desiredPolicies {
+		if err := m.policyEngine.AddPolicy(filerAddress, policyName, document); err != nil {
+			return fmt.Errorf("failed to sync runtime policy %q: %w", policyName, err)
+		}
+	}
+
+	m.runtimePolicyNames = make(map[string]struct{}, len(desiredPolicies))
+	for policyName := range desiredPolicies {
+		m.runtimePolicyNames[policyName] = struct{}{}
+	}
+
+	return nil
 }
 
 // Initialize initializes the IAM manager with all components
