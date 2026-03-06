@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 
@@ -70,7 +71,7 @@ func (store *inlinePolicyRuntimeStore) LoadInlinePolicies(ctx context.Context) (
 func newPolicyAuthRequest(t *testing.T, method string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return req
 }
 
