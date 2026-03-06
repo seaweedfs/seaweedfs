@@ -205,6 +205,19 @@ func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName 
 	resp = &DeleteUserResponse{}
 	for i, ident := range s3cfg.Identities {
 		if userName == ident.Name {
+			// Clean up any inline policies stored for this user
+			policies := Policies{}
+			if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+			}
+			if policies.InlinePolicies != nil {
+				if _, exists := policies.InlinePolicies[userName]; exists {
+					delete(policies.InlinePolicies, userName)
+					if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+						return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+					}
+				}
+			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
 			return resp, nil
 		}
@@ -231,6 +244,20 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 		for _, ident := range s3cfg.Identities {
 			if userName == ident.Name {
 				ident.Name = newUserName
+				// Move any inline policies from old username to new username
+				policies := Policies{}
+				if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+					return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+				}
+				if policies.InlinePolicies != nil {
+					if userPolicies, exists := policies.InlinePolicies[userName]; exists {
+						delete(policies.InlinePolicies, userName)
+						policies.InlinePolicies[newUserName] = userPolicies
+						if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+							return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+						}
+					}
+				}
 				return resp, nil
 			}
 		}
