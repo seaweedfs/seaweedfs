@@ -24,7 +24,7 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	s3cfg := &iam_pb.S3ApiConfiguration{}
 
 	// 1. Load from legacy single file (low priority)
-	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, IamLegacyIdentityFile)
+	content, foundLegacy, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, IamLegacyIdentityFile)
 	if err != nil {
 		return s3cfg, err
 	}
@@ -435,11 +435,11 @@ func (store *FilerEtcStore) saveIdentity(ctx context.Context, identity *iam_pb.I
 	})
 }
 
-func (store *FilerEtcStore) readInsideFiler(dir string, name string) ([]byte, bool, error) {
+func (store *FilerEtcStore) readInsideFiler(ctx context.Context, dir string, name string) ([]byte, bool, error) {
 	var content []byte
 	found := false
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		c, err := filer.ReadInsideFiler(client, dir, name)
+		c, err := filer.ReadInsideFilerWithContext(ctx, client, dir, name)
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return nil

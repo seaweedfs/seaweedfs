@@ -34,10 +34,10 @@ func newPoliciesCollection() *PoliciesCollection {
 	}
 }
 
-func (store *FilerEtcStore) loadLegacyPoliciesCollection() (*PoliciesCollection, error) {
+func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*PoliciesCollection, error) {
 	policiesCollection := newPoliciesCollection()
 
-	content, foundLegacy, err := store.readInsideFiler(filer.IamConfigDirectory, filer.IamPoliciesFile)
+	content, foundLegacy, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, filer.IamPoliciesFile)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func policyDocumentToPbPolicy(name string, policy policy_engine.PolicyDocument) 
 // policies while preserving any legacy inline policy data stored alongside
 // managed policies.
 func (store *FilerEtcStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
-	policiesCollection, err := store.loadLegacyPoliciesCollection()
+	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +100,7 @@ func (store *FilerEtcStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.
 // LoadInlinePolicies loads legacy inline policies keyed by user name. Inline
 // policies are still stored in the legacy shared policies file.
 func (store *FilerEtcStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
-	_ = ctx
-
-	policiesCollection, err := store.loadLegacyPoliciesCollection()
+	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +134,7 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 	// 1. Load from legacy single file (low priority)
-	policiesCollection, err := store.loadLegacyPoliciesCollection()
+	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
