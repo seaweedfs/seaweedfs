@@ -3,7 +3,6 @@ package weed_server
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -432,18 +430,12 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 
 func requestIDMiddleware(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		reqID := r.Header.Get(request_id.AmzRequestIDHeader)
-		if reqID == "" {
-			reqID = uuid.New().String()
-		}
-
-		ctx := context.WithValue(r.Context(), request_id.AmzRequestIDHeader, reqID)
-		ctx = metadata.NewOutgoingContext(ctx,
-			metadata.New(map[string]string{
-				request_id.AmzRequestIDHeader: reqID,
-			}))
-
-		w.Header().Set(request_id.AmzRequestIDHeader, reqID)
-		h(w, r.WithContext(ctx))
+		request_id.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := metadata.NewOutgoingContext(r.Context(),
+				metadata.New(map[string]string{
+					request_id.AmzRequestIDHeader: request_id.Get(r.Context()),
+				}))
+			h(w, r.WithContext(ctx))
+		})).ServeHTTP(w, r)
 	}
 }
