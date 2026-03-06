@@ -20,6 +20,14 @@ import (
 var _ CredentialStore = &PropagatingCredentialStore{}
 var _ PolicyManager = &PropagatingCredentialStore{}
 
+type propagatingManagedPolicyLoader interface {
+	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
+}
+
+type propagatingInlinePolicyLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
 type PropagatingCredentialStore struct {
 	CredentialStore
 	masterClient   *wdclient.MasterClient
@@ -238,6 +246,38 @@ func (s *PropagatingCredentialStore) DeletePolicy(ctx context.Context, name stri
 
 func (s *PropagatingCredentialStore) ListPolicyNames(ctx context.Context) ([]string, error) {
 	return s.CredentialStore.ListPolicyNames(ctx)
+}
+
+func (s *PropagatingCredentialStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	if loader, ok := s.CredentialStore.(propagatingManagedPolicyLoader); ok {
+		return loader.LoadManagedPolicies(ctx)
+	}
+
+	policies, err := s.CredentialStore.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policyDocument := range policies {
+		content, err := json.Marshal(policyDocument)
+		if err != nil {
+			return nil, err
+		}
+		managedPolicies = append(managedPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	return managedPolicies, nil
+}
+
+func (s *PropagatingCredentialStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := s.CredentialStore.(propagatingInlinePolicyLoader); ok {
+		return loader.LoadInlinePolicies(ctx)
+	}
+	return nil, nil
 }
 
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
