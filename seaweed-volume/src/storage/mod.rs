@@ -6,3 +6,4 @@ pub mod needle_map;
 pub mod volume;
 pub mod disk_location;
 pub mod store;
+pub mod erasure_coding;
