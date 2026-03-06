@@ -69,12 +69,31 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
+		if err := mc.BeginDirectoryBuild(ctx, path); err != nil {
+			return nil, fmt.Errorf("begin build %s: %w", path, err)
+		}
+		defer func() {
+			if ctx.Err() != nil {
+				if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+					glog.V(2).Infof("clear canceled build %s: %v", path, deleteErr)
+				}
+				if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+					glog.V(2).Infof("abort canceled build %s: %v", path, abortErr)
+				}
+			}
+		}()
+
 		// Collect entries in batches for efficient LevelDB writes
 		var batch []*filer.Entry
+		var snapshotTsNs int64
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
 			batch = nil // Reset batch on retry, allow GC of previous entries
-			return filer_pb.ReadDirAllEntries(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+			if err := mc.DeleteFolderChildren(ctx, path); err != nil {
+				return fmt.Errorf("clear existing entries for %s: %w", path, err)
+			}
+			var err error
+			snapshotTsNs, err = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
@@ -94,19 +113,40 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				}
 				return nil
 			})
+			return err
 		})
 
 		if fetchErr != nil {
+			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+				glog.V(2).Infof("clear failed build %s: %v", path, deleteErr)
+			}
+			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+				glog.V(2).Infof("abort failed build %s: %v", path, abortErr)
+			}
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
 		// Flush any remaining entries in the batch
 		if len(batch) > 0 {
 			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+				if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+					glog.V(2).Infof("clear incomplete build %s: %v", path, deleteErr)
+				}
+				if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+					glog.V(2).Infof("abort incomplete build %s: %v", path, abortErr)
+				}
 				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
 			}
 		}
-		mc.markCachedFn(path)
+		if err := mc.CompleteDirectoryBuild(ctx, path, snapshotTsNs); err != nil {
+			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+				glog.V(2).Infof("clear unreplayed build %s: %v", path, deleteErr)
+			}
+			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+				glog.V(2).Infof("abort unreplayed build %s: %v", path, abortErr)
+			}
+			return nil, fmt.Errorf("complete build for %s: %w", path, err)
+		}
 		return nil, nil
 	})
 	return err
