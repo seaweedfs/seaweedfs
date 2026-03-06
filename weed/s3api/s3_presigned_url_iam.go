@@ -101,6 +101,9 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 	if pm.s3iam == nil || !pm.s3iam.enabled {
 		return nil, fmt.Errorf("IAM integration not enabled")
 	}
+	if req == nil || strings.TrimSpace(req.SessionToken) == "" {
+		return nil, fmt.Errorf("IAM authorization failed: session token is required")
+	}
 
 	// Validate session token and get identity
 	// Use a proper ARN format for the principal
