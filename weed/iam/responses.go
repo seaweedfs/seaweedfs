@@ -18,6 +18,11 @@ func (r *CommonResponse) SetRequestId(requestID string) {
 	r.ResponseMetadata.RequestId = requestID
 }
 
+// RequestIDSetter is implemented by IAM responses that can carry a RequestId.
+type RequestIDSetter interface {
+	SetRequestId(string)
+}
+
 // ListUsersResponse is the response for ListUsers action.
 type ListUsersResponse struct {
 	XMLName         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUsersResponse"`

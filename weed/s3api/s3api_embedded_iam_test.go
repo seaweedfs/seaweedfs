@@ -1914,11 +1914,11 @@ func TestEmbeddedIamExecuteAction(t *testing.T) {
 	vals.Set("Action", "CreateUser")
 	vals.Set("UserName", "ExecuteActionUser")
 
-	resp, iamErr := api.ExecuteAction(context.Background(), vals, false, "")
+	resp, iamErr := api.ExecuteAction(context.Background(), vals, false)
 	assert.Nil(t, iamErr)
 
 	// Verify response type
-	createResp, ok := resp.(iamCreateUserResponse)
+	createResp, ok := resp.(*iamCreateUserResponse)
 	assert.True(t, ok)
 	assert.Equal(t, "ExecuteActionUser", *createResp.CreateUserResult.User.UserName)
 
