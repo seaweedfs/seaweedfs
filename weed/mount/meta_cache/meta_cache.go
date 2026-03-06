@@ -186,15 +186,27 @@ func (mc *MetaCache) ApplyMetadataResponse(ctx context.Context, resp *filer_pb.S
 	if resp == nil || resp.EventNotification == nil {
 		return nil
 	}
+	clonedResp := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
+	return mc.applyMetadataResponseEnqueue(ctx, clonedResp, options)
+}
+
+// ApplyMetadataResponseOwned is like ApplyMetadataResponse but takes ownership
+// of resp without cloning. The caller must not use resp after this call.
+func (mc *MetaCache) ApplyMetadataResponseOwned(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
+	if resp == nil || resp.EventNotification == nil {
+		return nil
+	}
+	return mc.applyMetadataResponseEnqueue(ctx, resp, options)
+}
+
+func (mc *MetaCache) applyMetadataResponseEnqueue(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	clonedResp := proto.Clone(resp).(*filer_pb.SubscribeMetadataResponse)
 	req := metadataApplyRequest{
 		ctx:     ctx,
 		kind:    metadataApplyEvent,
-		resp:    clonedResp,
+		resp:    resp,
 		options: options,
 		done:    make(chan error, 1),
 	}

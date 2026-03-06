@@ -12,7 +12,7 @@ func (wfs *WFS) applyLocalMetadataEvent(ctx context.Context, event *filer_pb.Sub
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return wfs.metaCache.ApplyMetadataResponse(ctx, event, meta_cache.LocalMetadataResponseApplyOptions)
+	return wfs.metaCache.ApplyMetadataResponseOwned(ctx, event, meta_cache.LocalMetadataResponseApplyOptions)
 }
 
 func metadataDeleteEvent(directory, name string) *filer_pb.SubscribeMetadataResponse {
