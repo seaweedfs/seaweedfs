@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -114,6 +115,7 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 
 		assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not return 501 (IAM handler)")
 		assert.Equal(t, http.StatusBadRequest, rr.Code, "Should return 400 (STS handler) for missing params")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
 
 	// Test Case 2: STS Action in Body (Should FAIL current implementation - routed to IAM)
@@ -200,4 +202,17 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusForbidden}, rr.Code,
 			"Should return 503 (STS unavailable) or 403 (auth failed), confirming STS routing")
 	})
+}
+
+func extractSTSRequestID(body string) string {
+	start := strings.Index(body, "<RequestId>")
+	if start == -1 {
+		return ""
+	}
+	start += len("<RequestId>")
+	end := strings.Index(body[start:], "</RequestId>")
+	if end == -1 {
+		return ""
+	}
+	return body[start : start+end]
 }
