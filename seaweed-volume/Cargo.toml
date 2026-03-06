@@ -78,5 +78,8 @@ futures = "0.3"
 # Disk space checking
 sysinfo = "0.31"
 
+[dev-dependencies]
+tempfile = "3"
+
 [build-dependencies]
 tonic-build = "0.12"
