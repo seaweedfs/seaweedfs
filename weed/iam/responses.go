@@ -17,7 +17,7 @@ type CommonResponse struct {
 
 // SetRequestId sets a unique request ID based on current timestamp.
 func (r *CommonResponse) SetRequestId() {
-	r.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	r.ResponseMetadata.RequestId = newRequestID()
 }
 
 // ListUsersResponse is the response for ListUsers action.
@@ -198,7 +198,11 @@ type ErrorResponse struct {
 
 // SetRequestId sets a unique request ID based on current timestamp.
 func (r *ErrorResponse) SetRequestId() {
-	r.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	r.RequestId = newRequestID()
+}
+
+func newRequestID() string {
+	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 // Error represents an IAM API error with code and underlying error.
