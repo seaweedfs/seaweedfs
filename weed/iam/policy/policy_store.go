@@ -527,8 +527,5 @@ func isAlreadyExistsPolicyStoreError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if status.Code(err) == codes.AlreadyExists {
-		return true
-	}
-	return strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "EEXIST")
+	return status.Code(err) == codes.AlreadyExists
 }

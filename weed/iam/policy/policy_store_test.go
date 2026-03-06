@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sort"
 	"strconv"
@@ -272,6 +273,11 @@ func TestCopyPolicyDocumentClonesConditionState(t *testing.T) {
 
 	assert.Equal(t, []string{"public/", "private/"}, copied.Statement[0].Condition["StringEquals"]["s3:prefix"])
 	assert.Equal(t, "false", copied.Statement[0].Condition["Null"]["aws:PrincipalArn"])
+}
+
+func TestIsAlreadyExistsPolicyStoreErrorUsesStatusCode(t *testing.T) {
+	assert.True(t, isAlreadyExistsPolicyStoreError(status.Error(codes.AlreadyExists, "entry already exists")))
+	assert.False(t, isAlreadyExistsPolicyStoreError(fmt.Errorf("entry already exists")))
 }
 
 func testPolicyDocument(action string, resource string) *PolicyDocument {
