@@ -44,67 +44,88 @@ func isCanceledErr(err error) bool {
 	return false
 }
 
-// LookupVolumeIds queries the master for volume locations (fallback when cache misses)
-// Returns partial results with aggregated errors for volumes that failed
+// LookupVolumeIds queries the master for volume locations (fallback when cache misses).
+// Returns partial results with aggregated errors for volumes that failed.
+// Retries on codes.Unavailable (e.g. master warming up after restart) with backoff.
 func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error) {
-	result := make(map[string][]Location)
+	var result map[string][]Location
 	var lookupErrors []error
 
 	glog.V(2).Infof("Looking up %d volumes from master: %v", len(volumeIds), volumeIds)
 
-	// Use a timeout for the master lookup to prevent indefinite blocking
-	timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
-	defer cancel()
+	waitTime := time.Second
+	maxWaitTime := 6 * time.Second
+	for {
+		result = make(map[string][]Location)
+		lookupErrors = nil
 
-	err := pb.WithMasterClient(false, p.masterClient.GetMaster(ctx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
-		resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
-			VolumeOrFileIds: volumeIds,
-		})
-		if err != nil {
-			return fmt.Errorf("master lookup failed: %v", err)
-		}
+		// Use a timeout for the master lookup to prevent indefinite blocking
+		timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
 
-		for _, vidLoc := range resp.VolumeIdLocations {
-			// Preserve per-volume errors from master response
-			// These could indicate misconfiguration, volume deletion, etc.
-			if vidLoc.Error != "" {
-				lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: %s", vidLoc.VolumeOrFileId, vidLoc.Error))
-				glog.V(1).Infof("volume %s lookup error from master: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
-				continue
-			}
-
-			// Parse volume ID from response
-			parts := strings.Split(vidLoc.VolumeOrFileId, ",")
-			vidOnly := parts[0]
-			vid, err := strconv.ParseUint(vidOnly, 10, 32)
+		err := pb.WithMasterClient(false, p.masterClient.GetMaster(ctx), p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
+				VolumeOrFileIds: volumeIds,
+			})
 			if err != nil {
-				lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: invalid volume ID format: %w", vidLoc.VolumeOrFileId, err))
-				glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
+				return fmt.Errorf("master lookup failed: %v", err)
+			}
+
+			for _, vidLoc := range resp.VolumeIdLocations {
+				// Preserve per-volume errors from master response
+				// These could indicate misconfiguration, volume deletion, etc.
+				if vidLoc.Error != "" {
+					lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: %s", vidLoc.VolumeOrFileId, vidLoc.Error))
+					glog.V(1).Infof("volume %s lookup error from master: %s", vidLoc.VolumeOrFileId, vidLoc.Error)
+					continue
+				}
+
+				// Parse volume ID from response
+				parts := strings.Split(vidLoc.VolumeOrFileId, ",")
+				vidOnly := parts[0]
+				vid, err := strconv.ParseUint(vidOnly, 10, 32)
+				if err != nil {
+					lookupErrors = append(lookupErrors, fmt.Errorf("volume %s: invalid volume ID format: %w", vidLoc.VolumeOrFileId, err))
+					glog.Warningf("Failed to parse volume id '%s' from master response '%s': %v", vidOnly, vidLoc.VolumeOrFileId, err)
+					continue
+				}
+
+				var locations []Location
+				for _, masterLoc := range vidLoc.Locations {
+					loc := Location{
+						Url:        masterLoc.Url,
+						PublicUrl:  masterLoc.PublicUrl,
+						GrpcPort:   int(masterLoc.GrpcPort),
+						DataCenter: masterLoc.DataCenter,
+					}
+					// Update cache with the location
+					p.masterClient.addLocation(uint32(vid), loc)
+					locations = append(locations, loc)
+				}
+
+				if len(locations) > 0 {
+					result[vidOnly] = locations
+				}
+			}
+			return nil
+		})
+		cancel()
+
+		if err != nil {
+			// Retry on Unavailable (master warming up) with backoff
+			if strings.Contains(err.Error(), "Unavailable") && waitTime <= maxWaitTime {
+				glog.V(0).Infof("master unavailable for lookup, retrying in %v: %v", waitTime, err)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(waitTime):
+				}
+				waitTime += waitTime / 2
 				continue
 			}
-
-			var locations []Location
-			for _, masterLoc := range vidLoc.Locations {
-				loc := Location{
-					Url:        masterLoc.Url,
-					PublicUrl:  masterLoc.PublicUrl,
-					GrpcPort:   int(masterLoc.GrpcPort),
-					DataCenter: masterLoc.DataCenter,
-				}
-				// Update cache with the location
-				p.masterClient.addLocation(uint32(vid), loc)
-				locations = append(locations, loc)
-			}
-
-			if len(locations) > 0 {
-				result[vidOnly] = locations
-			}
+			return nil, err
 		}
-		return nil
-	})
 
-	if err != nil {
-		return nil, err
+		break
 	}
 
 	// Return partial results with detailed errors
