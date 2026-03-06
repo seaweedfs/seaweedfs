@@ -213,7 +213,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
-				ms.Topo.LastLeaderChangeTime = time.Now()
+				ms.Topo.SetLastLeaderChangeTime(time.Now())
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
 					go ms.ensureTopologyId()
 				}
@@ -223,7 +223,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
-		ms.Topo.LastLeaderChangeTime = time.Now()
+		ms.Topo.SetLastLeaderChangeTime(time.Now())
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 

@@ -165,7 +165,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
-	hasError := false
+	hasNotFoundError := false
 	for _, volumeOrFileId := range req.VolumeOrFileIds {
 		vid := volumeOrFileId
 		commaSep := strings.Index(vid, ",")
@@ -186,8 +186,8 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			if commaSep > 0 { // this is a file id
 				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 			}
-			if result.Error != "" {
-				hasError = true
+			if result.Error != "" && strings.Contains(result.Error, "not found") {
+				hasNotFoundError = true
 			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 				VolumeOrFileId: result.VolumeOrFileId,
@@ -198,9 +198,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	if hasError && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
+	if hasNotFoundError && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
 		glog.V(0).Infof("lookup volume warming up: topology is still loading, suggest retry with other masters")
-		return resp, status.Errorf(codes.Unavailable, "master is warming up, retry with other masters")
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, retry with other masters")
 	}
 
 	return resp, nil

@@ -53,9 +53,10 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
+		if location.Locations == nil && strings.Contains(location.Error, "not found") &&
+			ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
 			httpStatus = http.StatusServiceUnavailable
-			w.Header().Set("Retry-After", "5")
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(ms.Topo.WarmupDuration().Seconds())))
 		} else {
 			httpStatus = http.StatusNotFound
 		}
@@ -113,6 +114,12 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
+	if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
+		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+			Error: "master is warming up, retry with other masters",
+		})
+		return
+	}
 	stats.AssignRequest()
 	requestedCount, e := strconv.ParseUint(r.FormValue("count"), 10, 64)
 	if e != nil || requestedCount == 0 {

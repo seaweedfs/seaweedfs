@@ -152,7 +152,7 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 		}
 	}()
 
-	for !topo.LastLeaderChangeTime.Add(constants.VolumePulsePeriod * 2).Before(time.Now()) {
+	for !topo.GetLastLeaderChangeTime().Add(constants.VolumePulsePeriod * 2).Before(time.Now()) {
 		glog.V(0).Infof("wait for volume servers to join back")
 		time.Sleep(constants.VolumePulsePeriod / 2)
 	}

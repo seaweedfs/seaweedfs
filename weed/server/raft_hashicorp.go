@@ -99,7 +99,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
-			s.topo.LastLeaderChangeTime = time.Now()
+			s.topo.SetLastLeaderChangeTime(time.Now())
 		}
 	}
 }
