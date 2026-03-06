@@ -8,7 +8,6 @@ import (
 )
 
 const AmzRequestIDHeader = "x-amz-request-id"
-const LegacyRequestIDHeader = "X-Request-ID"
 
 func Set(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, AmzRequestIDHeader, id)
@@ -39,10 +38,7 @@ func GetFromRequest(r *http.Request) string {
 	if id := Get(r.Context()); id != "" {
 		return id
 	}
-	if id := r.Header.Get(AmzRequestIDHeader); id != "" {
-		return id
-	}
-	return r.Header.Get(LegacyRequestIDHeader)
+	return r.Header.Get(AmzRequestIDHeader)
 }
 
 func Ensure(r *http.Request) (*http.Request, string) {
