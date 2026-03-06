@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -205,14 +206,10 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 }
 
 func extractSTSRequestID(body string) string {
-	start := strings.Index(body, "<RequestId>")
-	if start == -1 {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(body)
+	if len(matches) < 2 {
 		return ""
 	}
-	start += len("<RequestId>")
-	end := strings.Index(body[start:], "</RequestId>")
-	if end == -1 {
-		return ""
-	}
-	return body[start : start+end]
+	return matches[1]
 }

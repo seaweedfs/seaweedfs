@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -158,16 +159,12 @@ func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) 
 }
 
 func extractEmbeddedIamRequestID(response *httptest.ResponseRecorder) string {
-	start := strings.Index(response.Body.String(), "<RequestId>")
-	if start == -1 {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(response.Body.String())
+	if len(matches) < 2 {
 		return ""
 	}
-	start += len("<RequestId>")
-	end := strings.Index(response.Body.String()[start:], "</RequestId>")
-	if end == -1 {
-		return ""
-	}
-	return response.Body.String()[start : start+end]
+	return matches[1]
 }
 
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API

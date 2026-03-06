@@ -12,13 +12,20 @@ func SetResponseRequestID(response interface{}, requestID string) interface{} {
 		return response
 	}
 
+	value := reflect.ValueOf(response)
+	if !value.IsValid() {
+		return response
+	}
+	if value.Kind() == reflect.Ptr && value.IsNil() {
+		return response
+	}
+
 	if setter, ok := response.(requestIDSetter); ok {
 		setter.SetRequestId(requestID)
 		return response
 	}
 
-	value := reflect.ValueOf(response)
-	if !value.IsValid() || value.Kind() == reflect.Ptr {
+	if value.Kind() == reflect.Ptr {
 		return response
 	}
 
