@@ -13,16 +13,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestS3IAMMiddleware tests the basic S3 IAM middleware functionality
-func TestS3IAMMiddleware(t *testing.T) {
-	// Create IAM manager
-	iamManager := integration.NewIAMManager()
+func newTestS3IAMManagerWithDefaultEffect(t *testing.T, defaultEffect string) *integration.IAMManager {
+	t.Helper()
 
-	// Initialize with test configuration
+	iamManager := integration.NewIAMManager()
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
 			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
@@ -31,7 +30,7 @@ func TestS3IAMMiddleware(t *testing.T) {
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
-			DefaultEffect: "Deny",
+			DefaultEffect: defaultEffect,
 			StoreType:     "memory",
 		},
 		Roles: &integration.RoleStoreConfig{
@@ -40,9 +39,21 @@ func TestS3IAMMiddleware(t *testing.T) {
 	}
 
 	err := iamManager.Initialize(config, func() string {
-		return "localhost:8888" // Mock filer address for testing
+		return "localhost:8888"
 	})
 	require.NoError(t, err)
+
+	return iamManager
+}
+
+func newTestS3IAMManager(t *testing.T) *integration.IAMManager {
+	t.Helper()
+	return newTestS3IAMManagerWithDefaultEffect(t, "Deny")
+}
+
+// TestS3IAMMiddleware tests the basic S3 IAM middleware functionality
+func TestS3IAMMiddleware(t *testing.T) {
+	iamManager := newTestS3IAMManager(t)
 
 	// Create S3 IAM integration
 	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
@@ -50,6 +61,38 @@ func TestS3IAMMiddleware(t *testing.T) {
 	// Test that integration is created successfully
 	assert.NotNil(t, s3IAMIntegration)
 	assert.True(t, s3IAMIntegration.enabled)
+}
+
+func TestS3IAMMiddlewareStaticV4ManagedPolicies(t *testing.T) {
+	ctx := context.Background()
+	iamManager := newTestS3IAMManager(t)
+
+	allowPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Effect:   "Allow",
+				Action:   policy.StringList{"s3:PutObject", "s3:ListBucket"},
+				Resource: policy.StringList{"arn:aws:s3:::cli-allowed-bucket", "arn:aws:s3:::cli-allowed-bucket/*"},
+			},
+		},
+	}
+	require.NoError(t, iamManager.CreatePolicy(ctx, "localhost:8888", "cli-bucket-access-policy", allowPolicy))
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	identity := &IAMIdentity{
+		Name:        "cli-test-user",
+		Principal:   "arn:aws:iam::000000000000:user/cli-test-user",
+		PolicyNames: []string{"cli-bucket-access-policy"},
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-allowed-bucket/test-file.txt", http.NoBody)
+	putErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-allowed-bucket", "test-file.txt", putReq)
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	listReq := httptest.NewRequest(http.MethodGet, "http://example.com/cli-allowed-bucket/", http.NoBody)
+	listErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_LIST, "cli-allowed-bucket", "", listReq)
+	assert.Equal(t, s3err.ErrNone, listErrCode)
 }
 
 // TestS3IAMMiddlewareJWTAuth tests JWT authentication
