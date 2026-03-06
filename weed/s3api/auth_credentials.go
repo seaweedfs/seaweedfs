@@ -1572,10 +1572,16 @@ func mergePoliciesIntoConfiguration(config *iam_pb.S3ApiConfiguration, policies 
 
 	existingPolicies := make(map[string]int, len(config.Policies))
 	for idx, policy := range config.Policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
 		existingPolicies[policy.Name] = idx
 	}
 
 	for _, policy := range policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
 		policyCopy := &iam_pb.Policy{Name: policy.Name, Content: policy.Content}
 		if existingIdx, found := existingPolicies[policy.Name]; found {
 			config.Policies[existingIdx] = policyCopy

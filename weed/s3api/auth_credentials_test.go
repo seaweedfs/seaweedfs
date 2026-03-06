@@ -35,8 +35,9 @@ func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.
 	if err != nil {
 		return nil, err
 	}
-	config.Policies = nil
-	return config, nil
+	stripped := *config
+	stripped.Policies = nil
+	return &stripped, nil
 }
 
 func (store *loadConfigurationDropsPoliciesStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
@@ -715,6 +716,52 @@ func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePoliciesThroug
 
 	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
 	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+}
+
+func TestLoadConfigurationDropsPoliciesStoreDoesNotMutateSourceConfig(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	require.NoError(t, baseStore.Initialize(nil, ""))
+
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			{Name: "managedGet", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+	require.NoError(t, baseStore.SaveConfiguration(context.Background(), config))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+
+	stripped, err := store.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, stripped.Policies)
+
+	source, err := baseStore.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	require.Len(t, source.Policies, 1)
+	assert.Equal(t, "managedGet", source.Policies[0].Name)
+}
+
+func TestMergePoliciesIntoConfigurationSkipsNilPolicies(t *testing.T) {
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			nil,
+			{Name: "existing", Content: "old"},
+		},
+	}
+
+	mergePoliciesIntoConfiguration(config, []*iam_pb.Policy{
+		nil,
+		{Name: "", Content: "ignored"},
+		{Name: "existing", Content: "updated"},
+		{Name: "new", Content: "created"},
+	})
+
+	require.Len(t, config.Policies, 3)
+	assert.Nil(t, config.Policies[0])
+	assert.Equal(t, "existing", config.Policies[1].Name)
+	assert.Equal(t, "updated", config.Policies[1].Content)
+	assert.Equal(t, "new", config.Policies[2].Name)
+	assert.Equal(t, "created", config.Policies[2].Content)
 }
 
 type LoadS3ApiConfigurationTestCase struct {
