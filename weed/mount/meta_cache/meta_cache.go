@@ -9,6 +9,8 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -35,9 +37,8 @@ type MetaCache struct {
 	applyDone         chan struct{}
 	applyStateMu      sync.Mutex
 	applyClosed       bool
-	buildingDirs      map[util.FullPath]*directoryBuildState
-	recentEventKeys   []string
-	recentEventSet    map[string]struct{}
+	buildingDirs map[util.FullPath]*directoryBuildState
+	dedupRing    dedupRingBuffer
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -99,8 +100,8 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		},
 		applyCh:        make(chan metadataApplyRequest, 128),
 		applyDone:      make(chan struct{}),
-		buildingDirs:   make(map[util.FullPath]*directoryBuildState),
-		recentEventSet: make(map[string]struct{}),
+		buildingDirs: make(map[util.FullPath]*directoryBuildState),
+		dedupRing:    newDedupRingBuffer(),
 	}
 	go mc.runApplyLoop()
 	return mc
@@ -609,29 +610,54 @@ func metadataCreateFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 	}
 }
 
+func metadataEventDedupKey(resp *filer_pb.SubscribeMetadataResponse) string {
+	var oldName, newName string
+	if msg := resp.GetEventNotification(); msg != nil {
+		if msg.OldEntry != nil {
+			oldName = msg.OldEntry.Name
+		}
+		if msg.NewEntry != nil {
+			newName = msg.NewEntry.Name
+		}
+	}
+	return fmt.Sprintf("%d|%s|%s|%s", resp.TsNs, resp.Directory, oldName, newName)
+}
+
 func (mc *MetaCache) shouldSkipDuplicateEvent(resp *filer_pb.SubscribeMetadataResponse) bool {
 	if resp == nil || resp.TsNs == 0 {
 		return false
 	}
+	key := metadataEventDedupKey(resp)
+	return !mc.dedupRing.Add(key)
+}
 
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(resp)
-	if err != nil {
-		return false
-	}
-	key := string(data)
-	if _, found := mc.recentEventSet[key]; found {
-		return true
-	}
+type dedupRingBuffer struct {
+	keys [recentEventDedupWindow]string
+	head int
+	size int
+	set  map[string]struct{}
+}
 
-	mc.recentEventSet[key] = struct{}{}
-	mc.recentEventKeys = append(mc.recentEventKeys, key)
-	if len(mc.recentEventKeys) > recentEventDedupWindow {
-		evicted := mc.recentEventKeys[0]
-		mc.recentEventKeys = mc.recentEventKeys[1:]
-		delete(mc.recentEventSet, evicted)
+func newDedupRingBuffer() dedupRingBuffer {
+	return dedupRingBuffer{
+		set: make(map[string]struct{}, recentEventDedupWindow),
 	}
+}
 
-	return false
+func (r *dedupRingBuffer) Add(key string) bool {
+	if _, found := r.set[key]; found {
+		return false // duplicate
+	}
+	if r.size == recentEventDedupWindow {
+		evicted := r.keys[r.head]
+		delete(r.set, evicted)
+	} else {
+		r.size++
+	}
+	r.keys[r.head] = key
+	r.set[key] = struct{}{}
+	r.head = (r.head + 1) % recentEventDedupWindow
+	return true // new entry
 }
 
 func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []util.FullPath {
