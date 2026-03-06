@@ -21,7 +21,8 @@ const (
 	ExtMultipartObjectKey          = "key"
 
 	// Bucket Policy
-	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"
+	ExtBucketPolicyKey            = "Seaweed-X-Amz-Bucket-Policy"
+	ExtBucketLifecycleTTLRulesKey = "Seaweed-X-Amz-Bucket-Lifecycle-TTL-Rules"
 
 	// Object Retention and Legal Hold
 	ExtObjectLockModeKey     = "Seaweed-X-Amz-Object-Lock-Mode"
