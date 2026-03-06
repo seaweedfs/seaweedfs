@@ -50,7 +50,8 @@ toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# CRC32
+# CRC32 — using Castagnoli polynomial (CRC32-C), matching Go's crc32.Castagnoli
+crc32c = "0.6"
 crc32fast = "1"
 
 # Memory-mapped files
