@@ -875,128 +875,164 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	glog.V(4).Infof("DoActions: %+v", values)
 	var response interface{}
-	var iamError *IamError
 	changed := true
 	switch r.Form.Get("Action") {
 	case "ListUsers":
-		response = iama.ListUsers(s3cfg, values)
+		resp := iama.ListUsers(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListAccessKeys":
 		iama.handleImplicitUsername(r, values)
-		response = iama.ListAccessKeys(s3cfg, values)
+		resp := iama.ListAccessKeys(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "CreateUser":
-		response = iama.CreateUser(s3cfg, values)
+		resp := iama.CreateUser(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 	case "GetUser":
 		userName := values.Get("UserName")
-		response, iamError = iama.GetUser(s3cfg, userName)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.GetUser(s3cfg, userName)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "UpdateUser":
-		response, iamError = iama.UpdateUser(s3cfg, values)
-		if iamError != nil {
-			glog.Errorf("UpdateUser: %+v", iamError.Error)
+		resp, err := iama.UpdateUser(s3cfg, values)
+		if err != nil {
+			glog.Errorf("UpdateUser: %+v", err.Error)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DeleteUser":
 		userName := values.Get("UserName")
-		response, iamError = iama.DeleteUser(s3cfg, userName)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.DeleteUser(s3cfg, userName)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "CreateAccessKey":
 		iama.handleImplicitUsername(r, values)
-		response, iamError = iama.CreateAccessKey(s3cfg, values)
-		if iamError != nil {
-			glog.Errorf("CreateAccessKey: %+v", iamError.Error)
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.CreateAccessKey(s3cfg, values)
+		if err != nil {
+			glog.Errorf("CreateAccessKey: %+v", err.Error)
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DeleteAccessKey":
 		iama.handleImplicitUsername(r, values)
-		response = iama.DeleteAccessKey(s3cfg, values)
+		resp := iama.DeleteAccessKey(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 	case "UpdateAccessKey":
 		iama.handleImplicitUsername(r, values)
-		response, iamError = iama.UpdateAccessKey(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.UpdateAccessKey(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "CreatePolicy":
-		response, iamError = iama.CreatePolicy(s3cfg, values)
-		if iamError != nil {
-			glog.Errorf("CreatePolicy:  %+v", iamError.Error)
+		resp, err := iama.CreatePolicy(s3cfg, values)
+		if err != nil {
+			glog.Errorf("CreatePolicy:  %+v", err.Error)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		// CreatePolicy persists the policy document via iama.s3ApiConfig.PutPolicies().
 		// The `changed` flag is false because this does not modify the main s3cfg.Identities configuration.
 		changed = false
 	case "PutUserPolicy":
-		var iamError *IamError
-		response, iamError = iama.PutUserPolicy(s3cfg, values)
-		if iamError != nil {
-			glog.Errorf("PutUserPolicy:  %+v", iamError.Error)
-
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.PutUserPolicy(s3cfg, values)
+		if err != nil {
+			glog.Errorf("PutUserPolicy:  %+v", err.Error)
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "GetUserPolicy":
-		response, iamError = iama.GetUserPolicy(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.GetUserPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "DeleteUserPolicy":
-		if response, iamError = iama.DeleteUserPolicy(s3cfg, values); iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.DeleteUserPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "GetPolicy":
-		response, iamError = iama.GetPolicy(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.GetPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "DeletePolicy":
-		response, iamError = iama.DeletePolicy(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.DeletePolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListPolicies":
-		response, iamError = iama.ListPolicies(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.ListPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "AttachUserPolicy":
-		response, iamError = iama.AttachUserPolicy(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.AttachUserPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DetachUserPolicy":
-		response, iamError = iama.DetachUserPolicy(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.DetachUserPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "ListAttachedUserPolicies":
-		response, iamError = iama.ListAttachedUserPolicies(s3cfg, values)
-		if iamError != nil {
-			writeIamErrorResponse(w, r, reqID, iamError)
+		resp, err := iama.ListAttachedUserPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
@@ -1020,6 +1056,5 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	response = iamlib.SetResponseRequestID(response, reqID)
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }

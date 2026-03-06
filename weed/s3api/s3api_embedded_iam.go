@@ -1546,7 +1546,8 @@ func (e *EmbeddedIamApi) AuthIam(f http.HandlerFunc, _ Action) http.HandlerFunc 
 
 // ExecuteAction executes an IAM action with the given values.
 // If skipPersist is true, the changed configuration is not saved to the persistent store.
-func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool) (interface{}, *iamError) {
+// reqID is set on the response before returning; pass "" if no request ID is needed.
+func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, skipPersist bool, reqID string) (interface{}, *iamError) {
 	// Lock to prevent concurrent read-modify-write race conditions
 	e.policyLock.Lock()
 	defer e.policyLock.Unlock()
@@ -1568,165 +1569,217 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 
 	glog.V(4).Infof("IAM ExecuteAction: %+v", values)
 	var response interface{}
-	var iamErr *iamError
 	changed := true
 	switch values.Get("Action") {
 	case "ListUsers":
-		response = e.ListUsers(s3cfg, values)
+		resp := e.ListUsers(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListAccessKeys":
 		// Note: handleImplicitUsername requires request context which we don't have here for gRPC
 		// gRPC callers must provide UserName explicitly
-		response = e.ListAccessKeys(s3cfg, values)
+		resp := e.ListAccessKeys(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "CreateUser":
-		response, iamErr = e.CreateUser(s3cfg, values)
+		resp, iamErr := e.CreateUser(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "GetUser":
 		userName := values.Get("UserName")
-		response, iamErr = e.GetUser(s3cfg, userName)
+		resp, iamErr := e.GetUser(s3cfg, userName)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "UpdateUser":
-		response, iamErr = e.UpdateUser(s3cfg, values)
+		resp, iamErr := e.UpdateUser(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DeleteUser":
 		userName := values.Get("UserName")
-		response, iamErr = e.DeleteUser(s3cfg, userName)
+		resp, iamErr := e.DeleteUser(s3cfg, userName)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "CreateAccessKey":
-		response, iamErr = e.CreateAccessKey(s3cfg, values)
+		resp, iamErr := e.CreateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("CreateAccessKey: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DeleteAccessKey":
-		response = e.DeleteAccessKey(s3cfg, values)
+		resp := e.DeleteAccessKey(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 	case "CreatePolicy":
-		response, iamErr = e.CreatePolicy(ctx, values)
+		resp, iamErr := e.CreatePolicy(ctx, values)
 		if iamErr != nil {
 			glog.Errorf("CreatePolicy: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "DeletePolicy":
-		response, iamErr = e.DeletePolicy(ctx, values)
+		resp, iamErr := e.DeletePolicy(ctx, values)
 		if iamErr != nil {
 			glog.Errorf("DeletePolicy: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "PutUserPolicy":
-		response, iamErr = e.PutUserPolicy(s3cfg, values)
+		resp, iamErr := e.PutUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			glog.Errorf("PutUserPolicy: %+v", iamErr.Error)
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "GetUserPolicy":
-		response, iamErr = e.GetUserPolicy(s3cfg, values)
+		resp, iamErr := e.GetUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "DeleteUserPolicy":
-		response, iamErr = e.DeleteUserPolicy(s3cfg, values)
+		resp, iamErr := e.DeleteUserPolicy(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "AttachUserPolicy":
-		response, iamErr = e.AttachUserPolicy(ctx, values)
+		resp, iamErr := e.AttachUserPolicy(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "DetachUserPolicy":
-		response, iamErr = e.DetachUserPolicy(ctx, values)
+		resp, iamErr := e.DetachUserPolicy(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListAttachedUserPolicies":
-		response, iamErr = e.ListAttachedUserPolicies(ctx, values)
+		resp, iamErr := e.ListAttachedUserPolicies(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListPolicies":
-		response, iamErr = e.ListPolicies(ctx, values)
+		resp, iamErr := e.ListPolicies(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "GetPolicy":
-		response, iamErr = e.GetPolicy(ctx, values)
+		resp, iamErr := e.GetPolicy(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "ListPolicyVersions":
-		response, iamErr = e.ListPolicyVersions(ctx, values)
+		resp, iamErr := e.ListPolicyVersions(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "GetPolicyVersion":
-		response, iamErr = e.GetPolicyVersion(ctx, values)
+		resp, iamErr := e.GetPolicyVersion(ctx, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "SetUserStatus":
-		response, iamErr = e.SetUserStatus(s3cfg, values)
+		resp, iamErr := e.SetUserStatus(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "UpdateAccessKey":
-		response, iamErr = e.UpdateAccessKey(s3cfg, values)
+		resp, iamErr := e.UpdateAccessKey(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	// Service Account actions
 	case "CreateServiceAccount":
 		createdBy := values.Get("CreatedBy")
-		response, iamErr = e.CreateServiceAccount(s3cfg, values, createdBy)
+		resp, iamErr := e.CreateServiceAccount(s3cfg, values, createdBy)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "DeleteServiceAccount":
-		response, iamErr = e.DeleteServiceAccount(s3cfg, values)
+		resp, iamErr := e.DeleteServiceAccount(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	case "ListServiceAccounts":
-		response = e.ListServiceAccounts(s3cfg, values)
+		resp := e.ListServiceAccounts(s3cfg, values)
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "GetServiceAccount":
-		response, iamErr = e.GetServiceAccount(s3cfg, values)
+		resp, iamErr := e.GetServiceAccount(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 		changed = false
 	case "UpdateServiceAccount":
-		response, iamErr = e.UpdateServiceAccount(s3cfg, values)
+		resp, iamErr := e.UpdateServiceAccount(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
+		resp.SetRequestId(reqID)
+		response = resp
 	default:
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}
 	if changed {
 		if !skipPersist {
 			if err := e.PutS3ApiConfiguration(s3cfg); err != nil {
-				iamErr = &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-				return nil, iamErr
+				return nil, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 			}
 		}
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls
@@ -1742,7 +1795,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 			glog.Errorf("Failed to reload IAM configuration after managed policy mutation: %v", err)
 		}
 	}
-	return response, iamErr
+	return response, nil
 }
 
 // DoActions handles IAM API actions.
@@ -1763,12 +1816,11 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		values.Set("CreatedBy", createdBy)
 	}
 
-	response, iamErr := e.ExecuteAction(r.Context(), values, false)
+	response, iamErr := e.ExecuteAction(r.Context(), values, false, reqID)
 	if iamErr != nil {
 		e.writeIamErrorResponse(w, r, reqID, iamErr)
 		return
 	}
 
-	response = iamlib.SetResponseRequestID(response, reqID)
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }
