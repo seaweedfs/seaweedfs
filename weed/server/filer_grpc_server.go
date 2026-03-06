@@ -57,15 +57,20 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 	if snapshotTsNs == 0 {
 		snapshotTsNs = time.Now().UnixNano()
 	}
+	sentSnapshot := false
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
-			if err = stream.Send(&filer_pb.ListEntriesResponse{
-				Entry:        entry.ToProtoEntry(),
-				SnapshotTsNs: snapshotTsNs,
-			}); err != nil {
+			resp := &filer_pb.ListEntriesResponse{
+				Entry: entry.ToProtoEntry(),
+			}
+			if !sentSnapshot {
+				resp.SnapshotTsNs = snapshotTsNs
+				sentSnapshot = true
+			}
+			if err = stream.Send(resp); err != nil {
 				return false, err
 			}
 
