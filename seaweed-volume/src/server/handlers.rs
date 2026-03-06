@@ -12,6 +12,7 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::metrics;
 use crate::security::Guard;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
@@ -57,6 +58,9 @@ pub async fn get_or_head_handler(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Response {
+    let start = std::time::Instant::now();
+    metrics::REQUEST_COUNTER.with_label_values(&["read"]).inc();
+
     let path = request.uri().path().to_string();
     let method = request.method().clone();
 
@@ -120,6 +124,10 @@ pub async fn get_or_head_handler(
         return (StatusCode::OK, response_headers).into_response();
     }
 
+    metrics::REQUEST_DURATION
+        .with_label_values(&["read"])
+        .observe(start.elapsed().as_secs_f64());
+
     (StatusCode::OK, response_headers, n.data).into_response()
 }
 
@@ -141,6 +149,9 @@ pub async fn post_handler(
     Path(path): Path<String>,
     body: axum::body::Bytes,
 ) -> Response {
+    let start = std::time::Instant::now();
+    metrics::REQUEST_COUNTER.with_label_values(&["write"]).inc();
+
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
         None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
@@ -172,6 +183,9 @@ pub async fn post_handler(
                 size: n.data_size,
                 etag: n.etag(),
             };
+            metrics::REQUEST_DURATION
+                .with_label_values(&["write"])
+                .observe(start.elapsed().as_secs_f64());
             (StatusCode::CREATED, axum::Json(result)).into_response()
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
@@ -200,6 +214,9 @@ pub async fn delete_handler(
     headers: HeaderMap,
     Path(path): Path<String>,
 ) -> Response {
+    let start = std::time::Instant::now();
+    metrics::REQUEST_COUNTER.with_label_values(&["delete"]).inc();
+
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
         None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
@@ -227,6 +244,9 @@ pub async fn delete_handler(
             if size.0 == 0 {
                 return StatusCode::NOT_FOUND.into_response();
             }
+            metrics::REQUEST_DURATION
+                .with_label_values(&["delete"])
+                .observe(start.elapsed().as_secs_f64());
             let result = DeleteResult { size: size.0 };
             (StatusCode::ACCEPTED, axum::Json(result)).into_response()
         }
@@ -300,6 +320,20 @@ pub async fn healthz_handler(
         return (StatusCode::SERVICE_UNAVAILABLE, "stopping").into_response();
     }
     StatusCode::OK.into_response()
+}
+
+// ============================================================================
+// Metrics Handler
+// ============================================================================
+
+pub async fn metrics_handler() -> Response {
+    let body = metrics::gather_metrics();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
+        .into_response()
 }
 
 // ============================================================================
