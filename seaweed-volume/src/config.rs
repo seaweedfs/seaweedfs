@@ -222,13 +222,7 @@ pub struct VolumeServerConfig {
     pub debug_port: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NeedleMapKind {
-    InMemory,
-    LevelDb,
-    LevelDbMedium,
-    LevelDbLarge,
-}
+pub use crate::storage::needle_map::NeedleMapKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadMode {
