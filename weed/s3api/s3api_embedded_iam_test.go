@@ -1214,6 +1214,8 @@ func TestEmbeddedIamNotImplementedAction(t *testing.T) {
 	apiRouter.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotImplemented, rr.Code)
+	assert.Contains(t, rr.Body.String(), "<RequestId>")
+	assert.NotContains(t, rr.Body.String(), "<ResponseMetadata>")
 }
 
 // TestGetPolicyDocument tests parsing of policy documents

@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 )
 
-// CommonResponse is embedded in all IAM response types to provide RequestId.
+// CommonResponse is embedded in IAM success response types to provide RequestId.
 type CommonResponse struct {
 	ResponseMetadata struct {
 		RequestId string `xml:"RequestId"`
@@ -193,7 +193,12 @@ type ErrorResponse struct {
 		iam.ErrorDetails
 		Type string `xml:"Type"`
 	} `xml:"Error"`
-	CommonResponse
+	RequestId string `xml:"RequestId"`
+}
+
+// SetRequestId sets a unique request ID based on current timestamp.
+func (r *ErrorResponse) SetRequestId() {
+	r.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
 // Error represents an IAM API error with code and underlying error.
