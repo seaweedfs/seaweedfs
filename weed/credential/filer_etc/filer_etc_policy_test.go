@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -222,6 +223,66 @@ func TestFilerEtcStoreDeletePolicyRemovesLegacyManagedCopy(t *testing.T) {
 	require.True(t, foundLegacy)
 	assert.Empty(t, loadedLegacyPolicies.Policies)
 	assertInlinePolicyPreserved(t, loadedLegacyPolicies.InlinePolicies, "inline-user", "PutOnly")
+}
+
+func TestFilerEtcStoreDeletePolicySerializesLegacyUpdates(t *testing.T) {
+	ctx := context.Background()
+	store, server := newPolicyTestStoreWithServer(t)
+
+	legacyPolicies := newPoliciesCollection()
+	legacyPolicies.Policies["first"] = testPolicyDocument("s3:GetObject", "arn:aws:s3:::first/*")
+	legacyPolicies.Policies["second"] = testPolicyDocument("s3:GetObject", "arn:aws:s3:::second/*")
+	require.NoError(t, store.saveLegacyPoliciesCollection(ctx, legacyPolicies))
+	require.NoError(t, store.savePolicy(ctx, "first", testPolicyDocument("s3:GetObject", "arn:aws:s3:::first/*")))
+	require.NoError(t, store.savePolicy(ctx, "second", testPolicyDocument("s3:GetObject", "arn:aws:s3:::second/*")))
+
+	firstSaveStarted := make(chan struct{})
+	releaseFirstSave := make(chan struct{})
+	var blockOnce sync.Once
+
+	server.mu.Lock()
+	server.beforeUpdate = func(dir string, name string) error {
+		if dir == filer.IamConfigDirectory && name == filer.IamPoliciesFile {
+			blockOnce.Do(func() {
+				close(firstSaveStarted)
+				<-releaseFirstSave
+			})
+		}
+		return nil
+	}
+	server.mu.Unlock()
+
+	firstDeleteErr := make(chan error, 1)
+	go func() {
+		firstDeleteErr <- store.DeletePolicy(ctx, "first")
+	}()
+
+	<-firstSaveStarted
+
+	secondDeleteErr := make(chan error, 1)
+	go func() {
+		secondDeleteErr <- store.DeletePolicy(ctx, "second")
+	}()
+
+	secondCompletedWhileFirstBlocked := false
+	select {
+	case err := <-secondDeleteErr:
+		require.NoError(t, err)
+		secondCompletedWhileFirstBlocked = true
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	close(releaseFirstSave)
+
+	require.NoError(t, <-firstDeleteErr)
+	if !secondCompletedWhileFirstBlocked {
+		require.NoError(t, <-secondDeleteErr)
+	}
+
+	loadedLegacyPolicies, foundLegacy, err := store.loadLegacyPoliciesCollection(ctx)
+	require.NoError(t, err)
+	require.True(t, foundLegacy)
+	assert.Empty(t, loadedLegacyPolicies.Policies)
 }
 
 func TestFilerEtcStoreLoadManagedPoliciesRespectsReadContext(t *testing.T) {

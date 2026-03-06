@@ -266,6 +266,9 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 	if err := validatePolicyName(name); err != nil {
 		return err
 	}
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
 	policiesCollection, foundLegacy, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return err
