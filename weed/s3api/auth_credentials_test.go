@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -10,17 +11,48 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
-	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 )
+
+type loadConfigurationDropsPoliciesStore struct {
+	*memory.MemoryStore
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	config.Policies = nil
+	return config, nil
+}
+
+type inlinePolicyRuntimeStore struct {
+	*memory.MemoryStore
+	inlinePolicies map[string]map[string]policy_engine.PolicyDocument
+}
+
+func (store *inlinePolicyRuntimeStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	_ = ctx
+	return store.inlinePolicies, nil
+}
+
+func newPolicyAuthRequest(t *testing.T, method string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+	assert.NoError(t, err)
+	return req
+}
 
 func TestIdentityListFileFormat(t *testing.T) {
 
@@ -426,6 +458,98 @@ func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
 		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "any-object")
 		assert.Equal(t, s3err.ErrNone, errCode)
 	})
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedGet"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000001", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedGet",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	errCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	inlinePolicy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
+			},
+		},
+	}
+
+	store := &inlinePolicyRuntimeStore{
+		MemoryStore: baseStore,
+		inlinePolicies: map[string]map[string]policy_engine.PolicyDocument{
+			"inline-user": {
+				"PutOnly": inlinePolicy,
+			},
+		},
+	}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "inline-user",
+				Actions: []string{"Write:test-bucket"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAINLINE0000001", SecretKey: "inline-secret"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("inline-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+	assert.Contains(t, identity.PolicyNames, inlinePolicyRuntimeName("inline-user", "PutOnly"))
+
+	putErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
 }
 
 type LoadS3ApiConfigurationTestCase struct {
