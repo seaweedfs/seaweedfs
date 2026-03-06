@@ -1726,9 +1726,21 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	hasAttachedPolicies := len(identity.PolicyNames) > 0
 
-	if (len(identity.Actions) == 0 || hasSessionToken) && iam.iamIntegration != nil {
+	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
+	}
+
+	// Attached IAM policies are authoritative for IAM users. The legacy Actions
+	// field is a lossy projection that cannot represent deny statements,
+	// conditions, or fine-grained action differences such as PutObject vs
+	// DeleteObject.
+	if hasAttachedPolicies {
+		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
 	}
 
 	// Traditional actions-based authorization from static S3 config.
@@ -1737,14 +1749,6 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 			return s3err.ErrAccessDenied
 		}
 		return s3err.ErrNone
-	}
-
-	// IAM policy fallback for identities with attached policies but without IAM integration.
-	if len(identity.PolicyNames) > 0 {
-		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
-			return s3err.ErrNone
-		}
-		return s3err.ErrAccessDenied
 	}
 
 	return s3err.ErrAccessDenied

@@ -374,6 +374,25 @@ func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
 		assert.Equal(t, s3err.ErrNone, errCode)
 	})
 
+	t.Run("attached policies override coarse legacy actions", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("putOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:PutObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			Actions:     []Action{"Write:test-bucket"},
+			PolicyNames: []string{"putOnly"},
+		}
+
+		putErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, putErrCode)
+
+		deleteErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+	})
+
 	t.Run("valid policy updated to invalid denies access", func(t *testing.T) {
 		iam := &IdentityAccessManagement{}
 		err := iam.PutPolicy("myPolicy", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
