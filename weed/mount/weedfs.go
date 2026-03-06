@@ -200,7 +200,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		}, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
-				wfs.maybeRefreshDirectory(dirPath)
+				wfs.markDirectoryReadThrough(dirPath)
 			}
 		})
 	grace.OnInterrupt(func() {
@@ -371,31 +371,13 @@ func (wfs *WFS) ClearCacheDir() {
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
 }
 
-func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
-	if !wfs.inodeToPath.NeedsRefresh(dirPath) {
+func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
+	if !wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now()) {
 		return
 	}
-	wfs.refreshMu.Lock()
-	if _, exists := wfs.refreshingDirs[dirPath]; exists {
-		wfs.refreshMu.Unlock()
-		return
+	if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dirPath); err != nil {
+		glog.V(2).Infof("clear dir cache %s: %v", dirPath, err)
 	}
-	wfs.refreshingDirs[dirPath] = struct{}{}
-	wfs.refreshMu.Unlock()
-
-	go func() {
-		defer func() {
-			wfs.refreshMu.Lock()
-			delete(wfs.refreshingDirs, dirPath)
-			wfs.refreshMu.Unlock()
-		}()
-		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
-		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-			glog.Warningf("refresh dir cache %s: %v", dirPath, err)
-			return
-		}
-		wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, time.Now())
-	}()
 }
 
 func (wfs *WFS) loopEvictIdleDirCache() {

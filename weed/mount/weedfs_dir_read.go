@@ -164,7 +164,6 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 		return code
 	}
 	wfs.inodeToPath.TouchDirectory(dirPath)
-	wfs.maybeRefreshDirectory(dirPath)
 
 	var dirEntry fuse.DirEntry
 
