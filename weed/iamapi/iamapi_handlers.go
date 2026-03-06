@@ -13,6 +13,7 @@ func newErrorResponse(errCode string, errMsg string) ErrorResponse {
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
 	errorResp.Error.Message = &errMsg
+	errorResp.SetRequestId()
 	return errorResp
 }
 

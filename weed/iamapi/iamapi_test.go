@@ -244,6 +244,8 @@ func TestPutUserPolicyError(t *testing.T) {
 
 	assert.Equal(t, expectedMessage, message)
 	assert.Equal(t, expectedCode, code)
+	assert.Contains(t, response.Body.String(), "<RequestId>")
+	assert.NotContains(t, response.Body.String(), "<ResponseMetadata>")
 }
 
 func extractErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {

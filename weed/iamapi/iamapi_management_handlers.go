@@ -997,9 +997,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
-		errorResponse := ErrorResponse{}
-		errorResponse.Error.Code = &errNotImplemented.Code
-		errorResponse.Error.Message = &errNotImplemented.Description
+		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description)
 		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
 		return
 	}
