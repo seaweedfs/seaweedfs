@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -198,26 +199,12 @@ func (s *FilerPolicyStore) StorePolicy(ctx context.Context, filerAddress string,
 
 	// Store in filer
 	return s.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.CreateEntryRequest{
-			Directory: s.basePath,
-			Entry: &filer_pb.Entry{
-				Name:        s.getPolicyFileName(name),
-				IsDirectory: false,
-				Attributes: &filer_pb.FuseAttributes{
-					Mtime:    time.Now().Unix(),
-					Crtime:   time.Now().Unix(),
-					FileMode: uint32(0600), // Read/write for owner only
-					Uid:      uint32(0),
-					Gid:      uint32(0),
-				},
-				Content: policyData,
-			},
-		}
-
 		glog.V(3).Infof("Storing policy %s at %s", name, policyPath)
-		_, err := client.CreateEntry(ctx, request)
-		if err != nil {
+		if err := s.savePolicyFile(ctx, client, s.getPolicyFileName(name), policyData); err != nil {
 			return fmt.Errorf("failed to store policy %s: %v", name, err)
+		}
+		if err := s.deleteLegacyPolicyFileIfPresent(ctx, client, name); err != nil {
+			return err
 		}
 
 		return nil
@@ -400,6 +387,10 @@ func (s *FilerPolicyStore) getPolicyPath(policyName string) string {
 
 // getPolicyFileName returns the filename for a policy
 func (s *FilerPolicyStore) getPolicyFileName(policyName string) string {
+	return s.getCanonicalPolicyFileName(policyName)
+}
+
+func (s *FilerPolicyStore) getLegacyPolicyFileName(policyName string) string {
 	return "policy_" + policyName + ".json"
 }
 
@@ -410,7 +401,7 @@ func (s *FilerPolicyStore) getCanonicalPolicyFileName(policyName string) string 
 func (s *FilerPolicyStore) getPolicyLookupFileNames(policyName string) []string {
 	return []string{
 		s.getCanonicalPolicyFileName(policyName),
-		s.getPolicyFileName(policyName),
+		s.getLegacyPolicyFileName(policyName),
 	}
 }
 
@@ -418,8 +409,95 @@ func (s *FilerPolicyStore) policyNameFromFileName(fileName string) (string, bool
 	if !strings.HasSuffix(fileName, ".json") {
 		return "", false
 	}
+	policyName := strings.TrimSuffix(fileName, ".json")
 	if strings.HasPrefix(fileName, "policy_") {
-		return strings.TrimSuffix(strings.TrimPrefix(fileName, "policy_"), ".json"), true
+		policyName = strings.TrimPrefix(policyName, "policy_")
 	}
-	return strings.TrimSuffix(fileName, ".json"), true
+	if s.isSupportedPolicyName(policyName) {
+		return policyName, true
+	}
+	return "", false
+}
+
+func (s *FilerPolicyStore) isSupportedPolicyName(policyName string) bool {
+	if policyName == "" {
+		return false
+	}
+	if strings.HasPrefix(policyName, "bucket-policy:") {
+		return len(policyName) > len("bucket-policy:")
+	}
+	return credential.ValidatePolicyName(policyName) == nil
+}
+
+func (s *FilerPolicyStore) deleteLegacyPolicyFileIfPresent(ctx context.Context, client filer_pb.SeaweedFilerClient, policyName string) error {
+	legacyFileName := s.getLegacyPolicyFileName(policyName)
+	response, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+		Directory:            s.basePath,
+		Name:                 legacyFileName,
+		IsDeleteData:         true,
+		IsRecursive:          false,
+		IgnoreRecursiveError: false,
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
+			return nil
+		}
+		return fmt.Errorf("failed to delete legacy policy %s: %v", policyName, err)
+	}
+	if response.Error != "" && !strings.Contains(response.Error, "not found") {
+		return fmt.Errorf("failed to delete legacy policy %s: %s", policyName, response.Error)
+	}
+	return nil
+}
+
+func (s *FilerPolicyStore) savePolicyFile(ctx context.Context, client filer_pb.SeaweedFilerClient, fileName string, content []byte) error {
+	response, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: s.basePath,
+		Name:      fileName,
+	})
+	if err != nil {
+		if err == filer_pb.ErrNotFound {
+			now := time.Now().Unix()
+			return filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
+				Directory: s.basePath,
+				Entry: &filer_pb.Entry{
+					Name:        fileName,
+					IsDirectory: false,
+					Attributes: &filer_pb.FuseAttributes{
+						Mtime:    now,
+						Crtime:   now,
+						FileMode: uint32(0600),
+						Uid:      uint32(0),
+						Gid:      uint32(0),
+						FileSize: uint64(len(content)),
+					},
+					Content: content,
+				},
+			})
+		}
+		return err
+	}
+
+	entry := response.Entry
+	if entry == nil {
+		return fmt.Errorf("lookup returned empty entry for %s", fileName)
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	now := time.Now().Unix()
+	if entry.Attributes.Crtime == 0 {
+		entry.Attributes.Crtime = now
+	}
+	if entry.Attributes.FileMode == 0 {
+		entry.Attributes.FileMode = uint32(0600)
+	}
+	entry.Attributes.Mtime = now
+	entry.Attributes.FileSize = uint64(len(content))
+	entry.Content = content
+
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: s.basePath,
+		Entry:     entry,
+	})
 }

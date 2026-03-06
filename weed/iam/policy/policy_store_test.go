@@ -44,6 +44,32 @@ func (s *policyStoreTestFilerServer) LookupDirectoryEntry(_ context.Context, req
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: clonePolicyStoreEntry(entry)}, nil
 }
 
+func (s *policyStoreTestFilerServer) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := policyStoreTestEntryKey(req.Directory, req.Entry.Name)
+	if _, found := s.entries[key]; found {
+		return nil, status.Error(codes.AlreadyExists, "entry already exists")
+	}
+
+	s.entries[key] = clonePolicyStoreEntry(req.Entry)
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (s *policyStoreTestFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := policyStoreTestEntryKey(req.Directory, req.Entry.Name)
+	if _, found := s.entries[key]; !found {
+		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
+	}
+
+	s.entries[key] = clonePolicyStoreEntry(req.Entry)
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
 func (s *policyStoreTestFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -163,11 +189,13 @@ func TestFilerPolicyStoreListPoliciesIncludesCanonicalAndLegacyFiles(t *testing.
 	server.putPolicyFile(t, store.basePath, "policy_legacy-only.json", testPolicyDocument("s3:PutObject", "arn:aws:s3:::legacy-only/*"))
 	server.putPolicyFile(t, store.basePath, "shared.json", testPolicyDocument("s3:DeleteObject", "arn:aws:s3:::shared/*"))
 	server.putPolicyFile(t, store.basePath, "policy_shared.json", testPolicyDocument("s3:ListBucket", "arn:aws:s3:::shared"))
+	server.putPolicyFile(t, store.basePath, "policy_invalid:name.json", testPolicyDocument("s3:GetObject", "arn:aws:s3:::ignored/*"))
+	server.putPolicyFile(t, store.basePath, "bucket-policy:bucket-a.json", testPolicyDocument("s3:ListBucket", "arn:aws:s3:::bucket-a"))
 
 	names, err := store.ListPolicies(ctx, "")
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"canonical-only", "legacy-only", "shared"}, names)
+	assert.ElementsMatch(t, []string{"canonical-only", "legacy-only", "shared", "bucket-policy:bucket-a"}, names)
 }
 
 func TestFilerPolicyStoreDeletePolicyRemovesCanonicalAndLegacyFiles(t *testing.T) {
@@ -180,6 +208,23 @@ func TestFilerPolicyStoreDeletePolicyRemovesCanonicalAndLegacyFiles(t *testing.T
 	require.NoError(t, store.DeletePolicy(ctx, "", "dual-format"))
 	assert.False(t, server.hasEntry(store.basePath, "dual-format.json"))
 	assert.False(t, server.hasEntry(store.basePath, "policy_dual-format.json"))
+}
+
+func TestFilerPolicyStoreStorePolicyWritesCanonicalFileAndRemovesLegacyTwin(t *testing.T) {
+	ctx := context.Background()
+	store, server := newTestFilerPolicyStore(t)
+
+	server.putPolicyFile(t, store.basePath, "policy_dual-format.json", testPolicyDocument("s3:PutObject", "arn:aws:s3:::dual-format/*"))
+
+	require.NoError(t, store.StorePolicy(ctx, "", "dual-format", testPolicyDocument("s3:GetObject", "arn:aws:s3:::dual-format/*")))
+
+	assert.True(t, server.hasEntry(store.basePath, "dual-format.json"))
+	assert.False(t, server.hasEntry(store.basePath, "policy_dual-format.json"))
+
+	document, err := store.GetPolicy(ctx, "", "dual-format")
+	require.NoError(t, err)
+	require.Len(t, document.Statement, 1)
+	assert.Equal(t, "s3:GetObject", document.Statement[0].Action[0])
 }
 
 func testPolicyDocument(action string, resource string) *PolicyDocument {
