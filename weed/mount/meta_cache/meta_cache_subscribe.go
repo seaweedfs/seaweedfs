@@ -50,13 +50,6 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		message := resp.EventNotification
-
-		for _, sig := range message.Signatures {
-			if sig == selfSignature && selfSignature != 0 {
-				return nil
-			}
-		}
 		return mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions)
 
 	}

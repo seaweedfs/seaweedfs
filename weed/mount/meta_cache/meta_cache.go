@@ -36,6 +36,8 @@ type MetaCache struct {
 	applyStateMu      sync.Mutex
 	applyClosed       bool
 	buildingDirs      map[util.FullPath]*directoryBuildState
+	recentEventKeys   []string
+	recentEventSet    map[string]struct{}
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -58,6 +60,8 @@ var (
 type directoryBuildState struct {
 	bufferedEvents []*filer_pb.SubscribeMetadataResponse
 }
+
+const recentEventDedupWindow = 4096
 
 type metadataApplyRequestKind int
 
@@ -93,9 +97,10 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
-		applyCh:      make(chan metadataApplyRequest, 128),
-		applyDone:    make(chan struct{}),
-		buildingDirs: make(map[util.FullPath]*directoryBuildState),
+		applyCh:        make(chan metadataApplyRequest, 128),
+		applyDone:      make(chan struct{}),
+		buildingDirs:   make(map[util.FullPath]*directoryBuildState),
+		recentEventSet: make(map[string]struct{}),
 	}
 	go mc.runApplyLoop()
 	return mc
@@ -396,6 +401,10 @@ type metadataResponseSideEffects struct {
 }
 
 func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) error {
+	if mc.shouldSkipDuplicateEvent(resp) {
+		return nil
+	}
+
 	immediateEvents, bufferedEvents := mc.routeMetadataResponse(resp)
 	if len(bufferedEvents) == 0 {
 		return mc.applyMetadataResponseDirect(ctx, resp, options, false)
@@ -598,6 +607,31 @@ func metadataCreateFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 		},
 		TsNs: resp.TsNs,
 	}
+}
+
+func (mc *MetaCache) shouldSkipDuplicateEvent(resp *filer_pb.SubscribeMetadataResponse) bool {
+	if resp == nil || resp.TsNs == 0 {
+		return false
+	}
+
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(resp)
+	if err != nil {
+		return false
+	}
+	key := string(data)
+	if _, found := mc.recentEventSet[key]; found {
+		return true
+	}
+
+	mc.recentEventSet[key] = struct{}{}
+	mc.recentEventKeys = append(mc.recentEventKeys, key)
+	if len(mc.recentEventKeys) > recentEventDedupWindow {
+		evicted := mc.recentEventKeys[0]
+		mc.recentEventKeys = mc.recentEventKeys[1:]
+		delete(mc.recentEventSet, evicted)
+	}
+
+	return false
 }
 
 func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []util.FullPath {
