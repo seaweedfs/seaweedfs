@@ -1,5 +1,6 @@
 mod config;
 mod storage;
+mod security;
 
 fn main() {
     let cli = config::parse_cli();
