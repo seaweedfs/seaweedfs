@@ -22,6 +22,7 @@ type GroupCommitter struct {
 	lowWatermark  int           // skip delay if fewer pending (0 = always wait)
 	onDegraded    func()        // called when fsync fails
 	postSyncCheck func() error  // called after sync; error fails waiters
+	metrics       *EngineMetrics
 
 	mu       sync.Mutex
 	pending  []chan error
@@ -36,12 +37,13 @@ type GroupCommitter struct {
 
 // GroupCommitterConfig configures the group committer.
 type GroupCommitterConfig struct {
-	SyncFunc      func() error  // required: the fsync function
-	MaxDelay      time.Duration // default 1ms
-	MaxBatch      int           // default 64
-	LowWatermark  int           // skip delay if fewer pending (0 = always wait)
-	OnDegraded    func()        // optional: called on fsync error
-	PostSyncCheck func() error  // optional: called after successful sync; error fails all waiters
+	SyncFunc      func() error   // required: the fsync function
+	MaxDelay      time.Duration  // default 1ms
+	MaxBatch      int            // default 64
+	LowWatermark  int            // skip delay if fewer pending (0 = always wait)
+	OnDegraded    func()         // optional: called on fsync error
+	PostSyncCheck func() error   // optional: called after successful sync; error fails all waiters
+	Metrics       *EngineMetrics // optional; if nil, no metrics recorded
 }
 
 // NewGroupCommitter creates a new group committer. Call Run() to start it.
@@ -62,6 +64,7 @@ func NewGroupCommitter(cfg GroupCommitterConfig) *GroupCommitter {
 		lowWatermark:  cfg.LowWatermark,
 		onDegraded:    cfg.OnDegraded,
 		postSyncCheck: cfg.PostSyncCheck,
+		metrics:       cfg.Metrics,
 		notifyCh:      make(chan struct{}, 1),
 		stopCh:        make(chan struct{}),
 		done:          make(chan struct{}),
@@ -130,6 +133,7 @@ func (gc *GroupCommitter) Run() {
 
 		// Perform fsync with panic recovery. A panic in syncFunc must
 		// not leave waiters hung --notify them and drain stragglers.
+		syncStart := time.Now()
 		err := gc.callSyncFunc()
 		gc.syncCount.Add(1)
 		if err == nil && gc.postSyncCheck != nil {
@@ -137,6 +141,11 @@ func (gc *GroupCommitter) Run() {
 		}
 		if err != nil {
 			gc.onDegraded()
+		}
+
+		// Record metrics.
+		if gc.metrics != nil {
+			gc.metrics.RecordGroupCommitBatch(len(batch), time.Since(syncStart))
 		}
 
 		// Wake all waiters.

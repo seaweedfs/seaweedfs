@@ -310,6 +310,9 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 
 	// Start block volume iSCSI service (disabled if block.dir is empty).
 	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix)
+	if blockService != nil {
+		volumeServer.SetBlockService(blockService)
+	}
 
 	grace.OnReload(volumeServer.LoadNewVolumes)
 	grace.OnReload(volumeServer.Reload)

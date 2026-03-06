@@ -32,82 +32,116 @@ func newBlockFailoverState() *blockFailoverState {
 }
 
 // failoverBlockVolumes is called when a volume server disconnects.
-// It checks each block volume on that server and promotes the replica
-// if the lease has expired (F2).
+// It checks each block volume on that server and:
+// - If dead server is primary: promote best replica (if lease expired).
+// - If dead server hosts a replica: remove from replica list, record pending rebuild.
 func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 	if ms.blockRegistry == nil {
 		return
 	}
+	ms.blockRegistry.FailoversTotal.Add(1)
 	entries := ms.blockRegistry.ListByServer(deadServer)
 	now := time.Now()
 	for _, entry := range entries {
-		if blockvol.RoleFromWire(entry.Role) != blockvol.RolePrimary {
+		// Case 1: Dead server is the primary.
+		if entry.VolumeServer == deadServer &&
+			blockvol.RoleFromWire(entry.Role) == blockvol.RolePrimary {
+
+			if !entry.HasReplica() {
+				glog.Warningf("failover: %q has no replica, cannot promote", entry.Name)
+				continue
+			}
+			// F2: Wait for lease expiry before promoting.
+			leaseExpiry := entry.LastLeaseGrant.Add(entry.LeaseTTL)
+			if now.Before(leaseExpiry) {
+				delay := leaseExpiry.Sub(now)
+				glog.V(0).Infof("failover: %q lease expires in %v, deferring promotion", entry.Name, delay)
+				volumeName := entry.Name
+				timer := time.AfterFunc(delay, func() {
+					ms.promoteReplica(volumeName)
+				})
+				ms.blockFailover.mu.Lock()
+				ms.blockFailover.deferredTimers[deadServer] = append(
+					ms.blockFailover.deferredTimers[deadServer], timer)
+				ms.blockFailover.mu.Unlock()
+				continue
+			}
+			// Lease already expired — promote immediately.
+			ms.promoteReplica(entry.Name)
 			continue
 		}
-		// Only failover volumes whose primary is the dead server.
+
+		// Case 2: Dead server hosts a replica (not the primary).
 		if entry.VolumeServer != deadServer {
-			continue
+			ri := entry.ReplicaByServer(deadServer)
+			if ri != nil {
+				replicaPath := ri.Path
+				// Remove dead replica from registry.
+				if err := ms.blockRegistry.RemoveReplica(entry.Name, deadServer); err != nil {
+					glog.Warningf("failover: RemoveReplica %q on %s: %v", entry.Name, deadServer, err)
+					continue
+				}
+				// Record pending rebuild for when dead server reconnects.
+				ms.recordPendingRebuild(deadServer, pendingRebuild{
+					VolumeName: entry.Name,
+					OldPath:    replicaPath,
+					NewPrimary: entry.VolumeServer, // current primary (unchanged)
+					Epoch:      entry.Epoch,
+				})
+				glog.V(0).Infof("failover: removed dead replica %s for %q, pending rebuild",
+					deadServer, entry.Name)
+			}
 		}
-		if entry.ReplicaServer == "" {
-			glog.Warningf("failover: %q has no replica, cannot promote", entry.Name)
-			continue
-		}
-		// F2: Wait for lease expiry before promoting.
-		leaseExpiry := entry.LastLeaseGrant.Add(entry.LeaseTTL)
-		if now.Before(leaseExpiry) {
-			delay := leaseExpiry.Sub(now)
-			glog.V(0).Infof("failover: %q lease expires in %v, deferring promotion", entry.Name, delay)
-			volumeName := entry.Name
-			timer := time.AfterFunc(delay, func() {
-				ms.promoteReplica(volumeName)
-			})
-			// R2-F2: Store timer so it can be cancelled if the server reconnects.
-			ms.blockFailover.mu.Lock()
-			ms.blockFailover.deferredTimers[deadServer] = append(
-				ms.blockFailover.deferredTimers[deadServer], timer)
-			ms.blockFailover.mu.Unlock()
-			continue
-		}
-		// Lease already expired — promote immediately.
-		ms.promoteReplica(entry.Name)
 	}
 }
 
-// promoteReplica swaps primary and replica for the named volume,
+// promoteReplica promotes the best replica to primary for the named volume,
 // enqueues an assignment for the new primary, and records a pending rebuild.
 func (ms *MasterServer) promoteReplica(volumeName string) {
 	entry, ok := ms.blockRegistry.Lookup(volumeName)
 	if !ok {
 		return
 	}
-	if entry.ReplicaServer == "" {
+	if !entry.HasReplica() {
 		return
 	}
 
 	oldPrimary := entry.VolumeServer
 	oldPath := entry.Path
 
-	// R2-F5: Epoch computed atomically inside SwapPrimaryReplica (under lock).
-	newEpoch, err := ms.blockRegistry.SwapPrimaryReplica(volumeName)
+	// CP8-2: Use PromoteBestReplica (picks by health score, tie-break by WALHeadLSN).
+	newEpoch, err := ms.blockRegistry.PromoteBestReplica(volumeName)
 	if err != nil {
-		glog.Warningf("failover: SwapPrimaryReplica %q: %v", volumeName, err)
+		glog.Warningf("failover: PromoteBestReplica %q: %v", volumeName, err)
 		return
 	}
 
-	// Re-read entry after swap.
+	// Re-read entry after promotion.
 	entry, ok = ms.blockRegistry.Lookup(volumeName)
 	if !ok {
 		return
 	}
 
-	// Enqueue assignment for new primary.
+	// Build assignment for new primary. Include ReplicaAddrs for remaining replicas.
 	leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
-	ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, blockvol.BlockVolumeAssignment{
+	assignment := blockvol.BlockVolumeAssignment{
 		Path:       entry.Path,
 		Epoch:      newEpoch,
 		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 		LeaseTtlMs: leaseTTLMs,
-	})
+	}
+	for _, ri := range entry.Replicas {
+		assignment.ReplicaAddrs = append(assignment.ReplicaAddrs, blockvol.ReplicaAddr{
+			DataAddr: ri.DataAddr,
+			CtrlAddr: ri.CtrlAddr,
+		})
+	}
+	// Backward compat: also set scalar fields if exactly 1 replica.
+	if len(entry.Replicas) == 1 {
+		assignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
+		assignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+	}
+	ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, assignment)
 
 	// Record pending rebuild for when dead server reconnects.
 	ms.recordPendingRebuild(oldPrimary, pendingRebuild{
@@ -117,6 +151,7 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		Epoch:      newEpoch,
 	})
 
+	ms.blockRegistry.PromotionsTotal.Add(1)
 	glog.V(0).Infof("failover: promoted replica for %q: new primary=%s epoch=%d (old primary=%s)",
 		volumeName, entry.VolumeServer, newEpoch, oldPrimary)
 }
@@ -180,8 +215,11 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 			continue
 		}
 
-		// Update registry: reconnected server becomes the new replica.
-		ms.blockRegistry.SetReplica(rb.VolumeName, reconnectedServer, rb.OldPath, "", "")
+		// Update registry: reconnected server becomes a replica (via AddReplica for RF≥2 support).
+		ms.blockRegistry.AddReplica(rb.VolumeName, ReplicaInfo{
+			Server: reconnectedServer,
+			Path:   rb.OldPath,
+		})
 
 		// Enqueue rebuild assignment for the reconnected server.
 		ms.blockAssignmentQueue.Enqueue(reconnectedServer, blockvol.BlockVolumeAssignment{
@@ -191,6 +229,7 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 			RebuildAddr: entry.RebuildListenAddr,
 		})
 
+		ms.blockRegistry.RebuildsTotal.Add(1)
 		glog.V(0).Infof("rebuild: enqueued rebuild for %q on %s (epoch=%d, rebuildAddr=%s)",
 			rb.VolumeName, reconnectedServer, entry.Epoch, entry.RebuildListenAddr)
 	}

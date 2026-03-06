@@ -60,9 +60,10 @@ type MasterOption struct {
 	MetricsAddress          string
 	MetricsIntervalSec      int
 	IsFollower              bool
-	TelemetryUrl            string
-	TelemetryEnabled        bool
-	VolumeGrowthDisabled    bool
+	TelemetryUrl                string
+	TelemetryEnabled            bool
+	VolumeGrowthDisabled        bool
+	BlockPromotionLSNTolerance  int
 }
 
 type MasterServer struct {
@@ -97,8 +98,12 @@ type MasterServer struct {
 	blockRegistry        *BlockVolumeRegistry
 	blockAssignmentQueue *BlockAssignmentQueue
 	blockFailover        *blockFailoverState
-	blockVSAllocate func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error)
-	blockVSDelete   func(ctx context.Context, server string, name string) error
+	blockVSAllocate  func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error)
+	blockVSDelete    func(ctx context.Context, server string, name string) error
+	blockVSSnapshot  func(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error)
+	blockVSDeleteSnap func(ctx context.Context, server string, name string, snapID uint32) error
+	blockVSListSnaps func(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error)
+	blockVSExpand    func(ctx context.Context, server string, name string, newSize uint64) (uint64, error)
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
@@ -148,10 +153,17 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	}
 
 	ms.blockRegistry = NewBlockVolumeRegistry()
+	if option.BlockPromotionLSNTolerance > 0 {
+		ms.blockRegistry.SetPromotionLSNTolerance(uint64(option.BlockPromotionLSNTolerance))
+	}
 	ms.blockAssignmentQueue = NewBlockAssignmentQueue()
 	ms.blockFailover = newBlockFailoverState()
 	ms.blockVSAllocate = ms.defaultBlockVSAllocate
 	ms.blockVSDelete = ms.defaultBlockVSDelete
+	ms.blockVSSnapshot = ms.defaultBlockVSSnapshot
+	ms.blockVSDeleteSnap = ms.defaultBlockVSDeleteSnap
+	ms.blockVSListSnaps = ms.defaultBlockVSListSnaps
+	ms.blockVSExpand = ms.defaultBlockVSExpand
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 
@@ -197,6 +209,18 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 			r.HandleFunc("/stats/counter", ms.guard.WhiteList(statsCounterHandler))
 			r.HandleFunc("/stats/memory", ms.guard.WhiteList(statsMemoryHandler))
 		*/
+
+		// Block volume management routes.
+		r.HandleFunc("/block/volume", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeCreateHandler)))).Methods("POST")
+		r.HandleFunc("/block/volume/{name}", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeDeleteHandler)))).Methods("DELETE")
+		r.HandleFunc("/block/volume/{name}", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeLookupHandler))).Methods("GET")
+		r.HandleFunc("/block/volumes", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeListHandler))).Methods("GET")
+		r.HandleFunc("/block/assign", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockAssignHandler)))).Methods("POST")
+		r.HandleFunc("/block/servers", ms.guard.WhiteList(requestIDMiddleware(ms.blockServersHandler))).Methods("GET")
+		r.HandleFunc("/block/status", ms.guard.WhiteList(requestIDMiddleware(ms.blockStatusHandler))).Methods("GET")
+		r.HandleFunc("/block/ops", requestIDMiddleware(ms.blockOpsHandler))
+		r.HandleFunc("/block/", requestIDMiddleware(ms.blockUIHandler))
+
 		r.HandleFunc("/{fileId}", requestIDMiddleware(ms.redirectHandler))
 	}
 
@@ -559,4 +583,63 @@ func (ms *MasterServer) defaultBlockVSDelete(ctx context.Context, server string,
 		})
 		return err
 	})
+}
+
+func (ms *MasterServer) defaultBlockVSSnapshot(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error) {
+	var createdAt int64
+	var sizeBytes uint64
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, rerr := client.SnapshotBlockVolume(ctx, &volume_server_pb.SnapshotBlockVolumeRequest{
+			Name:       name,
+			SnapshotId: snapID,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		createdAt = resp.CreatedAt
+		sizeBytes = resp.SizeBytes
+		return nil
+	})
+	return createdAt, sizeBytes, err
+}
+
+func (ms *MasterServer) defaultBlockVSDeleteSnap(ctx context.Context, server string, name string, snapID uint32) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.DeleteBlockSnapshot(ctx, &volume_server_pb.DeleteBlockSnapshotRequest{
+			Name:       name,
+			SnapshotId: snapID,
+		})
+		return err
+	})
+}
+
+func (ms *MasterServer) defaultBlockVSListSnaps(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error) {
+	var infos []*volume_server_pb.BlockSnapshotInfo
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, rerr := client.ListBlockSnapshots(ctx, &volume_server_pb.ListBlockSnapshotsRequest{
+			Name: name,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		infos = resp.Snapshots
+		return nil
+	})
+	return infos, err
+}
+
+func (ms *MasterServer) defaultBlockVSExpand(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
+	var capacity uint64
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, rerr := client.ExpandBlockVolume(ctx, &volume_server_pb.ExpandBlockVolumeRequest{
+			Name:         name,
+			NewSizeBytes: newSize,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		capacity = resp.CapacityBytes
+		return nil
+	})
+	return capacity, err
 }

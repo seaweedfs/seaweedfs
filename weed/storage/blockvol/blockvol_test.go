@@ -2982,7 +2982,7 @@ func testDistCommitBothPass(t *testing.T) {
 	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
 	defer shipper.Stop()
 
-	distSync := MakeDistributedSync(walSync, shipper, v)
+	distSync := MakeDistributedSync(walSync, NewShipperGroup([]*WALShipper{shipper}), v)
 	if err := distSync(); err != nil {
 		t.Fatalf("distSync: %v", err)
 	}
@@ -3005,7 +3005,7 @@ func testDistCommitLocalFail(t *testing.T) {
 	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
 	defer shipper.Stop()
 
-	distSync := MakeDistributedSync(walSync, shipper, v)
+	distSync := MakeDistributedSync(walSync, NewShipperGroup([]*WALShipper{shipper}), v)
 	err := distSync()
 	if err == nil {
 		t.Fatal("expected error from local sync failure")
@@ -3025,10 +3025,10 @@ func testDistCommitRemoteFailDegrades(t *testing.T) {
 	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
 	defer shipper.Stop()
 
-	// Set shipper on vol so degradeReplica can mark it degraded.
-	v.shipper = shipper
+	// Set shipper group on vol so degradeReplica can see it.
+	v.shipperGroup = NewShipperGroup([]*WALShipper{shipper})
 
-	distSync := MakeDistributedSync(walSync, shipper, v)
+	distSync := MakeDistributedSync(walSync, v.shipperGroup, v)
 	// Should NOT return error (local succeeded, remote degraded).
 	if err := distSync(); err != nil {
 		t.Fatalf("distSync should not fail on remote error: %v", err)
@@ -3054,7 +3054,7 @@ func testDistCommitNoReplica(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
 
-	// nil shipper --local-only mode.
+	// nil group --local-only mode.
 	distSync := MakeDistributedSync(walSync, nil, v)
 	if err := distSync(); err != nil {
 		t.Fatalf("distSync: %v", err)
@@ -3133,9 +3133,9 @@ func testBlockvolNoReplicaCompat(t *testing.T) {
 		t.Error("data mismatch in no-replica mode")
 	}
 
-	// Verify shipper is nil.
-	if v.shipper != nil {
-		t.Error("shipper should be nil without SetReplicaAddr")
+	// Verify shipperGroup is nil.
+	if v.shipperGroup != nil {
+		t.Error("shipperGroup should be nil without SetReplicaAddr")
 	}
 }
 
@@ -3541,15 +3541,16 @@ func testDemoteStopsShipper(t *testing.T) {
 	v := setupPrimary(t)
 	defer v.Close()
 
-	// Create a shipper (won't connect but that's fine for this test).
-	v.shipper = NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 {
+	// Create a shipper group (won't connect but that's fine for this test).
+	shipper := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 {
 		return v.epoch.Load()
 	})
+	v.shipperGroup = NewShipperGroup([]*WALShipper{shipper})
 
 	if err := v.HandleAssignment(2, RoleStale, 0); err != nil {
 		t.Fatalf("demote: %v", err)
 	}
-	if !v.shipper.stopped.Load() {
+	if !shipper.stopped.Load() {
 		t.Error("shipper should be stopped after demotion")
 	}
 }

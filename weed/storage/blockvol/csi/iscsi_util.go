@@ -16,6 +16,7 @@ type ISCSIUtil interface {
 	Logout(ctx context.Context, iqn string) error
 	GetDeviceByIQN(ctx context.Context, iqn string) (string, error)
 	IsLoggedIn(ctx context.Context, iqn string) (bool, error)
+	RescanDevice(ctx context.Context, iqn string) error
 }
 
 // MountUtil provides filesystem mount operations.
@@ -26,6 +27,7 @@ type MountUtil interface {
 	Unmount(ctx context.Context, target string) error
 	IsFormatted(ctx context.Context, device string) (bool, error)
 	IsMounted(ctx context.Context, target string) (bool, error)
+	ResizeFS(ctx context.Context, devicePath, mountPath, fsType string) error
 }
 
 // realISCSIUtil uses iscsiadm CLI.
@@ -115,6 +117,15 @@ func (r *realISCSIUtil) IsLoggedIn(ctx context.Context, iqn string) (bool, error
 	return strings.Contains(string(out), iqn), nil
 }
 
+func (r *realISCSIUtil) RescanDevice(ctx context.Context, iqn string) error {
+	cmd := exec.CommandContext(ctx, "iscsiadm", "-m", "node", "-T", iqn, "--rescan")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iscsiadm rescan: %s: %w", string(out), err)
+	}
+	return nil
+}
+
 // realMountUtil uses mount/umount/mkfs CLI.
 type realMountUtil struct{}
 
@@ -200,11 +211,32 @@ func (r *realMountUtil) IsMounted(ctx context.Context, target string) (bool, err
 	return false, nil
 }
 
+func (r *realMountUtil) ResizeFS(ctx context.Context, devicePath, mountPath, fsType string) error {
+	switch fsType {
+	case "ext4", "ext3", "ext2":
+		cmd := exec.CommandContext(ctx, "resize2fs", devicePath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("resize2fs: %s: %w", string(out), err)
+		}
+	case "xfs":
+		cmd := exec.CommandContext(ctx, "xfs_growfs", mountPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("xfs_growfs: %s: %w", string(out), err)
+		}
+	default:
+		return fmt.Errorf("unsupported filesystem type for resize: %s", fsType)
+	}
+	return nil
+}
+
 // mockISCSIUtil is a test double for ISCSIUtil.
 type mockISCSIUtil struct {
 	discoveryErr    error
 	loginErr        error
 	logoutErr       error
+	rescanErr       error
 	getDeviceResult string
 	getDeviceErr    error
 	loggedIn        map[string]bool
@@ -247,11 +279,17 @@ func (m *mockISCSIUtil) IsLoggedIn(_ context.Context, iqn string) (bool, error) 
 	return m.loggedIn[iqn], nil
 }
 
+func (m *mockISCSIUtil) RescanDevice(_ context.Context, iqn string) error {
+	m.calls = append(m.calls, "rescan:"+iqn)
+	return m.rescanErr
+}
+
 // mockMountUtil is a test double for MountUtil.
 type mockMountUtil struct {
 	formatAndMountErr error
 	mountErr          error
 	unmountErr        error
+	resizeFSErr       error
 	isFormattedResult bool
 	isMountedTargets  map[string]bool
 	calls             []string
@@ -303,4 +341,9 @@ func (m *mockMountUtil) IsFormatted(_ context.Context, device string) (bool, err
 
 func (m *mockMountUtil) IsMounted(_ context.Context, target string) (bool, error) {
 	return m.isMountedTargets[target], nil
+}
+
+func (m *mockMountUtil) ResizeFS(_ context.Context, devicePath, mountPath, fsType string) error {
+	m.calls = append(m.calls, "resizefs:"+devicePath+":"+mountPath+":"+fsType)
+	return m.resizeFSErr
 }

@@ -63,6 +63,14 @@ service Seaweed {
   }
   rpc LookupBlockVolume (LookupBlockVolumeRequest) returns (LookupBlockVolumeResponse) {
   }
+  rpc CreateBlockSnapshot (CreateBlockSnapshotRequest) returns (CreateBlockSnapshotResponse) {
+  }
+  rpc DeleteBlockSnapshot (DeleteBlockSnapshotRequest) returns (DeleteBlockSnapshotResponse) {
+  }
+  rpc ListBlockSnapshots (ListBlockSnapshotsRequest) returns (ListBlockSnapshotsResponse) {
+  }
+  rpc ExpandBlockVolume (ExpandBlockVolumeRequest) returns (ExpandBlockVolumeResponse) {
+  }
 }
 
 //////////////////////////////////////////////////
@@ -493,6 +501,10 @@ message BlockVolumeInfoMessage {
   string disk_type = 9;
   string replica_data_addr = 10;
   string replica_ctrl_addr = 11;
+  double health_score = 12;
+  int64  scrub_errors = 13;
+  int64  last_scrub_time = 14;
+  bool   replica_degraded = 15;
 }
 
 message BlockVolumeShortInfoMessage {
@@ -510,12 +522,19 @@ message BlockVolumeAssignment {
   string replica_data_addr = 5;
   string replica_ctrl_addr = 6;
   string rebuild_addr = 7;
+  repeated ReplicaAddrMessage replica_addrs = 8;
+}
+
+message ReplicaAddrMessage {
+  string data_addr = 1;
+  string ctrl_addr = 2;
 }
 
 message CreateBlockVolumeRequest {
   string name = 1;
   uint64 size_bytes = 2;
   string disk_type = 3;
+  uint32 replica_factor = 4;
 }
 message CreateBlockVolumeResponse {
   string volume_id = 1;
@@ -524,6 +543,7 @@ message CreateBlockVolumeResponse {
   string iqn = 4;
   uint64 capacity_bytes = 5;
   string replica_server = 6;
+  repeated string replica_servers = 7;
 }
 
 message DeleteBlockVolumeRequest {
@@ -541,4 +561,43 @@ message LookupBlockVolumeResponse {
   string iqn = 3;
   uint64 capacity_bytes = 4;
   string replica_server = 5;
+  uint32 replica_factor = 6;
+  repeated string replica_servers = 7;
+}
+
+message CreateBlockSnapshotRequest {
+  string volume_name = 1;
+  uint32 snapshot_id = 2;
+}
+message CreateBlockSnapshotResponse {
+  uint32 snapshot_id = 1;
+  int64 created_at = 2;    // Unix timestamp in seconds
+  uint64 size_bytes = 3;
+}
+
+message DeleteBlockSnapshotRequest {
+  string volume_name = 1;
+  uint32 snapshot_id = 2;
+}
+message DeleteBlockSnapshotResponse {
+}
+
+message ListBlockSnapshotsRequest {
+  string volume_name = 1;
+}
+message ListBlockSnapshotsResponse {
+  repeated BlockSnapshotInfo snapshots = 1;
+}
+message BlockSnapshotInfo {
+  uint32 snapshot_id = 1;
+  int64 created_at = 2;        // Unix timestamp in seconds
+  uint64 volume_size_bytes = 3;
+}
+
+message ExpandBlockVolumeRequest {
+  string name = 1;
+  uint64 new_size_bytes = 2;
+}
+message ExpandBlockVolumeResponse {
+  uint64 capacity_bytes = 1;
 }

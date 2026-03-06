@@ -13,11 +13,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// stagedVolumeInfo tracks info needed for NodeUnstageVolume.
+// stagedVolumeInfo tracks info needed for NodeUnstageVolume and NodeExpandVolume.
 type stagedVolumeInfo struct {
-	iqn       string
-	iscsiAddr string
-	isLocal   bool // true if volume is served by local VolumeManager
+	iqn         string
+	iscsiAddr   string
+	isLocal     bool   // true if volume is served by local VolumeManager
+	fsType      string // filesystem type (ext4, xfs, etc.)
+	stagingPath string // staging mount path
 }
 
 type nodeServer struct {
@@ -140,9 +142,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		s.staged = make(map[string]*stagedVolumeInfo)
 	}
 	s.staged[volumeID] = &stagedVolumeInfo{
-		iqn:       iqn,
-		iscsiAddr: portal,
-		isLocal:   isLocal,
+		iqn:         iqn,
+		iscsiAddr:   portal,
+		isLocal:     isLocal,
+		fsType:      fsType,
+		stagingPath: stagingPath,
 	}
 	s.stagedMu.Unlock()
 
@@ -293,18 +297,80 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpub
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
-	return &csi.NodeGetCapabilitiesResponse{
-		Capabilities: []*csi.NodeServiceCapability{
-			{
-				Type: &csi.NodeServiceCapability_Rpc{
-					Rpc: &csi.NodeServiceCapability_RPC{
-						Type: csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
-					},
-				},
-			},
-		},
+func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
+	if req.VolumeId == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
+	}
+
+	// Look up staged volume info.
+	s.stagedMu.Lock()
+	info, ok := s.staged[req.VolumeId]
+	s.stagedMu.Unlock()
+	if !ok {
+		return nil, status.Errorf(codes.FailedPrecondition, "volume %q not staged", req.VolumeId)
+	}
+
+	// Check that iSCSI session is active.
+	loggedIn, err := s.iscsiUtil.IsLoggedIn(ctx, info.iqn)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "check iSCSI session: %v", err)
+	}
+	if !loggedIn {
+		return nil, status.Errorf(codes.FailedPrecondition, "volume %q not staged: iSCSI session not active", req.VolumeId)
+	}
+
+	// Rescan device to pick up new size.
+	if err := s.iscsiUtil.RescanDevice(ctx, info.iqn); err != nil {
+		return nil, status.Errorf(codes.Internal, "rescan iSCSI device: %v", err)
+	}
+
+	// Find the device path.
+	device, err := s.iscsiUtil.GetDeviceByIQN(ctx, info.iqn)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "find device: %v", err)
+	}
+
+	// Determine mount path and fsType.
+	mountPath := info.stagingPath
+	if req.VolumePath != "" {
+		mountPath = req.VolumePath
+	}
+	fsType := info.fsType
+	if fsType == "" {
+		fsType = "ext4"
+	}
+
+	// Resize the filesystem.
+	if err := s.mountUtil.ResizeFS(ctx, device, mountPath, fsType); err != nil {
+		return nil, status.Errorf(codes.Internal, "resize filesystem: %v", err)
+	}
+
+	s.logger.Printf("NodeExpandVolume: %s expanded (device=%s, fs=%s)", req.VolumeId, device, fsType)
+
+	capacity := int64(0)
+	if req.CapacityRange != nil {
+		capacity = req.CapacityRange.RequiredBytes
+	}
+	return &csi.NodeExpandVolumeResponse{
+		CapacityBytes: capacity,
 	}, nil
+}
+
+func (s *nodeServer) NodeGetCapabilities(_ context.Context, _ *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+	caps := []csi.NodeServiceCapability_RPC_Type{
+		csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME,
+		csi.NodeServiceCapability_RPC_EXPAND_VOLUME,
+	}
+
+	var result []*csi.NodeServiceCapability
+	for _, c := range caps {
+		result = append(result, &csi.NodeServiceCapability{
+			Type: &csi.NodeServiceCapability_Rpc{
+				Rpc: &csi.NodeServiceCapability_RPC{Type: c},
+			},
+		})
+	}
+	return &csi.NodeGetCapabilitiesResponse{Capabilities: result}, nil
 }
 
 func (s *nodeServer) NodeGetInfo(_ context.Context, _ *csi.NodeGetInfoRequest) (*csi.NodeGetInfoResponse, error) {

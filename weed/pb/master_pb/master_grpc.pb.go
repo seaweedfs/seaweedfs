@@ -46,6 +46,10 @@ const (
 	Seaweed_CreateBlockVolume_FullMethodName      = "/master_pb.Seaweed/CreateBlockVolume"
 	Seaweed_DeleteBlockVolume_FullMethodName      = "/master_pb.Seaweed/DeleteBlockVolume"
 	Seaweed_LookupBlockVolume_FullMethodName      = "/master_pb.Seaweed/LookupBlockVolume"
+	Seaweed_CreateBlockSnapshot_FullMethodName    = "/master_pb.Seaweed/CreateBlockSnapshot"
+	Seaweed_DeleteBlockSnapshot_FullMethodName    = "/master_pb.Seaweed/DeleteBlockSnapshot"
+	Seaweed_ListBlockSnapshots_FullMethodName     = "/master_pb.Seaweed/ListBlockSnapshots"
+	Seaweed_ExpandBlockVolume_FullMethodName      = "/master_pb.Seaweed/ExpandBlockVolume"
 )
 
 // SeaweedClient is the client API for Seaweed service.
@@ -79,6 +83,10 @@ type SeaweedClient interface {
 	CreateBlockVolume(ctx context.Context, in *CreateBlockVolumeRequest, opts ...grpc.CallOption) (*CreateBlockVolumeResponse, error)
 	DeleteBlockVolume(ctx context.Context, in *DeleteBlockVolumeRequest, opts ...grpc.CallOption) (*DeleteBlockVolumeResponse, error)
 	LookupBlockVolume(ctx context.Context, in *LookupBlockVolumeRequest, opts ...grpc.CallOption) (*LookupBlockVolumeResponse, error)
+	CreateBlockSnapshot(ctx context.Context, in *CreateBlockSnapshotRequest, opts ...grpc.CallOption) (*CreateBlockSnapshotResponse, error)
+	DeleteBlockSnapshot(ctx context.Context, in *DeleteBlockSnapshotRequest, opts ...grpc.CallOption) (*DeleteBlockSnapshotResponse, error)
+	ListBlockSnapshots(ctx context.Context, in *ListBlockSnapshotsRequest, opts ...grpc.CallOption) (*ListBlockSnapshotsResponse, error)
+	ExpandBlockVolume(ctx context.Context, in *ExpandBlockVolumeRequest, opts ...grpc.CallOption) (*ExpandBlockVolumeResponse, error)
 }
 
 type seaweedClient struct {
@@ -368,6 +376,46 @@ func (c *seaweedClient) LookupBlockVolume(ctx context.Context, in *LookupBlockVo
 	return out, nil
 }
 
+func (c *seaweedClient) CreateBlockSnapshot(ctx context.Context, in *CreateBlockSnapshotRequest, opts ...grpc.CallOption) (*CreateBlockSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateBlockSnapshotResponse)
+	err := c.cc.Invoke(ctx, Seaweed_CreateBlockSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) DeleteBlockSnapshot(ctx context.Context, in *DeleteBlockSnapshotRequest, opts ...grpc.CallOption) (*DeleteBlockSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteBlockSnapshotResponse)
+	err := c.cc.Invoke(ctx, Seaweed_DeleteBlockSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) ListBlockSnapshots(ctx context.Context, in *ListBlockSnapshotsRequest, opts ...grpc.CallOption) (*ListBlockSnapshotsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBlockSnapshotsResponse)
+	err := c.cc.Invoke(ctx, Seaweed_ListBlockSnapshots_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedClient) ExpandBlockVolume(ctx context.Context, in *ExpandBlockVolumeRequest, opts ...grpc.CallOption) (*ExpandBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExpandBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, Seaweed_ExpandBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedServer is the server API for Seaweed service.
 // All implementations must embed UnimplementedSeaweedServer
 // for forward compatibility.
@@ -399,6 +447,10 @@ type SeaweedServer interface {
 	CreateBlockVolume(context.Context, *CreateBlockVolumeRequest) (*CreateBlockVolumeResponse, error)
 	DeleteBlockVolume(context.Context, *DeleteBlockVolumeRequest) (*DeleteBlockVolumeResponse, error)
 	LookupBlockVolume(context.Context, *LookupBlockVolumeRequest) (*LookupBlockVolumeResponse, error)
+	CreateBlockSnapshot(context.Context, *CreateBlockSnapshotRequest) (*CreateBlockSnapshotResponse, error)
+	DeleteBlockSnapshot(context.Context, *DeleteBlockSnapshotRequest) (*DeleteBlockSnapshotResponse, error)
+	ListBlockSnapshots(context.Context, *ListBlockSnapshotsRequest) (*ListBlockSnapshotsResponse, error)
+	ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error)
 	mustEmbedUnimplementedSeaweedServer()
 }
 
@@ -489,6 +541,18 @@ func (UnimplementedSeaweedServer) DeleteBlockVolume(context.Context, *DeleteBloc
 }
 func (UnimplementedSeaweedServer) LookupBlockVolume(context.Context, *LookupBlockVolumeRequest) (*LookupBlockVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LookupBlockVolume not implemented")
+}
+func (UnimplementedSeaweedServer) CreateBlockSnapshot(context.Context, *CreateBlockSnapshotRequest) (*CreateBlockSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateBlockSnapshot not implemented")
+}
+func (UnimplementedSeaweedServer) DeleteBlockSnapshot(context.Context, *DeleteBlockSnapshotRequest) (*DeleteBlockSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteBlockSnapshot not implemented")
+}
+func (UnimplementedSeaweedServer) ListBlockSnapshots(context.Context, *ListBlockSnapshotsRequest) (*ListBlockSnapshotsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBlockSnapshots not implemented")
+}
+func (UnimplementedSeaweedServer) ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExpandBlockVolume not implemented")
 }
 func (UnimplementedSeaweedServer) mustEmbedUnimplementedSeaweedServer() {}
 func (UnimplementedSeaweedServer) testEmbeddedByValue()                 {}
@@ -964,6 +1028,78 @@ func _Seaweed_LookupBlockVolume_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Seaweed_CreateBlockSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateBlockSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).CreateBlockSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_CreateBlockSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).CreateBlockSnapshot(ctx, req.(*CreateBlockSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_DeleteBlockSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteBlockSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).DeleteBlockSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_DeleteBlockSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).DeleteBlockSnapshot(ctx, req.(*DeleteBlockSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_ListBlockSnapshots_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBlockSnapshotsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).ListBlockSnapshots(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_ListBlockSnapshots_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).ListBlockSnapshots(ctx, req.(*ListBlockSnapshotsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Seaweed_ExpandBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExpandBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedServer).ExpandBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Seaweed_ExpandBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedServer).ExpandBlockVolume(ctx, req.(*ExpandBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Seaweed_ServiceDesc is the grpc.ServiceDesc for Seaweed service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1066,6 +1202,22 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupBlockVolume",
 			Handler:    _Seaweed_LookupBlockVolume_Handler,
+		},
+		{
+			MethodName: "CreateBlockSnapshot",
+			Handler:    _Seaweed_CreateBlockSnapshot_Handler,
+		},
+		{
+			MethodName: "DeleteBlockSnapshot",
+			Handler:    _Seaweed_DeleteBlockSnapshot_Handler,
+		},
+		{
+			MethodName: "ListBlockSnapshots",
+			Handler:    _Seaweed_ListBlockSnapshots_Handler,
+		},
+		{
+			MethodName: "ExpandBlockVolume",
+			Handler:    _Seaweed_ExpandBlockVolume_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

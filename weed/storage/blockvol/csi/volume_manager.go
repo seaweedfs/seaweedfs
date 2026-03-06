@@ -325,6 +325,93 @@ func (m *VolumeManager) ListenAddr() string {
 	return ""
 }
 
+// WithVolume runs fn while holding the manager lock with a reference to the volume.
+func (m *VolumeManager) WithVolume(name string, fn func(*blockvol.BlockVol) error) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	mv, ok := m.volumes[name]
+	if !ok {
+		return ErrVolumeNotFound
+	}
+	return fn(mv.vol)
+}
+
+// CreateSnapshot creates a snapshot on the named volume.
+func (m *VolumeManager) CreateSnapshot(name string, snapID uint32) (*SnapshotInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	mv, ok := m.volumes[name]
+	if !ok {
+		return nil, ErrVolumeNotFound
+	}
+	if err := mv.vol.CreateSnapshot(snapID); err != nil {
+		return nil, err
+	}
+	// Find the snapshot we just created.
+	for _, s := range mv.vol.ListSnapshots() {
+		if s.ID == snapID {
+			return &SnapshotInfo{
+				SnapshotID: snapID,
+				VolumeID:   name,
+				CreatedAt:  s.CreatedAt.Unix(),
+				SizeBytes:  mv.sizeBytes,
+			}, nil
+		}
+	}
+	return nil, fmt.Errorf("snapshot %d created but not found", snapID)
+}
+
+// DeleteSnapshot deletes a snapshot. Idempotent: returns nil if not found.
+func (m *VolumeManager) DeleteSnapshot(name string, snapID uint32) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	mv, ok := m.volumes[name]
+	if !ok {
+		return ErrVolumeNotFound
+	}
+	err := mv.vol.DeleteSnapshot(snapID)
+	if err != nil && err.Error() == "blockvol: snapshot not found" {
+		return nil
+	}
+	return err
+}
+
+// ListSnapshots returns all snapshots for the named volume.
+func (m *VolumeManager) ListSnapshots(name string) ([]*SnapshotInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	mv, ok := m.volumes[name]
+	if !ok {
+		return nil, ErrVolumeNotFound
+	}
+	engineInfos := mv.vol.ListSnapshots()
+	result := make([]*SnapshotInfo, 0, len(engineInfos))
+	for _, s := range engineInfos {
+		result = append(result, &SnapshotInfo{
+			SnapshotID: s.ID,
+			VolumeID:   name,
+			CreatedAt:  s.CreatedAt.Unix(),
+			SizeBytes:  mv.sizeBytes,
+		})
+	}
+	return result, nil
+}
+
+// ExpandVolume expands the named volume. Returns the new size.
+func (m *VolumeManager) ExpandVolume(name string, newSizeBytes uint64) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mv, ok := m.volumes[name]
+	if !ok {
+		return 0, ErrVolumeNotFound
+	}
+	if err := mv.vol.Expand(newSizeBytes); err != nil {
+		return 0, err
+	}
+	mv.sizeBytes = mv.vol.Info().VolumeSize
+	return mv.sizeBytes, nil
+}
+
 func (m *VolumeManager) volumePath(name string) string {
 	return filepath.Join(m.dataDir, sanitizeFilename(name)+".blk")
 }

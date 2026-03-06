@@ -57,3 +57,87 @@ func (vs *VolumeServer) VolumeServerDeleteBlockVolume(_ context.Context, req *vo
 
 	return &volume_server_pb.VolumeServerDeleteBlockVolumeResponse{}, nil
 }
+
+// SnapshotBlockVolume creates a snapshot on a block volume.
+func (vs *VolumeServer) SnapshotBlockVolume(_ context.Context, req *volume_server_pb.SnapshotBlockVolumeRequest) (*volume_server_pb.SnapshotBlockVolumeResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	createdAt, sizeBytes, err := vs.blockService.SnapshotBlockVol(req.Name, req.SnapshotId)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot block volume %q: %w", req.Name, err)
+	}
+
+	return &volume_server_pb.SnapshotBlockVolumeResponse{
+		SnapshotId: req.SnapshotId,
+		CreatedAt:  createdAt,
+		SizeBytes:  sizeBytes,
+	}, nil
+}
+
+// DeleteBlockSnapshot deletes a snapshot from a block volume.
+func (vs *VolumeServer) DeleteBlockSnapshot(_ context.Context, req *volume_server_pb.DeleteBlockSnapshotRequest) (*volume_server_pb.DeleteBlockSnapshotResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	if err := vs.blockService.DeleteBlockSnapshot(req.Name, req.SnapshotId); err != nil {
+		return nil, fmt.Errorf("delete block snapshot %q/%d: %w", req.Name, req.SnapshotId, err)
+	}
+
+	return &volume_server_pb.DeleteBlockSnapshotResponse{}, nil
+}
+
+// ListBlockSnapshots lists all snapshots on a block volume.
+func (vs *VolumeServer) ListBlockSnapshots(_ context.Context, req *volume_server_pb.ListBlockSnapshotsRequest) (*volume_server_pb.ListBlockSnapshotsResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	infos, volSize, err := vs.blockService.ListBlockSnapshots(req.Name)
+	if err != nil {
+		return nil, fmt.Errorf("list block snapshots %q: %w", req.Name, err)
+	}
+
+	resp := &volume_server_pb.ListBlockSnapshotsResponse{}
+	for _, s := range infos {
+		resp.Snapshots = append(resp.Snapshots, &volume_server_pb.BlockSnapshotInfo{
+			SnapshotId:      s.ID,
+			CreatedAt:       s.CreatedAt.Unix(),
+			VolumeSizeBytes: volSize,
+		})
+	}
+	return resp, nil
+}
+
+// ExpandBlockVolume expands a block volume to a new size.
+func (vs *VolumeServer) ExpandBlockVolume(_ context.Context, req *volume_server_pb.ExpandBlockVolumeRequest) (*volume_server_pb.ExpandBlockVolumeResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if req.NewSizeBytes == 0 {
+		return nil, fmt.Errorf("new_size_bytes must be > 0")
+	}
+
+	actualSize, err := vs.blockService.ExpandBlockVol(req.Name, req.NewSizeBytes)
+	if err != nil {
+		return nil, fmt.Errorf("expand block volume %q: %w", req.Name, err)
+	}
+
+	return &volume_server_pb.ExpandBlockVolumeResponse{
+		CapacityBytes: actualSize,
+	}, nil
+}

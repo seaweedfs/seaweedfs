@@ -18,6 +18,10 @@ func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMess
 		DiskType:        m.DiskType,
 		ReplicaDataAddr: m.ReplicaDataAddr,
 		ReplicaCtrlAddr: m.ReplicaCtrlAddr,
+		HealthScore:     m.HealthScore,
+		ScrubErrors:     m.ScrubErrors,
+		LastScrubTime:   m.LastScrubTime,
+		ReplicaDegraded: m.ReplicaDegraded,
 	}
 }
 
@@ -38,6 +42,10 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		DiskType:        p.DiskType,
 		ReplicaDataAddr: p.ReplicaDataAddr,
 		ReplicaCtrlAddr: p.ReplicaCtrlAddr,
+		HealthScore:     p.HealthScore,
+		ScrubErrors:     p.ScrubErrors,
+		LastScrubTime:   p.LastScrubTime,
+		ReplicaDegraded: p.ReplicaDegraded,
 	}
 }
 
@@ -84,7 +92,7 @@ func ShortInfoFromProto(p *master_pb.BlockVolumeShortInfoMessage) BlockVolumeSho
 
 // AssignmentToProto converts a Go assignment to proto.
 func AssignmentToProto(a BlockVolumeAssignment) *master_pb.BlockVolumeAssignment {
-	return &master_pb.BlockVolumeAssignment{
+	pb := &master_pb.BlockVolumeAssignment{
 		Path:            a.Path,
 		Epoch:           a.Epoch,
 		Role:            a.Role,
@@ -93,22 +101,42 @@ func AssignmentToProto(a BlockVolumeAssignment) *master_pb.BlockVolumeAssignment
 		ReplicaCtrlAddr: a.ReplicaCtrlAddr,
 		RebuildAddr:     a.RebuildAddr,
 	}
+	for _, ra := range a.ReplicaAddrs {
+		pb.ReplicaAddrs = append(pb.ReplicaAddrs, &master_pb.ReplicaAddrMessage{
+			DataAddr: ra.DataAddr,
+			CtrlAddr: ra.CtrlAddr,
+		})
+	}
+	return pb
 }
 
 // AssignmentFromProto converts a proto assignment to Go wire type.
+// Precedence: if ReplicaAddrs is non-empty, use it and ignore scalar fields.
 func AssignmentFromProto(p *master_pb.BlockVolumeAssignment) BlockVolumeAssignment {
 	if p == nil {
 		return BlockVolumeAssignment{}
 	}
-	return BlockVolumeAssignment{
-		Path:            p.Path,
-		Epoch:           p.Epoch,
-		Role:            p.Role,
-		LeaseTtlMs:      p.LeaseTtlMs,
-		ReplicaDataAddr: p.ReplicaDataAddr,
-		ReplicaCtrlAddr: p.ReplicaCtrlAddr,
-		RebuildAddr:     p.RebuildAddr,
+	a := BlockVolumeAssignment{
+		Path:        p.Path,
+		Epoch:       p.Epoch,
+		Role:        p.Role,
+		LeaseTtlMs:  p.LeaseTtlMs,
+		RebuildAddr: p.RebuildAddr,
 	}
+	if len(p.ReplicaAddrs) > 0 {
+		// Multi-replica: populate ReplicaAddrs, leave scalar fields empty.
+		for _, ra := range p.ReplicaAddrs {
+			a.ReplicaAddrs = append(a.ReplicaAddrs, ReplicaAddr{
+				DataAddr: ra.DataAddr,
+				CtrlAddr: ra.CtrlAddr,
+			})
+		}
+	} else {
+		// Backward compat: use scalar fields.
+		a.ReplicaDataAddr = p.ReplicaDataAddr
+		a.ReplicaCtrlAddr = p.ReplicaCtrlAddr
+	}
+	return a
 }
 
 // AssignmentsToProto converts a slice of Go assignments to proto.

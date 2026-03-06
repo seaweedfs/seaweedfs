@@ -17,11 +17,24 @@ type VolumeInfo struct {
 	CapacityBytes uint64
 }
 
+// SnapshotInfo holds snapshot metadata returned by the backend.
+type SnapshotInfo struct {
+	SnapshotID uint32
+	VolumeID   string
+	CreatedAt  int64  // Unix timestamp in seconds
+	SizeBytes  uint64
+}
+
 // VolumeBackend abstracts volume lifecycle for the CSI controller.
 type VolumeBackend interface {
 	CreateVolume(ctx context.Context, name string, sizeBytes uint64) (*VolumeInfo, error)
 	DeleteVolume(ctx context.Context, name string) error
 	LookupVolume(ctx context.Context, name string) (*VolumeInfo, error)
+
+	CreateSnapshot(ctx context.Context, volumeID string, snapID uint32) (*SnapshotInfo, error)
+	DeleteSnapshot(ctx context.Context, volumeID string, snapID uint32) error
+	ListSnapshots(ctx context.Context, volumeID string) ([]*SnapshotInfo, error)
+	ExpandVolume(ctx context.Context, volumeID string, newSizeBytes uint64) (uint64, error)
 }
 
 // LocalVolumeBackend wraps VolumeManager for standalone/local mode (CP6-1).
@@ -64,6 +77,26 @@ func (b *LocalVolumeBackend) LookupVolume(ctx context.Context, name string) (*Vo
 		IQN:           b.mgr.VolumeIQN(name),
 		CapacityBytes: b.mgr.VolumeSizeBytes(name),
 	}, nil
+}
+
+func (b *LocalVolumeBackend) CreateSnapshot(ctx context.Context, volumeID string, snapID uint32) (*SnapshotInfo, error) {
+	info, err := b.mgr.CreateSnapshot(volumeID, snapID)
+	if err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (b *LocalVolumeBackend) DeleteSnapshot(ctx context.Context, volumeID string, snapID uint32) error {
+	return b.mgr.DeleteSnapshot(volumeID, snapID)
+}
+
+func (b *LocalVolumeBackend) ListSnapshots(ctx context.Context, volumeID string) ([]*SnapshotInfo, error) {
+	return b.mgr.ListSnapshots(volumeID)
+}
+
+func (b *LocalVolumeBackend) ExpandVolume(ctx context.Context, volumeID string, newSizeBytes uint64) (uint64, error) {
+	return b.mgr.ExpandVolume(volumeID, newSizeBytes)
 }
 
 // MasterVolumeClient calls master gRPC for volume operations.
@@ -128,4 +161,73 @@ func (c *MasterVolumeClient) LookupVolume(ctx context.Context, name string) (*Vo
 		return nil
 	})
 	return info, err
+}
+
+func (c *MasterVolumeClient) CreateSnapshot(ctx context.Context, volumeID string, snapID uint32) (*SnapshotInfo, error) {
+	var info *SnapshotInfo
+	err := pb.WithMasterClient(false, pb.ServerAddress(c.masterAddr), c.dialOpt, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.CreateBlockSnapshot(ctx, &master_pb.CreateBlockSnapshotRequest{
+			VolumeName: volumeID,
+			SnapshotId: snapID,
+		})
+		if err != nil {
+			return err
+		}
+		info = &SnapshotInfo{
+			SnapshotID: resp.SnapshotId,
+			VolumeID:   volumeID,
+			CreatedAt:  resp.CreatedAt,
+			SizeBytes:  resp.SizeBytes,
+		}
+		return nil
+	})
+	return info, err
+}
+
+func (c *MasterVolumeClient) DeleteSnapshot(ctx context.Context, volumeID string, snapID uint32) error {
+	return pb.WithMasterClient(false, pb.ServerAddress(c.masterAddr), c.dialOpt, false, func(client master_pb.SeaweedClient) error {
+		_, err := client.DeleteBlockSnapshot(ctx, &master_pb.DeleteBlockSnapshotRequest{
+			VolumeName: volumeID,
+			SnapshotId: snapID,
+		})
+		return err
+	})
+}
+
+func (c *MasterVolumeClient) ListSnapshots(ctx context.Context, volumeID string) ([]*SnapshotInfo, error) {
+	var infos []*SnapshotInfo
+	err := pb.WithMasterClient(false, pb.ServerAddress(c.masterAddr), c.dialOpt, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ListBlockSnapshots(ctx, &master_pb.ListBlockSnapshotsRequest{
+			VolumeName: volumeID,
+		})
+		if err != nil {
+			return err
+		}
+		for _, s := range resp.Snapshots {
+			infos = append(infos, &SnapshotInfo{
+				SnapshotID: s.SnapshotId,
+				VolumeID:   volumeID,
+				CreatedAt:  s.CreatedAt,
+				SizeBytes:  s.VolumeSizeBytes,
+			})
+		}
+		return nil
+	})
+	return infos, err
+}
+
+func (c *MasterVolumeClient) ExpandVolume(ctx context.Context, volumeID string, newSizeBytes uint64) (uint64, error) {
+	var capacity uint64
+	err := pb.WithMasterClient(false, pb.ServerAddress(c.masterAddr), c.dialOpt, false, func(client master_pb.SeaweedClient) error {
+		resp, err := client.ExpandBlockVolume(ctx, &master_pb.ExpandBlockVolumeRequest{
+			Name:         volumeID,
+			NewSizeBytes: newSizeBytes,
+		})
+		if err != nil {
+			return err
+		}
+		capacity = resp.CapacityBytes
+		return nil
+	})
+	return capacity, err
 }

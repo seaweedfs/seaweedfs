@@ -108,3 +108,96 @@ func TestVS_DeleteNotFound(t *testing.T) {
 		t.Fatalf("delete non-existent should not error: %v", err)
 	}
 }
+
+func TestVS_SnapshotBlockVol(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+
+	createdAt, sizeBytes, err := bs.SnapshotBlockVol("snap-vol", 1)
+	if err != nil {
+		t.Fatalf("SnapshotBlockVol: %v", err)
+	}
+	if createdAt == 0 {
+		t.Fatal("createdAt should not be zero")
+	}
+	if sizeBytes == 0 {
+		t.Fatal("sizeBytes should not be zero")
+	}
+}
+
+func TestVS_SnapshotVolumeNotFound(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	_, _, err := bs.SnapshotBlockVol("nonexistent", 1)
+	if err == nil {
+		t.Fatal("expected error for nonexistent volume")
+	}
+}
+
+func TestVS_DeleteBlockSnapshot(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.SnapshotBlockVol("snap-vol", 1)
+
+	if err := bs.DeleteBlockSnapshot("snap-vol", 1); err != nil {
+		t.Fatalf("DeleteBlockSnapshot: %v", err)
+	}
+
+	// Delete again should be idempotent.
+	if err := bs.DeleteBlockSnapshot("snap-vol", 1); err != nil {
+		t.Fatalf("idempotent delete: %v", err)
+	}
+}
+
+func TestVS_ListBlockSnapshots(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.SnapshotBlockVol("snap-vol", 1)
+	bs.SnapshotBlockVol("snap-vol", 2)
+
+	infos, volSize, err := bs.ListBlockSnapshots("snap-vol")
+	if err != nil {
+		t.Fatalf("ListBlockSnapshots: %v", err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(infos))
+	}
+	if volSize != 4*1024*1024 {
+		t.Fatalf("volSize: got %d, want %d", volSize, 4*1024*1024)
+	}
+}
+
+func TestVS_ListSnapshotsVolumeNotFound(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	_, _, err := bs.ListBlockSnapshots("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent volume")
+	}
+}
+
+func TestVS_ExpandBlockVol(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	bs.CreateBlockVol("expand-vol", 4*1024*1024, "")
+
+	actualSize, err := bs.ExpandBlockVol("expand-vol", 8*1024*1024)
+	if err != nil {
+		t.Fatalf("ExpandBlockVol: %v", err)
+	}
+	if actualSize != 8*1024*1024 {
+		t.Fatalf("expected 8MiB, got %d", actualSize)
+	}
+}
+
+func TestVS_ExpandVolumeNotFound(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+
+	_, err := bs.ExpandBlockVol("nonexistent", 8*1024*1024)
+	if err == nil {
+		t.Fatal("expected error for nonexistent volume")
+	}
+}

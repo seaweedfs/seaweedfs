@@ -335,13 +335,14 @@ func testAssignDemoteStopsShipper(t *testing.T) {
 	primary.HandleAssignment(2, RoleStale, 0)
 
 	// After demote, shipper should be stopped -- Ship is a no-op.
-	if primary.shipper != nil {
+	if primary.shipperGroup != nil && primary.shipperGroup.Len() > 0 {
+		shipper := primary.shipperGroup.Shipper(0)
 		entry := &WALEntry{LSN: 999, Epoch: 2, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('X')}
-		err := primary.shipper.Ship(entry)
+		err := shipper.Ship(entry)
 		if err != nil {
 			t.Errorf("Ship after stop: %v (should silently drop)", err)
 		}
-		if primary.shipper.ShippedLSN() == 999 {
+		if shipper.ShippedLSN() == 999 {
 			t.Error("shipper advanced LSN after demote -- should be stopped")
 		}
 	}

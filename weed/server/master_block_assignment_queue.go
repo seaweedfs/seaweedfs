@@ -123,3 +123,14 @@ func (q *BlockAssignmentQueue) Pending(server string) int {
 	defer q.mu.Unlock()
 	return len(q.queues[server])
 }
+
+// TotalPending returns the total number of pending assignments across all servers.
+func (q *BlockAssignmentQueue) TotalPending() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	total := 0
+	for _, queue := range q.queues {
+		total += len(queue)
+	}
+	return total
+}

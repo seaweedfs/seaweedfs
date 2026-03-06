@@ -37,6 +37,7 @@ type Flusher struct {
 
 	logger  *log.Logger
 	lastErr bool // true if last FlushOnce returned error
+	metrics *EngineMetrics
 
 	interval time.Duration
 	notifyCh chan struct{}
@@ -51,8 +52,9 @@ type FlusherConfig struct {
 	Super       *Superblock
 	WAL         *WALWriter
 	DirtyMap    *DirtyMap
-	Interval    time.Duration // default 100ms
-	Logger      *log.Logger   // optional; defaults to log.Default()
+	Interval    time.Duration    // default 100ms
+	Logger      *log.Logger      // optional; defaults to log.Default()
+	Metrics     *EngineMetrics   // optional; if nil, no metrics recorded
 }
 
 // NewFlusher creates a flusher. Call Run() in a goroutine.
@@ -73,6 +75,7 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 		blockSize:      cfg.Super.BlockSize,
 		extentStart:    cfg.Super.WALOffset + cfg.Super.WALSize,
 		logger:         cfg.Logger,
+		metrics:        cfg.Metrics,
 		checkpointLSN:  cfg.Super.WALCheckpointLSN,
 		checkpointTail: 0,
 		interval:       cfg.Interval,
@@ -98,6 +101,9 @@ func (f *Flusher) Run() {
 					f.logger.Printf("flusher error: %v", err)
 				}
 				f.lastErr = true
+				if f.metrics != nil {
+					f.metrics.RecordFlusherError()
+				}
 			} else {
 				f.lastErr = false
 			}
@@ -107,6 +113,9 @@ func (f *Flusher) Run() {
 					f.logger.Printf("flusher error: %v", err)
 				}
 				f.lastErr = true
+				if f.metrics != nil {
+					f.metrics.RecordFlusherError()
+				}
 			} else {
 				f.lastErr = false
 			}
@@ -185,6 +194,7 @@ func (f *Flusher) FlushOnce() error {
 
 // flushOnceLocked is the inner FlushOnce. Caller must hold flushMu.
 func (f *Flusher) flushOnceLocked() error {
+	flushStart := time.Now()
 	entries := f.dirtyMap.Snapshot()
 	if len(entries) == 0 {
 		return nil
@@ -332,6 +342,12 @@ func (f *Flusher) flushOnceLocked() error {
 
 	// Update superblock checkpoint.
 	f.updateSuperblockCheckpoint(maxLSN, f.wal.Tail())
+
+	// Record metrics.
+	if f.metrics != nil {
+		bytesWritten := uint64(len(entries)) * uint64(f.blockSize)
+		f.metrics.RecordFlusherFlush(bytesWritten, time.Since(flushStart))
+	}
 
 	return nil
 }

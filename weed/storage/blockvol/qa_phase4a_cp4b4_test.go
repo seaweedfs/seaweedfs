@@ -146,15 +146,16 @@ func testQA4b4ShipDataOkCtrlDown(t *testing.T) {
 	replica.replRecv.ctrlListener.Close()
 
 	// Force primary shipper to reconnect ctrl.
-	primary.shipper.ctrlMu.Lock()
-	if primary.shipper.ctrlConn != nil {
-		primary.shipper.ctrlConn.Close()
-		primary.shipper.ctrlConn = nil
+	shipper := primary.shipperGroup.Shipper(0)
+	shipper.ctrlMu.Lock()
+	if shipper.ctrlConn != nil {
+		shipper.ctrlConn.Close()
+		shipper.ctrlConn = nil
 	}
-	primary.shipper.ctrlMu.Unlock()
+	shipper.ctrlMu.Unlock()
 
 	// Barrier must fail (ctrl down).
-	err := primary.shipper.Barrier(replicaLSN)
+	err := shipper.Barrier(replicaLSN)
 	if err == nil {
 		t.Error("Barrier should fail when ctrl listener is closed")
 	}

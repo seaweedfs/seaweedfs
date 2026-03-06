@@ -71,8 +71,9 @@ type MasterOptions struct {
 	raftBootstrap      *bool
 	telemetryUrl       *string
 	telemetryEnabled   *bool
-	debug              *bool
-	debugPort          *int
+	debug                      *bool
+	debugPort                  *int
+	blockPromotionLSNTolerance *int
 }
 
 func init() {
@@ -104,6 +105,7 @@ func init() {
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
+	m.blockPromotionLSNTolerance = cmdMaster.Flag.Int("block.promotion.lsnTolerance", 100, "max WAL LSN lag for block volume replica promotion eligibility")
 }
 
 var cmdMaster = &Command{
@@ -410,7 +412,8 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		DisableHttp:             *m.disableHttp,
 		MetricsAddress:          *m.metricsAddress,
 		MetricsIntervalSec:      *m.metricsIntervalSec,
-		TelemetryUrl:            *m.telemetryUrl,
-		TelemetryEnabled:        *m.telemetryEnabled,
+		TelemetryUrl:               *m.telemetryUrl,
+		TelemetryEnabled:           *m.telemetryEnabled,
+		BlockPromotionLSNTolerance: *m.blockPromotionLSNTolerance,
 	}
 }

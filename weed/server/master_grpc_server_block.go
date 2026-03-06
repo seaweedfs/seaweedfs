@@ -8,7 +8,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
+
+// blockReqID extracts a short request ID from context for log correlation.
+func blockReqID(ctx context.Context) string {
+	id := request_id.Get(ctx)
+	if len(id) > 8 {
+		return id[:8]
+	}
+	if id == "" {
+		return "no-id"
+	}
+	return id
+}
 
 // CreateBlockVolume picks a volume server, delegates creation, and records
 // the mapping in the block volume registry.
@@ -25,13 +38,7 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		if entry.SizeBytes < req.SizeBytes {
 			return nil, fmt.Errorf("block volume %q exists with size %d (requested %d)", req.Name, entry.SizeBytes, req.SizeBytes)
 		}
-		return &master_pb.CreateBlockVolumeResponse{
-			VolumeId:      entry.Name,
-			VolumeServer:  entry.VolumeServer,
-			IscsiAddr:     entry.ISCSIAddr,
-			Iqn:           entry.IQN,
-			CapacityBytes: entry.SizeBytes,
-		}, nil
+		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
 
 	// Per-name inflight lock prevents concurrent creates for the same name.
@@ -42,13 +49,7 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 
 	// Double-check after acquiring lock (another goroutine may have finished).
 	if entry, ok := ms.blockRegistry.Lookup(req.Name); ok {
-		return &master_pb.CreateBlockVolumeResponse{
-			VolumeId:      entry.Name,
-			VolumeServer:  entry.VolumeServer,
-			IscsiAddr:     entry.ISCSIAddr,
-			Iqn:           entry.IQN,
-			CapacityBytes: entry.SizeBytes,
-		}, nil
+		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
 
 	// Get candidate servers.
@@ -73,9 +74,15 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.DiskType)
 		if err != nil {
 			lastErr = fmt.Errorf("server %s: %w", server, err)
-			glog.V(0).Infof("CreateBlockVolume %q: attempt %d on %s failed: %v", req.Name, attempt+1, server, err)
+			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: attempt %d on %s failed: %v", blockReqID(ctx), req.Name, attempt+1, server, err)
 			servers = removeServer(servers, server)
 			continue
+		}
+
+		// CP8-2: determine replica factor from request (default 2).
+		replicaFactor := 2
+		if req.ReplicaFactor > 0 && req.ReplicaFactor <= 3 {
+			replicaFactor = int(req.ReplicaFactor)
 		}
 
 		entry := &BlockVolumeEntry{
@@ -88,66 +95,85 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			Epoch:          1,
 			Role:           blockvol.RoleToWire(blockvol.RolePrimary),
 			Status:         StatusActive,
+			ReplicaFactor:  replicaFactor,
 			LeaseTTL:       30 * time.Second,
 			LastLeaseGrant: time.Now(), // R2-F1: set BEFORE Register to avoid stale-lease race
 		}
 
-		// Try to create replica on a different server (F4: partial create OK).
-		var replicaServer string
-		remainingServers := removeServer(servers, server)
-		if len(remainingServers) > 0 {
-			replicaServer = ms.tryCreateReplica(ctx, req, entry, result, remainingServers)
-		} else {
-			glog.V(0).Infof("CreateBlockVolume %q: single-copy mode (only 1 server)", req.Name)
+		// Create replicaFactor-1 replicas on different servers (F4: partial create OK).
+		remaining := removeServer(servers, server)
+		for i := 0; i < replicaFactor-1 && len(remaining) > 0; i++ {
+			replicaServer := ms.tryCreateOneReplica(ctx, req, entry, result, remaining)
+			if replicaServer != "" {
+				remaining = removeServer(remaining, replicaServer)
+			}
+		}
+		if len(entry.Replicas) == 0 && replicaFactor > 1 {
+			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: single-copy mode (replica allocation failed)", blockReqID(ctx), req.Name)
+		}
+		// Sync deprecated scalar fields from first replica.
+		if len(entry.Replicas) > 0 {
+			r0 := &entry.Replicas[0]
+			entry.ReplicaServer = r0.Server
+			entry.ReplicaPath = r0.Path
+			entry.ReplicaIQN = r0.IQN
+			entry.ReplicaISCSIAddr = r0.ISCSIAddr
+			entry.ReplicaDataAddr = r0.DataAddr
+			entry.ReplicaCtrlAddr = r0.CtrlAddr
 		}
 
 		// Register in registry as Active (VS confirmed creation).
 		if err := ms.blockRegistry.Register(entry); err != nil {
 			// Already registered (race condition) — return the existing entry.
 			if existing, ok := ms.blockRegistry.Lookup(req.Name); ok {
-				return &master_pb.CreateBlockVolumeResponse{
-					VolumeId:      existing.Name,
-					VolumeServer:  existing.VolumeServer,
-					IscsiAddr:     existing.ISCSIAddr,
-					Iqn:           existing.IQN,
-					CapacityBytes: existing.SizeBytes,
-					ReplicaServer: existing.ReplicaServer,
-				}, nil
+				return ms.createBlockVolumeResponseFromEntry(existing), nil
 			}
 			return nil, fmt.Errorf("register block volume: %w", err)
 		}
 
-		// Enqueue assignments for primary (and replica if available).
+		// Enqueue assignments for primary (and replicas if available).
 		leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
-		ms.blockAssignmentQueue.Enqueue(server, blockvol.BlockVolumeAssignment{
-			Path:            result.Path,
-			Epoch:           1,
-			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
-			LeaseTtlMs:      leaseTTLMs,
-			ReplicaDataAddr: entry.ReplicaDataAddr,
-			ReplicaCtrlAddr: entry.ReplicaCtrlAddr,
-		})
-		if entry.ReplicaServer != "" {
-			ms.blockAssignmentQueue.Enqueue(entry.ReplicaServer, blockvol.BlockVolumeAssignment{
-				Path:            entry.ReplicaPath,
+		primaryAssignment := blockvol.BlockVolumeAssignment{
+			Path:       result.Path,
+			Epoch:      1,
+			Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs: leaseTTLMs,
+		}
+		// CP8-2: populate ReplicaAddrs for multi-replica.
+		for _, ri := range entry.Replicas {
+			primaryAssignment.ReplicaAddrs = append(primaryAssignment.ReplicaAddrs, blockvol.ReplicaAddr{
+				DataAddr: ri.DataAddr,
+				CtrlAddr: ri.CtrlAddr,
+			})
+		}
+		// Backward compat: also set scalar fields if exactly 1 replica.
+		if len(entry.Replicas) == 1 {
+			primaryAssignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
+			primaryAssignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+		}
+		ms.blockAssignmentQueue.Enqueue(server, primaryAssignment)
+
+		// Enqueue assignments for each replica.
+		for _, ri := range entry.Replicas {
+			ms.blockAssignmentQueue.Enqueue(ri.Server, blockvol.BlockVolumeAssignment{
+				Path:            ri.Path,
 				Epoch:           1,
 				Role:            blockvol.RoleToWire(blockvol.RoleReplica),
 				LeaseTtlMs:      leaseTTLMs,
-				ReplicaDataAddr: entry.ReplicaDataAddr,
-				ReplicaCtrlAddr: entry.ReplicaCtrlAddr,
+				ReplicaDataAddr: ri.DataAddr,
+				ReplicaCtrlAddr: ri.CtrlAddr,
 			})
 		}
 
-		glog.V(0).Infof("CreateBlockVolume %q: created on %s (path=%s, iqn=%s, replica=%s)",
-			req.Name, server, result.Path, result.IQN, replicaServer)
-		return &master_pb.CreateBlockVolumeResponse{
-			VolumeId:      req.Name,
-			VolumeServer:  server,
-			IscsiAddr:     result.ISCSIAddr,
-			Iqn:           result.IQN,
-			CapacityBytes: req.SizeBytes,
-			ReplicaServer: replicaServer,
-		}, nil
+		// Collect replica server addresses for response.
+		var replicaServers []string
+		for _, ri := range entry.Replicas {
+			replicaServers = append(replicaServers, ri.Server)
+		}
+
+		glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: created on %s (path=%s, iqn=%s, replicas=%v)",
+			blockReqID(ctx), req.Name, server, result.Path, result.IQN, replicaServers)
+		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
 
 	return nil, fmt.Errorf("all volume servers failed for %q: %v", req.Name, lastErr)
@@ -170,16 +196,16 @@ func (ms *MasterServer) DeleteBlockVolume(ctx context.Context, req *master_pb.De
 		return nil, fmt.Errorf("delete block volume %q on %s: %w", req.Name, entry.VolumeServer, err)
 	}
 
-	// R2-F4: Also delete replica (best-effort, don't fail if replica is down).
-	if entry.ReplicaServer != "" {
-		if err := ms.blockVSDelete(ctx, entry.ReplicaServer, req.Name); err != nil {
-			glog.Warningf("DeleteBlockVolume %q: replica delete on %s failed (best-effort): %v",
-				req.Name, entry.ReplicaServer, err)
+	// CP8-2: Delete ALL replicas (best-effort, don't fail if replica is down).
+	for _, ri := range entry.Replicas {
+		if err := ms.blockVSDelete(ctx, ri.Server, req.Name); err != nil {
+			glog.Warningf("[reqID=%s] DeleteBlockVolume %q: replica delete on %s failed (best-effort): %v",
+				blockReqID(ctx), req.Name, ri.Server, err)
 		}
 	}
 
 	ms.blockRegistry.Unregister(req.Name)
-	glog.V(0).Infof("DeleteBlockVolume %q: removed from %s (replica=%s)", req.Name, entry.VolumeServer, entry.ReplicaServer)
+	glog.V(0).Infof("[reqID=%s] DeleteBlockVolume %q: removed from %s (replicas=%d)", blockReqID(ctx), req.Name, entry.VolumeServer, len(entry.Replicas))
 	return &master_pb.DeleteBlockVolumeResponse{}, nil
 }
 
@@ -194,35 +220,178 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		return nil, fmt.Errorf("block volume %q not found", req.Name)
 	}
 
+	replicaServers := replicaServerList(entry)
+	rf := entry.ReplicaFactor
+	if rf == 0 {
+		rf = 2 // default for pre-CP8-2 entries
+	}
 	return &master_pb.LookupBlockVolumeResponse{
-		VolumeServer:  entry.VolumeServer,
-		IscsiAddr:     entry.ISCSIAddr,
-		Iqn:           entry.IQN,
-		CapacityBytes: entry.SizeBytes,
-		ReplicaServer: entry.ReplicaServer,
+		VolumeServer:   entry.VolumeServer,
+		IscsiAddr:      entry.ISCSIAddr,
+		Iqn:            entry.IQN,
+		CapacityBytes:  entry.SizeBytes,
+		ReplicaServer:  entry.ReplicaServer, // backward compat
+		ReplicaFactor:  uint32(rf),
+		ReplicaServers: replicaServers,
 	}, nil
 }
 
-// tryCreateReplica attempts to create a replica volume on a different server.
+// tryCreateOneReplica attempts to create one replica volume on a different server.
 // Returns the replica server address on success, or empty string on failure (F4).
-func (ms *MasterServer) tryCreateReplica(ctx context.Context, req *master_pb.CreateBlockVolumeRequest, entry *BlockVolumeEntry, primaryResult *blockAllocResult, candidates []string) string {
+func (ms *MasterServer) tryCreateOneReplica(ctx context.Context, req *master_pb.CreateBlockVolumeRequest, entry *BlockVolumeEntry, primaryResult *blockAllocResult, candidates []string) string {
 	for _, replicaServerStr := range candidates {
 		replicaResult, err := ms.blockVSAllocate(ctx, replicaServerStr, req.Name, req.SizeBytes, req.DiskType)
 		if err != nil {
-			glog.V(0).Infof("CreateBlockVolume %q: replica on %s failed: %v", req.Name, replicaServerStr, err)
+			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: replica on %s failed: %v", blockReqID(ctx), req.Name, replicaServerStr, err)
 			continue
 		}
-		entry.ReplicaServer = replicaServerStr
-		entry.ReplicaPath = replicaResult.Path
-		entry.ReplicaIQN = replicaResult.IQN
-		entry.ReplicaISCSIAddr = replicaResult.ISCSIAddr
-		entry.ReplicaDataAddr = replicaResult.ReplicaDataAddr
-		entry.ReplicaCtrlAddr = replicaResult.ReplicaCtrlAddr
 		entry.RebuildListenAddr = primaryResult.RebuildListenAddr
+		// CP8-2: populate Replicas[].
+		entry.Replicas = append(entry.Replicas, ReplicaInfo{
+			Server:    replicaServerStr,
+			Path:      replicaResult.Path,
+			ISCSIAddr: replicaResult.ISCSIAddr,
+			IQN:       replicaResult.IQN,
+			DataAddr:  replicaResult.ReplicaDataAddr,
+			CtrlAddr:  replicaResult.ReplicaCtrlAddr,
+		})
 		return replicaServerStr
 	}
-	glog.Warningf("CreateBlockVolume %q: created without replica (replica allocation failed)", req.Name)
+	glog.Warningf("[reqID=%s] CreateBlockVolume %q: created without replica (replica allocation failed)", blockReqID(ctx), req.Name)
 	return ""
+}
+
+// CreateBlockSnapshot creates a snapshot on a block volume via the volume server.
+func (ms *MasterServer) CreateBlockSnapshot(ctx context.Context, req *master_pb.CreateBlockSnapshotRequest) (*master_pb.CreateBlockSnapshotResponse, error) {
+	if req.VolumeName == "" {
+		return nil, fmt.Errorf("volume_name is required")
+	}
+
+	entry, ok := ms.blockRegistry.Lookup(req.VolumeName)
+	if !ok {
+		return nil, fmt.Errorf("block volume %q not found", req.VolumeName)
+	}
+
+	createdAt, sizeBytes, err := ms.blockVSSnapshot(ctx, entry.VolumeServer, req.VolumeName, req.SnapshotId)
+	if err != nil {
+		return nil, fmt.Errorf("create snapshot on %s: %w", entry.VolumeServer, err)
+	}
+
+	return &master_pb.CreateBlockSnapshotResponse{
+		SnapshotId: req.SnapshotId,
+		CreatedAt:  createdAt,
+		SizeBytes:  sizeBytes,
+	}, nil
+}
+
+// DeleteBlockSnapshot deletes a snapshot from a block volume via the volume server.
+func (ms *MasterServer) DeleteBlockSnapshot(ctx context.Context, req *master_pb.DeleteBlockSnapshotRequest) (*master_pb.DeleteBlockSnapshotResponse, error) {
+	if req.VolumeName == "" {
+		return nil, fmt.Errorf("volume_name is required")
+	}
+
+	entry, ok := ms.blockRegistry.Lookup(req.VolumeName)
+	if !ok {
+		// Idempotent: volume not found → snapshot doesn't exist either.
+		return &master_pb.DeleteBlockSnapshotResponse{}, nil
+	}
+
+	if err := ms.blockVSDeleteSnap(ctx, entry.VolumeServer, req.VolumeName, req.SnapshotId); err != nil {
+		return nil, fmt.Errorf("delete snapshot on %s: %w", entry.VolumeServer, err)
+	}
+
+	return &master_pb.DeleteBlockSnapshotResponse{}, nil
+}
+
+// ListBlockSnapshots lists all snapshots on a block volume via the volume server.
+func (ms *MasterServer) ListBlockSnapshots(ctx context.Context, req *master_pb.ListBlockSnapshotsRequest) (*master_pb.ListBlockSnapshotsResponse, error) {
+	if req.VolumeName == "" {
+		return nil, fmt.Errorf("volume_name is required")
+	}
+
+	entry, ok := ms.blockRegistry.Lookup(req.VolumeName)
+	if !ok {
+		return nil, fmt.Errorf("block volume %q not found", req.VolumeName)
+	}
+
+	vsInfos, err := ms.blockVSListSnaps(ctx, entry.VolumeServer, req.VolumeName)
+	if err != nil {
+		return nil, fmt.Errorf("list snapshots on %s: %w", entry.VolumeServer, err)
+	}
+
+	resp := &master_pb.ListBlockSnapshotsResponse{}
+	for _, si := range vsInfos {
+		resp.Snapshots = append(resp.Snapshots, &master_pb.BlockSnapshotInfo{
+			SnapshotId:      si.SnapshotId,
+			CreatedAt:       si.CreatedAt,
+			VolumeSizeBytes: si.VolumeSizeBytes,
+		})
+	}
+	return resp, nil
+}
+
+// ExpandBlockVolume expands a block volume via the volume server, then updates registry.
+func (ms *MasterServer) ExpandBlockVolume(ctx context.Context, req *master_pb.ExpandBlockVolumeRequest) (*master_pb.ExpandBlockVolumeResponse, error) {
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if req.NewSizeBytes == 0 {
+		return nil, fmt.Errorf("new_size_bytes must be > 0")
+	}
+
+	entry, ok := ms.blockRegistry.Lookup(req.Name)
+	if !ok {
+		return nil, fmt.Errorf("block volume %q not found", req.Name)
+	}
+
+	// Expand primary first; only update registry on success.
+	capacity, err := ms.blockVSExpand(ctx, entry.VolumeServer, req.Name, req.NewSizeBytes)
+	if err != nil {
+		return nil, fmt.Errorf("expand on %s: %w", entry.VolumeServer, err)
+	}
+
+	// CP8-2: Expand ALL replicas (best-effort, log warning on failure).
+	for _, ri := range entry.Replicas {
+		if _, err := ms.blockVSExpand(ctx, ri.Server, req.Name, req.NewSizeBytes); err != nil {
+			glog.Warningf("[reqID=%s] ExpandBlockVolume %q: replica expand on %s failed (best-effort): %v",
+				blockReqID(ctx), req.Name, ri.Server, err)
+		}
+	}
+
+	// Update registry with actual new size.
+	if uerr := ms.blockRegistry.UpdateSize(req.Name, capacity); uerr != nil {
+		glog.Warningf("[reqID=%s] ExpandBlockVolume %q: registry update failed (VS succeeded): %v", blockReqID(ctx), req.Name, uerr)
+	}
+
+	return &master_pb.ExpandBlockVolumeResponse{
+		CapacityBytes: capacity,
+	}, nil
+}
+
+// createBlockVolumeResponseFromEntry builds a CreateBlockVolumeResponse from a registry entry.
+func (ms *MasterServer) createBlockVolumeResponseFromEntry(entry *BlockVolumeEntry) *master_pb.CreateBlockVolumeResponse {
+	return &master_pb.CreateBlockVolumeResponse{
+		VolumeId:       entry.Name,
+		VolumeServer:   entry.VolumeServer,
+		IscsiAddr:      entry.ISCSIAddr,
+		Iqn:            entry.IQN,
+		CapacityBytes:  entry.SizeBytes,
+		ReplicaServer:  entry.ReplicaServer, // backward compat
+		ReplicaServers: replicaServerList(entry),
+	}
+}
+
+// replicaServerList returns the list of replica server addresses.
+// Order matches Replicas[] (append-order), ensuring ReplicaServers[0] == ReplicaServer (legacy).
+func replicaServerList(entry *BlockVolumeEntry) []string {
+	if len(entry.Replicas) == 0 {
+		return nil
+	}
+	servers := make([]string, len(entry.Replicas))
+	for i, ri := range entry.Replicas {
+		servers[i] = ri.Server
+	}
+	return servers
 }
 
 // removeServer returns a new slice without the specified server.

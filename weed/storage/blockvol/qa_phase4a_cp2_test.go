@@ -922,12 +922,12 @@ func testQADSyncRemoteFailDegrades(t *testing.T) {
 	replica.replRecv.Stop()
 
 	// Force shipper to reconnect (old ctrl conn may still be open).
-	primary.shipper.ctrlMu.Lock()
-	if primary.shipper.ctrlConn != nil {
-		primary.shipper.ctrlConn.Close()
-		primary.shipper.ctrlConn = nil
+	primary.shipperGroup.Shipper(0).ctrlMu.Lock()
+	if primary.shipperGroup.Shipper(0).ctrlConn != nil {
+		primary.shipperGroup.Shipper(0).ctrlConn.Close()
+		primary.shipperGroup.Shipper(0).ctrlConn = nil
 	}
-	primary.shipper.ctrlMu.Unlock()
+	primary.shipperGroup.Shipper(0).ctrlMu.Unlock()
 
 	// SyncCache triggers distributed sync -> barrier fails -> degrade.
 	err := primary.SyncCache()
@@ -937,7 +937,7 @@ func testQADSyncRemoteFailDegrades(t *testing.T) {
 	}
 
 	// Shipper should be degraded.
-	if !primary.shipper.IsDegraded() {
+	if !primary.shipperGroup.Shipper(0).IsDegraded() {
 		t.Error("shipper should be degraded after replica receiver stopped")
 	}
 }
@@ -953,7 +953,7 @@ func testQADSyncBothFail(t *testing.T) {
 
 	syncFn := MakeDistributedSync(
 		func() error { return localErr },
-		shipper,
+		NewShipperGroup([]*WALShipper{shipper}),
 		vol,
 	)
 
@@ -992,7 +992,7 @@ func testQADSyncParallelExecution(t *testing.T) {
 		return nil
 	}
 
-	syncFn := MakeDistributedSync(slowLocalSync, primary.shipper, primary)
+	syncFn := MakeDistributedSync(slowLocalSync, primary.shipperGroup, primary)
 
 	start := time.Now()
 	err := syncFn()
@@ -1051,7 +1051,7 @@ func testQAE2EReplicaDataMatchesPrimary(t *testing.T) {
 	}
 
 	// Verify receivedLSN on replica matches what primary shipped.
-	primaryLSN := primary.shipper.ShippedLSN()
+	primaryLSN := primary.shipperGroup.Shipper(0).ShippedLSN()
 	replicaLSN := replica.replRecv.ReceivedLSN()
 	if replicaLSN < primaryLSN {
 		t.Errorf("replica receivedLSN = %d < primary shippedLSN = %d", replicaLSN, primaryLSN)

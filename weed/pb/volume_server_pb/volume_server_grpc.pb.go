@@ -69,6 +69,10 @@ const (
 	VolumeServer_Ping_FullMethodName                          = "/volume_server_pb.VolumeServer/Ping"
 	VolumeServer_AllocateBlockVolume_FullMethodName           = "/volume_server_pb.VolumeServer/AllocateBlockVolume"
 	VolumeServer_VolumeServerDeleteBlockVolume_FullMethodName = "/volume_server_pb.VolumeServer/VolumeServerDeleteBlockVolume"
+	VolumeServer_SnapshotBlockVolume_FullMethodName           = "/volume_server_pb.VolumeServer/SnapshotBlockVolume"
+	VolumeServer_DeleteBlockSnapshot_FullMethodName           = "/volume_server_pb.VolumeServer/DeleteBlockSnapshot"
+	VolumeServer_ListBlockSnapshots_FullMethodName            = "/volume_server_pb.VolumeServer/ListBlockSnapshots"
+	VolumeServer_ExpandBlockVolume_FullMethodName             = "/volume_server_pb.VolumeServer/ExpandBlockVolume"
 )
 
 // VolumeServerClient is the client API for VolumeServer service.
@@ -133,6 +137,10 @@ type VolumeServerClient interface {
 	// block volumes
 	AllocateBlockVolume(ctx context.Context, in *AllocateBlockVolumeRequest, opts ...grpc.CallOption) (*AllocateBlockVolumeResponse, error)
 	VolumeServerDeleteBlockVolume(ctx context.Context, in *VolumeServerDeleteBlockVolumeRequest, opts ...grpc.CallOption) (*VolumeServerDeleteBlockVolumeResponse, error)
+	SnapshotBlockVolume(ctx context.Context, in *SnapshotBlockVolumeRequest, opts ...grpc.CallOption) (*SnapshotBlockVolumeResponse, error)
+	DeleteBlockSnapshot(ctx context.Context, in *DeleteBlockSnapshotRequest, opts ...grpc.CallOption) (*DeleteBlockSnapshotResponse, error)
+	ListBlockSnapshots(ctx context.Context, in *ListBlockSnapshotsRequest, opts ...grpc.CallOption) (*ListBlockSnapshotsResponse, error)
+	ExpandBlockVolume(ctx context.Context, in *ExpandBlockVolumeRequest, opts ...grpc.CallOption) (*ExpandBlockVolumeResponse, error)
 }
 
 type volumeServerClient struct {
@@ -736,6 +744,46 @@ func (c *volumeServerClient) VolumeServerDeleteBlockVolume(ctx context.Context, 
 	return out, nil
 }
 
+func (c *volumeServerClient) SnapshotBlockVolume(ctx context.Context, in *SnapshotBlockVolumeRequest, opts ...grpc.CallOption) (*SnapshotBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_SnapshotBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) DeleteBlockSnapshot(ctx context.Context, in *DeleteBlockSnapshotRequest, opts ...grpc.CallOption) (*DeleteBlockSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteBlockSnapshotResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_DeleteBlockSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) ListBlockSnapshots(ctx context.Context, in *ListBlockSnapshotsRequest, opts ...grpc.CallOption) (*ListBlockSnapshotsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBlockSnapshotsResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_ListBlockSnapshots_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) ExpandBlockVolume(ctx context.Context, in *ExpandBlockVolumeRequest, opts ...grpc.CallOption) (*ExpandBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExpandBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_ExpandBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
 // for forward compatibility.
@@ -798,6 +846,10 @@ type VolumeServerServer interface {
 	// block volumes
 	AllocateBlockVolume(context.Context, *AllocateBlockVolumeRequest) (*AllocateBlockVolumeResponse, error)
 	VolumeServerDeleteBlockVolume(context.Context, *VolumeServerDeleteBlockVolumeRequest) (*VolumeServerDeleteBlockVolumeResponse, error)
+	SnapshotBlockVolume(context.Context, *SnapshotBlockVolumeRequest) (*SnapshotBlockVolumeResponse, error)
+	DeleteBlockSnapshot(context.Context, *DeleteBlockSnapshotRequest) (*DeleteBlockSnapshotResponse, error)
+	ListBlockSnapshots(context.Context, *ListBlockSnapshotsRequest) (*ListBlockSnapshotsResponse, error)
+	ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
@@ -957,6 +1009,18 @@ func (UnimplementedVolumeServerServer) AllocateBlockVolume(context.Context, *All
 }
 func (UnimplementedVolumeServerServer) VolumeServerDeleteBlockVolume(context.Context, *VolumeServerDeleteBlockVolumeRequest) (*VolumeServerDeleteBlockVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VolumeServerDeleteBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) SnapshotBlockVolume(context.Context, *SnapshotBlockVolumeRequest) (*SnapshotBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) DeleteBlockSnapshot(context.Context, *DeleteBlockSnapshotRequest) (*DeleteBlockSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteBlockSnapshot not implemented")
+}
+func (UnimplementedVolumeServerServer) ListBlockSnapshots(context.Context, *ListBlockSnapshotsRequest) (*ListBlockSnapshotsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBlockSnapshots not implemented")
+}
+func (UnimplementedVolumeServerServer) ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExpandBlockVolume not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
 func (UnimplementedVolumeServerServer) testEmbeddedByValue()                      {}
@@ -1798,6 +1862,78 @@ func _VolumeServer_VolumeServerDeleteBlockVolume_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_SnapshotBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).SnapshotBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_SnapshotBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).SnapshotBlockVolume(ctx, req.(*SnapshotBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_DeleteBlockSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteBlockSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).DeleteBlockSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_DeleteBlockSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).DeleteBlockSnapshot(ctx, req.(*DeleteBlockSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_ListBlockSnapshots_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBlockSnapshotsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ListBlockSnapshots(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_ListBlockSnapshots_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ListBlockSnapshots(ctx, req.(*ListBlockSnapshotsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_ExpandBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExpandBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).ExpandBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_ExpandBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).ExpandBlockVolume(ctx, req.(*ExpandBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1960,6 +2096,22 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VolumeServerDeleteBlockVolume",
 			Handler:    _VolumeServer_VolumeServerDeleteBlockVolume_Handler,
+		},
+		{
+			MethodName: "SnapshotBlockVolume",
+			Handler:    _VolumeServer_SnapshotBlockVolume_Handler,
+		},
+		{
+			MethodName: "DeleteBlockSnapshot",
+			Handler:    _VolumeServer_DeleteBlockSnapshot_Handler,
+		},
+		{
+			MethodName: "ListBlockSnapshots",
+			Handler:    _VolumeServer_ListBlockSnapshots_Handler,
+		},
+		{
+			MethodName: "ExpandBlockVolume",
+			Handler:    _VolumeServer_ExpandBlockVolume_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

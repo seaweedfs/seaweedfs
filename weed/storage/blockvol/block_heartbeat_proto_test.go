@@ -1,6 +1,7 @@
 package blockvol
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -46,7 +47,7 @@ func TestAssignmentRoundTrip(t *testing.T) {
 	}
 	pb := AssignmentToProto(orig)
 	back := AssignmentFromProto(pb)
-	if back != orig {
+	if !reflect.DeepEqual(back, orig) {
 		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", back, orig)
 	}
 }
@@ -80,7 +81,7 @@ func TestAssignmentRoundTripWithReplicaAddrs(t *testing.T) {
 	}
 	pb := AssignmentToProto(orig)
 	back := AssignmentFromProto(pb)
-	if back != orig {
+	if !reflect.DeepEqual(back, orig) {
 		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", back, orig)
 	}
 }
@@ -195,7 +196,199 @@ func TestNilProtoConversions(t *testing.T) {
 		t.Fatalf("nil short proto should yield zero value, got %+v", short)
 	}
 	assign := AssignmentFromProto(nil)
-	if assign != (BlockVolumeAssignment{}) {
+	if !reflect.DeepEqual(assign, BlockVolumeAssignment{}) {
 		t.Fatalf("nil assignment proto should yield zero value, got %+v", assign)
+	}
+}
+
+// --- CP8-2 new tests ---
+
+func TestInfoMessage_HealthScoreRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:        "/data/vol.blk",
+		VolumeSize:  1 << 30,
+		BlockSize:   4096,
+		Epoch:       5,
+		HealthScore: 0.85,
+		ScrubErrors: 3,
+		LastScrubTime: 1709000000,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.HealthScore != 0.85 {
+		t.Fatalf("HealthScore: got %f, want 0.85", back.HealthScore)
+	}
+	if back.ScrubErrors != 3 {
+		t.Fatalf("ScrubErrors: got %d, want 3", back.ScrubErrors)
+	}
+	if back.LastScrubTime != 1709000000 {
+		t.Fatalf("LastScrubTime: got %d, want 1709000000", back.LastScrubTime)
+	}
+}
+
+func TestInfoMessage_ReplicaDegradedRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:            "/data/vol.blk",
+		Epoch:           1,
+		ReplicaDegraded: true,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if !back.ReplicaDegraded {
+		t.Fatal("ReplicaDegraded should be true after round-trip")
+	}
+
+	// Also verify false round-trips.
+	orig.ReplicaDegraded = false
+	pb = InfoMessageToProto(orig)
+	back = InfoMessageFromProto(pb)
+	if back.ReplicaDegraded {
+		t.Fatal("ReplicaDegraded should be false after round-trip")
+	}
+}
+
+func TestAssignment_MultiReplicaRoundTrip(t *testing.T) {
+	orig := BlockVolumeAssignment{
+		Path:       "/data/vol.blk",
+		Epoch:      10,
+		Role:       RoleToWire(RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []ReplicaAddr{
+			{DataAddr: "10.0.0.2:14260", CtrlAddr: "10.0.0.2:14261"},
+			{DataAddr: "10.0.0.3:14260", CtrlAddr: "10.0.0.3:14261"},
+		},
+	}
+	pb := AssignmentToProto(orig)
+	back := AssignmentFromProto(pb)
+
+	if len(back.ReplicaAddrs) != 2 {
+		t.Fatalf("ReplicaAddrs len: got %d, want 2", len(back.ReplicaAddrs))
+	}
+	if back.ReplicaAddrs[0].DataAddr != "10.0.0.2:14260" {
+		t.Fatalf("ReplicaAddrs[0].DataAddr: got %q", back.ReplicaAddrs[0].DataAddr)
+	}
+	if back.ReplicaAddrs[1].CtrlAddr != "10.0.0.3:14261" {
+		t.Fatalf("ReplicaAddrs[1].CtrlAddr: got %q", back.ReplicaAddrs[1].CtrlAddr)
+	}
+	// Scalar fields should be empty when ReplicaAddrs is populated.
+	if back.ReplicaDataAddr != "" || back.ReplicaCtrlAddr != "" {
+		t.Fatalf("scalar addrs should be empty when ReplicaAddrs set, got data=%q ctrl=%q",
+			back.ReplicaDataAddr, back.ReplicaCtrlAddr)
+	}
+}
+
+func TestAssignment_PrecedenceRule(t *testing.T) {
+	// When proto has BOTH ReplicaAddrs AND scalar fields,
+	// ReplicaAddrs takes precedence and scalar fields are ignored.
+	orig := BlockVolumeAssignment{
+		Path:            "/data/vol.blk",
+		Epoch:           5,
+		Role:            RoleToWire(RolePrimary),
+		ReplicaDataAddr: "scalar-data:1234",
+		ReplicaCtrlAddr: "scalar-ctrl:1235",
+		ReplicaAddrs: []ReplicaAddr{
+			{DataAddr: "multi-data:4260", CtrlAddr: "multi-ctrl:4261"},
+		},
+	}
+	pb := AssignmentToProto(orig)
+	// Proto will have both scalar and repeated fields set.
+	if pb.ReplicaDataAddr != "scalar-data:1234" {
+		t.Fatalf("proto should preserve scalar, got %q", pb.ReplicaDataAddr)
+	}
+	if len(pb.ReplicaAddrs) != 1 {
+		t.Fatalf("proto should have 1 ReplicaAddr, got %d", len(pb.ReplicaAddrs))
+	}
+
+	// FromProto: ReplicaAddrs non-empty → use it, ignore scalar.
+	back := AssignmentFromProto(pb)
+	if len(back.ReplicaAddrs) != 1 {
+		t.Fatalf("back.ReplicaAddrs len: got %d, want 1", len(back.ReplicaAddrs))
+	}
+	if back.ReplicaDataAddr != "" {
+		t.Fatalf("scalar ReplicaDataAddr should be empty due to precedence, got %q", back.ReplicaDataAddr)
+	}
+	if back.ReplicaCtrlAddr != "" {
+		t.Fatalf("scalar ReplicaCtrlAddr should be empty due to precedence, got %q", back.ReplicaCtrlAddr)
+	}
+}
+
+func TestAssignment_BackwardCompatScalar(t *testing.T) {
+	// When proto has only scalar fields (no ReplicaAddrs), backward compat path.
+	orig := BlockVolumeAssignment{
+		Path:            "/data/vol.blk",
+		Epoch:           3,
+		Role:            RoleToWire(RolePrimary),
+		LeaseTtlMs:      5000,
+		ReplicaDataAddr: "host:4260",
+		ReplicaCtrlAddr: "host:4261",
+	}
+	pb := AssignmentToProto(orig)
+	back := AssignmentFromProto(pb)
+
+	if back.ReplicaDataAddr != "host:4260" {
+		t.Fatalf("scalar ReplicaDataAddr: got %q, want %q", back.ReplicaDataAddr, "host:4260")
+	}
+	if back.ReplicaCtrlAddr != "host:4261" {
+		t.Fatalf("scalar ReplicaCtrlAddr: got %q, want %q", back.ReplicaCtrlAddr, "host:4261")
+	}
+	if len(back.ReplicaAddrs) != 0 {
+		t.Fatalf("ReplicaAddrs should be empty for backward compat, got %d", len(back.ReplicaAddrs))
+	}
+}
+
+func TestAssignmentsSlice_MultiReplicaRoundTrip(t *testing.T) {
+	as := []BlockVolumeAssignment{
+		{
+			Path:  "/a.blk",
+			Epoch: 1,
+			ReplicaAddrs: []ReplicaAddr{
+				{DataAddr: "h1:1", CtrlAddr: "h1:2"},
+				{DataAddr: "h2:1", CtrlAddr: "h2:2"},
+			},
+		},
+		{
+			Path:            "/b.blk",
+			Epoch:           2,
+			ReplicaDataAddr: "scalar:1",
+		},
+	}
+	pbs := AssignmentsToProto(as)
+	back := AssignmentsFromProto(pbs)
+	if len(back) != 2 {
+		t.Fatalf("len: got %d, want 2", len(back))
+	}
+	// First: multi-replica path.
+	if len(back[0].ReplicaAddrs) != 2 {
+		t.Fatalf("back[0].ReplicaAddrs len: got %d, want 2", len(back[0].ReplicaAddrs))
+	}
+	// Second: scalar path.
+	if back[1].ReplicaDataAddr != "scalar:1" {
+		t.Fatalf("back[1].ReplicaDataAddr: got %q", back[1].ReplicaDataAddr)
+	}
+	if len(back[1].ReplicaAddrs) != 0 {
+		t.Fatalf("back[1].ReplicaAddrs should be empty, got %d", len(back[1].ReplicaAddrs))
+	}
+}
+
+func TestInfoMessage_HealthFieldsZeroDefault(t *testing.T) {
+	// Verify zero-valued health fields round-trip correctly (backward compat).
+	orig := BlockVolumeInfoMessage{
+		Path:  "/data/old.blk",
+		Epoch: 1,
+		// All CP8-2 fields at zero default.
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.HealthScore != 0 {
+		t.Fatalf("HealthScore zero default: got %f", back.HealthScore)
+	}
+	if back.ScrubErrors != 0 {
+		t.Fatalf("ScrubErrors zero default: got %d", back.ScrubErrors)
+	}
+	if back.LastScrubTime != 0 {
+		t.Fatalf("LastScrubTime zero default: got %d", back.LastScrubTime)
+	}
+	if back.ReplicaDegraded {
+		t.Fatal("ReplicaDegraded zero default should be false")
 	}
 }

@@ -220,7 +220,7 @@ func TestControllerUnpublish_Success(t *testing.T) {
 	}
 }
 
-func TestController_Capabilities_IncludesPublish(t *testing.T) {
+func TestController_Capabilities(t *testing.T) {
 	mgr := newTestManager(t)
 	backend := NewLocalVolumeBackend(mgr)
 	cs := &controllerServer{backend: backend}
@@ -230,24 +230,225 @@ func TestController_Capabilities_IncludesPublish(t *testing.T) {
 		t.Fatalf("ControllerGetCapabilities: %v", err)
 	}
 
-	hasCreate := false
-	hasPublish := false
+	want := map[csi.ControllerServiceCapability_RPC_Type]bool{
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME:   true,
+		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME: true,
+		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT: true,
+		csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS:         true,
+		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME:          true,
+	}
+
+	got := make(map[csi.ControllerServiceCapability_RPC_Type]bool)
 	for _, cap := range resp.Capabilities {
 		rpc := cap.GetRpc()
-		if rpc == nil {
-			continue
-		}
-		switch rpc.Type {
-		case csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME:
-			hasCreate = true
-		case csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME:
-			hasPublish = true
+		if rpc != nil {
+			got[rpc.Type] = true
 		}
 	}
-	if !hasCreate {
-		t.Fatal("expected CREATE_DELETE_VOLUME capability")
+
+	for capType := range want {
+		if !got[capType] {
+			t.Fatalf("missing capability: %v", capType)
+		}
 	}
-	if !hasPublish {
-		t.Fatal("expected PUBLISH_UNPUBLISH_VOLUME capability")
+}
+
+func TestController_CreateSnapshot(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	// Create volume first.
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "snap-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+
+	resp, err := cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "my-snapshot",
+		SourceVolumeId: "snap-vol",
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if resp.Snapshot.SnapshotId == "" {
+		t.Fatal("snapshot ID should not be empty")
+	}
+	if resp.Snapshot.SourceVolumeId != "snap-vol" {
+		t.Fatalf("SourceVolumeId: got %q, want snap-vol", resp.Snapshot.SourceVolumeId)
+	}
+	if !resp.Snapshot.ReadyToUse {
+		t.Fatal("snapshot should be ready")
+	}
+}
+
+func TestController_CreateSnapshotIdempotent(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "snap-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+
+	// First create.
+	resp1, err := cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "my-snapshot",
+		SourceVolumeId: "snap-vol",
+	})
+	if err != nil {
+		t.Fatalf("first CreateSnapshot: %v", err)
+	}
+
+	// Same name on same volume -- CSI idempotency: should return existing snapshot.
+	resp2, err := cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "my-snapshot",
+		SourceVolumeId: "snap-vol",
+	})
+	if err != nil {
+		t.Fatalf("idempotent CreateSnapshot: %v", err)
+	}
+	if resp2.Snapshot.SnapshotId != resp1.Snapshot.SnapshotId {
+		t.Fatalf("snapshot IDs differ: %q vs %q", resp2.Snapshot.SnapshotId, resp1.Snapshot.SnapshotId)
+	}
+	if resp2.Snapshot.SourceVolumeId != "snap-vol" {
+		t.Fatalf("source volume: got %q", resp2.Snapshot.SourceVolumeId)
+	}
+}
+
+func TestController_DeleteSnapshot(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "snap-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+
+	resp, _ := cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "del-snap",
+		SourceVolumeId: "snap-vol",
+	})
+
+	_, err := cs.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{
+		SnapshotId: resp.Snapshot.SnapshotId,
+	})
+	if err != nil {
+		t.Fatalf("DeleteSnapshot: %v", err)
+	}
+}
+
+func TestController_DeleteSnapshotNotFound(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	// Delete non-existent snapshot should succeed (idempotent).
+	_, err := cs.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{
+		SnapshotId: "snap-nonexistent-vol-42",
+	})
+	if err != nil {
+		t.Fatalf("DeleteSnapshot non-existent: %v", err)
+	}
+}
+
+func TestController_ListSnapshotsByVolume(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "list-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+
+	cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name: "snap-a", SourceVolumeId: "list-vol",
+	})
+	cs.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name: "snap-b", SourceVolumeId: "list-vol",
+	})
+
+	resp, err := cs.ListSnapshots(context.Background(), &csi.ListSnapshotsRequest{
+		SourceVolumeId: "list-vol",
+	})
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(resp.Entries) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(resp.Entries))
+	}
+}
+
+func TestController_ExpandVolume(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "expand-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+
+	resp, err := cs.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId:      "expand-vol",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 8 * 1024 * 1024},
+	})
+	if err != nil {
+		t.Fatalf("ControllerExpandVolume: %v", err)
+	}
+	if resp.CapacityBytes != 8*1024*1024 {
+		t.Fatalf("CapacityBytes: got %d, want %d", resp.CapacityBytes, 8*1024*1024)
+	}
+	if !resp.NodeExpansionRequired {
+		t.Fatal("NodeExpansionRequired should be true")
+	}
+}
+
+func TestController_ExpandNoShrink(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	cs.CreateVolume(context.Background(), &csi.CreateVolumeRequest{
+		Name:               "noshrink-vol",
+		VolumeCapabilities: testVolCaps(),
+		CapacityRange:      &csi.CapacityRange{RequiredBytes: 8 * 1024 * 1024},
+	})
+
+	_, err := cs.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId:      "noshrink-vol",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 4 * 1024 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected error for shrink")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", st.Code())
+	}
+}
+
+func TestController_ExpandMissingVolumeID(t *testing.T) {
+	mgr := newTestManager(t)
+	backend := NewLocalVolumeBackend(mgr)
+	cs := &controllerServer{backend: backend}
+
+	_, err := cs.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 8 * 1024 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing volume ID")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", st.Code())
 	}
 }

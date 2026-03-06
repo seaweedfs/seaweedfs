@@ -115,9 +115,9 @@ func demote(vol *BlockVol, newEpoch uint64) error {
 		}
 	}
 
-	// Stop shipper if present.
-	if vol.shipper != nil {
-		vol.shipper.Stop()
+	// Stop shippers if present.
+	if vol.shipperGroup != nil {
+		vol.shipperGroup.StopAll()
 	}
 
 	// Transition Draining -> Stale.

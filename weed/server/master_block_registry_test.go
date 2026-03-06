@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 func TestRegistry_RegisterLookup(t *testing.T) {
@@ -432,5 +434,560 @@ func TestFullHeartbeat_UpdatesReplicaAddrs(t *testing.T) {
 	}
 	if entry.ReplicaCtrlAddr != "10.0.0.2:14261" {
 		t.Fatalf("ReplicaCtrlAddr: got %q, want 10.0.0.2:14261", entry.ReplicaCtrlAddr)
+	}
+}
+
+// --- CP8-2 new tests ---
+
+func TestRegistry_AddReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	err := r.AddReplica("vol1", ReplicaInfo{
+		Server:    "s2",
+		Path:      "/replica/v1.blk",
+		ISCSIAddr: "10.0.0.2:3260",
+		IQN:       "iqn:vol1-r1",
+		DataAddr:  "s2:14260",
+		CtrlAddr:  "s2:14261",
+	})
+	if err != nil {
+		t.Fatalf("AddReplica: %v", err)
+	}
+
+	e, _ := r.Lookup("vol1")
+	if len(e.Replicas) != 1 {
+		t.Fatalf("Replicas len: got %d, want 1", len(e.Replicas))
+	}
+	if e.Replicas[0].Server != "s2" {
+		t.Fatalf("Replicas[0].Server: got %q", e.Replicas[0].Server)
+	}
+	// Deprecated scalar should be synced.
+	if e.ReplicaServer != "s2" {
+		t.Fatalf("ReplicaServer (deprecated): got %q", e.ReplicaServer)
+	}
+	// byServer index should include replica.
+	if len(r.ListByServer("s2")) != 1 {
+		t.Fatalf("ListByServer(s2): got %d, want 1", len(r.ListByServer("s2")))
+	}
+}
+
+func TestRegistry_AddReplica_TwoRF3(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", ReplicaFactor: 3})
+
+	r.AddReplica("vol1", ReplicaInfo{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1"})
+	r.AddReplica("vol1", ReplicaInfo{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2"})
+
+	e, _ := r.Lookup("vol1")
+	if len(e.Replicas) != 2 {
+		t.Fatalf("Replicas len: got %d, want 2", len(e.Replicas))
+	}
+	if e.Replicas[0].Server != "s2" || e.Replicas[1].Server != "s3" {
+		t.Fatalf("Replicas: got %+v", e.Replicas)
+	}
+	// byServer index should include both.
+	if len(r.ListByServer("s2")) != 1 || len(r.ListByServer("s3")) != 1 {
+		t.Fatal("byServer should include both replica servers")
+	}
+}
+
+func TestRegistry_AddReplica_Upsert(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	r.AddReplica("vol1", ReplicaInfo{Server: "s2", Path: "/r1.blk"})
+	r.AddReplica("vol1", ReplicaInfo{Server: "s2", Path: "/r1-new.blk"})
+
+	e, _ := r.Lookup("vol1")
+	if len(e.Replicas) != 1 {
+		t.Fatalf("Replicas len: got %d, want 1 (upsert, not duplicate)", len(e.Replicas))
+	}
+	if e.Replicas[0].Path != "/r1-new.blk" {
+		t.Fatalf("Replicas[0].Path: got %q, want /r1-new.blk", e.Replicas[0].Path)
+	}
+}
+
+func TestRegistry_RemoveReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+	r.AddReplica("vol1", ReplicaInfo{Server: "s2", Path: "/r1.blk"})
+	r.AddReplica("vol1", ReplicaInfo{Server: "s3", Path: "/r2.blk"})
+
+	err := r.RemoveReplica("vol1", "s2")
+	if err != nil {
+		t.Fatalf("RemoveReplica: %v", err)
+	}
+
+	e, _ := r.Lookup("vol1")
+	if len(e.Replicas) != 1 {
+		t.Fatalf("Replicas len: got %d, want 1", len(e.Replicas))
+	}
+	if e.Replicas[0].Server != "s3" {
+		t.Fatalf("remaining replica should be s3, got %q", e.Replicas[0].Server)
+	}
+	// Deprecated scalar should sync to first remaining replica.
+	if e.ReplicaServer != "s3" {
+		t.Fatalf("ReplicaServer (deprecated): got %q, want s3", e.ReplicaServer)
+	}
+	// s2 should be removed from byServer.
+	if len(r.ListByServer("s2")) != 0 {
+		t.Fatalf("ListByServer(s2): got %d, want 0", len(r.ListByServer("s2")))
+	}
+}
+
+func TestRegistry_PromoteBestReplica_PicksHighest(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "s1",
+		Path:         "/v1.blk",
+		Epoch:        5,
+		Role:         1,
+		Replicas: []ReplicaInfo{
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.8, WALHeadLSN: 100},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.95, WALHeadLSN: 90},
+		},
+	})
+	// Add to byServer for s2 and s3.
+	r.mu.Lock()
+	r.addToServer("s2", "vol1")
+	r.addToServer("s3", "vol1")
+	r.mu.Unlock()
+
+	newEpoch, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	if newEpoch != 6 {
+		t.Fatalf("newEpoch: got %d, want 6", newEpoch)
+	}
+
+	e, _ := r.Lookup("vol1")
+	// s3 had higher health score → promoted.
+	if e.VolumeServer != "s3" {
+		t.Fatalf("VolumeServer: got %q, want s3 (higher health)", e.VolumeServer)
+	}
+	if e.Path != "/r2.blk" {
+		t.Fatalf("Path: got %q", e.Path)
+	}
+	// s2 should remain in Replicas.
+	if len(e.Replicas) != 1 {
+		t.Fatalf("Replicas len: got %d, want 1 (s2 stays)", len(e.Replicas))
+	}
+	if e.Replicas[0].Server != "s2" {
+		t.Fatalf("remaining replica: got %q, want s2", e.Replicas[0].Server)
+	}
+}
+
+func TestRegistry_PromoteBestReplica_NoReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("PromoteBestReplica with no replicas should return error")
+	}
+}
+
+func TestRegistry_PromoteBestReplica_TiebreakByLSN(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "s1",
+		Path:         "/v1.blk",
+		Epoch:        3,
+		Replicas: []ReplicaInfo{
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.9, WALHeadLSN: 50},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.9, WALHeadLSN: 100},
+		},
+	})
+	r.mu.Lock()
+	r.addToServer("s2", "vol1")
+	r.addToServer("s3", "vol1")
+	r.mu.Unlock()
+
+	newEpoch, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	if newEpoch != 4 {
+		t.Fatalf("newEpoch: got %d, want 4", newEpoch)
+	}
+
+	e, _ := r.Lookup("vol1")
+	// Same health → tie-break by WALHeadLSN → s3 wins.
+	if e.VolumeServer != "s3" {
+		t.Fatalf("VolumeServer: got %q, want s3 (higher LSN)", e.VolumeServer)
+	}
+	if len(e.Replicas) != 1 || e.Replicas[0].Server != "s2" {
+		t.Fatalf("remaining replica: got %+v, want [s2]", e.Replicas)
+	}
+}
+
+func TestRegistry_PromoteBestReplica_KeepsOthers(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "s1",
+		Path:         "/v1.blk",
+		Epoch:        1,
+		Replicas: []ReplicaInfo{
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 1.0, WALHeadLSN: 100},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.5, WALHeadLSN: 100},
+		},
+	})
+	r.mu.Lock()
+	r.addToServer("s2", "vol1")
+	r.addToServer("s3", "vol1")
+	r.mu.Unlock()
+
+	r.PromoteBestReplica("vol1")
+
+	e, _ := r.Lookup("vol1")
+	// s2 promoted, s3 stays.
+	if e.VolumeServer != "s2" {
+		t.Fatalf("VolumeServer: got %q, want s2", e.VolumeServer)
+	}
+	if len(e.Replicas) != 1 || e.Replicas[0].Server != "s3" {
+		t.Fatalf("remaining replicas: got %+v, want [s3]", e.Replicas)
+	}
+}
+
+func TestRegistry_BackwardCompatAccessors(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	e, _ := r.Lookup("vol1")
+	if e.HasReplica() {
+		t.Fatal("HasReplica should be false with no replicas")
+	}
+	if e.FirstReplica() != nil {
+		t.Fatal("FirstReplica should be nil")
+	}
+	if e.BestReplicaForPromotion() != nil {
+		t.Fatal("BestReplicaForPromotion should be nil")
+	}
+
+	r.AddReplica("vol1", ReplicaInfo{Server: "s2", Path: "/r.blk", HealthScore: 0.9})
+
+	e, _ = r.Lookup("vol1")
+	if !e.HasReplica() {
+		t.Fatal("HasReplica should be true after AddReplica")
+	}
+	if e.FirstReplica() == nil || e.FirstReplica().Server != "s2" {
+		t.Fatal("FirstReplica should return s2")
+	}
+	if e.ReplicaByServer("s2") == nil {
+		t.Fatal("ReplicaByServer(s2) should not be nil")
+	}
+	if e.ReplicaByServer("s3") != nil {
+		t.Fatal("ReplicaByServer(s3) should be nil")
+	}
+}
+
+func TestRegistry_ReplicaFactorDefault(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk"})
+
+	e, _ := r.Lookup("vol1")
+	// ReplicaFactor defaults to 0 (zero value). API handler defaults to 2.
+	if e.ReplicaFactor != 0 {
+		t.Fatalf("default ReplicaFactor: got %d, want 0", e.ReplicaFactor)
+	}
+
+	// Explicit RF=3.
+	r.Register(&BlockVolumeEntry{Name: "vol2", VolumeServer: "s1", Path: "/v2.blk", ReplicaFactor: 3})
+	e2, _ := r.Lookup("vol2")
+	if e2.ReplicaFactor != 3 {
+		t.Fatalf("ReplicaFactor: got %d, want 3", e2.ReplicaFactor)
+	}
+}
+
+func TestRegistry_FullHeartbeat_UpdatesHealthScore(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "s1",
+		Path:         "/v1.blk",
+		Status:       StatusPending,
+	})
+
+	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
+		{
+			Path:        "/v1.blk",
+			VolumeSize:  1 << 30,
+			Epoch:       1,
+			Role:        1,
+			HealthScore: 0.85,
+			ScrubErrors: 2,
+			WalHeadLsn:  500,
+		},
+	})
+
+	e, _ := r.Lookup("vol1")
+	if e.HealthScore != 0.85 {
+		t.Fatalf("HealthScore: got %f, want 0.85", e.HealthScore)
+	}
+	if e.WALHeadLSN != 500 {
+		t.Fatalf("WALHeadLSN: got %d, want 500", e.WALHeadLSN)
+	}
+}
+
+// Fix #1: Replica heartbeat must NOT delete the volume.
+func TestRegistry_ReplicaHeartbeat_DoesNotDeleteVolume(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Status:       StatusActive,
+		Replicas: []ReplicaInfo{
+			{Server: "replica1", Path: "/data/vol1.blk"},
+		},
+	})
+
+	// Replica sends heartbeat reporting its path.
+	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 1, Role: 2},
+	})
+
+	// Volume must still exist with primary intact.
+	e, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 should not be deleted when replica sends heartbeat")
+	}
+	if e.VolumeServer != "primary" {
+		t.Fatalf("primary should remain 'primary', got %q", e.VolumeServer)
+	}
+}
+
+// Fix #1: Replica path NOT reported → replica removed, volume preserved.
+func TestRegistry_ReplicaHeartbeat_StaleReplicaRemoved(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Status:       StatusActive,
+		Replicas: []ReplicaInfo{
+			{Server: "replica1", Path: "/data/vol1.blk"},
+			{Server: "replica2", Path: "/data/vol1.blk"},
+		},
+	})
+
+	// replica1 heartbeat does NOT report vol1 path → stale replica.
+	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{})
+
+	// Volume still exists, but replica1 removed.
+	e, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 should exist (only replica removed)")
+	}
+	if len(e.Replicas) != 1 {
+		t.Fatalf("expected 1 replica after stale removal, got %d", len(e.Replicas))
+	}
+	if e.Replicas[0].Server != "replica2" {
+		t.Fatalf("remaining replica should be replica2, got %q", e.Replicas[0].Server)
+	}
+}
+
+// Fix #3: Replica heartbeat after master restart reconstructs ReplicaInfo.
+func TestRegistry_ReplicaHeartbeat_ReconstructsAfterRestart(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// Simulate master restart: primary heartbeat re-created entry without replicas.
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Status:       StatusActive,
+	})
+
+	// Replica heartbeat arrives — vol1 exists but has no record of this server.
+	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 1, Role: 2, HealthScore: 0.95, WalHeadLsn: 42},
+	})
+
+	// vol1 should now have replica1 in Replicas[].
+	e, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 should exist")
+	}
+	if len(e.Replicas) != 1 {
+		t.Fatalf("expected 1 replica after reconstruction, got %d", len(e.Replicas))
+	}
+	ri := e.Replicas[0]
+	if ri.Server != "replica1" {
+		t.Fatalf("replica server: got %q, want replica1", ri.Server)
+	}
+	if ri.HealthScore != 0.95 {
+		t.Fatalf("replica health: got %f, want 0.95", ri.HealthScore)
+	}
+	if ri.WALHeadLSN != 42 {
+		t.Fatalf("replica WALHeadLSN: got %d, want 42", ri.WALHeadLSN)
+	}
+	// byServer index should include replica1.
+	entries := r.ListByServer("replica1")
+	if len(entries) != 1 || entries[0].Name != "vol1" {
+		t.Fatalf("ListByServer(replica1) should return vol1, got %+v", entries)
+	}
+}
+
+// Fix #2: Stale replica (old heartbeat) not eligible for promotion.
+func TestRegistry_PromoteBestReplica_StaleHeartbeatIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     5 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "stale-replica",
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				LastHeartbeat: time.Now().Add(-30 * time.Second), // stale (>2×5s)
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: stale replica should not be eligible")
+	}
+}
+
+// Fix #2: Replica with WAL lag too large is not eligible.
+func TestRegistry_PromoteBestReplica_WALLagIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   1000,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "lagging",
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    800, // lag=200, tolerance=100
+				LastHeartbeat: time.Now(),
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: lagging replica should not be eligible")
+	}
+}
+
+// Fix #2: Rebuilding replica is not eligible for promotion.
+func TestRegistry_PromoteBestReplica_RebuildingIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "rebuilding",
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				LastHeartbeat: time.Now(),
+				Role:          blockvol.RoleToWire(blockvol.RoleRebuilding),
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: rebuilding replica should not be eligible")
+	}
+}
+
+// Fix #2: Among eligible replicas, best (health+LSN) wins.
+func TestRegistry_PromoteBestReplica_EligibilityFiltersCorrectly(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "stale", // ineligible: old heartbeat
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				LastHeartbeat: time.Now().Add(-2 * time.Minute),
+			},
+			{
+				Server:        "good", // eligible
+				Path:          "/data/vol1.blk",
+				HealthScore:   0.8,
+				WALHeadLSN:    95,
+				LastHeartbeat: time.Now(),
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("expected promotion to succeed: %v", err)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "good" {
+		t.Fatalf("expected 'good' promoted (only eligible), got %q", e.VolumeServer)
+	}
+}
+
+// Configurable tolerance: widen tolerance to allow lagging replicas.
+func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   1000,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "lagging",
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    800, // lag=200
+				LastHeartbeat: time.Now(),
+			},
+		},
+	})
+
+	// Default tolerance (100): lag 200 > tolerance → ineligible.
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error with default tolerance")
+	}
+
+	// Widen tolerance to 250: lag 200 < tolerance → eligible.
+	r.SetPromotionLSNTolerance(250)
+	_, err = r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("expected success with widened tolerance: %v", err)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "lagging" {
+		t.Fatalf("expected 'lagging' promoted, got %q", e.VolumeServer)
 	}
 }

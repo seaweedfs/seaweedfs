@@ -44,9 +44,9 @@ type BlockVol struct {
 	opsOutstanding atomic.Int64 // in-flight Read/Write/Trim/SyncCache ops
 	opsDrained     chan struct{}
 
-	// Replication fields (Phase 4A CP2).
-	shipper  *WALShipper
-	replRecv *ReplicaReceiver
+	// Replication fields (Phase 4A CP2, generalized to N replicas in CP8-2).
+	shipperGroup *ShipperGroup
+	replRecv     *ReplicaReceiver
 
 	// Fencing fields (Phase 4A).
 	epoch        atomic.Uint64 // current persisted epoch
@@ -59,6 +59,13 @@ type BlockVol struct {
 	rebuildServer *RebuildServer
 	assignMu      sync.Mutex    // serializes HandleAssignment calls
 	drainTimeout  time.Duration // default 10s, for demote drain
+
+	// Health score and scrub (CP8-2).
+	healthScore *HealthScore
+	scrubber    *Scrubber
+
+	// Observability (CP8-4).
+	Metrics *EngineMetrics
 
 	// Snapshot fields (Phase 5 CP5-2).
 	snapMu    sync.RWMutex
@@ -116,14 +123,16 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	dm := NewDirtyMap(cfg.DirtyMapShards)
 	wal := NewWALWriter(fd, sb.WALOffset, sb.WALSize, 0, 0)
 	v := &BlockVol{
-		fd:         fd,
-		path:       path,
-		super:      sb,
-		config:     cfg,
-		wal:        wal,
-		dirtyMap:   dm,
-		opsDrained: make(chan struct{}, 1),
-		snapshots:  make(map[uint32]*activeSnapshot),
+		fd:          fd,
+		path:        path,
+		super:       sb,
+		config:      cfg,
+		wal:         wal,
+		dirtyMap:    dm,
+		healthScore: NewHealthScore(),
+		Metrics:     NewEngineMetrics(),
+		opsDrained:  make(chan struct{}, 1),
+		snapshots:   make(map[uint32]*activeSnapshot),
 	}
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
@@ -134,6 +143,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		LowWatermark:   cfg.GroupCommitLowWatermark,
 		OnDegraded:     func() { v.healthy.Store(false) },
 		PostSyncCheck:  v.writeGate,
+		Metrics:        v.Metrics,
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -142,6 +152,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		WAL:      wal,
 		DirtyMap: dm,
 		Interval: cfg.FlushInterval,
+		Metrics:  v.Metrics,
 	})
 	go v.flusher.Run()
 	return v, nil
@@ -189,13 +200,15 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 
 	wal := NewWALWriter(fd, sb.WALOffset, sb.WALSize, sb.WALHead, sb.WALTail)
 	v := &BlockVol{
-		fd:         fd,
-		path:       path,
-		super:      sb,
-		config:     cfg,
-		wal:        wal,
-		dirtyMap:   dirtyMap,
-		opsDrained: make(chan struct{}, 1),
+		fd:          fd,
+		path:        path,
+		super:       sb,
+		config:      cfg,
+		wal:         wal,
+		dirtyMap:    dirtyMap,
+		healthScore: NewHealthScore(),
+		Metrics:     NewEngineMetrics(),
+		opsDrained:  make(chan struct{}, 1),
 	}
 	v.nextLSN.Store(nextLSN)
 	v.epoch.Store(sb.Epoch)
@@ -207,6 +220,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		LowWatermark:   cfg.GroupCommitLowWatermark,
 		OnDegraded:     func() { v.healthy.Store(false) },
 		PostSyncCheck:  v.writeGate,
+		Metrics:        v.Metrics,
 	})
 	go v.groupCommit.Run()
 	v.flusher = NewFlusher(FlusherConfig{
@@ -215,6 +229,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		WAL:      wal,
 		DirtyMap: dirtyMap,
 		Interval: cfg.FlushInterval,
+		Metrics:  v.Metrics,
 	})
 	go v.flusher.Run()
 
@@ -292,9 +307,14 @@ func (v *BlockVol) appendWithRetry(entry *WALEntry) (uint64, error) {
 		return 0, ErrVolumeClosed
 	}
 
-	// Ship to replica if configured (fire-and-forget).
-	if v.shipper != nil {
-		v.shipper.Ship(entry)
+	// Ship to replicas if configured (fire-and-forget).
+	if v.shipperGroup != nil {
+		v.shipperGroup.ShipAll(entry)
+	}
+
+	// Notify scrubber of written LBAs for CRC invalidation.
+	if v.scrubber != nil && entry.Type == EntryTypeWrite {
+		v.scrubber.NotifyWrite(entry.LBA, entry.Length/v.super.BlockSize)
 	}
 
 	return walOff, nil
@@ -567,17 +587,33 @@ func (v *BlockVol) SyncCache() error {
 	return v.groupCommit.Submit()
 }
 
-// SetReplicaAddr configures the replica endpoint and creates a WAL shipper
-// with distributed group commit. Must be called before any writes.
+// ReplicaAddr holds the data and control addresses for one replica.
+type ReplicaAddr struct {
+	DataAddr string
+	CtrlAddr string
+}
+
+// SetReplicaAddr configures a single replica endpoint. Backward-compatible wrapper
+// around SetReplicaAddrs for RF=2 callers.
 func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
-	v.shipper = NewWALShipper(dataAddr, ctrlAddr, func() uint64 {
-		return v.epoch.Load()
-	})
+	v.SetReplicaAddrs([]ReplicaAddr{{DataAddr: dataAddr, CtrlAddr: ctrlAddr}})
+}
+
+// SetReplicaAddrs configures N replica endpoints and creates a ShipperGroup
+// with distributed group commit. Creates fresh shippers (old group is GC'd).
+func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
+	shippers := make([]*WALShipper, len(addrs))
+	for i, a := range addrs {
+		shippers[i] = NewWALShipper(a.DataAddr, a.CtrlAddr, func() uint64 {
+			return v.epoch.Load()
+		}, v.Metrics)
+	}
+	v.shipperGroup = NewShipperGroup(shippers)
 
 	// Replace the group committer's sync function with a distributed version.
 	v.groupCommit.Stop()
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:      MakeDistributedSync(v.fd.Sync, v.shipper, v),
+		SyncFunc:      MakeDistributedSync(v.fd.Sync, v.shipperGroup, v),
 		MaxDelay:      v.config.GroupCommitMaxDelay,
 		MaxBatch:      v.config.GroupCommitMaxBatch,
 		LowWatermark:  v.config.GroupCommitLowWatermark,
@@ -622,21 +658,21 @@ func (v *BlockVol) StopRebuildServer() {
 	}
 }
 
-// degradeReplica marks the shipper as degraded and logs a warning.
+// degradeReplica logs a warning about a replica barrier failure.
+// Individual shippers are already degraded by Barrier itself.
 func (v *BlockVol) degradeReplica(err error) {
-	if v.shipper != nil {
-		v.shipper.degraded.Store(true)
-	}
 	log.Printf("blockvol: replica degraded: %v", err)
 }
 
 // BlockVolumeStatus contains block volume state for heartbeat reporting.
 type BlockVolumeStatus struct {
-	Epoch         uint64
-	WALHeadLSN    uint64
-	Role          Role
-	CheckpointLSN uint64
-	HasLease      bool
+	Epoch           uint64
+	WALHeadLSN      uint64
+	Role            Role
+	CheckpointLSN   uint64
+	HasLease        bool
+	HealthScore     float64
+	ReplicaDegraded bool
 }
 
 // Status returns the current block volume status for heartbeat reporting.
@@ -645,13 +681,79 @@ func (v *BlockVol) Status() BlockVolumeStatus {
 	if v.flusher != nil {
 		cpLSN = v.flusher.CheckpointLSN()
 	}
-	return BlockVolumeStatus{
-		Epoch:         v.epoch.Load(),
-		WALHeadLSN:    v.nextLSN.Load() - 1,
-		Role:          v.Role(),
-		CheckpointLSN: cpLSN,
-		HasLease:      v.lease.IsValid(),
+	var hs float64 = 1.0
+	if v.healthScore != nil {
+		hs = v.healthScore.Score()
 	}
+	var degraded bool
+	if v.shipperGroup != nil {
+		degraded = v.shipperGroup.AnyDegraded()
+	}
+	return BlockVolumeStatus{
+		Epoch:           v.epoch.Load(),
+		WALHeadLSN:      v.nextLSN.Load() - 1,
+		Role:            v.Role(),
+		CheckpointLSN:   cpLSN,
+		HasLease:        v.lease.IsValid(),
+		HealthScore:     hs,
+		ReplicaDegraded: degraded,
+	}
+}
+
+// CheckpointLSN returns the last LSN flushed to the extent region.
+func (v *BlockVol) CheckpointLSN() uint64 {
+	if v.flusher != nil {
+		return v.flusher.CheckpointLSN()
+	}
+	return 0
+}
+
+// HealthScore returns the current health score (0.0-1.0).
+func (v *BlockVol) HealthScore() float64 {
+	if v.healthScore == nil {
+		return 1.0
+	}
+	return v.healthScore.Score()
+}
+
+// HealthStats returns detailed health statistics.
+func (v *BlockVol) HealthStats() HealthStats {
+	if v.healthScore == nil {
+		return HealthStats{Score: 1.0}
+	}
+	return v.healthScore.Stats()
+}
+
+// StartScrub starts background scrubbing with the given interval.
+func (v *BlockVol) StartScrub(interval time.Duration) {
+	if v.scrubber != nil {
+		return
+	}
+	v.scrubber = NewScrubber(v, interval)
+	v.scrubber.Start()
+}
+
+// StopScrub stops the background scrubber.
+func (v *BlockVol) StopScrub() {
+	if v.scrubber != nil {
+		v.scrubber.Stop()
+		v.scrubber = nil
+	}
+}
+
+// TriggerScrub triggers an immediate scrub pass.
+func (v *BlockVol) TriggerScrub() {
+	if v.scrubber != nil {
+		v.scrubber.TriggerNow()
+	}
+}
+
+// ScrubStats returns the current scrub statistics.
+func (v *BlockVol) ScrubStats() ScrubStats {
+	if v.scrubber == nil {
+		return ScrubStats{}
+	}
+	return v.scrubber.Stats()
 }
 
 // CreateSnapshot creates a point-in-time snapshot. The snapshot captures the
@@ -945,13 +1047,16 @@ func (v *BlockVol) persistSuperblock() error {
 }
 
 // Close shuts down the block volume and closes the file.
-// Shutdown order: shipper -> replica receiver -> rebuild server -> drain ops -> group committer -> flusher -> final flush -> close fd.
+// Shutdown order: shippers -> replica receiver -> rebuild server -> drain ops -> group committer -> flusher -> final flush -> close fd.
 func (v *BlockVol) Close() error {
 	v.closed.Store(true)
 
-	// Stop shipper first: no more Ship calls.
-	if v.shipper != nil {
-		v.shipper.Stop()
+	// Stop scrubber first (no more extent reads).
+	v.StopScrub()
+
+	// Stop shippers: no more Ship calls.
+	if v.shipperGroup != nil {
+		v.shipperGroup.StopAll()
 	}
 	// Stop replica receiver: no more barrier waits.
 	if v.replRecv != nil {

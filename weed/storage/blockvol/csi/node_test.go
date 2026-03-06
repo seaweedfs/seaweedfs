@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -508,6 +509,239 @@ func TestNode_UnstageRetryKeepsStagedEntry(t *testing.T) {
 	}
 	if info.iqn != "iqn.2024.com.seaweedfs:busy-vol" {
 		t.Fatalf("unexpected IQN: %s", info.iqn)
+	}
+}
+
+// TestNode_ExpandVolume verifies happy path for NodeExpandVolume.
+func TestNode_ExpandVolume(t *testing.T) {
+	ns, mi, mm := newTestNodeServer(t)
+
+	stagingPath := t.TempDir()
+
+	// Stage the volume first.
+	_, err := ns.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "test-vol",
+		StagingTargetPath: stagingPath,
+		VolumeCapability:  testVolCap(),
+	})
+	if err != nil {
+		t.Fatalf("NodeStageVolume: %v", err)
+	}
+
+	// Reset calls to track expand-specific calls.
+	mi.calls = nil
+	mm.calls = nil
+
+	_, err = ns.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId:      "test-vol",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 8 * 1024 * 1024},
+	})
+	if err != nil {
+		t.Fatalf("NodeExpandVolume: %v", err)
+	}
+
+	// Verify rescan was called.
+	foundRescan := false
+	for _, c := range mi.calls {
+		if strings.HasPrefix(c, "rescan:") {
+			foundRescan = true
+		}
+	}
+	if !foundRescan {
+		t.Fatalf("expected rescan call, got: %v", mi.calls)
+	}
+
+	// Verify resize was called.
+	foundResize := false
+	for _, c := range mm.calls {
+		if strings.HasPrefix(c, "resizefs:") {
+			foundResize = true
+		}
+	}
+	if !foundResize {
+		t.Fatalf("expected resizefs call, got: %v", mm.calls)
+	}
+}
+
+// TestNode_ExpandNotStaged verifies error when volume is not staged.
+func TestNode_ExpandNotStaged(t *testing.T) {
+	ns, _, _ := newTestNodeServer(t)
+
+	_, err := ns.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId:      "not-staged",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 8 * 1024 * 1024},
+	})
+	if err == nil {
+		t.Fatal("expected error for not-staged volume")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", st.Code())
+	}
+}
+
+// TestNode_ExpandMissingVolumeID verifies error for missing volume ID.
+func TestNode_ExpandMissingVolumeID(t *testing.T) {
+	ns, _, _ := newTestNodeServer(t)
+
+	_, err := ns.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{})
+	if err == nil {
+		t.Fatal("expected error for missing volume ID")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", st.Code())
+	}
+}
+
+// TestNode_ExpandXFSUsesMountPath verifies xfs_growfs uses mount path.
+func TestNode_ExpandXFSUsesMountPath(t *testing.T) {
+	mi := newMockISCSIUtil()
+	mi.getDeviceResult = "/dev/sdb"
+	mm := newMockMountUtil()
+
+	ns := &nodeServer{
+		mgr:       nil,
+		nodeID:    "test-node-1",
+		iqnPrefix: "iqn.2024.com.seaweedfs",
+		iscsiUtil: mi,
+		mountUtil: mm,
+		logger:    log.New(os.Stderr, "[test-node] ", log.LstdFlags),
+		staged: map[string]*stagedVolumeInfo{
+			"xfs-vol": {
+				iqn:         "iqn.2024.com.seaweedfs:xfs-vol",
+				iscsiAddr:   "10.0.0.5:3260",
+				isLocal:     false,
+				fsType:      "xfs",
+				stagingPath: "/staging/xfs-vol",
+			},
+		},
+	}
+
+	// Mark as logged in so the check passes.
+	mi.loggedIn["iqn.2024.com.seaweedfs:xfs-vol"] = true
+
+	_, err := ns.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId:      "xfs-vol",
+		CapacityRange: &csi.CapacityRange{RequiredBytes: 16 * 1024 * 1024},
+	})
+	if err != nil {
+		t.Fatalf("NodeExpandVolume: %v", err)
+	}
+
+	// Verify resizefs was called with xfs type.
+	foundXFS := false
+	for _, c := range mm.calls {
+		if strings.Contains(c, "resizefs:") && strings.Contains(c, ":xfs") {
+			foundXFS = true
+			// Verify mount path is used (not device path).
+			if !strings.Contains(c, "/staging/xfs-vol") {
+				t.Fatalf("xfs_growfs should use mount path, got: %s", c)
+			}
+		}
+	}
+	if !foundXFS {
+		t.Fatalf("expected resizefs call with xfs, got: %v", mm.calls)
+	}
+}
+
+// TestNode_ExpandRejectsNoISCSISession verifies error when iSCSI not logged in.
+func TestNode_ExpandRejectsNoISCSISession(t *testing.T) {
+	mi := newMockISCSIUtil()
+	mm := newMockMountUtil()
+
+	ns := &nodeServer{
+		mgr:       nil,
+		nodeID:    "test-node-1",
+		iqnPrefix: "iqn.2024.com.seaweedfs",
+		iscsiUtil: mi,
+		mountUtil: mm,
+		logger:    log.New(os.Stderr, "[test-node] ", log.LstdFlags),
+		staged: map[string]*stagedVolumeInfo{
+			"no-session-vol": {
+				iqn:         "iqn.2024.com.seaweedfs:no-session-vol",
+				iscsiAddr:   "10.0.0.5:3260",
+				isLocal:     false,
+				fsType:      "ext4",
+				stagingPath: "/staging/no-session-vol",
+			},
+		},
+	}
+	// NOT logged in (loggedIn map is empty).
+
+	_, err := ns.NodeExpandVolume(context.Background(), &csi.NodeExpandVolumeRequest{
+		VolumeId: "no-session-vol",
+	})
+	if err == nil {
+		t.Fatal("expected error when iSCSI session not active")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", st.Code())
+	}
+}
+
+// TestNode_NodeGetCapabilities verifies EXPAND_VOLUME capability is present.
+func TestNode_NodeGetCapabilities(t *testing.T) {
+	ns, _, _ := newTestNodeServer(t)
+
+	resp, err := ns.NodeGetCapabilities(context.Background(), &csi.NodeGetCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("NodeGetCapabilities: %v", err)
+	}
+
+	hasStage := false
+	hasExpand := false
+	for _, cap := range resp.Capabilities {
+		rpc := cap.GetRpc()
+		if rpc == nil {
+			continue
+		}
+		switch rpc.Type {
+		case csi.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME:
+			hasStage = true
+		case csi.NodeServiceCapability_RPC_EXPAND_VOLUME:
+			hasExpand = true
+		}
+	}
+	if !hasStage {
+		t.Fatal("expected STAGE_UNSTAGE_VOLUME capability")
+	}
+	if !hasExpand {
+		t.Fatal("expected EXPAND_VOLUME capability")
+	}
+}
+
+// TestNode_StageCapturesFSType verifies that fsType is captured in staged info.
+func TestNode_StageCapturesFSType(t *testing.T) {
+	ns, _, _ := newTestNodeServer(t)
+
+	stagingPath := t.TempDir()
+
+	_, err := ns.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
+		VolumeId:          "test-vol",
+		StagingTargetPath: stagingPath,
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Mount{
+				Mount: &csi.VolumeCapability_MountVolume{FsType: "xfs"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NodeStageVolume: %v", err)
+	}
+
+	ns.stagedMu.Lock()
+	info := ns.staged["test-vol"]
+	ns.stagedMu.Unlock()
+	if info == nil {
+		t.Fatal("expected test-vol in staged map")
+	}
+	if info.fsType != "xfs" {
+		t.Fatalf("fsType: got %q, want xfs", info.fsType)
+	}
+	if info.stagingPath != stagingPath {
+		t.Fatalf("stagingPath: got %q, want %q", info.stagingPath, stagingPath)
 	}
 }
 

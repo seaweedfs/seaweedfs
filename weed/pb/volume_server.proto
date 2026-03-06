@@ -143,6 +143,14 @@ service VolumeServer {
     }
     rpc VolumeServerDeleteBlockVolume (VolumeServerDeleteBlockVolumeRequest) returns (VolumeServerDeleteBlockVolumeResponse) {
     }
+    rpc SnapshotBlockVolume (SnapshotBlockVolumeRequest) returns (SnapshotBlockVolumeResponse) {
+    }
+    rpc DeleteBlockSnapshot (DeleteBlockSnapshotRequest) returns (DeleteBlockSnapshotResponse) {
+    }
+    rpc ListBlockSnapshots (ListBlockSnapshotsRequest) returns (ListBlockSnapshotsResponse) {
+    }
+    rpc ExpandBlockVolume (ExpandBlockVolumeRequest) returns (ExpandBlockVolumeResponse) {
+    }
 
 }
 
@@ -785,4 +793,41 @@ message VolumeServerDeleteBlockVolumeRequest {
     string name = 1;
 }
 message VolumeServerDeleteBlockVolumeResponse {
+}
+
+message SnapshotBlockVolumeRequest {
+    string name = 1;
+    uint32 snapshot_id = 2;
+}
+message SnapshotBlockVolumeResponse {
+    uint32 snapshot_id = 1;
+    int64 created_at = 2;    // Unix timestamp in seconds
+    uint64 size_bytes = 3;
+}
+
+message DeleteBlockSnapshotRequest {
+    string name = 1;
+    uint32 snapshot_id = 2;
+}
+message DeleteBlockSnapshotResponse {
+}
+
+message ListBlockSnapshotsRequest {
+    string name = 1;
+}
+message ListBlockSnapshotsResponse {
+    repeated BlockSnapshotInfo snapshots = 1;
+}
+message BlockSnapshotInfo {
+    uint32 snapshot_id = 1;
+    int64 created_at = 2;        // Unix timestamp in seconds
+    uint64 volume_size_bytes = 3;
+}
+
+message ExpandBlockVolumeRequest {
+    string name = 1;
+    uint64 new_size_bytes = 2;
+}
+message ExpandBlockVolumeResponse {
+    uint64 capacity_bytes = 1;
 }

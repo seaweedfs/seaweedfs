@@ -228,7 +228,10 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 		// 2. Replication setup based on role + addresses.
 		switch role {
 		case blockvol.RolePrimary:
-			if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
+			// CP8-2: ReplicaAddrs (multi-replica) takes precedence over scalar fields.
+			if len(a.ReplicaAddrs) > 0 {
+				bs.setupPrimaryReplicationMulti(a.Path, a.ReplicaAddrs)
+			} else if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
 				bs.setupPrimaryReplication(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr)
 			}
 		case blockvol.RoleReplica:
@@ -279,6 +282,43 @@ func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCt
 	glog.V(0).Infof("block service: primary %s shipping WAL to %s/%s (rebuild=%s)", path, replicaDataAddr, replicaCtrlAddr, rebuildAddr)
 }
 
+// setupPrimaryReplicationMulti configures WAL shipping from primary to N replicas
+// using SetReplicaAddrs (CP8-2: multi-replica support).
+func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockvol.ReplicaAddr) {
+	// Compute deterministic rebuild listen address.
+	_, _, rebuildPort := bs.ReplicationPorts(path)
+	host := bs.listenAddr
+	if idx := strings.LastIndex(host, ":"); idx >= 0 {
+		host = host[:idx]
+	}
+	rebuildAddr := fmt.Sprintf("%s:%d", host, rebuildPort)
+
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		vol.SetReplicaAddrs(addrs)
+		if err := vol.StartRebuildServer(rebuildAddr); err != nil {
+			glog.Warningf("block service: start rebuild server %s on %s: %v", path, rebuildAddr, err)
+		}
+		return nil
+	}); err != nil {
+		glog.Warningf("block service: setup primary replication (multi) %s: %v", path, err)
+		return
+	}
+	// Track replication state for heartbeat reporting.
+	bs.replMu.Lock()
+	if bs.replStates == nil {
+		bs.replStates = make(map[string]*volReplState)
+	}
+	// Store first replica in replState for backward compat heartbeat reporting.
+	if len(addrs) > 0 {
+		bs.replStates[path] = &volReplState{
+			replicaDataAddr: addrs[0].DataAddr,
+			replicaCtrlAddr: addrs[0].CtrlAddr,
+		}
+	}
+	bs.replMu.Unlock()
+	glog.V(0).Infof("block service: primary %s shipping WAL to %d replicas (rebuild=%s)", path, len(addrs), rebuildAddr)
+}
+
 // setupReplicaReceiver starts the replica WAL receiver.
 func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
 	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
@@ -316,6 +356,72 @@ func (bs *BlockService) startRebuild(path, rebuildAddr string, epoch uint64) {
 		}
 		glog.V(0).Infof("block service: rebuild %s from %s completed", path, rebuildAddr)
 	}()
+}
+
+// SnapshotBlockVol creates a snapshot on the named volume.
+func (bs *BlockService) SnapshotBlockVol(name string, snapID uint32) (createdAt int64, sizeBytes uint64, err error) {
+	path := bs.volumePath(name)
+	err = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		if serr := vol.CreateSnapshot(snapID); serr != nil {
+			return serr
+		}
+		// Find the snapshot we just created for its metadata.
+		for _, s := range vol.ListSnapshots() {
+			if s.ID == snapID {
+				createdAt = s.CreatedAt.Unix()
+				sizeBytes = vol.Info().VolumeSize
+				return nil
+			}
+		}
+		return fmt.Errorf("snapshot %d created but not found in list", snapID)
+	})
+	return
+}
+
+// DeleteBlockSnapshot deletes a snapshot on the named volume.
+// Idempotent: returns nil if snapshot does not exist.
+func (bs *BlockService) DeleteBlockSnapshot(name string, snapID uint32) error {
+	path := bs.volumePath(name)
+	return bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		err := vol.DeleteSnapshot(snapID)
+		if err != nil && err.Error() == "blockvol: snapshot not found" {
+			return nil // idempotent
+		}
+		return err
+	})
+}
+
+// ListBlockSnapshots lists all snapshots on the named volume.
+func (bs *BlockService) ListBlockSnapshots(name string) ([]blockvol.SnapshotInfo, uint64, error) {
+	path := bs.volumePath(name)
+	var infos []blockvol.SnapshotInfo
+	var volSize uint64
+	err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		infos = vol.ListSnapshots()
+		volSize = vol.Info().VolumeSize
+		return nil
+	})
+	return infos, volSize, err
+}
+
+// ExpandBlockVol expands the named volume to newSize bytes.
+func (bs *BlockService) ExpandBlockVol(name string, newSize uint64) (uint64, error) {
+	path := bs.volumePath(name)
+	var actualSize uint64
+	err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		if eerr := vol.Expand(newSize); eerr != nil {
+			return eerr
+		}
+		actualSize = vol.Info().VolumeSize
+		return nil
+	})
+	return actualSize, err
+}
+
+// volumePath converts a volume name to its .blk file path.
+func (bs *BlockService) volumePath(name string) string {
+	sanitized := blockvol.SanitizeFilename(name)
+	return filepath.Join(bs.blockDir, sanitized+".blk")
 }
 
 // GetReplState returns the replication state for a volume path.
@@ -373,4 +479,10 @@ func (bs *BlockService) Shutdown() {
 	}
 	bs.blockStore.Close()
 	glog.V(0).Infof("block service: shut down")
+}
+
+// SetBlockService wires a BlockService into the VolumeServer so that
+// heartbeats include block volume info and the server is marked block-capable.
+func (vs *VolumeServer) SetBlockService(bs *BlockService) {
+	vs.blockService = bs
 }

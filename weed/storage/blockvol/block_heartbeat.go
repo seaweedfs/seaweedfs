@@ -8,17 +8,21 @@ import (
 // BlockVolumeInfoMessage is the heartbeat status for one block volume.
 // Mirrors the proto message that will be generated from master.proto.
 type BlockVolumeInfoMessage struct {
-	Path            string // volume file path (unique ID on this server)
-	VolumeSize      uint64 // logical size in bytes
-	BlockSize       uint32 // block size in bytes
-	Epoch           uint64 // current fencing epoch
-	Role            uint32 // blockvol.Role as uint32 for wire compat
-	WalHeadLsn      uint64 // WAL head LSN
-	CheckpointLsn   uint64 // last flushed LSN
-	HasLease        bool   // whether volume holds a valid lease
-	DiskType        string // e.g., "ssd", "hdd"
-	ReplicaDataAddr string // receiver data listen addr (VS reports in heartbeat)
-	ReplicaCtrlAddr string // receiver ctrl listen addr
+	Path            string  // volume file path (unique ID on this server)
+	VolumeSize      uint64  // logical size in bytes
+	BlockSize       uint32  // block size in bytes
+	Epoch           uint64  // current fencing epoch
+	Role            uint32  // blockvol.Role as uint32 for wire compat
+	WalHeadLsn      uint64  // WAL head LSN
+	CheckpointLsn   uint64  // last flushed LSN
+	HasLease        bool    // whether volume holds a valid lease
+	DiskType        string  // e.g., "ssd", "hdd"
+	ReplicaDataAddr string  // receiver data listen addr (VS reports in heartbeat)
+	ReplicaCtrlAddr string  // receiver ctrl listen addr
+	HealthScore     float64 // CP8-2: 0.0-1.0
+	ScrubErrors     int64   // CP8-2: lifetime scrub error count
+	LastScrubTime   int64   // CP8-2: unix seconds
+	ReplicaDegraded bool    // CP8-2: true if any replica shipper degraded
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats
@@ -33,13 +37,14 @@ type BlockVolumeShortInfoMessage struct {
 // BlockVolumeAssignment carries a role/epoch/lease assignment
 // from master to volume server for one block volume.
 type BlockVolumeAssignment struct {
-	Path            string // which block volume
-	Epoch           uint64 // new epoch
-	Role            uint32 // target role (blockvol.Role as uint32)
-	LeaseTtlMs      uint32 // lease TTL in milliseconds (0 = no lease)
-	ReplicaDataAddr string // where primary ships WAL data
-	ReplicaCtrlAddr string // where primary sends barriers
-	RebuildAddr     string // where rebuild server listens
+	Path            string        // which block volume
+	Epoch           uint64        // new epoch
+	Role            uint32        // target role (blockvol.Role as uint32)
+	LeaseTtlMs      uint32        // lease TTL in milliseconds (0 = no lease)
+	ReplicaDataAddr string        // where primary ships WAL data (scalar, RF=2 compat)
+	ReplicaCtrlAddr string        // where primary sends barriers (scalar, RF=2 compat)
+	RebuildAddr     string        // where rebuild server listens
+	ReplicaAddrs    []ReplicaAddr // CP8-2: multi-replica addrs (precedence over scalar)
 }
 
 // ToBlockVolumeInfoMessage converts a BlockVol's current state
@@ -48,16 +53,21 @@ type BlockVolumeAssignment struct {
 func ToBlockVolumeInfoMessage(path, diskType string, vol *BlockVol) BlockVolumeInfoMessage {
 	info := vol.Info()
 	status := vol.Status()
+	hs := vol.HealthStats()
 	return BlockVolumeInfoMessage{
-		Path:          path,
-		VolumeSize:    info.VolumeSize,
-		BlockSize:     info.BlockSize,
-		Epoch:         status.Epoch,
-		Role:          RoleToWire(status.Role),
-		WalHeadLsn:    status.WALHeadLSN,
-		CheckpointLsn: status.CheckpointLSN,
-		HasLease:      status.HasLease,
-		DiskType:      diskType,
+		Path:            path,
+		VolumeSize:      info.VolumeSize,
+		BlockSize:       info.BlockSize,
+		Epoch:           status.Epoch,
+		Role:            RoleToWire(status.Role),
+		WalHeadLsn:      status.WALHeadLSN,
+		CheckpointLsn:   status.CheckpointLSN,
+		HasLease:        status.HasLease,
+		DiskType:        diskType,
+		HealthScore:     status.HealthScore,
+		ScrubErrors:     hs.ScrubErrors,
+		LastScrubTime:   hs.LastScrubTime,
+		ReplicaDegraded: status.ReplicaDegraded,
 	}
 }
 

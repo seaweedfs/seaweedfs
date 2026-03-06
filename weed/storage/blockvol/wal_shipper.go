@@ -23,6 +23,7 @@ type WALShipper struct {
 	dataAddr    string
 	controlAddr string
 	epochFn     func() uint64
+	metrics     *EngineMetrics
 
 	mu       sync.Mutex // protects dataConn
 	dataConn net.Conn
@@ -37,11 +38,17 @@ type WALShipper struct {
 
 // NewWALShipper creates a WAL shipper. Connections are established lazily on
 // first Ship/Barrier call. epochFn returns the current epoch for validation.
-func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64) *WALShipper {
+// metrics is optional; if nil, no metrics are recorded.
+func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, metrics ...*EngineMetrics) *WALShipper {
+	var m *EngineMetrics
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
 	return &WALShipper{
 		dataAddr:    dataAddr,
 		controlAddr: controlAddr,
 		epochFn:     epochFn,
+		metrics:     m,
 	}
 }
 
@@ -83,6 +90,9 @@ func (s *WALShipper) Ship(entry *WALEntry) error {
 	s.dataConn.SetWriteDeadline(time.Time{}) // clear deadline
 
 	s.shippedLSN.Store(entry.LSN)
+	if s.metrics != nil {
+		s.metrics.RecordWALShipped()
+	}
 	return nil
 }
 
@@ -97,6 +107,8 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 		return ErrReplicaDegraded
 	}
 
+	barrierStart := time.Now()
+
 	req := EncodeBarrierRequest(BarrierRequest{
 		LSN:   lsnMax,
 		Epoch: s.epochFn(),
@@ -107,6 +119,7 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 
 	if err := s.ensureCtrlConn(); err != nil {
 		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return ErrReplicaDegraded
 	}
 
@@ -114,31 +127,49 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 
 	if err := WriteFrame(s.ctrlConn, MsgBarrierReq, req); err != nil {
 		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return ErrReplicaDegraded
 	}
 
 	msgType, payload, err := ReadFrame(s.ctrlConn)
 	if err != nil {
 		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return ErrReplicaDegraded
 	}
 
 	if msgType != MsgBarrierResp || len(payload) < 1 {
 		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return ErrReplicaDegraded
 	}
 
 	switch payload[0] {
 	case BarrierOK:
+		s.recordBarrierMetric(barrierStart, false)
 		return nil
 	case BarrierEpochMismatch:
+		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return fmt.Errorf("wal_shipper: barrier epoch mismatch")
 	case BarrierTimeout:
+		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return fmt.Errorf("wal_shipper: barrier timeout on replica")
 	case BarrierFsyncFailed:
+		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return fmt.Errorf("wal_shipper: barrier fsync failed on replica")
 	default:
+		s.markDegraded()
+		s.recordBarrierMetric(barrierStart, true)
 		return fmt.Errorf("wal_shipper: unknown barrier status %d", payload[0])
+	}
+}
+
+func (s *WALShipper) recordBarrierMetric(start time.Time, failed bool) {
+	if s.metrics != nil {
+		s.metrics.RecordWALBarrier(time.Since(start), failed)
 	}
 }
 

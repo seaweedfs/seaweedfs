@@ -641,7 +641,22 @@ func TestIntegration_DoubleFailover(t *testing.T) {
 		t.Fatalf("first failover epoch: got %d, want 2", e1.Epoch)
 	}
 
-	// Second failover: vs2 dies → vs1 promoted (it's now the replica).
+	// CP8-2: PromoteBestReplica does NOT add old primary back as replica.
+	// Reconnect vs1 first so it becomes a replica (via recoverBlockVolumes).
+	ms.recoverBlockVolumes(vs1)
+
+	// Simulate heartbeat from vs1 that restores iSCSI addr and health score
+	// (in production this happens when the VS re-registers after reconnect).
+	e1, _ = ms.blockRegistry.Lookup("pvc-double-1")
+	for i := range e1.Replicas {
+		if e1.Replicas[i].Server == vs1 {
+			e1.Replicas[i].ISCSIAddr = vs1 + ":3260"
+			e1.Replicas[i].HealthScore = 1.0
+		}
+	}
+
+	// Now vs1 is back as replica. Second failover: vs2 dies → vs1 promoted.
+	e1, _ = ms.blockRegistry.Lookup("pvc-double-1")
 	e1.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
 	ms.failoverBlockVolumes(vs2)
 
@@ -724,9 +739,10 @@ func TestIntegration_MultiVolumeFailoverRebuild(t *testing.T) {
 		}
 	}
 	_ = otherServer
-	// rebuildCount should equal the number of volumes that were primary on deadServer.
-	if rebuildCount != primaryCounts[deadServer] {
-		t.Fatalf("expected %d rebuild assignments for %s, got %d",
-			primaryCounts[deadServer], deadServer, rebuildCount)
+	// CP8-2: With 2 servers and 3 volumes, deadServer hosts all 3 volumes
+	// (as primary for some, replica for others). All need rebuild on reconnect.
+	if rebuildCount != 3 {
+		t.Fatalf("expected 3 rebuild assignments for %s (all volumes), got %d",
+			deadServer, rebuildCount)
 	}
 }

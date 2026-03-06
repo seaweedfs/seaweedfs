@@ -101,6 +101,53 @@ func newMetricsAdapter(inner iscsi.BlockDevice, vol *blockvol.BlockVol, reg prom
 		Name: "snapshot_count", Help: "Number of active snapshots",
 	}, gs.snapshotCount))
 
+	// --- Engine subsystem metrics (CP8-4) ---
+	em := vol.Metrics
+
+	// Flusher
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "flusher_bytes_total", Help: "Total bytes flushed to extent",
+	}, func() float64 { return float64(em.FlusherBytesTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "flusher_flushes_total", Help: "Total flush cycles completed",
+	}, func() float64 { return float64(em.FlusherFlushesTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "flusher_errors_total", Help: "Total flusher errors",
+	}, func() float64 { return float64(em.FlusherErrorsTotal.Load()) }))
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "flusher_checkpoint_lsn", Help: "Last flushed checkpoint LSN",
+	}, gs.checkpointLSN))
+
+	// Group Commit
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "group_commit_flushes_total", Help: "Total group commit fsyncs",
+	}, func() float64 { return float64(em.GroupCommitBatchTotal.Load()) }))
+
+	// WAL Shipper
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_shipped_entries_total", Help: "Total WAL entries shipped to replicas",
+	}, func() float64 { return float64(em.WALShippedEntriesTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "replica_failed_barriers_total", Help: "Total failed barrier requests",
+	}, func() float64 { return float64(em.WALFailedBarriersTotal.Load()) }))
+
+	// Scrub
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "scrub_passes_total", Help: "Total scrub passes completed",
+	}, func() float64 { return float64(em.ScrubPassesTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "scrub_errors_total", Help: "Total scrub errors (CRC mismatches)",
+	}, func() float64 { return float64(em.ScrubErrorsTotal.Load()) }))
+
 	return &metricsAdapter{
 		inner:        inner,
 		writeOps:     writeOps,
@@ -191,4 +238,8 @@ func (gs *gaugeSource) role() float64 {
 
 func (gs *gaugeSource) snapshotCount() float64 {
 	return float64(len(gs.vol.ListSnapshots()))
+}
+
+func (gs *gaugeSource) checkpointLSN() float64 {
+	return float64(gs.vol.CheckpointLSN())
 }

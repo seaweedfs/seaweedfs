@@ -62,6 +62,16 @@ func registerQAVolume(t *testing.T, ms *MasterServer, name, primary, replica str
 		entry.ReplicaPath = fmt.Sprintf("/data/%s.blk", name)
 		entry.ReplicaIQN = fmt.Sprintf("iqn.2024.test:%s-r", name)
 		entry.ReplicaISCSIAddr = replica + ":3260"
+		// CP8-2: also populate Replicas[].
+		entry.Replicas = []ReplicaInfo{
+			{
+				Server:      replica,
+				Path:        fmt.Sprintf("/data/%s.blk", name),
+				IQN:         fmt.Sprintf("iqn.2024.test:%s-r", name),
+				ISCSIAddr:   replica + ":3260",
+				HealthScore: 1.0,
+			},
+		}
 	}
 	if err := ms.blockRegistry.Register(entry); err != nil {
 		t.Fatalf("register %s: %v", name, err)
@@ -382,11 +392,12 @@ func TestQA_Failover_PromoteIdempotent_NoReplicaAfterFirstSwap(t *testing.T) {
 	ms := testMSForQA(t)
 	registerQAVolume(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second, true)
 
-	ms.failoverBlockVolumes("vs1") // promotes vs2, vs1 becomes replica
+	ms.failoverBlockVolumes("vs1") // promotes vs2
 
-	// Now if vs2 also disconnects, it should try to failover.
-	// After first failover: primary=vs2, replica=vs1.
-	// vs2 disconnects: primary IS vs2, replica=vs1 — should swap back.
+	// CP8-2: PromoteBestReplica does NOT add old primary back as replica.
+	// Reconnect vs1 first so it becomes a replica.
+	ms.recoverBlockVolumes("vs1")
+
 	e, _ := ms.blockRegistry.Lookup("vol1")
 	e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expire the new lease
 	ms.failoverBlockVolumes("vs2")
@@ -555,16 +566,19 @@ func TestQA_Create_ReplicaDeleteFailure_PrimaryStillDeleted(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1")
 	ms.blockRegistry.MarkBlockCapable("vs2")
 
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "vol1", SizeBytes: 1 << 30,
+	})
+
+	// Find the replica server and make its delete fail.
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	replicaServer := entry.ReplicaServer
 	ms.blockVSDelete = func(ctx context.Context, server string, name string) error {
-		if server == "vs2" {
+		if server == replicaServer {
 			return fmt.Errorf("replica down")
 		}
 		return nil
 	}
-
-	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
-		Name: "vol1", SizeBytes: 1 << 30,
-	})
 
 	// Delete should succeed even if replica delete fails (best-effort).
 	_, err := ms.DeleteBlockVolume(context.Background(), &master_pb.DeleteBlockVolumeRequest{Name: "vol1"})
