@@ -227,6 +227,21 @@ func TestFilerPolicyStoreStorePolicyWritesCanonicalFileAndRemovesLegacyTwin(t *t
 	assert.Equal(t, "s3:GetObject", document.Statement[0].Action[0])
 }
 
+func TestFilerPolicyStoreStorePolicyUpdatesExistingCanonicalFile(t *testing.T) {
+	ctx := context.Background()
+	store, server := newTestFilerPolicyStore(t)
+
+	server.putPolicyFile(t, store.basePath, "existing.json", testPolicyDocument("s3:PutObject", "arn:aws:s3:::existing/*"))
+
+	require.NoError(t, store.StorePolicy(ctx, "", "existing", testPolicyDocument("s3:GetObject", "arn:aws:s3:::existing/*")))
+
+	document, err := store.GetPolicy(ctx, "", "existing")
+	require.NoError(t, err)
+	require.Len(t, document.Statement, 1)
+	assert.Equal(t, "s3:GetObject", document.Statement[0].Action[0])
+	assert.Equal(t, "arn:aws:s3:::existing/*", document.Statement[0].Resource[0])
+}
+
 func TestCopyPolicyDocumentClonesConditionState(t *testing.T) {
 	original := &PolicyDocument{
 		Version: "2012-10-17",
