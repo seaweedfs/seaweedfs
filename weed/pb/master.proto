@@ -505,6 +505,7 @@ message BlockVolumeInfoMessage {
   int64  scrub_errors = 13;
   int64  last_scrub_time = 14;
   bool   replica_degraded = 15;
+  string durability_mode = 16;
 }
 
 message BlockVolumeShortInfoMessage {
@@ -535,6 +536,7 @@ message CreateBlockVolumeRequest {
   uint64 size_bytes = 2;
   string disk_type = 3;
   uint32 replica_factor = 4;
+  string durability_mode = 5;
 }
 message CreateBlockVolumeResponse {
   string volume_id = 1;
@@ -563,6 +565,7 @@ message LookupBlockVolumeResponse {
   string replica_server = 5;
   uint32 replica_factor = 6;
   repeated string replica_servers = 7;
+  string durability_mode = 8;
 }
 
 message CreateBlockSnapshotRequest {

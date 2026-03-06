@@ -1,0 +1,80 @@
+name: consistency-lease
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: lease-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    iqn_suffix: lease-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+
+  - name: lease_expiry
+    actions:
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 5s
+      - action: assert_status
+        target: primary
+        role: primary
+      - action: sleep
+        duration: 7s
+      - action: assert_status
+        target: primary
+        has_lease: "false"
+
+  - name: split_brain_prevention
+    actions:
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: primary
+        lease_ttl: 30s
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: replica
+        lease_ttl: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_all_targets
+        ignore_error: true

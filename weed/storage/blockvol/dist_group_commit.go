@@ -1,20 +1,44 @@
 package blockvol
 
 import (
+	"fmt"
 	"sync"
 )
 
 // MakeDistributedSync creates a sync function that runs local WAL fsync and
 // replica barriers in parallel. Supports N replicas via ShipperGroup.
 //
-// If no replicas are configured (group is nil or empty) or all replicas are
-// degraded, it falls back to local-only sync.
-//
-// Local fsync is the durability point. Replica barrier failures degrade
-// individual shippers but never fail the write.
+// Durability semantics depend on vol.DurabilityMode():
+//   - best_effort: local fsync = ACK; replica failures degrade shippers but never fail writes
+//   - sync_all: ALL replica barriers must succeed, else write returns ErrDurabilityBarrierFailed
+//   - sync_quorum: quorum (RF/2+1) of nodes must be durable, else ErrDurabilityQuorumLost
 func MakeDistributedSync(walSync func() error, group *ShipperGroup, vol *BlockVol) func() error {
 	return func() error {
+		mode := vol.DurabilityMode()
+
 		if group == nil || group.Len() == 0 || group.AllDegraded() {
+			// No healthy replicas available.
+			switch mode {
+			case DurabilitySyncAll:
+				if group != nil && (group.Len() > 0 || group.AllDegraded()) {
+					if vol.Metrics != nil {
+						vol.Metrics.DurabilityBarrierFailedTotal.Add(1)
+					}
+					return ErrDurabilityBarrierFailed
+				}
+			case DurabilitySyncQuorum:
+				if group != nil && group.Len() > 0 {
+					// quorum = (Len+1)/2+1; with 0 healthy replicas, only primary is durable
+					rf := group.Len() + 1
+					quorum := rf/2 + 1
+					if 1 < quorum { // primary alone doesn't meet quorum
+						if vol.Metrics != nil {
+							vol.Metrics.DurabilityQuorumLostTotal.Add(1)
+						}
+						return ErrDurabilityQuorumLost
+					}
+				}
+			}
 			return walSync()
 		}
 
@@ -38,12 +62,38 @@ func MakeDistributedSync(walSync func() error, group *ShipperGroup, vol *BlockVo
 		if localErr != nil {
 			return localErr
 		}
-		// Remote failures: degrade individual shippers (already done by Barrier).
+
+		// Count barrier failures and degrade shippers.
+		failCount := 0
 		for _, err := range barrierErrs {
 			if err != nil {
+				failCount++
 				vol.degradeReplica(err)
 			}
 		}
+
+		switch mode {
+		case DurabilitySyncAll:
+			if failCount > 0 {
+				if vol.Metrics != nil {
+					vol.Metrics.DurabilityBarrierFailedTotal.Add(1)
+				}
+				return fmt.Errorf("%w: %d of %d barriers failed",
+					ErrDurabilityBarrierFailed, failCount, len(barrierErrs))
+			}
+		case DurabilitySyncQuorum:
+			rf := group.Len() + 1 // total nodes including primary
+			quorum := rf/2 + 1
+			durableNodes := 1 + (len(barrierErrs) - failCount) // primary + successful barriers
+			if durableNodes < quorum {
+				if vol.Metrics != nil {
+					vol.Metrics.DurabilityQuorumLostTotal.Add(1)
+				}
+				return fmt.Errorf("%w: %d durable of %d needed",
+					ErrDurabilityQuorumLost, durableNodes, quorum)
+			}
+		}
+		// best_effort: barrier failures already logged via degradeReplica, return nil.
 		return nil
 	}
 }

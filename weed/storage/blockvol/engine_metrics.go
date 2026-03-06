@@ -29,6 +29,10 @@ type EngineMetrics struct {
 	ScrubPassesTotal   atomic.Uint64
 	ScrubErrorsTotal   atomic.Uint64
 	scrubDurationNs    atomicHistogram
+
+	// Durability (CP8-3-1)
+	DurabilityBarrierFailedTotal atomic.Uint64 // sync_all barrier failures
+	DurabilityQuorumLostTotal    atomic.Uint64 // sync_quorum quorum lost
 }
 
 // NewEngineMetrics creates an EngineMetrics instance.

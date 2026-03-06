@@ -370,6 +370,39 @@ func TestAssignmentsSlice_MultiReplicaRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_DurabilityModeRoundTrip(t *testing.T) {
+	for _, mode := range []string{"best_effort", "sync_all", "sync_quorum"} {
+		t.Run(mode, func(t *testing.T) {
+			orig := BlockVolumeInfoMessage{
+				Path:           "/data/dur.blk",
+				Epoch:          1,
+				DurabilityMode: mode,
+			}
+			pb := InfoMessageToProto(orig)
+			if pb.DurabilityMode != mode {
+				t.Fatalf("ToProto: expected %q, got %q", mode, pb.DurabilityMode)
+			}
+			back := InfoMessageFromProto(pb)
+			if back.DurabilityMode != mode {
+				t.Fatalf("FromProto: expected %q, got %q", mode, back.DurabilityMode)
+			}
+		})
+	}
+}
+
+func TestInfoMessage_DurabilityModeEmpty_BackwardCompat(t *testing.T) {
+	// Empty string should round-trip as empty (V1 compat).
+	orig := BlockVolumeInfoMessage{
+		Path:  "/data/old.blk",
+		Epoch: 1,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.DurabilityMode != "" {
+		t.Fatalf("empty mode should round-trip as empty, got %q", back.DurabilityMode)
+	}
+}
+
 func TestInfoMessage_HealthFieldsZeroDefault(t *testing.T) {
 	// Verify zero-valued health fields round-trip correctly (backward compat).
 	orig := BlockVolumeInfoMessage{

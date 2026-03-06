@@ -1,0 +1,260 @@
+package actions
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
+)
+
+// RegisterIOActions registers IO-related actions.
+func RegisterIOActions(r *tr.Registry) {
+	r.RegisterFunc("dd_write", tr.TierBlock, ddWrite)
+	r.RegisterFunc("dd_read_md5", tr.TierBlock, ddReadMD5)
+	r.RegisterFunc("fio", tr.TierBlock, fioAction)
+	r.RegisterFunc("fio_verify", tr.TierBlock, fioVerify)
+	r.RegisterFunc("mkfs", tr.TierBlock, mkfsAction)
+	r.RegisterFunc("mount", tr.TierBlock, mountAction)
+	r.RegisterFunc("umount", tr.TierBlock, umountAction)
+}
+
+// ddWrite writes random data using dd, returns the md5 checksum.
+func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("dd_write: device param required")
+	}
+	bs := act.Params["bs"]
+	if bs == "" {
+		bs = "1M"
+	}
+	count := act.Params["count"]
+	if count == "" {
+		count = "1"
+	}
+	oflag := act.Params["oflag"]
+	if oflag == "" {
+		oflag = "direct"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate random data to temp file, write to device, compute md5.
+	tmpFile := "/tmp/sw-test-runner-dd-data"
+	genCmd := fmt.Sprintf("dd if=/dev/urandom of=%s bs=%s count=%s 2>/dev/null", tmpFile, bs, count)
+	_, stderr, code, err := node.RunRoot(ctx, genCmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("dd_write gen: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	writeCmd := fmt.Sprintf("dd if=%s of=%s bs=%s oflag=%s conv=fsync", tmpFile, device, bs, oflag)
+	if seek := act.Params["seek"]; seek != "" {
+		writeCmd += fmt.Sprintf(" seek=%s", seek)
+	}
+	writeCmd += " 2>/dev/null"
+	_, stderr, code, err = node.RunRoot(ctx, writeCmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("dd_write: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	md5Cmd := fmt.Sprintf("md5sum %s | cut -d' ' -f1", tmpFile)
+	stdout, stderr, code, err := node.RunRoot(ctx, md5Cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("dd_write md5: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+	node.Run(ctx, fmt.Sprintf("rm -f %s", tmpFile))
+
+	md5 := strings.TrimSpace(stdout)
+	if md5 == "" {
+		return nil, fmt.Errorf("dd_write: empty md5")
+	}
+
+	return map[string]string{"value": md5}, nil
+}
+
+// ddReadMD5 reads from device using dd and returns md5.
+func ddReadMD5(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("dd_read_md5: device param required")
+	}
+	bs := act.Params["bs"]
+	if bs == "" {
+		bs = "1M"
+	}
+	count := act.Params["count"]
+	if count == "" {
+		count = "1"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	tmpFile := "/tmp/sw-test-runner-dd-read"
+	readCmd := fmt.Sprintf("dd if=%s of=%s bs=%s count=%s iflag=direct", device, tmpFile, bs, count)
+	if skip := act.Params["skip"]; skip != "" {
+		readCmd += fmt.Sprintf(" skip=%s", skip)
+	}
+	readCmd += " 2>/dev/null"
+	_, stderr, code, err := node.RunRoot(ctx, readCmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("dd_read_md5 read: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	cmd := fmt.Sprintf("md5sum %s | cut -d' ' -f1", tmpFile)
+	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("dd_read_md5: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+	node.Run(ctx, fmt.Sprintf("rm -f %s", tmpFile))
+
+	md5 := strings.TrimSpace(stdout)
+	if md5 == "" {
+		return nil, fmt.Errorf("dd_read_md5: empty md5")
+	}
+
+	return map[string]string{"value": md5}, nil
+}
+
+func fioAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("fio: device param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	rw := act.Params["rw"]
+	if rw == "" {
+		rw = "randwrite"
+	}
+	bs := act.Params["bs"]
+	if bs == "" {
+		bs = "4k"
+	}
+	iodepth := act.Params["iodepth"]
+	if iodepth == "" {
+		iodepth = "32"
+	}
+	runtime := act.Params["runtime"]
+	if runtime == "" {
+		runtime = "10"
+	}
+	name := act.Params["name"]
+	if name == "" {
+		name = "fio_test"
+	}
+
+	cmd := fmt.Sprintf("fio --name=%s --filename=%s --rw=%s --bs=%s --iodepth=%s --direct=1 --runtime=%s --time_based --output-format=json",
+		name, device, rw, bs, iodepth, runtime)
+	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("fio: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	return map[string]string{"value": stdout}, nil
+}
+
+func fioVerify(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("fio_verify: device param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	bs := act.Params["bs"]
+	if bs == "" {
+		bs = "4k"
+	}
+	size := act.Params["size"]
+	if size == "" {
+		size = "10M"
+	}
+
+	// Write with verify pattern, then read+verify.
+	cmd := fmt.Sprintf("fio --name=verify --filename=%s --rw=write --bs=%s --size=%s --direct=1 --verify=crc32c --do_verify=1 --output-format=json",
+		device, bs, size)
+	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("fio_verify: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	return map[string]string{"value": stdout}, nil
+}
+
+func mkfsAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("mkfs: device param required")
+	}
+	fstype := act.Params["fstype"]
+	if fstype == "" {
+		fstype = "ext4"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := fmt.Sprintf("mkfs.%s -F %s", fstype, device)
+	_, stderr, code, err := node.RunRoot(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("mkfs: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+	return nil, nil
+}
+
+func mountAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("mount: device param required")
+	}
+	mountpoint := act.Params["mountpoint"]
+	if mountpoint == "" {
+		mountpoint = "/mnt/test"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	node.RunRoot(ctx, fmt.Sprintf("mkdir -p %s", mountpoint))
+	_, stderr, code, err := node.RunRoot(ctx, fmt.Sprintf("mount %s %s", device, mountpoint))
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("mount: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+	return map[string]string{"value": mountpoint}, nil
+}
+
+func umountAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	mountpoint := act.Params["mountpoint"]
+	if mountpoint == "" {
+		mountpoint = "/mnt/test"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	_, stderr, code, err := node.RunRoot(ctx, fmt.Sprintf("umount %s", mountpoint))
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("umount: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+	return nil, nil
+}

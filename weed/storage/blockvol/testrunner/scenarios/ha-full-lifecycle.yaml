@@ -1,0 +1,166 @@
+name: ha-full-lifecycle
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    rebuild_port: 9020
+    iqn_suffix: lifecycle-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    rebuild_port: 9013
+    iqn_suffix: lifecycle-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: initial_write
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        save_as: md5_epoch1
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: failover_1
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: write_after_failover_1
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      - action: dd_write
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_epoch2
+
+  - name: rebuild_primary
+    actions:
+      - action: iscsi_logout
+        target: replica
+        node: client_node
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: primary
+        primary: replica
+        epoch: "2"
+      - action: wait_role
+        target: primary
+        role: replica
+        timeout: 30s
+
+  - name: failover_2
+    actions:
+      - action: kill_target
+        target: replica
+      - action: assign
+        target: primary
+        epoch: "3"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: primary
+        role: primary
+        timeout: 5s
+
+  - name: verify_data
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device3
+      # Verify the epoch2 write (1MB at offset 0) survived double failover + rebuild.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device3 }}"
+        bs: 1M
+        count: "1"
+        save_as: read_epoch2
+      - action: assert_equal
+        actual: "{{ read_epoch2 }}"
+        expected: "{{ md5_epoch2 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

@@ -319,7 +319,7 @@ func TestQA_Master_AllVSFailNoOrphan(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 	ms.blockRegistry.MarkBlockCapable("vs3:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return nil, fmt.Errorf("disk full on %s", server)
 	}
 
@@ -348,7 +348,7 @@ func TestQA_Master_SlowAllocateBlocksSecond(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var allocCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocCount.Add(1)
 		time.Sleep(100 * time.Millisecond) // simulate slow VS
 		return &blockAllocResult{
@@ -450,7 +450,7 @@ func TestQA_VS_ConcurrentCreate(t *testing.T) {
 					t.Errorf("PANIC: %v", r)
 				}
 			}()
-			_, _, _, errors[i] = bs.CreateBlockVol("race-vol", 4*1024*1024, "")
+			_, _, _, errors[i] = bs.CreateBlockVol("race-vol", 4*1024*1024, "", "")
 		}(i)
 	}
 	wg.Wait()
@@ -487,7 +487,7 @@ func TestQA_VS_ConcurrentCreateDelete(t *testing.T) {
 					panicked.Store(true)
 				}
 			}()
-			bs.CreateBlockVol("cd-vol", 4*1024*1024, "")
+			bs.CreateBlockVol("cd-vol", 4*1024*1024, "", "")
 		}()
 		go func() {
 			defer wg.Done()
@@ -510,7 +510,7 @@ func TestQA_VS_ConcurrentCreateDelete(t *testing.T) {
 func TestQA_VS_DeleteCleansSnapshots(t *testing.T) {
 	bs, blockDir := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "", "")
 
 	// Simulate snapshot files.
 	snapPath := blockDir + "/snap-vol.blk.snap.0"
@@ -531,13 +531,13 @@ func TestQA_VS_SanitizationCollision(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
 	// "VolA" sanitizes to "vola.blk", "vola" also sanitizes to "vola.blk".
-	_, _, _, err := bs.CreateBlockVol("VolA", 4*1024*1024, "")
+	_, _, _, err := bs.CreateBlockVol("VolA", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("create VolA: %v", err)
 	}
 
 	// "vola" should get the idempotent path (same file on disk).
-	path2, _, _, err := bs.CreateBlockVol("vola", 4*1024*1024, "")
+	path2, _, _, err := bs.CreateBlockVol("vola", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("create vola: %v", err)
 	}
@@ -553,13 +553,13 @@ func TestQA_VS_CreateIdempotentReaddTarget(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
 	// First create.
-	_, iqn1, _, err := bs.CreateBlockVol("readd-vol", 4*1024*1024, "")
+	_, iqn1, _, err := bs.CreateBlockVol("readd-vol", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
 	// Second create (idempotent) — should succeed and re-add to TargetServer.
-	_, iqn2, _, err := bs.CreateBlockVol("readd-vol", 4*1024*1024, "")
+	_, iqn2, _, err := bs.CreateBlockVol("readd-vol", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("idempotent create: %v", err)
 	}

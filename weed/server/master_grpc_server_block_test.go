@@ -19,7 +19,7 @@ func testMasterServer(t *testing.T) *MasterServer {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 	}
 	// Default mock: succeed with deterministic values.
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
 			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
@@ -139,7 +139,7 @@ func TestMaster_CreateVSFailure_Retry(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
 	var callCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		n := callCount.Add(1)
 		if n == 1 {
 			return nil, fmt.Errorf("disk full")
@@ -170,7 +170,7 @@ func TestMaster_CreateVSFailure_Cleanup(t *testing.T) {
 	ms := testMasterServer(t)
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return nil, fmt.Errorf("all servers broken")
 	}
 
@@ -193,7 +193,7 @@ func TestMaster_CreateConcurrentSameName(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var callCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount.Add(1)
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
@@ -275,7 +275,7 @@ func TestMaster_CreateWithReplica(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
 	var allocServers []string
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocServers = append(allocServers, server)
 		return &blockAllocResult{
 			Path:            fmt.Sprintf("/data/%s.blk", name),
@@ -328,7 +328,7 @@ func TestMaster_CreateSingleServer_NoReplica(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var allocCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocCount.Add(1)
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
@@ -365,7 +365,7 @@ func TestMaster_CreateReplica_SecondFails_SingleCopy(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
 	var callCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		n := callCount.Add(1)
 		if n == 2 {
 			// Replica allocation fails.
@@ -402,7 +402,7 @@ func TestMaster_CreateEnqueuesAssignments(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:            fmt.Sprintf("/data/%s.blk", name),
 			IQN:             fmt.Sprintf("iqn.2024.test:%s", name),
@@ -463,7 +463,7 @@ func TestMaster_LookupReturnsReplicaServer(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
 			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
@@ -670,7 +670,7 @@ func TestMaster_LookupBlockVolume(t *testing.T) {
 func testMasterServerRF3(t *testing.T) *MasterServer {
 	t.Helper()
 	ms := testMasterServer(t)
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:            fmt.Sprintf("/data/%s.blk", name),
 			IQN:             fmt.Sprintf("iqn.2024.test:%s", name),
@@ -725,7 +725,7 @@ func TestMaster_CreateRF3_ThreeServers(t *testing.T) {
 // RF=3 with only 2 servers: should create 1 replica (partial).
 func TestMaster_CreateRF3_TwoServers(t *testing.T) {
 	ms := testMasterServer(t)
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:            fmt.Sprintf("/data/%s.blk", name),
 			IQN:             fmt.Sprintf("iqn.2024.test:%s", name),

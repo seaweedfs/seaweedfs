@@ -33,10 +33,29 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		return nil, fmt.Errorf("size_bytes must be > 0")
 	}
 
-	// Idempotent: if already registered, return existing entry (validate size).
+	// F2: validate durability mode in gRPC path (authoritative, not bypassable).
+	var durMode blockvol.DurabilityMode
+	if req.DurabilityMode != "" {
+		var err error
+		durMode, err = blockvol.ParseDurabilityMode(req.DurabilityMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid durability_mode: %w", err)
+		}
+	}
+
+	// Cross-validate mode + RF (sync_quorum requires RF >= 3).
+	replicaFactor := 2
+	if req.ReplicaFactor > 0 && req.ReplicaFactor <= 3 {
+		replicaFactor = int(req.ReplicaFactor)
+	}
+	if err := durMode.Validate(replicaFactor); err != nil {
+		return nil, fmt.Errorf("durability_mode %q incompatible with replica_factor %d: %w", req.DurabilityMode, replicaFactor, err)
+	}
+
+	// Idempotent: if already registered, return existing entry (validate size + mode + RF).
 	if entry, ok := ms.blockRegistry.Lookup(req.Name); ok {
-		if entry.SizeBytes < req.SizeBytes {
-			return nil, fmt.Errorf("block volume %q exists with size %d (requested %d)", req.Name, entry.SizeBytes, req.SizeBytes)
+		if err := ms.validateIdempotentCreate(entry, req, durMode, replicaFactor); err != nil {
+			return nil, err
 		}
 		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
@@ -49,6 +68,9 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 
 	// Double-check after acquiring lock (another goroutine may have finished).
 	if entry, ok := ms.blockRegistry.Lookup(req.Name); ok {
+		if err := ms.validateIdempotentCreate(entry, req, durMode, replicaFactor); err != nil {
+			return nil, err
+		}
 		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
 
@@ -71,18 +93,12 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			return nil, err
 		}
 
-		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.DiskType)
+		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
 		if err != nil {
 			lastErr = fmt.Errorf("server %s: %w", server, err)
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: attempt %d on %s failed: %v", blockReqID(ctx), req.Name, attempt+1, server, err)
 			servers = removeServer(servers, server)
 			continue
-		}
-
-		// CP8-2: determine replica factor from request (default 2).
-		replicaFactor := 2
-		if req.ReplicaFactor > 0 && req.ReplicaFactor <= 3 {
-			replicaFactor = int(req.ReplicaFactor)
 		}
 
 		entry := &BlockVolumeEntry{
@@ -96,6 +112,7 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			Role:           blockvol.RoleToWire(blockvol.RolePrimary),
 			Status:         StatusActive,
 			ReplicaFactor:  replicaFactor,
+			DurabilityMode: durMode.String(),
 			LeaseTTL:       30 * time.Second,
 			LastLeaseGrant: time.Now(), // R2-F1: set BEFORE Register to avoid stale-lease race
 		}
@@ -111,6 +128,15 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		if len(entry.Replicas) == 0 && replicaFactor > 1 {
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: single-copy mode (replica allocation failed)", blockReqID(ctx), req.Name)
 		}
+
+		// F1: strict modes require minimum replicas at create time.
+		requiredReplicas := durMode.RequiredReplicas(replicaFactor)
+		if len(entry.Replicas) < requiredReplicas {
+			ms.cleanupPartialCreate(ctx, entry)
+			return nil, fmt.Errorf("durability mode %q requires %d replicas but only %d provisioned",
+				durMode.String(), requiredReplicas, len(entry.Replicas))
+		}
+
 		// Sync deprecated scalar fields from first replica.
 		if len(entry.Replicas) > 0 {
 			r0 := &entry.Replicas[0]
@@ -225,6 +251,10 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 	if rf == 0 {
 		rf = 2 // default for pre-CP8-2 entries
 	}
+	durModeStr := entry.DurabilityMode
+	if durModeStr == "" {
+		durModeStr = "best_effort"
+	}
 	return &master_pb.LookupBlockVolumeResponse{
 		VolumeServer:   entry.VolumeServer,
 		IscsiAddr:      entry.ISCSIAddr,
@@ -233,6 +263,7 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		ReplicaServer:  entry.ReplicaServer, // backward compat
 		ReplicaFactor:  uint32(rf),
 		ReplicaServers: replicaServers,
+		DurabilityMode: durModeStr,
 	}, nil
 }
 
@@ -240,7 +271,7 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 // Returns the replica server address on success, or empty string on failure (F4).
 func (ms *MasterServer) tryCreateOneReplica(ctx context.Context, req *master_pb.CreateBlockVolumeRequest, entry *BlockVolumeEntry, primaryResult *blockAllocResult, candidates []string) string {
 	for _, replicaServerStr := range candidates {
-		replicaResult, err := ms.blockVSAllocate(ctx, replicaServerStr, req.Name, req.SizeBytes, req.DiskType)
+		replicaResult, err := ms.blockVSAllocate(ctx, replicaServerStr, req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
 		if err != nil {
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: replica on %s failed: %v", blockReqID(ctx), req.Name, replicaServerStr, err)
 			continue
@@ -381,6 +412,31 @@ func (ms *MasterServer) createBlockVolumeResponseFromEntry(entry *BlockVolumeEnt
 	}
 }
 
+// validateIdempotentCreate checks that an idempotent create request is consistent
+// with an existing entry. Returns nil if compatible, error on mismatch.
+func (ms *MasterServer) validateIdempotentCreate(entry *BlockVolumeEntry, req *master_pb.CreateBlockVolumeRequest, durMode blockvol.DurabilityMode, replicaFactor int) error {
+	if entry.SizeBytes < req.SizeBytes {
+		return fmt.Errorf("block volume %q exists with size %d (requested %d)", req.Name, entry.SizeBytes, req.SizeBytes)
+	}
+	// Validate durability mode consistency.
+	existingMode := entry.DurabilityMode
+	if existingMode == "" {
+		existingMode = "best_effort"
+	}
+	if durMode.String() != existingMode {
+		return fmt.Errorf("block volume %q exists with durability_mode %q (requested %q)", req.Name, existingMode, durMode.String())
+	}
+	// Validate replica factor consistency.
+	existingRF := entry.ReplicaFactor
+	if existingRF == 0 {
+		existingRF = 2 // default
+	}
+	if replicaFactor != existingRF {
+		return fmt.Errorf("block volume %q exists with replica_factor %d (requested %d)", req.Name, existingRF, replicaFactor)
+	}
+	return nil
+}
+
 // replicaServerList returns the list of replica server addresses.
 // Order matches Replicas[] (append-order), ensuring ReplicaServers[0] == ReplicaServer (legacy).
 func replicaServerList(entry *BlockVolumeEntry) []string {
@@ -403,4 +459,24 @@ func removeServer(servers []string, server string) []string {
 		}
 	}
 	return result
+}
+
+// cleanupPartialCreate removes a partially created block volume (primary + any replicas)
+// when strict durability mode enforcement fails due to insufficient replicas.
+// All operations are best-effort: failures are logged but do not propagate.
+func (ms *MasterServer) cleanupPartialCreate(ctx context.Context, entry *BlockVolumeEntry) {
+	// Delete primary volume.
+	if err := ms.blockVSDelete(ctx, entry.VolumeServer, entry.Name); err != nil {
+		glog.Warningf("[reqID=%s] cleanupPartialCreate %q: delete primary on %s: %v",
+			blockReqID(ctx), entry.Name, entry.VolumeServer, err)
+	}
+	// Delete any successfully created replicas.
+	for _, ri := range entry.Replicas {
+		if err := ms.blockVSDelete(ctx, ri.Server, entry.Name); err != nil {
+			glog.Warningf("[reqID=%s] cleanupPartialCreate %q: delete replica on %s: %v",
+				blockReqID(ctx), entry.Name, ri.Server, err)
+		}
+	}
+	// Remove from registry if somehow registered (shouldn't be at this point).
+	ms.blockRegistry.Unregister(entry.Name)
 }

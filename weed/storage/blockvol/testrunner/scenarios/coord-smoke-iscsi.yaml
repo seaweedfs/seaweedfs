@@ -1,0 +1,66 @@
+name: coord-smoke-iscsi
+timeout: 5m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+
+topology:
+  agents:
+    target_agent: "192.168.1.184:9100"
+    client_agent: "192.168.1.181:9100"
+
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      agent: target_agent
+    client_node:
+      host: "192.168.1.181"
+      agent: client_agent
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: coord-smoke-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+
+  - name: iscsi_connect
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: write_verify
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: written_md5
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ written_md5 }}"
+        expected: "{{ read_md5 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

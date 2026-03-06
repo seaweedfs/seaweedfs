@@ -20,7 +20,7 @@ func blockTestServer(t *testing.T) (*MasterServer, *httptest.Server) {
 		blockRegistry:        NewBlockVolumeRegistry(),
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
 			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),

@@ -23,7 +23,7 @@ func newTestBlockServiceWithDir(t *testing.T) (*BlockService, string) {
 func TestVS_AllocateBlockVolume(t *testing.T) {
 	bs, blockDir := newTestBlockServiceWithDir(t)
 
-	path, iqn, iscsiAddr, err := bs.CreateBlockVol("test-vol", 4*1024*1024, "ssd")
+	path, iqn, iscsiAddr, err := bs.CreateBlockVol("test-vol", 4*1024*1024, "ssd", "")
 	if err != nil {
 		t.Fatalf("CreateBlockVol: %v", err)
 	}
@@ -49,13 +49,13 @@ func TestVS_AllocateBlockVolume(t *testing.T) {
 func TestVS_AllocateIdempotent(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	path1, iqn1, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "")
+	path1, iqn1, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
 	// Same name+size should return same info.
-	path2, iqn2, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "")
+	path2, iqn2, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("idempotent create: %v", err)
 	}
@@ -67,13 +67,13 @@ func TestVS_AllocateIdempotent(t *testing.T) {
 func TestVS_AllocateSizeMismatch(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	_, _, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "")
+	_, _, _, err := bs.CreateBlockVol("vol1", 4*1024*1024, "", "")
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 
 	// Requesting a LARGER size than existing should fail.
-	_, _, _, err = bs.CreateBlockVol("vol1", 8*1024*1024, "")
+	_, _, _, err = bs.CreateBlockVol("vol1", 8*1024*1024, "", "")
 	if err == nil {
 		t.Fatal("size mismatch should return error")
 	}
@@ -82,7 +82,7 @@ func TestVS_AllocateSizeMismatch(t *testing.T) {
 func TestVS_DeleteBlockVolume(t *testing.T) {
 	bs, blockDir := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("vol1", 4*1024*1024, "")
+	bs.CreateBlockVol("vol1", 4*1024*1024, "", "")
 	path := filepath.Join(blockDir, "vol1.blk")
 
 	// File should exist.
@@ -112,7 +112,7 @@ func TestVS_DeleteNotFound(t *testing.T) {
 func TestVS_SnapshotBlockVol(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "", "")
 
 	createdAt, sizeBytes, err := bs.SnapshotBlockVol("snap-vol", 1)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestVS_SnapshotVolumeNotFound(t *testing.T) {
 func TestVS_DeleteBlockSnapshot(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "", "")
 	bs.SnapshotBlockVol("snap-vol", 1)
 
 	if err := bs.DeleteBlockSnapshot("snap-vol", 1); err != nil {
@@ -154,7 +154,7 @@ func TestVS_DeleteBlockSnapshot(t *testing.T) {
 func TestVS_ListBlockSnapshots(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("snap-vol", 4*1024*1024, "")
+	bs.CreateBlockVol("snap-vol", 4*1024*1024, "", "")
 	bs.SnapshotBlockVol("snap-vol", 1)
 	bs.SnapshotBlockVol("snap-vol", 2)
 
@@ -182,7 +182,7 @@ func TestVS_ListSnapshotsVolumeNotFound(t *testing.T) {
 func TestVS_ExpandBlockVol(t *testing.T) {
 	bs, _ := newTestBlockServiceWithDir(t)
 
-	bs.CreateBlockVol("expand-vol", 4*1024*1024, "")
+	bs.CreateBlockVol("expand-vol", 4*1024*1024, "", "")
 
 	actualSize, err := bs.ExpandBlockVol("expand-vol", 8*1024*1024)
 	if err != nil {

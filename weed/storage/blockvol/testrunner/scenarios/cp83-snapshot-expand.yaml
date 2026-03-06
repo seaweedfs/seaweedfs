@@ -1,0 +1,199 @@
+name: cp83-snapshot-expand
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3262
+    admin_port: 8082
+    iqn_suffix: cp83-snap
+
+phases:
+  # Phase 1: Clean slate + start target
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -f /tmp/blockvol-primary.blk.snap.*"
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 120s
+
+  # Phase 2: Connect iSCSI, record original size
+  - name: iscsi_connect
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: get_block_size
+        node: client_node
+        device: "{{ device }}"
+        save_as: original_size
+
+  # Phase 3: Write initial data at two offsets
+  - name: write_initial_data
+    actions:
+      # 10 MB at offset 0
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "10"
+        save_as: md5_at_0
+      # 5 MB at offset 20M (seek=20 with bs=1M)
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        seek: "20"
+        save_as: md5_at_20M
+
+  # Phase 4: Expand volume 50M -> 100M while iSCSI session active
+  - name: expand
+    actions:
+      - action: resize
+        target: primary
+        new_size: 100M
+      - action: iscsi_rescan
+        node: client_node
+      - action: get_block_size
+        node: client_node
+        device: "{{ device }}"
+        save_as: expanded_size
+      - action: assert_greater
+        actual: "{{ expanded_size }}"
+        expected: "{{ original_size }}"
+
+  # Phase 5: Verify original data intact after expand
+  - name: verify_data_after_expand
+    actions:
+      # Read 10 MB at offset 0
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "10"
+        save_as: verify_md5_at_0
+      - action: assert_equal
+        actual: "{{ verify_md5_at_0 }}"
+        expected: "{{ md5_at_0 }}"
+      # Read 5 MB at offset 20M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        skip: "20"
+        save_as: verify_md5_at_20M
+      - action: assert_equal
+        actual: "{{ verify_md5_at_20M }}"
+        expected: "{{ md5_at_20M }}"
+
+  # Phase 6: Write to expanded area (beyond original 50M)
+  - name: write_expanded_area
+    actions:
+      # 5 MB at offset 60M (in expanded region)
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        seek: "60"
+        save_as: md5_at_60M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        skip: "60"
+        save_as: verify_md5_at_60M
+      - action: assert_equal
+        actual: "{{ verify_md5_at_60M }}"
+        expected: "{{ md5_at_60M }}"
+
+  # Phase 7: Create snapshots on expanded volume
+  - name: snapshot_on_expanded
+    actions:
+      - action: snapshot_create
+        target: primary
+        id: "1"
+      - action: snapshot_list
+        target: primary
+        save_as: snap_count_1
+      - action: assert_equal
+        actual: "{{ snap_count_1 }}"
+        expected: "1"
+      - action: snapshot_create
+        target: primary
+        id: "2"
+      - action: snapshot_list
+        target: primary
+        save_as: snap_count_2
+      - action: assert_equal
+        actual: "{{ snap_count_2 }}"
+        expected: "2"
+
+  # Phase 8: Delete snapshots, then expand again (100M -> 150M)
+  - name: delete_snap_and_expand_again
+    actions:
+      - action: snapshot_delete
+        target: primary
+        id: "1"
+      - action: snapshot_delete
+        target: primary
+        id: "2"
+      - action: snapshot_list
+        target: primary
+        save_as: snap_count_0
+      - action: assert_equal
+        actual: "{{ snap_count_0 }}"
+        expected: "0"
+      - action: resize
+        target: primary
+        new_size: 150M
+      - action: iscsi_rescan
+        node: client_node
+      - action: get_block_size
+        node: client_node
+        device: "{{ device }}"
+        save_as: final_size
+      - action: assert_greater
+        actual: "{{ final_size }}"
+        expected: "{{ expanded_size }}"
+
+  # Phase 9: Cleanup (always runs)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

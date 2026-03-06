@@ -28,7 +28,7 @@ func integrationMaster(t *testing.T) *MasterServer {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 		blockFailover:        newBlockFailoverState(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
 			IQN:               fmt.Sprintf("iqn.2024.test:%s", name),
@@ -382,13 +382,13 @@ func TestIntegration_ReplicaFailureSingleCopy(t *testing.T) {
 	// Make replica allocation always fail.
 	callCount := 0
 	origAllocate := ms.blockVSAllocate
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount > 1 {
 			// Second call (replica) fails.
 			return nil, fmt.Errorf("disk full on replica")
 		}
-		return origAllocate(ctx, server, name, sizeBytes, diskType)
+		return origAllocate(ctx, server, name, sizeBytes, diskType, durabilityMode)
 	}
 
 	resp, err := ms.CreateBlockVolume(ctx, &master_pb.CreateBlockVolumeRequest{

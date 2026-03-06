@@ -13,7 +13,9 @@ var blockOpsTemplate = template.Must(template.New("blockOps").Parse(blockLayoutH
 
 type blockUIVolume struct {
 	blockapi.VolumeInfo
-	SizeMB uint64
+	SizeMB     uint64
+	WALHeadLSN uint64
+	MaxWALLag  uint64 // max WAL lag across replicas
 }
 
 type blockUIData struct {
@@ -25,6 +27,12 @@ type blockUIData struct {
 	ActiveCount  int
 	PendingCount int
 	TotalSizeMB  uint64
+	// Observability (CP8-4)
+	BarrierLagLSN      uint64
+	PromotionsTotal    uint64
+	FailoversTotal     uint64
+	RebuildsTotal      uint64
+	AssignmentQueueLen int
 }
 
 func (ms *MasterServer) buildBlockUIData(tab string) blockUIData {
@@ -35,9 +43,17 @@ func (ms *MasterServer) buildBlockUIData(tab string) blockUIData {
 	for i, e := range entries {
 		info := entryToVolumeInfo(e)
 		mb := info.SizeBytes / (1024 * 1024)
+		var maxLag uint64
+		for _, ri := range e.Replicas {
+			if ri.WALLag > maxLag {
+				maxLag = ri.WALLag
+			}
+		}
 		volumes[i] = blockUIVolume{
 			VolumeInfo: info,
 			SizeMB:     mb,
+			WALHeadLSN: e.WALHeadLSN,
+			MaxWALLag:  maxLag,
 		}
 		totalSizeMB += mb
 		if e.Status == StatusActive {
@@ -58,13 +74,18 @@ func (ms *MasterServer) buildBlockUIData(tab string) blockUIData {
 	}
 
 	return blockUIData{
-		Tab:          tab,
-		Volumes:      volumes,
-		Servers:      servers,
-		TotalVolumes: len(entries),
-		ActiveCount:  activeCount,
-		PendingCount: pendingCount,
-		TotalSizeMB:  totalSizeMB,
+		Tab:                tab,
+		Volumes:            volumes,
+		Servers:            servers,
+		TotalVolumes:       len(entries),
+		ActiveCount:        activeCount,
+		PendingCount:       pendingCount,
+		TotalSizeMB:        totalSizeMB,
+		BarrierLagLSN:      ms.blockRegistry.MaxBarrierLagLSN(),
+		PromotionsTotal:    ms.blockRegistry.PromotionsTotal.Load(),
+		FailoversTotal:     ms.blockRegistry.FailoversTotal.Load(),
+		RebuildsTotal:      ms.blockRegistry.RebuildsTotal.Load(),
+		AssignmentQueueLen: ms.blockAssignmentQueue.TotalPending(),
 	}
 }
 
@@ -130,6 +151,9 @@ const blockLayoutHTML = `<!DOCTYPE html>
   .badge-primary { background: #dfe6e9; color: #2d3436; }
   .badge-replica { background: #e8daef; color: #6c3483; }
   .empty { color: #b2bec3; font-style: italic; padding: 20px; text-align: center; }
+  .card .value.red { color: #d63031; }
+  .card .value.gray { color: #636e72; }
+  .section-label { font-size: 11px; color: #b2bec3; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
 </style>
 </head>
 <body>
@@ -166,6 +190,30 @@ const blockDashContentHTML = `
   </div>
 </div>
 
+<div class="section-label">Cluster Health</div>
+<div class="cards">
+  <div class="card">
+    <div class="label">Barrier Lag LSN</div>
+    <div class="value {{if gt .BarrierLagLSN 1000}}red{{else if gt .BarrierLagLSN 100}}orange{{else}}green{{end}}">{{.BarrierLagLSN}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Promotions</div>
+    <div class="value gray">{{.PromotionsTotal}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Failovers</div>
+    <div class="value {{if gt .FailoversTotal 0}}orange{{else}}gray{{end}}">{{.FailoversTotal}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Rebuilds</div>
+    <div class="value {{if gt .RebuildsTotal 0}}orange{{else}}gray{{end}}">{{.RebuildsTotal}}</div>
+  </div>
+  <div class="card">
+    <div class="label">Queue Depth</div>
+    <div class="value {{if gt .AssignmentQueueLen 10}}red{{else if gt .AssignmentQueueLen 0}}orange{{else}}green{{end}}">{{.AssignmentQueueLen}}</div>
+  </div>
+</div>
+
 <h2>Servers</h2>
 {{if .Servers}}
 <table>
@@ -186,19 +234,23 @@ const blockDashContentHTML = `
 {{if .Volumes}}
 <table>
   <tr>
-    <th>Name</th><th>Server</th><th>Size</th><th>Placement</th>
-    <th>Epoch</th><th>Role</th><th>Status</th><th>iSCSI</th><th>Replica</th>
+    <th>Name</th><th>Server</th><th>Size</th><th>Role</th><th>Status</th>
+    <th>Durability</th><th>Health</th><th>WAL LSN</th><th>WAL Lag</th><th>Degraded</th>
+    <th>Epoch</th><th>Replica</th>
   </tr>
   {{range .Volumes}}
   <tr>
     <td>{{.Name}}</td>
     <td>{{.VolumeServer}}</td>
     <td>{{.SizeMB}} MB</td>
-    <td>{{.ReplicaPlacement}}</td>
-    <td>{{.Epoch}}</td>
     <td>{{if eq .Role "primary"}}<span class="badge badge-primary">primary</span>{{else if eq .Role "replica"}}<span class="badge badge-replica">replica</span>{{else}}{{.Role}}{{end}}</td>
     <td>{{if eq .Status "active"}}<span class="badge badge-active">active</span>{{else}}<span class="badge badge-pending">{{.Status}}</span>{{end}}</td>
-    <td>{{.ISCSIAddr}}</td>
+    <td>{{if eq .DurabilityMode "sync_all"}}<span class="badge" style="background:#dfe6e9;color:#d63031">sync_all</span>{{else if eq .DurabilityMode "sync_quorum"}}<span class="badge" style="background:#dfe6e9;color:#e17055">sync_quorum</span>{{else}}best_effort{{end}}</td>
+    <td style="color:{{if ge .HealthScore 0.9}}#00b894{{else if ge .HealthScore 0.5}}#fdcb6e{{else}}#d63031{{end}}">{{printf "%.2f" .HealthScore}}</td>
+    <td>{{.WALHeadLSN}}</td>
+    <td style="color:{{if gt .MaxWALLag 1000}}#d63031{{else if gt .MaxWALLag 100}}#fdcb6e{{else}}#00b894{{end}}">{{.MaxWALLag}}</td>
+    <td>{{if .ReplicaDegraded}}<span class="badge" style="background:#ffeaa7;color:#d68910">yes</span>{{else}}-{{end}}</td>
+    <td>{{.Epoch}}</td>
     <td>{{.ReplicaServer}}</td>
   </tr>
   {{end}}
@@ -236,6 +288,23 @@ const blockOpsContentHTML = `
       <input type="text" id="cDisk" placeholder="ssd">
     </div>
     <div class="form-row">
+      <label>RF:</label>
+      <select id="cRF">
+        <option value="0" selected>Default (2)</option>
+        <option value="1">1 - No replica</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Durability:</label>
+      <select id="cDurability">
+        <option value="" selected>best_effort (default)</option>
+        <option value="sync_all">sync_all</option>
+        <option value="sync_quorum">sync_quorum</option>
+      </select>
+    </div>
+    <div class="form-row">
       <label></label>
       <button type="submit" class="btn-create">Create Volume</button>
     </div>
@@ -246,19 +315,22 @@ const blockOpsContentHTML = `
 {{if .Volumes}}
 <table>
   <tr>
-    <th>Name</th><th>Server</th><th>Size</th><th>Placement</th>
-    <th>Epoch</th><th>Role</th><th>Status</th><th>iSCSI</th><th>Replica</th><th>Action</th>
+    <th>Name</th><th>Server</th><th>Size</th><th>Role</th><th>Status</th>
+    <th>Durability</th><th>Health</th><th>WAL Lag</th><th>Degraded</th>
+    <th>Epoch</th><th>Replica</th><th>Action</th>
   </tr>
   {{range .Volumes}}
   <tr>
     <td>{{.Name}}</td>
     <td>{{.VolumeServer}}</td>
     <td>{{.SizeMB}} MB</td>
-    <td>{{.ReplicaPlacement}}</td>
-    <td>{{.Epoch}}</td>
     <td>{{if eq .Role "primary"}}<span class="badge badge-primary">primary</span>{{else if eq .Role "replica"}}<span class="badge badge-replica">replica</span>{{else}}{{.Role}}{{end}}</td>
     <td>{{if eq .Status "active"}}<span class="badge badge-active">active</span>{{else}}<span class="badge badge-pending">{{.Status}}</span>{{end}}</td>
-    <td>{{.ISCSIAddr}}</td>
+    <td>{{if eq .DurabilityMode "sync_all"}}<span class="badge" style="background:#dfe6e9;color:#d63031">sync_all</span>{{else if eq .DurabilityMode "sync_quorum"}}<span class="badge" style="background:#dfe6e9;color:#e17055">sync_quorum</span>{{else}}best_effort{{end}}</td>
+    <td style="color:{{if ge .HealthScore 0.9}}#00b894{{else if ge .HealthScore 0.5}}#fdcb6e{{else}}#d63031{{end}}">{{printf "%.2f" .HealthScore}}</td>
+    <td style="color:{{if gt .MaxWALLag 1000}}#d63031{{else if gt .MaxWALLag 100}}#fdcb6e{{else}}#00b894{{end}}">{{.MaxWALLag}}</td>
+    <td>{{if .ReplicaDegraded}}<span class="badge" style="background:#ffeaa7;color:#d68910">yes</span>{{else}}-{{end}}</td>
+    <td>{{.Epoch}}</td>
     <td>{{.ReplicaServer}}</td>
     <td><button class="btn-delete" onclick="deleteVol('{{.Name}}')">Delete</button></td>
   </tr>
@@ -281,7 +353,9 @@ document.getElementById('createForm').addEventListener('submit', function(e) {
       name: document.getElementById('cName').value,
       size_bytes: parseInt(document.getElementById('cSize').value) * 1024 * 1024,
       replica_placement: document.getElementById('cPlacement').value,
-      disk_type: document.getElementById('cDisk').value
+      disk_type: document.getElementById('cDisk').value,
+      replica_factor: parseInt(document.getElementById('cRF').value) || 0,
+      durability_mode: document.getElementById('cDurability').value
     })
   }).then(function(r) {
     if (!r.ok) return r.json().then(function(j) { throw new Error(j.error || r.statusText); });

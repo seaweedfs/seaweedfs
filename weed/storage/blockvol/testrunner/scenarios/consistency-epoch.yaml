@@ -1,0 +1,80 @@
+name: consistency-epoch
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: epoch-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+
+  - name: epoch_monotonicity
+    actions:
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 30s
+      - action: assert_status
+        target: primary
+        role: primary
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: primary
+        lease_ttl: 30s
+      - action: status
+        target: primary
+        save_as: status_e2
+      - action: print
+        msg: "status after epoch 2: {{ status_e2 }}"
+
+  - name: stale_epoch_reject
+    actions:
+      - action: exec
+        node: target_node
+        cmd: "curl -s -w '\\n%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"epoch\":1,\"role\":1,\"lease_ttl_ms\":30000}' http://127.0.0.1:8080/assign"
+        save_as: stale_result
+      - action: print
+        msg: "stale epoch result: {{ stale_result }}"
+
+  - name: epoch_persist
+    actions:
+      - action: stop_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "false"
+      - action: status
+        target: primary
+        save_as: post_restart_status
+      - action: print
+        msg: "status after restart: {{ post_restart_status }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_all_targets
+        ignore_error: true

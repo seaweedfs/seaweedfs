@@ -20,7 +20,7 @@ func (vs *VolumeServer) AllocateBlockVolume(_ context.Context, req *volume_serve
 		return nil, fmt.Errorf("size_bytes must be > 0")
 	}
 
-	path, iqn, iscsiAddr, err := vs.blockService.CreateBlockVol(req.Name, req.SizeBytes, req.DiskType)
+	path, iqn, iscsiAddr, err := vs.blockService.CreateBlockVol(req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
 	if err != nil {
 		return nil, fmt.Errorf("create block volume %q: %w", req.Name, err)
 	}

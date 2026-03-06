@@ -3899,6 +3899,7 @@ type BlockVolumeInfoMessage struct {
 	ScrubErrors     int64                  `protobuf:"varint,13,opt,name=scrub_errors,json=scrubErrors,proto3" json:"scrub_errors,omitempty"`
 	LastScrubTime   int64                  `protobuf:"varint,14,opt,name=last_scrub_time,json=lastScrubTime,proto3" json:"last_scrub_time,omitempty"`
 	ReplicaDegraded bool                   `protobuf:"varint,15,opt,name=replica_degraded,json=replicaDegraded,proto3" json:"replica_degraded,omitempty"`
+	DurabilityMode  string                 `protobuf:"bytes,16,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4036,6 +4037,13 @@ func (x *BlockVolumeInfoMessage) GetReplicaDegraded() bool {
 		return x.ReplicaDegraded
 	}
 	return false
+}
+
+func (x *BlockVolumeInfoMessage) GetDurabilityMode() string {
+	if x != nil {
+		return x.DurabilityMode
+	}
+	return ""
 }
 
 type BlockVolumeShortInfoMessage struct {
@@ -4238,9 +4246,10 @@ type CreateBlockVolumeRequest struct {
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	SizeBytes     uint64                 `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	DiskType      string                 `protobuf:"bytes,3,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	ReplicaFactor uint32                 `protobuf:"varint,4,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ReplicaFactor  uint32                 `protobuf:"varint,4,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
+	DurabilityMode string                 `protobuf:"bytes,5,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *CreateBlockVolumeRequest) Reset() {
@@ -4299,6 +4308,13 @@ func (x *CreateBlockVolumeRequest) GetReplicaFactor() uint32 {
 		return x.ReplicaFactor
 	}
 	return 0
+}
+
+func (x *CreateBlockVolumeRequest) GetDurabilityMode() string {
+	if x != nil {
+		return x.DurabilityMode
+	}
+	return ""
 }
 
 type CreateBlockVolumeResponse struct {
@@ -4526,6 +4542,7 @@ type LookupBlockVolumeResponse struct {
 	ReplicaServer  string                 `protobuf:"bytes,5,opt,name=replica_server,json=replicaServer,proto3" json:"replica_server,omitempty"`
 	ReplicaFactor  uint32                 `protobuf:"varint,6,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
 	ReplicaServers []string               `protobuf:"bytes,7,rep,name=replica_servers,json=replicaServers,proto3" json:"replica_servers,omitempty"`
+	DurabilityMode string                 `protobuf:"bytes,8,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4607,6 +4624,13 @@ func (x *LookupBlockVolumeResponse) GetReplicaServers() []string {
 		return x.ReplicaServers
 	}
 	return nil
+}
+
+func (x *LookupBlockVolumeResponse) GetDurabilityMode() string {
+	if x != nil {
+		return x.DurabilityMode
+	}
+	return ""
 }
 
 type CreateBlockSnapshotRequest struct {

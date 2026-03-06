@@ -72,6 +72,9 @@ type BlockVolumeEntry struct {
 	ReplicaDegraded bool          // primary reports degraded replicas
 	WALHeadLSN      uint64        // primary WAL head LSN from heartbeat
 
+	// CP8-3-1: Durability mode.
+	DurabilityMode  string        // "best_effort", "sync_all", "sync_quorum"
+
 	// Lease tracking for failover (CP6-3 F2).
 	LastLeaseGrant time.Time
 	LeaseTTL       time.Duration
@@ -320,6 +323,10 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				existing.HealthScore = info.HealthScore
 				existing.ReplicaDegraded = info.ReplicaDegraded
 				existing.WALHeadLSN = info.WalHeadLsn
+				// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
+				if info.DurabilityMode != "" {
+					existing.DurabilityMode = info.DurabilityMode
+				}
 				// F5: update replica addresses from heartbeat info.
 				if info.ReplicaDataAddr != "" {
 					existing.ReplicaDataAddr = info.ReplicaDataAddr
@@ -391,6 +398,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 					LeaseTTL:       30 * time.Second,
 					HealthScore:    info.HealthScore,
 					WALHeadLSN:     info.WalHeadLsn,
+					DurabilityMode: info.DurabilityMode,
 				}
 				if info.ReplicaDataAddr != "" {
 					entry.ReplicaDataAddr = info.ReplicaDataAddr

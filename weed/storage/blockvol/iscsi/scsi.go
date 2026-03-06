@@ -2,6 +2,9 @@ package iscsi
 
 import (
 	"encoding/binary"
+	"errors"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/blockerr"
 )
 
 // SCSI opcode constants (SPC-5 / SBC-4)
@@ -685,12 +688,7 @@ func (h *SCSIHandler) doWrite(lba uint64, transferLen uint32, dataOut []byte) SC
 	}
 
 	if err := h.dev.WriteAt(lba, dataOut[:expectedBytes]); err != nil {
-		return SCSIResult{
-			Status:    SCSIStatusCheckCond,
-			SenseKey:  SenseMediumError,
-			SenseASC:  0x0C, // Write error
-			SenseASCQ: 0x00,
-		}
+		return mapBlockVolError(err)
 	}
 
 	return SCSIResult{Status: SCSIStatusGood}
@@ -698,12 +696,7 @@ func (h *SCSIHandler) doWrite(lba uint64, transferLen uint32, dataOut []byte) SC
 
 func (h *SCSIHandler) syncCache() SCSIResult {
 	if err := h.dev.SyncCache(); err != nil {
-		return SCSIResult{
-			Status:    SCSIStatusCheckCond,
-			SenseKey:  SenseHardwareError,
-			SenseASC:  0x00,
-			SenseASCQ: 0x00,
-		}
+		return mapBlockVolError(err)
 	}
 	return SCSIResult{Status: SCSIStatusGood}
 }
@@ -734,12 +727,7 @@ func (h *SCSIHandler) unmap(cdb [16]byte, dataOut []byte) SCSIResult {
 		if numBlocks > 0 {
 			blockSize := h.dev.BlockSize()
 			if err := h.dev.Trim(lba, numBlocks*blockSize); err != nil {
-				return SCSIResult{
-					Status:    SCSIStatusCheckCond,
-					SenseKey:  SenseMediumError,
-					SenseASC:  0x0C,
-					SenseASCQ: 0x00,
-				}
+				return mapBlockVolError(err)
 			}
 		}
 		descData = descData[16:]
@@ -772,12 +760,7 @@ func (h *SCSIHandler) writeSame16(cdb [16]byte, dataOut []byte) SCSIResult {
 	// UNMAP or NDOB: zero/trim the range.
 	if unmap || ndob {
 		if err := h.dev.Trim(lba, numBlocks*blockSize); err != nil {
-			return SCSIResult{
-				Status:    SCSIStatusCheckCond,
-				SenseKey:  SenseMediumError,
-				SenseASC:  0x0C,
-				SenseASCQ: 0x00,
-			}
+			return mapBlockVolError(err)
 		}
 		return SCSIResult{Status: SCSIStatusGood}
 	}
@@ -798,12 +781,7 @@ func (h *SCSIHandler) writeSame16(cdb [16]byte, dataOut []byte) SCSIResult {
 	}
 	if allZero {
 		if err := h.dev.Trim(lba, numBlocks*blockSize); err != nil {
-			return SCSIResult{
-				Status:    SCSIStatusCheckCond,
-				SenseKey:  SenseMediumError,
-				SenseASC:  0x0C,
-				SenseASCQ: 0x00,
-			}
+			return mapBlockVolError(err)
 		}
 		return SCSIResult{Status: SCSIStatusGood}
 	}
@@ -811,15 +789,39 @@ func (h *SCSIHandler) writeSame16(cdb [16]byte, dataOut []byte) SCSIResult {
 	// Non-zero pattern: write each block individually.
 	for i := uint32(0); i < numBlocks; i++ {
 		if err := h.dev.WriteAt(lba+uint64(i), pattern); err != nil {
-			return SCSIResult{
-				Status:    SCSIStatusCheckCond,
-				SenseKey:  SenseMediumError,
-				SenseASC:  0x0C,
-				SenseASCQ: 0x00,
-			}
+			return mapBlockVolError(err)
 		}
 	}
 	return SCSIResult{Status: SCSIStatusGood}
+}
+
+// isDurabilityError checks if an error originates from the durability layer.
+// Uses errors.Is with shared sentinels from blockerr (avoids import cycle
+// since blockerr has no dependencies on blockvol or iscsi).
+func isDurabilityError(err error) bool {
+	return errors.Is(err, blockerr.ErrDurabilityBarrierFailed) ||
+		errors.Is(err, blockerr.ErrDurabilityQuorumLost)
+}
+
+// mapBlockVolError maps a blockvol write/sync error to a SCSI sense result.
+// Durability errors (barrier failed, quorum lost) are mapped to
+// HARDWARE_ERROR + ASC 0x08 (Logical Unit Communication Failure) to
+// distinguish them from local I/O errors (MEDIUM_ERROR + ASC 0x0C).
+func mapBlockVolError(err error) SCSIResult {
+	if isDurabilityError(err) {
+		return SCSIResult{
+			Status:    SCSIStatusCheckCond,
+			SenseKey:  SenseHardwareError,
+			SenseASC:  0x08, // Logical Unit Communication Failure
+			SenseASCQ: 0x00,
+		}
+	}
+	return SCSIResult{
+		Status:    SCSIStatusCheckCond,
+		SenseKey:  SenseMediumError,
+		SenseASC:  0x0C, // Write error
+		SenseASCQ: 0x00,
+	}
 }
 
 // BuildSenseData constructs a fixed-format sense data buffer (18 bytes).

@@ -17,11 +17,12 @@ import (
 
 // CreateOptions configures a new block volume.
 type CreateOptions struct {
-	VolumeSize  uint64 // required, logical size in bytes
-	ExtentSize  uint32 // default 64KB
-	BlockSize   uint32 // default 4KB
-	WALSize     uint64 // default 64MB
-	Replication string // default "000"
+	VolumeSize     uint64         // required, logical size in bytes
+	ExtentSize     uint32         // default 64KB
+	BlockSize      uint32         // default 4KB
+	WALSize        uint64         // default 64MB
+	Replication    string         // default "000"
+	DurabilityMode DurabilityMode // CP8-3-1: default best_effort (0)
 }
 
 // ErrVolumeClosed is returned when an operation is attempted on a closed BlockVol.
@@ -559,6 +560,11 @@ type VolumeInfo struct {
 	WALSize    uint64
 	UUID       [16]byte
 	Healthy    bool
+}
+
+// DurabilityMode returns the volume's durability mode from the superblock.
+func (v *BlockVol) DurabilityMode() DurabilityMode {
+	return DurabilityMode(v.super.DurabilityMode)
 }
 
 // WALUsedFraction returns the fraction of WAL space currently in use (0.0 to 1.0).

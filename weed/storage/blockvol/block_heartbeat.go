@@ -23,6 +23,7 @@ type BlockVolumeInfoMessage struct {
 	ScrubErrors     int64   // CP8-2: lifetime scrub error count
 	LastScrubTime   int64   // CP8-2: unix seconds
 	ReplicaDegraded bool    // CP8-2: true if any replica shipper degraded
+	DurabilityMode  string  // CP8-3-1: "best_effort", "sync_all", "sync_quorum"
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats
@@ -68,6 +69,7 @@ func ToBlockVolumeInfoMessage(path, diskType string, vol *BlockVol) BlockVolumeI
 		ScrubErrors:     hs.ScrubErrors,
 		LastScrubTime:   hs.LastScrubTime,
 		ReplicaDegraded: status.ReplicaDegraded,
+		DurabilityMode:  vol.DurabilityMode().String(),
 	}
 }
 

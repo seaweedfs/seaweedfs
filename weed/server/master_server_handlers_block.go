@@ -26,10 +26,20 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		replicaPlacement = "000"
 	}
 
+	// Pre-validate durability_mode (cosmetic — real validation is in gRPC handler).
+	if req.DurabilityMode != "" {
+		if _, perr := blockvol.ParseDurabilityMode(req.DurabilityMode); perr != nil {
+			writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid durability_mode: %w", perr))
+			return
+		}
+	}
+
 	resp, err := ms.CreateBlockVolume(r.Context(), &master_pb.CreateBlockVolumeRequest{
-		Name:      req.Name,
-		SizeBytes: req.SizeBytes,
-		DiskType:  req.DiskType,
+		Name:           req.Name,
+		SizeBytes:      req.SizeBytes,
+		DiskType:       req.DiskType,
+		DurabilityMode: req.DurabilityMode,
+		ReplicaFactor:  uint32(req.ReplicaFactor),
 	})
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -177,6 +187,10 @@ func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 	if rf == 0 {
 		rf = 2 // default
 	}
+	durMode := e.DurabilityMode
+	if durMode == "" {
+		durMode = "best_effort"
+	}
 	info := blockapi.VolumeInfo{
 		Name:             e.Name,
 		VolumeServer:     e.VolumeServer,
@@ -195,6 +209,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 		ReplicaFactor:    rf,
 		HealthScore:      e.HealthScore,
 		ReplicaDegraded:  e.ReplicaDegraded,
+		DurabilityMode:   durMode,
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

@@ -98,7 +98,7 @@ type MasterServer struct {
 	blockRegistry        *BlockVolumeRegistry
 	blockAssignmentQueue *BlockAssignmentQueue
 	blockFailover        *blockFailoverState
-	blockVSAllocate  func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error)
+	blockVSAllocate  func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error)
 	blockVSDelete    func(ctx context.Context, server string, name string) error
 	blockVSSnapshot  func(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error)
 	blockVSDeleteSnap func(ctx context.Context, server string, name string, snapID uint32) error
@@ -553,13 +553,14 @@ type blockAllocResult struct {
 }
 
 // defaultBlockVSAllocate calls a volume server's AllocateBlockVolume RPC.
-func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server string, name string, sizeBytes uint64, diskType string) (*blockAllocResult, error) {
+func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 	var result blockAllocResult
 	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, rerr := client.AllocateBlockVolume(ctx, &volume_server_pb.AllocateBlockVolumeRequest{
-			Name:      name,
-			SizeBytes: sizeBytes,
-			DiskType:  diskType,
+			Name:           name,
+			SizeBytes:      sizeBytes,
+			DiskType:       diskType,
+			DurabilityMode: durabilityMode,
 		})
 		if rerr != nil {
 			return rerr

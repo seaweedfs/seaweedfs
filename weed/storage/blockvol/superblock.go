@@ -39,7 +39,8 @@ type Superblock struct {
 	Replication      [4]byte
 	CreatedAt        uint64 // unix timestamp
 	SnapshotCount    uint32
-	Epoch            uint64 // fencing epoch (0 = no fencing, Phase 3 compat)
+	Epoch            uint64        // fencing epoch (0 = no fencing, Phase 3 compat)
+	DurabilityMode   uint8         // CP8-3-1: 0=best_effort, 1=sync_all, 2=sync_quorum
 }
 
 // superblockOnDisk is the fixed-size on-disk layout (binary.Write/Read target).
@@ -61,6 +62,7 @@ type superblockOnDisk struct {
 	CreatedAt        uint64
 	SnapshotCount    uint32
 	Epoch            uint64
+	DurabilityMode   uint8
 }
 
 // NewSuperblock creates a superblock with defaults and a fresh UUID.
@@ -92,12 +94,13 @@ func NewSuperblock(volumeSize uint64, opts CreateOptions) (Superblock, error) {
 	id := uuid.New()
 
 	sb := Superblock{
-		Version:    CurrentVersion,
-		VolumeSize: volumeSize,
-		ExtentSize: extentSize,
-		BlockSize:  blockSize,
-		WALOffset:  SuperblockSize,
-		WALSize:    walSize,
+		Version:        CurrentVersion,
+		VolumeSize:     volumeSize,
+		ExtentSize:     extentSize,
+		BlockSize:      blockSize,
+		WALOffset:      SuperblockSize,
+		WALSize:        walSize,
+		DurabilityMode: uint8(opts.DurabilityMode),
 	}
 	copy(sb.Magic[:], MagicSWBK)
 	sb.UUID = id
@@ -127,6 +130,7 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 		CreatedAt:        sb.CreatedAt,
 		SnapshotCount:    sb.SnapshotCount,
 		Epoch:            sb.Epoch,
+		DurabilityMode:   sb.DurabilityMode,
 	}
 
 	// Encode into beginning of buf; rest stays zero (padding).
@@ -160,6 +164,8 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 	endian.PutUint32(buf[off:], d.SnapshotCount)
 	off += 4
 	endian.PutUint64(buf[off:], d.Epoch)
+	off += 8
+	buf[off] = d.DurabilityMode
 
 	n, err := w.Write(buf)
 	return int64(n), err
@@ -220,6 +226,8 @@ func ReadSuperblock(r io.Reader) (Superblock, error) {
 	sb.SnapshotCount = endian.Uint32(buf[off:])
 	off += 4
 	sb.Epoch = endian.Uint64(buf[off:])
+	off += 8
+	sb.DurabilityMode = buf[off]
 
 	return sb, nil
 }
@@ -251,6 +259,9 @@ func (sb *Superblock) Validate() error {
 	}
 	if sb.VolumeSize%uint64(sb.BlockSize) != 0 {
 		return fmt.Errorf("%w: VolumeSize %d not aligned to BlockSize %d", ErrInvalidSuperblock, sb.VolumeSize, sb.BlockSize)
+	}
+	if sb.DurabilityMode > 2 {
+		return fmt.Errorf("%w: invalid DurabilityMode %d", ErrInvalidSuperblock, sb.DurabilityMode)
 	}
 	return nil
 }

@@ -135,7 +135,7 @@ func (bs *BlockService) ListenAddr() string {
 // CreateBlockVol creates a new .blk file, registers it with BlockVolumeStore
 // and iSCSI TargetServer. Returns path, IQN, iSCSI addr.
 // Idempotent: if volume already exists with same or larger size, returns existing info.
-func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType string) (path, iqn, iscsiAddr string, err error) {
+func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType string, durabilityMode string) (path, iqn, iscsiAddr string, err error) {
 	sanitized := blockvol.SanitizeFilename(name)
 	path = filepath.Join(bs.blockDir, sanitized+".blk")
 	iqn = bs.iqnPrefix + blockvol.SanitizeIQN(name)
@@ -155,12 +155,23 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 		return path, iqn, iscsiAddr, nil
 	}
 
+	// F2: VS-side validation — reject invalid mode strings (defense-in-depth).
+	var durMode blockvol.DurabilityMode
+	if durabilityMode != "" {
+		var perr error
+		durMode, perr = blockvol.ParseDurabilityMode(durabilityMode)
+		if perr != nil {
+			return "", "", "", fmt.Errorf("invalid durability mode: %w", perr)
+		}
+	}
+
 	// Create the .blk file.
 	if err := os.MkdirAll(bs.blockDir, 0755); err != nil {
 		return "", "", "", fmt.Errorf("create block dir: %w", err)
 	}
 	created, err := blockvol.CreateBlockVol(path, blockvol.CreateOptions{
-		VolumeSize: sizeBytes,
+		VolumeSize:     sizeBytes,
+		DurabilityMode: durMode,
 	})
 	if err != nil {
 		return "", "", "", fmt.Errorf("create block volume: %w", err)

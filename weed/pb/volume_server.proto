@@ -779,6 +779,7 @@ message AllocateBlockVolumeRequest {
     string name = 1;
     uint64 size_bytes = 2;
     string disk_type = 3;
+    string durability_mode = 4;
 }
 message AllocateBlockVolumeResponse {
     string path = 1;

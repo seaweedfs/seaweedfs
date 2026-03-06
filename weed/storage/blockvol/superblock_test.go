@@ -16,6 +16,9 @@ func TestSuperblock(t *testing.T) {
 		{name: "superblock_magic_check", run: testSuperblockMagicCheck},
 		{name: "superblock_version_check", run: testSuperblockVersionCheck},
 		{name: "superblock_zero_vol_size", run: testSuperblockZeroVolSize},
+		{name: "durability_mode_roundtrip", run: testDurabilityModeRoundtrip},
+		{name: "durability_mode_v1_compat", run: testDurabilityModeV1Compat},
+		{name: "durability_mode_invalid_rejected", run: testDurabilityModeInvalidRejected},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -142,5 +145,56 @@ func testSuperblockZeroVolSize(t *testing.T) {
 	_, err = ReadSuperblock(bytes.NewReader(data))
 	if !errors.Is(err, ErrInvalidVolumeSize) {
 		t.Errorf("ReadSuperblock(vol_size=0): expected ErrInvalidVolumeSize, got %v", err)
+	}
+}
+
+func testDurabilityModeRoundtrip(t *testing.T) {
+	sb, err := NewSuperblock(1*1024*1024*1024, CreateOptions{
+		DurabilityMode: DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatalf("NewSuperblock: %v", err)
+	}
+	if sb.DurabilityMode != uint8(DurabilitySyncAll) {
+		t.Fatalf("NewSuperblock DurabilityMode = %d, want %d", sb.DurabilityMode, DurabilitySyncAll)
+	}
+
+	var buf bytes.Buffer
+	sb.WriteTo(&buf)
+
+	got, err := ReadSuperblock(&buf)
+	if err != nil {
+		t.Fatalf("ReadSuperblock: %v", err)
+	}
+	if got.DurabilityMode != uint8(DurabilitySyncAll) {
+		t.Errorf("DurabilityMode = %d, want %d", got.DurabilityMode, DurabilitySyncAll)
+	}
+}
+
+func testDurabilityModeV1Compat(t *testing.T) {
+	// V1 file has zeros in the DurabilityMode region → reads as best_effort.
+	sb, _ := NewSuperblock(1*1024*1024*1024, CreateOptions{})
+	var buf bytes.Buffer
+	sb.WriteTo(&buf)
+
+	got, err := ReadSuperblock(&buf)
+	if err != nil {
+		t.Fatalf("ReadSuperblock: %v", err)
+	}
+	if DurabilityMode(got.DurabilityMode) != DurabilityBestEffort {
+		t.Errorf("V1 DurabilityMode = %d, want %d (best_effort)", got.DurabilityMode, DurabilityBestEffort)
+	}
+}
+
+func testDurabilityModeInvalidRejected(t *testing.T) {
+	sb, _ := NewSuperblock(1*1024*1024*1024, CreateOptions{})
+	sb.DurabilityMode = 99
+
+	err := sb.Validate()
+	if err == nil {
+		t.Error("Validate should reject DurabilityMode=99")
+	}
+	if !errors.Is(err, ErrInvalidSuperblock) {
+		t.Errorf("Validate error = %v, want ErrInvalidSuperblock", err)
 	}
 }

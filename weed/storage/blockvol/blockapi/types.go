@@ -10,8 +10,10 @@ import (
 type CreateVolumeRequest struct {
 	Name             string `json:"name"`
 	SizeBytes        uint64 `json:"size_bytes"`
-	ReplicaPlacement string `json:"replica_placement"` // SeaweedFS placement string: "000", "001", "010", "100"
-	DiskType         string `json:"disk_type"`         // e.g. "ssd", "hdd"
+	ReplicaPlacement string `json:"replica_placement"`          // SeaweedFS placement string: "000", "001", "010", "100"
+	DiskType         string `json:"disk_type"`                  // e.g. "ssd", "hdd"
+	DurabilityMode   string `json:"durability_mode,omitempty"`  // "best_effort", "sync_all", "sync_quorum"
+	ReplicaFactor    int    `json:"replica_factor,omitempty"`   // 1, 2, or 3 (default: 2)
 }
 
 // VolumeInfo describes a block volume.
@@ -35,6 +37,7 @@ type VolumeInfo struct {
 	Replicas        []ReplicaDetail `json:"replicas,omitempty"`
 	HealthScore     float64         `json:"health_score"`
 	ReplicaDegraded bool            `json:"replica_degraded,omitempty"`
+	DurabilityMode  string          `json:"durability_mode"` // CP8-3-1
 }
 
 // ReplicaDetail describes one replica in the API response.

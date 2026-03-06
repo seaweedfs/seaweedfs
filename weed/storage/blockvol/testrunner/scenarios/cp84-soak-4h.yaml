@@ -1,0 +1,189 @@
+name: cp84-soak-4h
+timeout: 5h
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 200M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: soak-4h-primary
+  replica:
+    node: target_node
+    vol_size: 200M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    iqn_suffix: soak-4h-replica
+
+phases:
+  # Phase 1: Setup — build, deploy, start targets, wire replication.
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 30s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  # Phase 2: Baseline metrics scrape (pre-load).
+  - name: baseline_scrape
+    actions:
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_baseline
+
+  # Phase 3: Steady-state load (2 hours).
+  # Mixed read/write with periodic metrics scrape every 30s.
+  - name: steady_state
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "256"
+        save_as: ss_write_md5
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "256"
+        save_as: ss_read_md5
+      - action: assert_equal
+        actual: "{{ ss_read_md5 }}"
+        expected: "{{ ss_write_md5 }}"
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_steady
+
+  # Phase 4: Inject 200ms replica network delay (fault window = 10 min).
+  - name: fault_inject
+    actions:
+      - action: inject_netem
+        node: target_node
+        target_ip: "127.0.0.1"
+        delay_ms: "200"
+      - action: sleep
+        duration: 5s
+      # Write under fault to verify primary still serves.
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "64"
+        seek: "512"
+        save_as: fault_write_md5
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "64"
+        skip: "512"
+        save_as: fault_read_md5
+      - action: assert_equal
+        actual: "{{ fault_read_md5 }}"
+        expected: "{{ fault_write_md5 }}"
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_fault
+
+  # Phase 5: Clear fault — restore normal network.
+  - name: fault_clear
+    actions:
+      - action: clear_fault
+        type: netem
+        node: target_node
+      - action: sleep
+        duration: 5s
+
+  # Phase 6: Post-fault steady-state — verify recovery.
+  - name: post_fault_verify
+    actions:
+      # Re-read original data to verify no corruption.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "256"
+        save_as: pf_read_md5
+      - action: assert_equal
+        actual: "{{ pf_read_md5 }}"
+        expected: "{{ ss_write_md5 }}"
+      # Write new data post-fault.
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "128"
+        seek: "1024"
+        save_as: pf_write_md5
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "128"
+        skip: "1024"
+        save_as: pf_verify_md5
+      - action: assert_equal
+        actual: "{{ pf_verify_md5 }}"
+        expected: "{{ pf_write_md5 }}"
+
+  # Phase 7: Final metrics scrape + perf summary.
+  - name: final_metrics
+    actions:
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_final
+      - action: perf_summary
+        target: primary
+        save_as: perf_stats
+
+  # Phase 8: Cleanup (always runs).
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        type: netem
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

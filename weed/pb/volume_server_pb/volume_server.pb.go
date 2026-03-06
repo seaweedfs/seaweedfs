@@ -6189,9 +6189,10 @@ type AllocateBlockVolumeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	SizeBytes     uint64                 `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	DiskType      string                 `protobuf:"bytes,3,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DiskType       string                 `protobuf:"bytes,3,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	DurabilityMode string                 `protobuf:"bytes,4,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *AllocateBlockVolumeRequest) Reset() {
@@ -6241,6 +6242,13 @@ func (x *AllocateBlockVolumeRequest) GetSizeBytes() uint64 {
 func (x *AllocateBlockVolumeRequest) GetDiskType() string {
 	if x != nil {
 		return x.DiskType
+	}
+	return ""
+}
+
+func (x *AllocateBlockVolumeRequest) GetDurabilityMode() string {
+	if x != nil {
+		return x.DurabilityMode
 	}
 	return ""
 }

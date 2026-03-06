@@ -1,0 +1,76 @@
+name: fault-disk-full
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: fault-diskfull-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: fill_disk
+    actions:
+      - action: fill_disk
+        node: target_node
+        dir: /tmp
+
+  - name: write_fails
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        ignore_error: true
+        save_as: write_result
+
+  - name: clear_and_recover
+    actions:
+      - action: clear_fault
+        type: fill_disk
+        node: target_node
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "1"
+        save_as: recovery_md5
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        type: fill_disk
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

@@ -41,7 +41,10 @@ func (c *commandBlockCreate) Name() string { return "block.create" }
 func (c *commandBlockCreate) Help() string {
 	return `create a block volume
 
-	block.create -name <name> -size <bytes> [-replicaPlacement <xyz>] [-disk <type>]
+	block.create -name <name> -size <bytes> [-replicaPlacement <xyz>] [-disk <type>] [-durability <mode>] [-replicaFactor <n>]
+
+	durability modes: best_effort (default), sync_all, sync_quorum
+	replica factor: 1, 2 (default), or 3. sync_quorum requires 3.
 `
 }
 func (c *commandBlockCreate) HasTag(CommandTag) bool { return false }
@@ -52,6 +55,8 @@ func (c *commandBlockCreate) Do(args []string, commandEnv *CommandEnv, writer io
 	size := f.Uint64("size", 0, "volume size in bytes")
 	placement := f.String("replicaPlacement", "000", "placement string: 000, 001, 010, 100")
 	disk := f.String("disk", "", "disk type (e.g. ssd, hdd)")
+	durability := f.String("durability", "", "durability mode: best_effort (default), sync_all, sync_quorum")
+	rf := f.Int("replicaFactor", 0, "replica factor: 1, 2 (default), or 3")
 	if err := f.Parse(args); err != nil {
 		return nil
 	}
@@ -65,6 +70,8 @@ func (c *commandBlockCreate) Do(args []string, commandEnv *CommandEnv, writer io
 		SizeBytes:        *size,
 		ReplicaPlacement: *placement,
 		DiskType:         *disk,
+		DurabilityMode:   *durability,
+		ReplicaFactor:    *rf,
 	})
 	if err != nil {
 		return err
@@ -101,11 +108,15 @@ func (c *commandBlockList) Do(args []string, commandEnv *CommandEnv, writer io.W
 		fmt.Fprintln(writer, "no block volumes")
 		return nil
 	}
-	fmt.Fprintf(writer, "%-20s %-20s %-12s %-8s %-8s %-20s\n",
-		"NAME", "SERVER", "SIZE", "EPOCH", "ROLE", "STATUS")
+	fmt.Fprintf(writer, "%-20s %-20s %-12s %-8s %-8s %-14s %-20s\n",
+		"NAME", "SERVER", "SIZE", "EPOCH", "ROLE", "DURABILITY", "STATUS")
 	for _, v := range vols {
-		fmt.Fprintf(writer, "%-20s %-20s %-12d %-8d %-8s %-20s\n",
-			v.Name, v.VolumeServer, v.SizeBytes, v.Epoch, v.Role, v.Status)
+		durMode := v.DurabilityMode
+		if durMode == "" {
+			durMode = "best_effort"
+		}
+		fmt.Fprintf(writer, "%-20s %-20s %-12d %-8d %-8s %-14s %-20s\n",
+			v.Name, v.VolumeServer, v.SizeBytes, v.Epoch, v.Role, durMode, v.Status)
 	}
 	return nil
 }
@@ -134,12 +145,17 @@ func (c *commandBlockStatus) Do(args []string, commandEnv *CommandEnv, writer io
 	if err != nil {
 		return err
 	}
+	durMode := info.DurabilityMode
+	if durMode == "" {
+		durMode = "best_effort"
+	}
 	fmt.Fprintf(writer, "Name:           %s\n", info.Name)
 	fmt.Fprintf(writer, "VolumeServer:   %s\n", info.VolumeServer)
 	fmt.Fprintf(writer, "SizeBytes:      %d\n", info.SizeBytes)
 	fmt.Fprintf(writer, "Epoch:          %d\n", info.Epoch)
 	fmt.Fprintf(writer, "Role:           %s\n", info.Role)
 	fmt.Fprintf(writer, "Status:         %s\n", info.Status)
+	fmt.Fprintf(writer, "Durability:     %s\n", durMode)
 	fmt.Fprintf(writer, "ISCSIAddr:      %s\n", info.ISCSIAddr)
 	fmt.Fprintf(writer, "IQN:            %s\n", info.IQN)
 	if info.ReplicaServer != "" {

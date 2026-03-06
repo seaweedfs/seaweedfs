@@ -22,6 +22,7 @@ func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMess
 		ScrubErrors:     m.ScrubErrors,
 		LastScrubTime:   m.LastScrubTime,
 		ReplicaDegraded: m.ReplicaDegraded,
+		DurabilityMode:  m.DurabilityMode,
 	}
 }
 
@@ -46,6 +47,7 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		ScrubErrors:     p.ScrubErrors,
 		LastScrubTime:   p.LastScrubTime,
 		ReplicaDegraded: p.ReplicaDegraded,
+		DurabilityMode:  p.DurabilityMode,
 	}
 }
 
