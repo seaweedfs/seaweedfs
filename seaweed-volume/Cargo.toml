@@ -1,0 +1,81 @@
+[package]
+name = "seaweed-volume"
+version = "0.1.0"
+edition = "2021"
+description = "SeaweedFS Volume Server — Rust implementation"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# gRPC + protobuf
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+prost-types = "0.13"
+
+# HTTP server
+axum = { version = "0.7", features = ["multipart"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Metrics
+prometheus = { version = "0.13", features = ["process"] }
+
+# JWT
+jsonwebtoken = "9"
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+
+# LevelDB (via RocksDB for better Rust support)
+# Using rusty-leveldb for pure Rust LevelDB
+rusty-leveldb = "3"
+
+# Reed-Solomon erasure coding
+reed-solomon-erasure = "6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CRC32
+crc32fast = "1"
+
+# Memory-mapped files
+memmap2 = "0.9"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
+
+# HTTP client (for proxying, remote fetch)
+reqwest = { version = "0.12", features = ["rustls-tls", "stream"] }
+
+# Misc
+bytes = "1"
+rand = "0.8"
+chrono = "0.4"
+hex = "0.4"
+parking_lot = "0.12"
+dashmap = "6"
+thiserror = "1"
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+
+# Disk space checking
+sysinfo = "0.31"
+
+[build-dependencies]
+tonic-build = "0.12"

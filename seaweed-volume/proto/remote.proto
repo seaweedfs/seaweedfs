@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package remote_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/remote_pb";
+option java_package = "seaweedfs.client";
+option java_outer_classname = "FilerProto";
+
+/////////////////////////
+// Remote Storage related
+/////////////////////////
+message RemoteConf {
+  string type = 1;
+  string name = 2;
+  string s3_access_key = 4;
+  string s3_secret_key = 5;
+  string s3_region = 6;
+  string s3_endpoint = 7;
+  string s3_storage_class = 8;
+  bool s3_force_path_style = 9;
+  bool s3_support_tagging = 13;
+  bool s3_v4_signature = 11;
+
+  string gcs_google_application_credentials = 10;
+  string gcs_project_id = 12;
+
+  string azure_account_name = 15;
+  string azure_account_key = 16;
+
+  string backblaze_key_id = 20;
+  string backblaze_application_key = 21;
+  string backblaze_endpoint = 22;
+  string backblaze_region = 23;
+
+  string aliyun_access_key = 25;
+  string aliyun_secret_key = 26;
+  string aliyun_endpoint = 27;
+  string aliyun_region = 28;
+
+  string tencent_secret_id = 30;
+  string tencent_secret_key = 31;
+  string tencent_endpoint = 32;
+
+  string baidu_access_key = 35;
+  string baidu_secret_key = 36;
+  string baidu_endpoint = 37;
+  string baidu_region = 38;
+
+  string wasabi_access_key = 40;
+  string wasabi_secret_key = 41;
+  string wasabi_endpoint = 42;
+  string wasabi_region = 43;
+
+  string filebase_access_key = 60;
+  string filebase_secret_key = 61;
+  string filebase_endpoint = 62;
+
+  string storj_access_key = 65;
+  string storj_secret_key = 66;
+  string storj_endpoint = 67;
+
+  string contabo_access_key = 68;
+  string contabo_secret_key = 69;
+  string contabo_endpoint = 70;
+  string contabo_region = 71;
+}
+
+message RemoteStorageMapping {
+  map<string,RemoteStorageLocation> mappings = 1;
+  string primary_bucket_storage_name = 2;
+}
+message RemoteStorageLocation {
+  string name = 1;
+  string bucket = 2;
+  string path = 3;
+}
