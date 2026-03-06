@@ -30,9 +30,10 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
+        .route("/metrics", get(handlers::metrics_handler))
         // Volume operations: GET/HEAD/POST/PUT/DELETE on /{vid},{fid}
         .route(
-            "/{path}",
+            "/:path",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler)
                 .post(handlers::post_handler)
@@ -41,7 +42,7 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
         )
         // Also support /{vid}/{fid} and /{vid}/{fid}/{filename} paths
         .route(
-            "/{vid}/{fid}",
+            "/:vid/:fid",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler)
                 .post(handlers::post_handler)
@@ -49,7 +50,7 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
                 .delete(handlers::delete_handler),
         )
         .route(
-            "/{vid}/{fid}/{filename}",
+            "/:vid/:fid/:filename",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler),
         )
@@ -61,17 +62,17 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/healthz", get(handlers::healthz_handler))
         .route(
-            "/{path}",
+            "/:path",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler),
         )
         .route(
-            "/{vid}/{fid}",
+            "/:vid/:fid",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler),
         )
         .route(
-            "/{vid}/{fid}/{filename}",
+            "/:vid/:fid/:filename",
             get(handlers::get_or_head_handler)
                 .head(handlers::get_or_head_handler),
         )

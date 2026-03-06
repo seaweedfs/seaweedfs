@@ -1,32 +1,15 @@
-mod config;
-mod storage;
-mod security;
-mod server;
-
-/// Generated protobuf modules.
-pub mod pb {
-    pub mod remote_pb {
-        tonic::include_proto!("remote_pb");
-    }
-    pub mod volume_server_pb {
-        tonic::include_proto!("volume_server_pb");
-    }
-    pub mod master_pb {
-        tonic::include_proto!("master_pb");
-    }
-}
-
 use std::sync::{Arc, RwLock};
 
 use tracing::{info, error};
 
-use crate::config::VolumeServerConfig;
-use crate::security::{Guard, SigningKey};
-use crate::server::grpc_server::VolumeGrpcService;
-use crate::server::volume_server::VolumeServerState;
-use crate::storage::store::Store;
-use crate::storage::types::DiskType;
-use crate::pb::volume_server_pb::volume_server_server::VolumeServerServer;
+use seaweed_volume::config::{self, VolumeServerConfig};
+use seaweed_volume::metrics;
+use seaweed_volume::security::{Guard, SigningKey};
+use seaweed_volume::server::grpc_server::VolumeGrpcService;
+use seaweed_volume::server::volume_server::VolumeServerState;
+use seaweed_volume::storage::store::Store;
+use seaweed_volume::storage::types::DiskType;
+use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 
 fn main() {
     // Initialize tracing
@@ -39,6 +22,9 @@ fn main() {
 
     let config = config::parse_cli();
     info!("SeaweedFS Volume Server (Rust) v{}", env!("CARGO_PKG_VERSION"));
+
+    // Register Prometheus metrics
+    metrics::register_metrics();
 
     // Build the tokio runtime and run the async entry point
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -94,7 +80,7 @@ async fn run(config: VolumeServerConfig) {
     });
 
     // Build HTTP routers
-    let admin_router = server::volume_server::build_admin_router(state.clone());
+    let admin_router = seaweed_volume::server::volume_server::build_admin_router(state.clone());
     let admin_addr = format!("{}:{}", config.bind_ip, config.port);
 
     let public_port = config.public_port;
@@ -160,7 +146,7 @@ async fn run(config: VolumeServerConfig) {
     });
 
     let public_handle = if needs_public {
-        let public_router = server::volume_server::build_public_router(state.clone());
+        let public_router = seaweed_volume::server::volume_server::build_public_router(state.clone());
         let public_addr = format!("{}:{}", config.bind_ip, public_port);
         let listener = tokio::net::TcpListener::bind(&public_addr)
             .await
