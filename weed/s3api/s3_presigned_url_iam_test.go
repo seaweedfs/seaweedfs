@@ -220,6 +220,35 @@ func TestPresignedURLGeneration(t *testing.T) {
 	}
 }
 
+func TestPresignedURLGenerationUsesAuthenticatedPrincipal(t *testing.T) {
+	iamManager := setupTestIAMManagerForPresigned(t)
+	s3iam := NewS3IAMIntegration(iamManager, "localhost:8888")
+	s3iam.enabled = true
+	presignedManager := NewS3PresignedURLManager(s3iam)
+
+	ctx := context.Background()
+	setupTestRolesForPresigned(ctx, iamManager)
+
+	validJWTToken := createTestJWTPresigned(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "presigned-read-only-session",
+	})
+	require.NoError(t, err)
+
+	_, err = presignedManager.GeneratePresignedURLWithIAM(ctx, &PresignedURLRequest{
+		Method:       "PUT",
+		Bucket:       "test-bucket",
+		ObjectKey:    "new-file.txt",
+		Expiration:   time.Hour,
+		SessionToken: response.Credentials.SessionToken,
+	}, "http://localhost:8333")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "IAM authorization failed")
+}
+
 // TestPresignedURLExpiration tests URL expiration validation
 func TestPresignedURLExpiration(t *testing.T) {
 	tests := []struct {
