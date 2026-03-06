@@ -1,8 +1,13 @@
 package filer
 
 import (
+	"encoding/base64"
 	"context"
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -12,6 +17,11 @@ import (
 
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
+	remoteMetadataDeletionPendingIndexKey = "filer.remote.metadata.deletion.pending.index"
+	remoteMetadataDeletionPendingKeyPrefix = "filer.remote.metadata.deletion.pending/"
+	remoteMetadataDeletionReconcileInterval = 1 * time.Minute
+	remoteMetadataDeletionMarkRetryAttempts = 3
+	remoteMetadataDeletionMarkRetryBackoff = 100 * time.Millisecond
 )
 
 type OnChunksFunc func([]*filer_pb.FileChunk) error
@@ -130,8 +140,36 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
+	remoteDeleted, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry)
+	if remoteDeletionErr != nil {
+		return remoteDeletionErr
+	}
+	if remoteDeleted {
+		markBackoff := remoteMetadataDeletionMarkRetryBackoff
+		var markErr error
+		for attempt := 1; attempt <= remoteMetadataDeletionMarkRetryAttempts; attempt++ {
+			markErr = f.markRemoteMetadataDeletionPending(ctx, entry.FullPath)
+			if markErr == nil {
+				break
+			}
+			if attempt < remoteMetadataDeletionMarkRetryAttempts {
+				time.Sleep(markBackoff)
+				markBackoff *= 2
+			}
+		}
+		if markErr != nil {
+			glog.Errorf("CRITICAL: failed to mark remote metadata deletion pending for %s after %d attempts: %v", entry.FullPath, remoteMetadataDeletionMarkRetryAttempts, markErr)
+			return fmt.Errorf("mark remote metadata deletion pending %s after retries: %w", entry.FullPath, markErr)
+		}
+	}
+
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+	}
+	if remoteDeleted {
+		if clearErr := f.clearRemoteMetadataDeletionPending(ctx, entry.FullPath); clearErr != nil {
+			glog.Warningf("clear remote metadata deletion pending %s: %v", entry.FullPath, clearErr)
+		}
 	}
 	if !entry.IsDirectory() {
 		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
@@ -160,4 +198,198 @@ func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLink
 			glog.ErrorfCtx(ctx, "delete hard link id %d : %v", hardLinkId, err)
 		}
 	}
+}
+
+func (f *Filer) loopProcessingRemoteMetadataDeletionPending() {
+	ticker := time.NewTicker(remoteMetadataDeletionReconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-f.deletionQuit:
+			return
+		case <-ticker.C:
+			if err := f.reconcilePendingRemoteMetadataDeletions(context.Background()); err != nil {
+				glog.Warningf("reconcile remote metadata deletion pendings: %v", err)
+			}
+		}
+	}
+}
+
+func (f *Filer) reconcilePendingRemoteMetadataDeletions(ctx context.Context) error {
+	if f.Store == nil {
+		return nil
+	}
+
+	pendingPaths, err := f.listPendingRemoteMetadataDeletionPaths(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, pendingPath := range pendingPaths {
+		entry, findErr := f.FindEntryLocal(ctx, pendingPath)
+		if errors.Is(findErr, filer_pb.ErrNotFound) || entry == nil {
+			if clearErr := f.clearRemoteMetadataDeletionPending(ctx, pendingPath); clearErr != nil {
+				glog.Warningf("clear remote metadata deletion pending %s: %v", pendingPath, clearErr)
+			}
+			continue
+		}
+		if findErr != nil {
+			glog.Warningf("find pending remote metadata deletion %s: %v", pendingPath, findErr)
+			continue
+		}
+
+		if deleteErr := f.Store.DeleteOneEntry(ctx, entry); deleteErr != nil {
+			glog.Warningf("retry local metadata deletion %s: %v", pendingPath, deleteErr)
+			continue
+		}
+
+		if clearErr := f.clearRemoteMetadataDeletionPending(ctx, pendingPath); clearErr != nil {
+			glog.Warningf("clear remote metadata deletion pending %s: %v", pendingPath, clearErr)
+		}
+	}
+
+	return nil
+}
+
+func (f *Filer) markRemoteMetadataDeletionPending(ctx context.Context, path util.FullPath) error {
+	f.remoteMetadataDeletionIndexMu.Lock()
+	defer f.remoteMetadataDeletionIndexMu.Unlock()
+
+	txnCtx, beginErr := f.BeginTransaction(ctx)
+	if beginErr != nil {
+		return beginErr
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = f.RollbackTransaction(txnCtx)
+		}
+	}()
+
+	pendings, err := f.listPendingRemoteMetadataDeletionPaths(txnCtx)
+	if err != nil {
+		return err
+	}
+
+	pendingSet := make(map[string]struct{}, len(pendings)+1)
+	for _, pendingPath := range pendings {
+		pendingSet[string(pendingPath)] = struct{}{}
+	}
+	pendingSet[string(path)] = struct{}{}
+
+	if err := f.Store.KvPut(txnCtx, pendingRemoteMetadataDeletionPathKey(path), []byte(path)); err != nil {
+		return err
+	}
+	if err := f.Store.KvPut(txnCtx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet)); err != nil {
+		return err
+	}
+	if err := f.CommitTransaction(txnCtx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (f *Filer) clearRemoteMetadataDeletionPending(ctx context.Context, path util.FullPath) error {
+	f.remoteMetadataDeletionIndexMu.Lock()
+	defer f.remoteMetadataDeletionIndexMu.Unlock()
+
+	txnCtx, beginErr := f.BeginTransaction(ctx)
+	if beginErr != nil {
+		return beginErr
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = f.RollbackTransaction(txnCtx)
+		}
+	}()
+
+	pendings, err := f.listPendingRemoteMetadataDeletionPaths(txnCtx)
+	if err != nil {
+		return err
+	}
+
+	pendingSet := make(map[string]struct{}, len(pendings))
+	for _, pendingPath := range pendings {
+		pendingSet[string(pendingPath)] = struct{}{}
+	}
+	delete(pendingSet, string(path))
+
+	if err := f.Store.KvDelete(txnCtx, pendingRemoteMetadataDeletionPathKey(path)); err != nil {
+		return err
+	}
+	if err := f.Store.KvPut(txnCtx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet)); err != nil {
+		return err
+	}
+	if err := f.CommitTransaction(txnCtx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func (f *Filer) listPendingRemoteMetadataDeletionPaths(ctx context.Context) ([]util.FullPath, error) {
+	if f.Store == nil {
+		return nil, nil
+	}
+
+	indexData, err := f.Store.KvGet(ctx, []byte(remoteMetadataDeletionPendingIndexKey))
+	if err != nil {
+		if err == ErrKvNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(indexData) == 0 {
+		return nil, nil
+	}
+
+	encodedKeys := decodePendingRemoteMetadataDeletionIndex(indexData)
+	if len(encodedKeys) == 0 {
+		return nil, nil
+	}
+
+	var pendingPaths []util.FullPath
+	for _, encodedKey := range encodedKeys {
+		encodedKey = strings.TrimSpace(encodedKey)
+		if encodedKey == "" {
+			continue
+		}
+		data, getErr := f.Store.KvGet(ctx, []byte(encodedKey))
+		if getErr != nil {
+			if getErr == ErrKvNotFound {
+				continue
+			}
+			return nil, getErr
+		}
+		pendingPaths = append(pendingPaths, util.FullPath(string(data)))
+	}
+	return pendingPaths, nil
+}
+
+func pendingRemoteMetadataDeletionPathKey(path util.FullPath) []byte {
+	encodedPath := base64.RawURLEncoding.EncodeToString([]byte(path))
+	return []byte(remoteMetadataDeletionPendingKeyPrefix + encodedPath)
+}
+
+func encodePendingRemoteMetadataDeletionIndex(pendingSet map[string]struct{}) []byte {
+	if len(pendingSet) == 0 {
+		return []byte{}
+	}
+
+	keys := make([]string, 0, len(pendingSet))
+	for path := range pendingSet {
+		keys = append(keys, string(pendingRemoteMetadataDeletionPathKey(util.FullPath(path))))
+	}
+	sort.Strings(keys)
+	return []byte(strings.Join(keys, "\n"))
+}
+
+func decodePendingRemoteMetadataDeletionIndex(indexData []byte) []string {
+	if len(indexData) == 0 {
+		return nil
+	}
+	return strings.Split(string(indexData), "\n")
 }

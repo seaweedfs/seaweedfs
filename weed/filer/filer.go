@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
@@ -61,6 +62,8 @@ type Filer struct {
 	deletionQuit        chan struct{}
 	DeletionRetryQueue  *DeletionRetryQueue
 	EmptyFolderCleaner  *empty_folder_cleanup.EmptyFolderCleaner
+	remoteDeletionLoop            sync.Once
+	remoteMetadataDeletionIndexMu sync.Mutex
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -151,6 +154,9 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
 	f.Store = NewFilerStoreWrapper(store)
+	f.remoteDeletionLoop.Do(func() {
+		go f.loopProcessingRemoteMetadataDeletionPending()
+	})
 
 	return f.setOrLoadFilerStoreSignature(store)
 }
@@ -358,7 +364,14 @@ var (
 )
 
 func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
+	return f.findEntry(ctx, p, true)
+}
 
+func (f *Filer) FindEntryLocal(ctx context.Context, p util.FullPath) (entry *Entry, err error) {
+	return f.findEntry(ctx, p, false)
+}
+
+func (f *Filer) findEntry(ctx context.Context, p util.FullPath, allowLazyFetch bool) (entry *Entry, err error) {
 	if string(p) == "/" {
 		return Root, nil
 	}
@@ -377,7 +390,7 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		}
 	}
 
-	if entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
+	if allowLazyFetch && entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
 		if lazy, lazyErr := f.maybeLazyFetchFromRemote(ctx, p); lazyErr != nil {
 			glog.V(1).InfofCtx(ctx, "FindEntry lazy fetch %s: %v", p, lazyErr)
 		} else if lazy != nil {

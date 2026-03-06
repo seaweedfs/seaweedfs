@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -28,11 +29,17 @@ import (
 type stubFilerStore struct {
 	mu      sync.Mutex
 	entries map[string]*Entry
+	kv      map[string][]byte
 	insertErr error
+	deleteErrByPath map[string]error
 }
 
 func newStubFilerStore() *stubFilerStore {
-	return &stubFilerStore{entries: make(map[string]*Entry)}
+	return &stubFilerStore{
+		entries: make(map[string]*Entry),
+		kv: make(map[string][]byte),
+		deleteErrByPath: make(map[string]error),
+	}
 }
 
 func (s *stubFilerStore) GetName() string { return "stub" }
@@ -43,11 +50,27 @@ func (s *stubFilerStore) BeginTransaction(ctx context.Context) (context.Context,
 }
 func (s *stubFilerStore) CommitTransaction(context.Context) error    { return nil }
 func (s *stubFilerStore) RollbackTransaction(context.Context) error  { return nil }
-func (s *stubFilerStore) KvPut(context.Context, []byte, []byte) error { return nil }
-func (s *stubFilerStore) KvGet(context.Context, []byte) ([]byte, error) {
-	return nil, ErrKvNotFound
+func (s *stubFilerStore) KvPut(_ context.Context, key []byte, value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kv[string(key)] = append([]byte(nil), value...)
+	return nil
 }
-func (s *stubFilerStore) KvDelete(context.Context, []byte) error { return nil }
+func (s *stubFilerStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	value, found := s.kv[string(key)]
+	if !found {
+		return nil, ErrKvNotFound
+	}
+	return append([]byte(nil), value...), nil
+}
+func (s *stubFilerStore) KvDelete(_ context.Context, key []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.kv, string(key))
+	return nil
+}
 func (s *stubFilerStore) DeleteFolderChildren(context.Context, util.FullPath) error { return nil }
 func (s *stubFilerStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
 	return "", nil
@@ -85,6 +108,9 @@ func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, 
 func (s *stubFilerStore) DeleteEntry(_ context.Context, p util.FullPath) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if deleteErr, found := s.deleteErrByPath[string(p)]; found && deleteErr != nil {
+		return deleteErr
+	}
 	delete(s.entries, string(p))
 	return nil
 }
@@ -94,6 +120,11 @@ func (s *stubFilerStore) DeleteEntry(_ context.Context, p util.FullPath) error {
 type stubRemoteClient struct {
 	statResult *filer_pb.RemoteEntry
 	statErr    error
+	deleteErr  error
+	removeErr  error
+
+	deleteCalls []*remote_pb.RemoteStorageLocation
+	removeCalls []*remote_pb.RemoteStorageLocation
 }
 
 func (c *stubRemoteClient) StatFile(*remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
@@ -108,14 +139,28 @@ func (c *stubRemoteClient) ReadFile(*remote_pb.RemoteStorageLocation, int64, int
 func (c *stubRemoteClient) WriteDirectory(*remote_pb.RemoteStorageLocation, *filer_pb.Entry) error {
 	return nil
 }
-func (c *stubRemoteClient) RemoveDirectory(*remote_pb.RemoteStorageLocation) error { return nil }
+func (c *stubRemoteClient) RemoveDirectory(loc *remote_pb.RemoteStorageLocation) error {
+	c.removeCalls = append(c.removeCalls, &remote_pb.RemoteStorageLocation{
+		Name:   loc.Name,
+		Bucket: loc.Bucket,
+		Path:   loc.Path,
+	})
+	return c.removeErr
+}
 func (c *stubRemoteClient) WriteFile(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, io.Reader) (*filer_pb.RemoteEntry, error) {
 	return nil, nil
 }
 func (c *stubRemoteClient) UpdateFileMetadata(*remote_pb.RemoteStorageLocation, *filer_pb.Entry, *filer_pb.Entry) error {
 	return nil
 }
-func (c *stubRemoteClient) DeleteFile(*remote_pb.RemoteStorageLocation) error { return nil }
+func (c *stubRemoteClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
+	c.deleteCalls = append(c.deleteCalls, &remote_pb.RemoteStorageLocation{
+		Name:   loc.Name,
+		Bucket: loc.Bucket,
+		Path:   loc.Path,
+	})
+	return c.deleteErr
+}
 func (c *stubRemoteClient) ListBuckets() ([]*remote_storage.Bucket, error)    { return nil, nil }
 func (c *stubRemoteClient) CreateBucket(string) error                         { return nil }
 func (c *stubRemoteClient) DeleteBucket(string) error                         { return nil }
@@ -367,4 +412,269 @@ func TestFindEntry_LazyFetchOnMiss(t *testing.T) {
 	require.NoError(t, err2)
 	require.NotNil(t, entry2)
 	assert.Equal(t, uint64(999), entry2.FileSize)
+}
+
+func TestDeleteEntryMetaAndData_RemoteOnlyFileDeletesRemoteAndMetadata(t *testing.T) {
+	const storageType = "stub_lazy_delete_file"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "deletestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "deletestore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/file.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 64},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.NoError(t, err)
+
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+	require.Len(t, stub.deleteCalls, 1)
+	assert.Equal(t, "deletestore", stub.deleteCalls[0].Name)
+	assert.Equal(t, "mybucket", stub.deleteCalls[0].Bucket)
+	assert.Equal(t, "/file.txt", stub.deleteCalls[0].Path)
+}
+
+func TestDeleteEntryMetaAndData_RemoteOnlyFileNotUnderMountSkipsRemoteDelete(t *testing.T) {
+	const storageType = "stub_lazy_delete_not_under_mount"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "notundermount", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "notundermount",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/no/mount/file.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 99,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 99},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.NoError(t, err)
+	require.Len(t, stub.deleteCalls, 0)
+}
+
+func TestDeleteEntryMetaAndData_RemoteMountWithoutClientResolutionKeepsMetadata(t *testing.T) {
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf["missingclient"] = &remote_pb.RemoteConf{Name: "missingclient", Type: "stub_missing_client"}
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "missingclient",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/no-client.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 51,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 51},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "resolve remote storage client")
+	require.ErrorContains(t, err, string(filePath))
+
+	stored, findErr := store.FindEntry(context.Background(), filePath)
+	require.NoError(t, findErr)
+	require.NotNil(t, stored)
+}
+
+func TestDeleteEntryMetaAndData_LocalDeleteFailureLeavesDurablePendingForReconcile(t *testing.T) {
+	const storageType = "stub_lazy_delete_pending_reconcile"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "pendingreconcile", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "pendingreconcile",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/reconcile.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 80,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 80},
+	}
+	store.deleteErrByPath[string(filePath)] = errors.New("simulated local delete failure")
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "filer store delete")
+	require.Len(t, stub.deleteCalls, 1)
+
+	stored, findErr := store.FindEntry(context.Background(), filePath)
+	require.NoError(t, findErr)
+	require.NotNil(t, stored)
+
+	pendingPaths, pendingErr := f.listPendingRemoteMetadataDeletionPaths(context.Background())
+	require.NoError(t, pendingErr)
+	require.Equal(t, []util.FullPath{filePath}, pendingPaths)
+
+	delete(store.deleteErrByPath, string(filePath))
+	require.NoError(t, f.reconcilePendingRemoteMetadataDeletions(context.Background()))
+
+	_, findAfterReconcileErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findAfterReconcileErr, filer_pb.ErrNotFound)
+	require.Len(t, stub.deleteCalls, 1)
+
+	pendingPaths, pendingErr = f.listPendingRemoteMetadataDeletionPaths(context.Background())
+	require.NoError(t, pendingErr)
+	require.Empty(t, pendingPaths)
+}
+
+func TestDeleteEntryMetaAndData_RemoteDeleteNotFoundStillDeletesMetadata(t *testing.T) {
+	const storageType = "stub_lazy_delete_notfound"
+	stub := &stubRemoteClient{deleteErr: remote_storage.ErrRemoteObjectNotFound}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "deletenotfound", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "deletenotfound",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/notfound.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 23,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 23},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.NoError(t, err)
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+}
+
+func TestDeleteEntryMetaAndData_RemoteDeleteErrorKeepsMetadata(t *testing.T) {
+	const storageType = "stub_lazy_delete_error"
+	stub := &stubRemoteClient{deleteErr: errors.New("remote delete failed")}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "deleteerr", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "deleteerr",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/error.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 77,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 77},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, false, nil, 0)
+	require.Error(t, err)
+	stored, findErr := store.FindEntry(context.Background(), filePath)
+	require.NoError(t, findErr)
+	require.NotNil(t, stored)
+}
+
+func TestDeleteEntryMetaAndData_DirectoryUnderMountDeletesRemoteDirectory(t *testing.T) {
+	const storageType = "stub_lazy_delete_dir"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "dirstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "dirstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	dirPath := util.FullPath("/buckets/mybucket/dir")
+	store.entries[string(dirPath)] = &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mtime:  time.Unix(1700000000, 0),
+			Crtime: time.Unix(1700000000, 0),
+			Mode:   os.ModeDir | 0755,
+		},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.doDeleteEntryMetaAndData(context.Background(), store.entries[string(dirPath)], false, false, nil)
+	require.NoError(t, err)
+
+	require.Len(t, stub.removeCalls, 1)
+	assert.Equal(t, "dirstore", stub.removeCalls[0].Name)
+	assert.Equal(t, "mybucket", stub.removeCalls[0].Bucket)
+	assert.Equal(t, "/dir", stub.removeCalls[0].Path)
+	_, findErr := store.FindEntry(context.Background(), dirPath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
 }

@@ -114,3 +114,46 @@ func (f *Filer) maybeLazyFetchFromRemote(ctx context.Context, p util.FullPath) (
 	}
 	return result.entry, nil
 }
+
+func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, error) {
+	if entry == nil || f.RemoteStorage == nil {
+		return false, nil
+	}
+
+	mountDir, remoteLoc := f.RemoteStorage.FindMountDirectory(entry.FullPath)
+	if remoteLoc == nil {
+		return false, nil
+	}
+
+	client, _, found := f.RemoteStorage.GetRemoteStorageClient(remoteLoc.Name)
+	if !found || client == nil {
+		return false, fmt.Errorf("resolve remote storage client for %s: not found", entry.FullPath)
+	}
+
+	objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, entry.FullPath)
+
+	if entry.IsDirectory() {
+		if err := client.RemoveDirectory(objectLoc); err != nil {
+			if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+				return true, nil
+			}
+			return false, fmt.Errorf("remove remote directory %s: %w", entry.FullPath, err)
+		}
+		glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted directory %s from remote", entry.FullPath)
+		return true, nil
+	}
+
+	if !entry.IsInRemoteOnly() {
+		return false, nil
+	}
+
+	if err := client.DeleteFile(objectLoc); err != nil {
+		if errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+			return true, nil
+		}
+		return false, fmt.Errorf("delete remote file %s: %w", entry.FullPath, err)
+	}
+
+	glog.V(3).InfofCtx(ctx, "maybeDeleteFromRemote: deleted %s from remote", entry.FullPath)
+	return true, nil
+}
