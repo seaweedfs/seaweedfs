@@ -159,47 +159,35 @@ func (mc *MetaCache) DeleteFolderChildren(ctx context.Context, fp util.FullPath)
 	return mc.localStore.DeleteFolderChildren(ctx, fp)
 }
 
-// ReplaceDirectoryEntries atomically clears all children of dirPath and inserts
-// the provided entries under a single lock. This prevents race conditions where
-// concurrent DeleteEntry (from Unlink) or AtomicUpdateEntryFromFiler (from
-// subscription) could interleave with streaming batch inserts, causing ghost entries.
-func (mc *MetaCache) ReplaceDirectoryEntries(ctx context.Context, dirPath util.FullPath, entries []*filer.Entry) error {
+// insertBatchFiltered inserts a batch of entries under lock, filtering out any
+// entries that were deleted while the directory refresh was in progress.
+func (mc *MetaCache) insertBatchFiltered(ctx context.Context, dirPath util.FullPath, entries []*filer.Entry) error {
 	mc.Lock()
 	defer mc.Unlock()
+
 	pendingDeletes := mc.pendingDeletes[dirPath]
-	delete(mc.pendingDeletes, dirPath)
-
-	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
-		return err
-	}
-
-	n := len(entries)
-	for i := 0; i < n; i += batchInsertSize {
-		end := i + batchInsertSize
-		if end > n {
-			end = n
-		}
-		batch := entries[i:end]
-		if len(pendingDeletes) > 0 {
-			filtered := make([]*filer.Entry, 0, len(batch))
-			for _, entry := range batch {
-				if _, deleted := pendingDeletes[entry.Name()]; deleted {
-					glog.V(2).Infof("[ghost_trace] replace skip reinsert dir=%s name=%s", dirPath, entry.Name())
-					continue
-				}
-				filtered = append(filtered, entry)
+	if len(pendingDeletes) > 0 {
+		filtered := make([]*filer.Entry, 0, len(entries))
+		for _, entry := range entries {
+			if _, deleted := pendingDeletes[entry.Name()]; deleted {
+				glog.V(2).Infof("[ghost_trace] streaming skip reinsert dir=%s name=%s", dirPath, entry.Name())
+				continue
 			}
-			batch = filtered
+			filtered = append(filtered, entry)
 		}
-		if len(batch) == 0 {
-			continue
-		}
-		if err := mc.leveldbStore.BatchInsertEntries(ctx, batch); err != nil {
-			return err
-		}
+		entries = filtered
 	}
+	if len(entries) == 0 {
+		return nil
+	}
+	return mc.leveldbStore.BatchInsertEntries(ctx, entries)
+}
 
-	return nil
+// endRefresh cleans up the pending deletes tracking after a successful directory refresh.
+func (mc *MetaCache) endRefresh(dirPath util.FullPath) {
+	mc.Lock()
+	defer mc.Unlock()
+	delete(mc.pendingDeletes, dirPath)
 }
 
 func (mc *MetaCache) BeginRefresh(dirPath util.FullPath) {

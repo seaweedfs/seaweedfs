@@ -70,18 +70,32 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 		mc.BeginRefresh(path)
 
-		// Phase 1: Collect all entries from filer into memory (no lock held).
-		// Network I/O happens here without blocking MetaCache operations.
-		var allEntries []*filer.Entry
+		// Use a bounded batch buffer to avoid OOM on very large directories.
+		// Entries are flushed to LevelDB incrementally instead of collecting all in memory.
+		batch := make([]*filer.Entry, 0, batchInsertSize)
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
-			allEntries = nil // Reset on retry, allow GC of previous entries
+			// On each attempt, clear any partially inserted entries and reset the batch
+			mc.Lock()
+			err := mc.localStore.DeleteFolderChildren(ctx, path)
+			mc.Unlock()
+			if err != nil {
+				return err
+			}
+			batch = batch[:0]
+
 			return filer_pb.ReadDirAllEntries(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
 				}
-				allEntries = append(allEntries, entry)
+				batch = append(batch, entry)
+				if len(batch) >= batchInsertSize {
+					if err := mc.insertBatchFiltered(ctx, path, batch); err != nil {
+						return err
+					}
+					batch = batch[:0]
+				}
 				return nil
 			})
 		})
@@ -91,15 +105,15 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
-		// Phase 2: Atomically replace all children under a single lock.
-		// Concurrent DeleteEntry (from Unlink) and AtomicUpdateEntryFromFiler
-		// (from subscription) will block during the replace, then execute after
-		// the lock is released — correctly removing any stale entries that were
-		// in the filer listing snapshot but deleted during collection.
-		if err := mc.ReplaceDirectoryEntries(ctx, path, allEntries); err != nil {
-			return nil, fmt.Errorf("replace entries for %s: %w", path, err)
+		// Flush remaining entries in the last partial batch
+		if len(batch) > 0 {
+			if err := mc.insertBatchFiltered(ctx, path, batch); err != nil {
+				mc.CancelRefresh(path)
+				return nil, fmt.Errorf("flush remaining entries for %s: %w", path, err)
+			}
 		}
 
+		mc.endRefresh(path)
 		mc.markCachedFn(path)
 		return nil, nil
 	})
