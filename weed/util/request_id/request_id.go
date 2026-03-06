@@ -2,9 +2,9 @@ package request_id
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-
-	"github.com/google/uuid"
+	"time"
 )
 
 const AmzRequestIDHeader = "x-amz-request-id"
@@ -28,7 +28,7 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 }
 
 func New() string {
-	return uuid.New().String()
+	return fmt.Sprintf("%X", time.Now().UTC().UnixNano())
 }
 
 func GetFromRequest(r *http.Request) string {
