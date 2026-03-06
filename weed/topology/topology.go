@@ -109,6 +109,11 @@ func (t *Topology) IsChildLocked() (bool, error) {
 	return false, nil
 }
 
+func (t *Topology) IsWarmingUp() bool {
+	warmupDuration := time.Duration(t.pulse*3) * time.Second
+	return !t.LastLeaderChangeTime.IsZero() && time.Since(t.LastLeaderChangeTime) < warmupDuration
+}
+
 func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()

@@ -53,7 +53,12 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		httpStatus = http.StatusNotFound
+		if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+			httpStatus = http.StatusServiceUnavailable
+			w.Header().Set("Retry-After", "5")
+		} else {
+			httpStatus = http.StatusNotFound
+		}
 	} else {
 		forRead := r.FormValue("read")
 		isRead := forRead == "yes"
