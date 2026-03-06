@@ -238,6 +238,7 @@ func TestFilerEtcStoreDeletePolicySerializesLegacyUpdates(t *testing.T) {
 
 	firstSaveStarted := make(chan struct{})
 	releaseFirstSave := make(chan struct{})
+	secondReachedDelete := make(chan struct{}, 1)
 	var blockOnce sync.Once
 
 	server.mu.Lock()
@@ -247,6 +248,15 @@ func TestFilerEtcStoreDeletePolicySerializesLegacyUpdates(t *testing.T) {
 				close(firstSaveStarted)
 				<-releaseFirstSave
 			})
+		}
+		return nil
+	}
+	server.beforeDelete = func(dir string, name string) error {
+		if dir == filer.IamConfigDirectory+"/"+IamPoliciesDirectory && name == "second.json" {
+			select {
+			case secondReachedDelete <- struct{}{}:
+			default:
+			}
 		}
 		return nil
 	}
@@ -264,20 +274,16 @@ func TestFilerEtcStoreDeletePolicySerializesLegacyUpdates(t *testing.T) {
 		secondDeleteErr <- store.DeletePolicy(ctx, "second")
 	}()
 
-	secondCompletedWhileFirstBlocked := false
 	select {
-	case err := <-secondDeleteErr:
-		require.NoError(t, err)
-		secondCompletedWhileFirstBlocked = true
+	case <-secondReachedDelete:
+		t.Fatal("second delete reached filer mutation while first delete was still blocked")
 	case <-time.After(300 * time.Millisecond):
 	}
 
 	close(releaseFirstSave)
 
 	require.NoError(t, <-firstDeleteErr)
-	if !secondCompletedWhileFirstBlocked {
-		require.NoError(t, <-secondDeleteErr)
-	}
+	require.NoError(t, <-secondDeleteErr)
 
 	loadedLegacyPolicies, foundLegacy, err := store.loadLegacyPoliciesCollection(ctx)
 	require.NoError(t, err)
