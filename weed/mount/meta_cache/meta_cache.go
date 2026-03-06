@@ -678,11 +678,24 @@ func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []u
 		return nil
 	}
 
-	dirsToNotify := make(map[util.FullPath]struct{})
+	// At most 3 dirs: old parent, new parent, new child (if directory).
+	// Use a fixed slice with linear dedup to avoid map allocation.
+	var dirs [3]util.FullPath
+	n := 0
+	addUnique := func(p util.FullPath) {
+		for i := 0; i < n; i++ {
+			if dirs[i] == p {
+				return
+			}
+		}
+		dirs[n] = p
+		n++
+	}
+
 	if message.OldEntry != nil {
 		oldPath := util.NewFullPath(resp.Directory, message.OldEntry.Name)
 		parent, _ := oldPath.DirAndName()
-		dirsToNotify[util.FullPath(parent)] = struct{}{}
+		addUnique(util.FullPath(parent))
 	}
 	if message.NewEntry != nil {
 		newDir := resp.Directory
@@ -691,17 +704,13 @@ func collectDirectoryNotifications(resp *filer_pb.SubscribeMetadataResponse) []u
 		}
 		newPath := util.NewFullPath(newDir, message.NewEntry.Name)
 		parent, _ := newPath.DirAndName()
-		dirsToNotify[util.FullPath(parent)] = struct{}{}
+		addUnique(util.FullPath(parent))
 		if message.NewEntry.IsDirectory {
-			dirsToNotify[newPath] = struct{}{}
+			addUnique(newPath)
 		}
 	}
 
-	orderedDirs := make([]util.FullPath, 0, len(dirsToNotify))
-	for dirPath := range dirsToNotify {
-		orderedDirs = append(orderedDirs, dirPath)
-	}
-	return orderedDirs
+	return dirs[:n]
 }
 
 func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metadataInvalidation {
