@@ -2,8 +2,6 @@ package iam
 
 import (
 	"encoding/xml"
-	"fmt"
-	"time"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 )
@@ -15,9 +13,9 @@ type CommonResponse struct {
 	} `xml:"ResponseMetadata"`
 }
 
-// SetRequestId sets a unique request ID based on current timestamp.
-func (r *CommonResponse) SetRequestId() {
-	r.ResponseMetadata.RequestId = newRequestID()
+// SetRequestId stores the request ID generated for the current HTTP request.
+func (r *CommonResponse) SetRequestId(requestID string) {
+	r.ResponseMetadata.RequestId = requestID
 }
 
 // ListUsersResponse is the response for ListUsers action.
@@ -187,6 +185,7 @@ type GetUserPolicyResponse struct {
 }
 
 // ErrorResponse is the IAM error response format.
+// AWS IAM uses a bare <RequestId> at root level for errors, not <ResponseMetadata>.
 type ErrorResponse struct {
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ErrorResponse"`
 	Error   struct {
@@ -196,13 +195,9 @@ type ErrorResponse struct {
 	RequestId string `xml:"RequestId"`
 }
 
-// SetRequestId sets a unique request ID based on current timestamp.
-func (r *ErrorResponse) SetRequestId() {
-	r.RequestId = newRequestID()
-}
-
-func newRequestID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+// SetRequestId stores the request ID generated for the current HTTP request.
+func (r *ErrorResponse) SetRequestId(requestID string) {
+	r.RequestId = requestID
 }
 
 // Error represents an IAM API error with code and underlying error.

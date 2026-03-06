@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 // Constants from shared package
@@ -859,6 +860,8 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	policyLock.Lock()
 	defer policyLock.Unlock()
 
+	r, reqID := request_id.Ensure(r)
+
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
@@ -997,7 +1000,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		changed = false
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
-		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description)
+		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description, reqID)
 		s3err.WriteXMLResponse(w, r, errNotImplemented.HTTPStatusCode, errorResponse)
 		return
 	}
@@ -1017,5 +1020,6 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	response = iamlib.SetResponseRequestID(response, reqID)
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }

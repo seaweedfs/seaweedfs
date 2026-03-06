@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -156,6 +157,19 @@ func extractEmbeddedIamErrorCodeAndMessage(response *httptest.ResponseRecorder) 
 	return "", ""
 }
 
+func extractEmbeddedIamRequestID(response *httptest.ResponseRecorder) string {
+	start := strings.Index(response.Body.String(), "<RequestId>")
+	if start == -1 {
+		return ""
+	}
+	start += len("<RequestId>")
+	end := strings.Index(response.Body.String()[start:], "</RequestId>")
+	if end == -1 {
+		return ""
+	}
+	return response.Body.String()[start : start+end]
+}
+
 // TestEmbeddedIamCreateUser tests creating a user via the embedded IAM API
 func TestEmbeddedIamCreateUser(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
@@ -199,6 +213,8 @@ func TestEmbeddedIamListUsers(t *testing.T) {
 
 	// Verify response contains the users
 	assert.Len(t, out.ListUsersResult.Users, 2)
+	assert.NotEmpty(t, response.Header().Get(request_id.AmzRequestIDHeader))
+	assert.Equal(t, response.Header().Get(request_id.AmzRequestIDHeader), out.ResponseMetadata.RequestId)
 }
 
 // TestEmbeddedIamListAccessKeys tests listing access keys via the embedded IAM API
@@ -1216,6 +1232,7 @@ func TestEmbeddedIamNotImplementedAction(t *testing.T) {
 	assert.Equal(t, http.StatusNotImplemented, rr.Code)
 	assert.Contains(t, rr.Body.String(), "<RequestId>")
 	assert.NotContains(t, rr.Body.String(), "<ResponseMetadata>")
+	assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractEmbeddedIamRequestID(rr))
 }
 
 // TestGetPolicyDocument tests parsing of policy documents

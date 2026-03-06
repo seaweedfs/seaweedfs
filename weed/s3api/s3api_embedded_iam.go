@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -157,16 +158,17 @@ const (
 	iamAccessKeyStatusInactive = iamlib.AccessKeyStatusInactive
 )
 
-func newIamErrorResponse(errCode string, errMsg string) iamErrorResponse {
+func newIamErrorResponse(errCode string, errMsg string, requestID string) iamErrorResponse {
 	errorResp := iamErrorResponse{}
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
 	errorResp.Error.Message = &errMsg
-	errorResp.SetRequestId()
+	errorResp.SetRequestId(requestID)
 	return errorResp
 }
 
 func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamErr *iamError) {
+	r, reqID := request_id.Ensure(r)
 	if iamErr == nil {
 		glog.Errorf("No error found")
 		return
@@ -176,8 +178,8 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 	errMsg := iamErr.Error.Error()
 	glog.Errorf("IAM Response %+v", errMsg)
 
-	errorResp := newIamErrorResponse(errCode, errMsg)
-	internalErrorResponse := newIamErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error")
+	errorResp := newIamErrorResponse(errCode, errMsg, reqID)
+	internalErrorResponse := newIamErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
 
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
@@ -1744,6 +1746,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 
 // DoActions handles IAM API actions.
 func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
+	r, reqID := request_id.Ensure(r)
 	if err := r.ParseForm(); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
@@ -1765,9 +1768,6 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set RequestId for AWS compatibility
-	if r, ok := response.(interface{ SetRequestId() }); ok {
-		r.SetRequestId()
-	}
+	response = iamlib.SetResponseRequestID(response, reqID)
 	s3err.WriteXMLResponse(w, r, http.StatusOK, response)
 }

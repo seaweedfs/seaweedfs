@@ -6,18 +6,20 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
-func newErrorResponse(errCode string, errMsg string) ErrorResponse {
+func newErrorResponse(errCode string, errMsg string, requestID string) ErrorResponse {
 	errorResp := ErrorResponse{}
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
 	errorResp.Error.Message = &errMsg
-	errorResp.SetRequestId()
+	errorResp.SetRequestId(requestID)
 	return errorResp
 }
 
 func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *IamError) {
+	r, reqID := request_id.Ensure(r)
 
 	if iamError == nil {
 		// Do nothing if there is no error
@@ -29,8 +31,8 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *Iam
 	errMsg := iamError.Error.Error()
 	glog.Errorf("Response %+v", errMsg)
 
-	errorResp := newErrorResponse(errCode, errMsg)
-	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error")
+	errorResp := newErrorResponse(errCode, errMsg, reqID)
+	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
 
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:
