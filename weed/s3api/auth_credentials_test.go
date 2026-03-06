@@ -26,6 +26,7 @@ import (
 
 type loadConfigurationDropsPoliciesStore struct {
 	*memory.MemoryStore
+	loadManagedPoliciesCalled bool
 }
 
 func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
@@ -35,6 +36,25 @@ func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.
 	}
 	config.Policies = nil
 	return config, nil
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	store.loadManagedPoliciesCalled = true
+
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	policies := make([]*iam_pb.Policy, 0, len(config.Policies))
+	for _, policy := range config.Policies {
+		policies = append(policies, &iam_pb.Policy{
+			Name:    policy.Name,
+			Content: policy.Content,
+		})
+	}
+
+	return policies, nil
 }
 
 type inlinePolicyRuntimeStore struct {
@@ -488,6 +508,7 @@ func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPolicies(t *t
 
 	iam := &IdentityAccessManagement{credentialManager: cm}
 	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+	assert.True(t, store.loadManagedPoliciesCalled)
 
 	identity := iam.lookupByIdentityName("managed-user")
 	if !assert.NotNil(t, identity) {
