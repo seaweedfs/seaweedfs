@@ -10,6 +10,7 @@ import (
 	"github.com/fluent/fluent-logger-golang/fluent"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 type AccessLogExtend struct {
@@ -150,7 +151,7 @@ func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *Acc
 	}
 	return &AccessLog{
 		HostHeader:       hostHeader,
-		RequestID:        r.Header.Get("X-Request-ID"),
+		RequestID:        request_id.GetFromRequest(r),
 		RemoteIP:         remoteIP,
 		Requester:        s3_constants.GetIdentityNameFromContext(r), // Get from context, not header (secure)
 		SignatureVersion: r.Header.Get(s3_constants.AmzAuthType),
