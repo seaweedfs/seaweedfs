@@ -365,11 +365,13 @@ func (mc *MetaCache) enqueueAndWait(ctx context.Context, req metadataApplyReques
 
 func (mc *MetaCache) enqueueApplyRequest(req metadataApplyRequest) error {
 	mc.applyStateMu.Lock()
-	defer mc.applyStateMu.Unlock()
-
 	if mc.applyClosed {
+		mc.applyStateMu.Unlock()
 		return errMetaCacheClosed
 	}
+	// Release the mutex before the potentially-blocking channel send so that
+	// Shutdown can still acquire it to set applyClosed when the channel is full.
+	mc.applyStateMu.Unlock()
 	mc.applyCh <- req
 	return nil
 }
