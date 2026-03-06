@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -213,6 +214,10 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 
 	var lastEntryName string
 
+	if wfs.inodeToPath.ShouldReadDirectoryDirect(dirPath) {
+		return wfs.readDirectoryDirect(input, out, dh, dirPath, processEachEntryFn)
+	}
+
 	// Read from cache first, then load next batch if needed
 	if input.Offset >= dh.entryStreamOffset {
 		// Handle case: new handle with non-zero offset but empty cache
@@ -286,4 +291,77 @@ func (wfs *WFS) doReadDirectory(input *fuse.ReadIn, out *fuse.DirEntryList, isPl
 	}
 
 	return fuse.OK
+}
+
+func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, dh *DirectoryHandle, dirPath util.FullPath, processEachEntryFn func(entry *filer.Entry, index int64) bool) fuse.Status {
+	var lastEntryName string
+
+	if input.Offset >= dh.entryStreamOffset {
+		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
+			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
+			entries, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount)
+			if err != nil {
+				glog.Errorf("list filer directory: %v", err)
+				return fuse.EIO
+			}
+			dh.entryStream = append(dh.entryStream, entries...)
+		}
+
+		if input.Offset > dh.entryStreamOffset {
+			entryPreviousIndex := (input.Offset - dh.entryStreamOffset) - 1
+			if uint64(len(dh.entryStream)) > entryPreviousIndex {
+				lastEntryName = dh.entryStream[entryPreviousIndex].Name()
+			}
+		}
+
+		entryCurrentIndex := int64(input.Offset - dh.entryStreamOffset)
+		for int64(len(dh.entryStream)) > entryCurrentIndex {
+			entry := dh.entryStream[entryCurrentIndex]
+			if processEachEntryFn(entry, entryCurrentIndex) {
+				lastEntryName = entry.Name()
+				entryCurrentIndex++
+			} else {
+				return fuse.OK
+			}
+		}
+
+		entries, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize)
+		if err != nil {
+			glog.Errorf("list filer directory: %v", err)
+			return fuse.EIO
+		}
+
+		bufferFull := false
+		for _, entry := range entries {
+			currentIndex := int64(len(dh.entryStream))
+			dh.entryStream = append(dh.entryStream, entry)
+			if !processEachEntryFn(entry, currentIndex) {
+				bufferFull = true
+				break
+			}
+		}
+		if !bufferFull && len(entries) < int(batchSize) {
+			dh.isFinished = true
+		}
+	}
+
+	return fuse.OK
+}
+
+func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32) ([]*filer.Entry, error) {
+	entries := make([]*filer.Entry, 0, limit)
+	err := filer_pb.List(ctx, client, string(dirPath), "", func(entry *filer_pb.Entry, isLast bool) error {
+		if meta_cache.IsHiddenSystemEntry(string(dirPath), entry.Name) {
+			return nil
+		}
+		if uidGidMapper != nil && entry.Attributes != nil {
+			entry.Attributes.Uid, entry.Attributes.Gid = uidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+		}
+		entries = append(entries, filer.FromPbEntry(string(dirPath), entry))
+		return nil
+	}, startFileName, includeStart, limit)
+	if err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
