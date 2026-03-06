@@ -2,9 +2,11 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -22,6 +24,7 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 
 	var details []string
 	var totalVolumes, totalFiles uint64
+	var brokenVolumes []*storage.Volume
 	var brokenVolumeIds []uint32
 	for _, vid := range vids {
 		v := vs.store.GetVolume(vid)
@@ -46,11 +49,27 @@ func (vs *VolumeServer) ScrubVolume(ctx context.Context, req *volume_server_pb.S
 		totalVolumes += 1
 		totalFiles += uint64(files)
 		if len(serrs) != 0 {
-			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
+			brokenVolumes = append(brokenVolumes, v)
+			brokenVolumeIds = append(brokenVolumeIds, uint32(v.Id))
 			for _, err := range serrs {
 				details = append(details, err.Error())
 			}
 		}
+	}
+
+	errs := []error{}
+	if req.GetMarkBrokenVolumesReadonly() {
+		for _, v := range brokenVolumes {
+			if err := vs.makeVolumeReadonly(ctx, v, true); err != nil {
+				errs = append(errs, err)
+				details = append(details, err.Error())
+			} else {
+				details = append(details, fmt.Sprintf("volume %d is now read-only", v.Id))
+			}
+		}
+	}
+	if len(errs) != 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	res := &volume_server_pb.ScrubVolumeResponse{
@@ -102,7 +121,7 @@ func (vs *VolumeServer) ScrubEcVolume(ctx context.Context, req *volume_server_pb
 		totalVolumes += 1
 		totalFiles += uint64(files)
 		if len(serrs) != 0 || len(shardInfos) != 0 {
-			brokenVolumeIds = append(brokenVolumeIds, uint32(vid))
+			brokenVolumeIds = append(brokenVolumeIds, uint32(v.VolumeId))
 			brokenShardInfos = append(brokenShardInfos, shardInfos...)
 			for _, err := range serrs {
 				details = append(details, err.Error())
