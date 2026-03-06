@@ -891,7 +891,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, iamError = iama.GetUser(s3cfg, userName)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
@@ -906,7 +906,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		userName := values.Get("UserName")
 		response, iamError = iama.DeleteUser(s3cfg, userName)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "CreateAccessKey":
@@ -914,7 +914,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		response, iamError = iama.CreateAccessKey(s3cfg, values)
 		if iamError != nil {
 			glog.Errorf("CreateAccessKey: %+v", iamError.Error)
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "DeleteAccessKey":
@@ -924,7 +924,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		iama.handleImplicitUsername(r, values)
 		response, iamError = iama.UpdateAccessKey(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "CreatePolicy":
@@ -943,58 +943,58 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		if iamError != nil {
 			glog.Errorf("PutUserPolicy:  %+v", iamError.Error)
 
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "GetUserPolicy":
 		response, iamError = iama.GetUserPolicy(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
 	case "DeleteUserPolicy":
 		if response, iamError = iama.DeleteUserPolicy(s3cfg, values); iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "GetPolicy":
 		response, iamError = iama.GetPolicy(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
 	case "DeletePolicy":
 		response, iamError = iama.DeletePolicy(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
 	case "ListPolicies":
 		response, iamError = iama.ListPolicies(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
 	case "AttachUserPolicy":
 		response, iamError = iama.AttachUserPolicy(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "DetachUserPolicy":
 		response, iamError = iama.DetachUserPolicy(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 	case "ListAttachedUserPolicies":
 		response, iamError = iama.ListAttachedUserPolicies(s3cfg, values)
 		if iamError != nil {
-			writeIamErrorResponse(w, r, iamError)
+			writeIamErrorResponse(w, r, reqID, iamError)
 			return
 		}
 		changed = false
@@ -1008,7 +1008,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		err := iama.s3ApiConfig.PutS3ApiConfiguration(s3cfg)
 		if err != nil {
 			var iamError = IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
-			writeIamErrorResponse(w, r, &iamError)
+			writeIamErrorResponse(w, r, reqID, &iamError)
 			return
 		}
 		// Reload in-memory identity maps so subsequent LookupByAccessKey calls

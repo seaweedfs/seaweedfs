@@ -11,7 +11,7 @@ import (
 
 func TestGetAccessLogUsesAmzRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
-	req.Header.Set(request_id.AmzRequestIDHeader, "req-123")
+	req = req.WithContext(request_id.Set(req.Context(), "req-123"))
 
 	log := GetAccessLog(req, http.StatusOK, ErrNone)
 

@@ -6,7 +6,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 func newErrorResponse(errCode string, errMsg string, requestID string) ErrorResponse {
@@ -18,12 +17,11 @@ func newErrorResponse(errCode string, errMsg string, requestID string) ErrorResp
 	return errorResp
 }
 
-func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *IamError) {
-	r, reqID := request_id.Ensure(r)
-
+func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string, iamError *IamError) {
 	if iamError == nil {
-		// Do nothing if there is no error
-		glog.Errorf("No error found")
+		glog.Errorf("writeIamErrorResponse called with nil error")
+		internalResp := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalResp)
 		return
 	}
 

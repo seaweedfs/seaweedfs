@@ -10,15 +10,17 @@ import (
 
 const AmzRequestIDHeader = "x-amz-request-id"
 
+type contextKey struct{}
+
 func Set(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, AmzRequestIDHeader, id)
+	return context.WithValue(ctx, contextKey{}, id)
 }
 
 func Get(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
-	id, _ := ctx.Value(AmzRequestIDHeader).(string)
+	id, _ := ctx.Value(contextKey{}).(string)
 	return id
 }
 
@@ -34,26 +36,26 @@ func New() string {
 	return fmt.Sprintf("%X%08X", time.Now().UTC().UnixNano(), buf)
 }
 
+// GetFromRequest returns the server-generated request ID from the context.
 func GetFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if id := Get(r.Context()); id != "" {
-		return id
-	}
-	return r.Header.Get(AmzRequestIDHeader)
+	return Get(r.Context())
 }
 
+// Ensure guarantees a server-generated request ID exists in the context.
+// It always generates a new ID if one is not already present in the context,
+// ignoring any client-sent x-amz-request-id header to prevent spoofing.
 func Ensure(r *http.Request) (*http.Request, string) {
 	if r == nil {
 		return nil, ""
 	}
-	id := GetFromRequest(r)
-	if id == "" {
-		id = New()
+	if id := Get(r.Context()); id != "" {
+		return r, id
 	}
+	id := New()
 	r = r.WithContext(Set(r.Context(), id))
-	r.Header.Set(AmzRequestIDHeader, id)
 	return r, id
 }
 

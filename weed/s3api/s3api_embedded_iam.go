@@ -167,10 +167,11 @@ func newIamErrorResponse(errCode string, errMsg string, requestID string) iamErr
 	return errorResp
 }
 
-func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamErr *iamError) {
-	r, reqID := request_id.Ensure(r)
+func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string, iamErr *iamError) {
 	if iamErr == nil {
-		glog.Errorf("No error found")
+		glog.Errorf("writeIamErrorResponse called with nil error")
+		internalResp := newIamErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalResp)
 		return
 	}
 
@@ -1764,7 +1765,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	response, iamErr := e.ExecuteAction(r.Context(), values, false)
 	if iamErr != nil {
-		e.writeIamErrorResponse(w, r, iamErr)
+		e.writeIamErrorResponse(w, r, reqID, iamErr)
 		return
 	}
 

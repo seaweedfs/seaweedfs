@@ -17,7 +17,7 @@ func TestWriteErrorResponseReusesRequestID(t *testing.T) {
 		"bucket": "bucket",
 		"object": "object",
 	})
-	req.Header.Set(request_id.AmzRequestIDHeader, "req-123")
+	req = req.WithContext(request_id.Set(req.Context(), "req-123"))
 
 	rr := httptest.NewRecorder()
 	WriteErrorResponse(rr, req, ErrNoSuchKey)
