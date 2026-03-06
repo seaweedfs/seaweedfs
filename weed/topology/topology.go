@@ -110,6 +110,9 @@ func (t *Topology) IsChildLocked() (bool, error) {
 }
 
 func (t *Topology) IsWarmingUp() bool {
+	if t.GetMaxVolumeId() == 0 {
+		return false
+	}
 	warmupDuration := time.Duration(t.pulse*3) * time.Second
 	return !t.LastLeaderChangeTime.IsZero() && time.Since(t.LastLeaderChangeTime) < warmupDuration
 }

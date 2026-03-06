@@ -53,7 +53,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
 			httpStatus = http.StatusServiceUnavailable
 			w.Header().Set("Retry-After", "5")
 		} else {

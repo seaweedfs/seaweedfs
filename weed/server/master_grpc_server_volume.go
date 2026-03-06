@@ -198,7 +198,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	if hasError && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+	if hasError && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() && ms.MasterClient.GetMasterCount() > 1 {
 		glog.V(0).Infof("lookup volume warming up: topology is still loading, suggest retry with other masters")
 		return resp, status.Errorf(codes.Unavailable, "master is warming up, retry with other masters")
 	}
