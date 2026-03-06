@@ -63,19 +63,16 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		}
 
 		glog.V(1).Infof("mkdir: %v", request)
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
+		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
 			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
 			return err
 		}
 
-		// Only cache the entry if the parent directory is already cached.
-		// This avoids polluting the cache with partial directory data.
-		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
-			wfs.inodeToPath.TouchDirectory(dirFullPath)
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("local mkdir dir %s: %w", entryFullPath, err)
-			}
+		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
+			return fmt.Errorf("local mkdir dir %s: %w", entryFullPath, err)
 		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
 
 		return nil
 	})
@@ -112,7 +109,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
 	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
+	resp, err := filer_pb.RemoveWithResponse(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
@@ -121,7 +118,14 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		return fuse.ENOENT
 	}
 
-	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
+	event := metadataDeleteEvent(string(dirFullPath), name)
+	if resp != nil && resp.MetadataEvent != nil {
+		event = resp.MetadataEvent
+	}
+	if err := wfs.applyLocalMetadataEvent(context.Background(), event); err != nil {
+		glog.V(3).Infof("apply local delete event %s: %v", entryFullPath, err)
+		return fuse.EIO
+	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 

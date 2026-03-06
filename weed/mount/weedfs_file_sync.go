@@ -161,16 +161,14 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
+		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
 			glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}
 
-		// Only update cache if the parent directory is cached
-		if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("update meta cache for %s: %w", fileFullPath, err)
-			}
+		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
+			return fmt.Errorf("update metadata event for %s: %w", fileFullPath, err)
 		}
 
 		return nil

@@ -177,6 +177,63 @@ func TestApplyMetadataResponseRenamesAcrossCachedDirectories(t *testing.T) {
 	}
 }
 
+func TestApplyMetadataResponseLocalOptionsSkipInvalidations(t *testing.T) {
+	mc, _, notifications, invalidations := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/dir": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/file.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 7,
+		},
+	}); err != nil {
+		t.Fatalf("insert source entry: %v", err)
+	}
+
+	updateResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name: "file.txt",
+			},
+			NewEntry: &filer_pb.Entry{
+				Name: "file.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   1,
+					Mtime:    2,
+					FileMode: 0100644,
+					FileSize: 17,
+				},
+			},
+			NewParentPath: "/dir",
+		},
+	}
+
+	if err := mc.ApplyMetadataResponse(context.Background(), updateResp, LocalMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply local update: %v", err)
+	}
+
+	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/file.txt"))
+	if err != nil {
+		t.Fatalf("find updated entry: %v", err)
+	}
+	if entry.FileSize != 17 {
+		t.Fatalf("updated file size = %d, want 17", entry.FileSize)
+	}
+	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 1 {
+		t.Fatalf("directory notifications for /dir = %d, want 1", got)
+	}
+	if got := len(invalidations.paths()); got != 0 {
+		t.Fatalf("invalidations = %d, want 0", got)
+	}
+}
+
 func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths, *recordedPaths) {
 	t.Helper()
 

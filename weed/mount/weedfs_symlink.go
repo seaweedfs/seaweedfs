@@ -9,7 +9,6 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -53,15 +52,13 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
+		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
 			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
 		}
 
-		// Only cache the entry if the parent directory is already cached.
-		if wfs.metaCache.IsDirectoryCached(dirPath) {
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("insert meta cache for symlink %s: %w", entryFullPath, err)
-			}
+		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
+			return fmt.Errorf("insert metadata event for symlink %s: %w", entryFullPath, err)
 		}
 
 		return nil
