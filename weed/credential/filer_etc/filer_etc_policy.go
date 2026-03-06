@@ -34,19 +34,19 @@ func newPoliciesCollection() *PoliciesCollection {
 	}
 }
 
-func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*PoliciesCollection, error) {
+func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*PoliciesCollection, bool, error) {
 	policiesCollection := newPoliciesCollection()
 
 	content, foundLegacy, err := store.readInsideFiler(ctx, filer.IamConfigDirectory, filer.IamPoliciesFile)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !foundLegacy || len(content) == 0 {
-		return policiesCollection, nil
+		return policiesCollection, foundLegacy, nil
 	}
 
 	if err := json.Unmarshal(content, policiesCollection); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if policiesCollection.Policies == nil {
 		policiesCollection.Policies = make(map[string]policy_engine.PolicyDocument)
@@ -55,7 +55,17 @@ func (store *FilerEtcStore) loadLegacyPoliciesCollection(ctx context.Context) (*
 		policiesCollection.InlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
 	}
 
-	return policiesCollection, nil
+	return policiesCollection, true, nil
+}
+
+func (store *FilerEtcStore) saveLegacyPoliciesCollection(ctx context.Context, policiesCollection *PoliciesCollection) error {
+	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		content, err := json.MarshalIndent(policiesCollection, "", "  ")
+		if err != nil {
+			return err
+		}
+		return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, content)
+	})
 }
 
 func policyDocumentToPbPolicy(name string, policy policy_engine.PolicyDocument) (*iam_pb.Policy, error) {
@@ -71,7 +81,7 @@ func policyDocumentToPbPolicy(name string, policy policy_engine.PolicyDocument) 
 // policies while preserving any legacy inline policy data stored alongside
 // managed policies.
 func (store *FilerEtcStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
-	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +110,7 @@ func (store *FilerEtcStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.
 // LoadInlinePolicies loads legacy inline policies keyed by user name. Inline
 // policies are still stored in the legacy shared policies file.
 func (store *FilerEtcStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
-	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +144,7 @@ func (store *FilerEtcStore) GetPolicies(ctx context.Context) (map[string]policy_
 		filer.IamConfigDirectory, filer.IamPoliciesFile)
 
 	// 1. Load from legacy single file (low priority)
-	policiesCollection, err := store.loadLegacyPoliciesCollection(ctx)
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +266,20 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 	if err := validatePolicyName(name); err != nil {
 		return err
 	}
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	policiesCollection, foundLegacy, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	deleteLegacyPolicy := false
+	if foundLegacy {
+		if _, exists := policiesCollection.Policies[name]; exists {
+			delete(policiesCollection.Policies, name)
+			deleteLegacyPolicy = true
+		}
+	}
+
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + IamPoliciesDirectory,
 			Name:      name + ".json",
@@ -265,7 +288,15 @@ func (store *FilerEtcStore) DeletePolicy(ctx context.Context, name string) error
 			return err
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+
+	if deleteLegacyPolicy {
+		return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+	}
+
+	return nil
 }
 
 // GetPolicy retrieves a specific IAM policy by name from the filer
@@ -311,6 +342,7 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 // ListPolicyNames returns all managed policy names stored in the filer.
 func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
 	names := make([]string, 0)
+	seenNames := make(map[string]struct{})
 
 	store.mu.RLock()
 	configured := store.filerAddressFunc != nil
@@ -320,7 +352,19 @@ func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, erro
 		return names, nil
 	}
 
-	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for name := range policiesCollection.Policies {
+		if _, found := seenNames[name]; found {
+			continue
+		}
+		names = append(names, name)
+		seenNames[name] = struct{}{}
+	}
+
+	err = store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		dir := filer.IamConfigDirectory + "/" + IamPoliciesDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
@@ -338,7 +382,11 @@ func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, erro
 			if strings.HasSuffix(name, ".json") {
 				name = name[:len(name)-5]
 			}
+			if _, found := seenNames[name]; found {
+				continue
+			}
 			names = append(names, name)
+			seenNames[name] = struct{}{}
 		}
 
 		return nil
