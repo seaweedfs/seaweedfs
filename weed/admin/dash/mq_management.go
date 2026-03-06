@@ -391,7 +391,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 								consumerGroup := strings.TrimSuffix(offsetResp.Entry.Name, ".offset")
 
 								// Read the offset value from the file
-								offsetData, err := filer.ReadInsideFiler(client, partitionDir, offsetResp.Entry.Name)
+								offsetData, err := filer.ReadInsideFiler(context.Background(), client, partitionDir, offsetResp.Entry.Name)
 								if err != nil {
 									glog.Warningf("Failed to read offset file %s: %v", offsetResp.Entry.Name, err)
 									continue

@@ -20,6 +20,7 @@ type FilerEtcStore struct {
 	filerAddressFunc func() pb.ServerAddress // Function to get current active filer
 	grpcDialOption   grpc.DialOption
 	mu               sync.RWMutex // Protects filerAddressFunc and grpcDialOption
+	policyMu         sync.Mutex   // Serializes legacy managed-policy mutations
 }
 
 func (store *FilerEtcStore) GetName() credential.CredentialStoreTypeName {

@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,7 +35,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 
 	// Use WithOneOfGrpcFilerClients to support multiple filers with failover
 	err := pb.WithOneOfGrpcFilerClients(false, option.Filers, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
+		content, err := filer.ReadInsideFiler(context.Background(), client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}
