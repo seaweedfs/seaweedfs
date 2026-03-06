@@ -53,13 +53,18 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
+	snapshotTsNs := req.SnapshotTsNs
+	if snapshotTsNs == 0 {
+		snapshotTsNs = time.Now().UnixNano()
+	}
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
 			if err = stream.Send(&filer_pb.ListEntriesResponse{
-				Entry: entry.ToProtoEntry(),
+				Entry:        entry.ToProtoEntry(),
+				SnapshotTsNs: snapshotTsNs,
 			}); err != nil {
 				return false, err
 			}
@@ -162,10 +167,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		newEntry.TtlSec = 0
 	}
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
 	if createErr == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
+		resp.MetadataEvent = eventSink.Last()
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -201,16 +208,19 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
+	resp := &filer_pb.UpdateEntryResponse{}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
+		resp.MetadataEvent = eventSink.Last()
 
 	} else {
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
-	return &filer_pb.UpdateEntryResponse{}, err
+	return resp, err
 }
 
 func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
@@ -303,11 +313,13 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).InfofCtx(ctx, "DeleteEntry %v", req)
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
 	}
+	resp.MetadataEvent = eventSink.Last()
 	return resp, nil
 }
 
