@@ -69,7 +69,7 @@ impl Store {
     }
 
     /// Find which location contains a volume (mutable).
-    fn find_volume_mut(&mut self, vid: VolumeId) -> Option<(usize, &mut crate::storage::volume::Volume)> {
+    pub fn find_volume_mut(&mut self, vid: VolumeId) -> Option<(usize, &mut crate::storage::volume::Volume)> {
         for (i, loc) in self.locations.iter_mut().enumerate() {
             if let Some(v) = loc.find_volume_mut(vid) {
                 return Some((i, v));

@@ -590,6 +590,43 @@ impl Volume {
         self.no_write_or_delete || self.no_write_can_delete
     }
 
+    /// Mark this volume as read-only (no writes or deletes).
+    pub fn set_read_only(&mut self) {
+        self.no_write_or_delete = true;
+    }
+
+    /// Mark this volume as writable (allow writes and deletes).
+    pub fn set_writable(&mut self) {
+        self.no_write_or_delete = false;
+        self.no_write_can_delete = false;
+    }
+
+    /// Change the replication placement and rewrite the super block.
+    pub fn set_replica_placement(&mut self, rp: ReplicaPlacement) -> Result<(), VolumeError> {
+        self.super_block.replica_placement = rp;
+        let bytes = self.super_block.to_bytes();
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+        dat_file.seek(SeekFrom::Start(0))?;
+        dat_file.write_all(&bytes)?;
+        dat_file.sync_all()?;
+        Ok(())
+    }
+
+    /// Write a raw needle blob at a specific offset in the .dat file.
+    pub fn write_needle_blob(&mut self, offset: i64, needle_blob: &[u8]) -> Result<(), VolumeError> {
+        if self.no_write_or_delete {
+            return Err(VolumeError::ReadOnly);
+        }
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+        dat_file.seek(SeekFrom::Start(offset as u64))?;
+        dat_file.write_all(needle_blob)?;
+        Ok(())
+    }
+
     pub fn needs_replication(&self) -> bool {
         self.super_block.replica_placement.get_copy_count() > 1
     }

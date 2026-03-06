@@ -210,23 +210,51 @@ impl VolumeServer for VolumeGrpcService {
 
     async fn volume_mark_readonly(
         &self,
-        _request: Request<volume_server_pb::VolumeMarkReadonlyRequest>,
+        request: Request<volume_server_pb::VolumeMarkReadonlyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkReadonlyResponse>, Status> {
-        Err(Status::unimplemented("volume_mark_readonly not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let mut store = self.state.store.write().unwrap();
+        let (_, vol) = store.find_volume_mut(vid)
+            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+        vol.set_read_only();
+        Ok(Response::new(volume_server_pb::VolumeMarkReadonlyResponse {}))
     }
 
     async fn volume_mark_writable(
         &self,
-        _request: Request<volume_server_pb::VolumeMarkWritableRequest>,
+        request: Request<volume_server_pb::VolumeMarkWritableRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkWritableResponse>, Status> {
-        Err(Status::unimplemented("volume_mark_writable not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let mut store = self.state.store.write().unwrap();
+        let (_, vol) = store.find_volume_mut(vid)
+            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+        vol.set_writable();
+        Ok(Response::new(volume_server_pb::VolumeMarkWritableResponse {}))
     }
 
     async fn volume_configure(
         &self,
-        _request: Request<volume_server_pb::VolumeConfigureRequest>,
+        request: Request<volume_server_pb::VolumeConfigureRequest>,
     ) -> Result<Response<volume_server_pb::VolumeConfigureResponse>, Status> {
-        Err(Status::unimplemented("volume_configure not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let rp = crate::storage::super_block::ReplicaPlacement::from_string(&req.replication)
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        let mut store = self.state.store.write().unwrap();
+        let (_, vol) = store.find_volume_mut(vid)
+            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+
+        match vol.set_replica_placement(rp) {
+            Ok(()) => Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error: String::new(),
+            })),
+            Err(e) => Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error: e.to_string(),
+            })),
+        }
     }
 
     async fn volume_status(
@@ -338,16 +366,47 @@ impl VolumeServer for VolumeGrpcService {
 
     async fn read_needle_meta(
         &self,
-        _request: Request<volume_server_pb::ReadNeedleMetaRequest>,
+        request: Request<volume_server_pb::ReadNeedleMetaRequest>,
     ) -> Result<Response<volume_server_pb::ReadNeedleMetaResponse>, Status> {
-        Err(Status::unimplemented("read_needle_meta not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let needle_id = NeedleId(req.needle_id);
+
+        let store = self.state.store.read().unwrap();
+        let mut n = Needle { id: needle_id, ..Needle::default() };
+        match store.read_volume_needle(vid, &mut n) {
+            Ok(_) => {
+                let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
+                Ok(Response::new(volume_server_pb::ReadNeedleMetaResponse {
+                    cookie: n.cookie.0,
+                    last_modified: n.last_modified,
+                    crc: n.checksum.0,
+                    ttl: ttl_str,
+                    append_at_ns: n.append_at_ns,
+                }))
+            }
+            Err(e) => Err(Status::not_found(e.to_string())),
+        }
     }
 
     async fn write_needle_blob(
         &self,
-        _request: Request<volume_server_pb::WriteNeedleBlobRequest>,
+        request: Request<volume_server_pb::WriteNeedleBlobRequest>,
     ) -> Result<Response<volume_server_pb::WriteNeedleBlobResponse>, Status> {
-        Err(Status::unimplemented("write_needle_blob not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        let mut store = self.state.store.write().unwrap();
+        let (_, vol) = store.find_volume_mut(vid)
+            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+
+        // Write the raw needle blob at the end of the dat file (append)
+        let dat_size = vol.dat_file_size()
+            .map_err(|e| Status::internal(e.to_string()))? as i64;
+        vol.write_needle_blob(dat_size, &req.needle_blob)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(volume_server_pb::WriteNeedleBlobResponse {}))
     }
 
     type ReadAllNeedlesStream = BoxStream<volume_server_pb::ReadAllNeedlesResponse>;
@@ -377,9 +436,24 @@ impl VolumeServer for VolumeGrpcService {
 
     async fn volume_ec_shards_generate(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsGenerateRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsGenerateRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsGenerateResponse>, Status> {
-        Err(Status::unimplemented("volume_ec_shards_generate not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let collection = &req.collection;
+
+        // Find the volume's directory
+        let dir = {
+            let store = self.state.store.read().unwrap();
+            let (loc_idx, _) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            store.locations[loc_idx].directory.clone()
+        };
+
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsGenerateResponse {}))
     }
 
     async fn volume_ec_shards_rebuild(
