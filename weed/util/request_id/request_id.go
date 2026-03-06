@@ -2,6 +2,7 @@ package request_id
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/http"
 	"time"
@@ -28,7 +29,9 @@ func InjectToRequest(ctx context.Context, req *http.Request) {
 }
 
 func New() string {
-	return fmt.Sprintf("%X", time.Now().UTC().UnixNano())
+	var buf [4]byte
+	rand.Read(buf[:])
+	return fmt.Sprintf("%X%08X", time.Now().UTC().UnixNano(), buf)
 }
 
 func GetFromRequest(r *http.Request) string {
