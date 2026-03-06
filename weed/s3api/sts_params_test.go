@@ -158,6 +158,7 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		}
 		// Confirm it routed to STS
 		assert.Equal(t, http.StatusServiceUnavailable, rr.Code, "Fixed behavior: Should return 503 from STS handler (service not ready)")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
 
 	// Test Case 3: STS Action in Body with SigV4-style Authorization (Real-world scenario)
@@ -202,6 +203,7 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not return 501 (IAM handler)")
 		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusForbidden}, rr.Code,
 			"Should return 503 (STS unavailable) or 403 (auth failed), confirming STS routing")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
 }
 
