@@ -135,16 +135,43 @@ func copyPolicyDocument(original *PolicyDocument) *PolicyDocument {
 			copy(copied.Statement[i].NotResource, stmt.NotResource)
 		}
 
-		// Copy condition map (shallow copy for now)
+		// Copy condition map
 		if stmt.Condition != nil {
 			copied.Statement[i].Condition = make(map[string]map[string]interface{})
-			for k, v := range stmt.Condition {
-				copied.Statement[i].Condition[k] = v
+			for conditionType, conditionValues := range stmt.Condition {
+				copiedConditionValues := make(map[string]interface{}, len(conditionValues))
+				for conditionKey, conditionValue := range conditionValues {
+					copiedConditionValues[conditionKey] = copyPolicyConditionValue(conditionValue)
+				}
+				copied.Statement[i].Condition[conditionType] = copiedConditionValues
 			}
 		}
 	}
 
 	return copied
+}
+
+func copyPolicyConditionValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case []string:
+		copied := make([]string, len(v))
+		copy(copied, v)
+		return copied
+	case []interface{}:
+		copied := make([]interface{}, len(v))
+		for i := range v {
+			copied[i] = copyPolicyConditionValue(v[i])
+		}
+		return copied
+	case map[string]interface{}:
+		copied := make(map[string]interface{}, len(v))
+		for key, nestedValue := range v {
+			copied[key] = copyPolicyConditionValue(nestedValue)
+		}
+		return copied
+	default:
+		return v
+	}
 }
 
 // FilerPolicyStore implements PolicyStore using SeaweedFS filer

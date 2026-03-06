@@ -227,6 +227,38 @@ func TestFilerPolicyStoreStorePolicyWritesCanonicalFileAndRemovesLegacyTwin(t *t
 	assert.Equal(t, "s3:GetObject", document.Statement[0].Action[0])
 }
 
+func TestCopyPolicyDocumentClonesConditionState(t *testing.T) {
+	original := &PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []Statement{
+			{
+				Effect: "Allow",
+				Action: []string{"s3:GetObject"},
+				Resource: []string{
+					"arn:aws:s3:::test-bucket/*",
+				},
+				Condition: map[string]map[string]interface{}{
+					"StringEquals": {
+						"s3:prefix": []string{"public/", "private/"},
+					},
+					"Null": {
+						"aws:PrincipalArn": "false",
+					},
+				},
+			},
+		},
+	}
+
+	copied := copyPolicyDocument(original)
+	require.NotNil(t, copied)
+
+	original.Statement[0].Condition["StringEquals"]["s3:prefix"] = []string{"mutated/"}
+	original.Statement[0].Condition["Null"]["aws:PrincipalArn"] = "true"
+
+	assert.Equal(t, []string{"public/", "private/"}, copied.Statement[0].Condition["StringEquals"]["s3:prefix"])
+	assert.Equal(t, "false", copied.Statement[0].Condition["Null"]["aws:PrincipalArn"])
+}
+
 func testPolicyDocument(action string, resource string) *PolicyDocument {
 	return &PolicyDocument{
 		Version: "2012-10-17",
