@@ -564,7 +564,12 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	}
 
 	for _, event := range state.bufferedEvents {
-		if event.TsNs != 0 && event.TsNs <= snapshotTsNs {
+		// When the server provided a snapshot timestamp, skip events that
+		// the listing already included. When snapshotTsNs == 0 (empty
+		// directory — server returned no entries and no snapshot), replay
+		// ALL buffered events to avoid dropping mutations due to
+		// client/server clock skew.
+		if snapshotTsNs != 0 && event.TsNs != 0 && event.TsNs <= snapshotTsNs {
 			continue
 		}
 		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {

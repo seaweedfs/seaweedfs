@@ -134,14 +134,13 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		SnapshotTsNs:       snapshotTsNs,
 	}
 
-	// Preserve the caller-requested snapshot so it isn't lost on errors,
-	// empty directories, or when the server omits SnapshotTsNs.
-	// For first requests (snapshotTsNs==0), generate a client-side cutoff
-	// so callers like CompleteDirectoryBuild get a meaningful boundary.
+	// Preserve the caller-requested snapshot so pagination uses the same
+	// boundary across pages. For first requests (snapshotTsNs==0) we do NOT
+	// synthesize a client-side timestamp — if the server returns no entries,
+	// we return 0 so callers like CompleteDirectoryBuild know no server
+	// snapshot was received and can replay all buffered events without
+	// clock-skew-sensitive filtering.
 	actualSnapshotTsNs = snapshotTsNs
-	if actualSnapshotTsNs == 0 {
-		actualSnapshotTsNs = time.Now().UnixNano()
-	}
 
 	glog.V(4).InfofCtx(ctx, "read directory: %v", request)
 	ctx, cancel := context.WithCancel(ctx)

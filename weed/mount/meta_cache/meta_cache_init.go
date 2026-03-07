@@ -69,7 +69,11 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
-		if err := mc.BeginDirectoryBuild(ctx, path); err != nil {
+		// Use context.Background() for build lifecycle calls so that
+		// errgroup cancellation of ctx doesn't cause enqueueAndWait to
+		// return early, which would trigger cleanupBuild while the
+		// operation is still queued.
+		if err := mc.BeginDirectoryBuild(context.Background(), path); err != nil {
 			return nil, fmt.Errorf("begin build %s: %w", path, err)
 		}
 		cleanupDone := false
@@ -136,7 +140,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
 			}
 		}
-		if err := mc.CompleteDirectoryBuild(ctx, path, snapshotTsNs); err != nil {
+		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs); err != nil {
 			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)
 		}
