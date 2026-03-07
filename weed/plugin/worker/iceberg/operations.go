@@ -525,7 +525,12 @@ func (h *Handler) commitWithRetry(
 		tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
 		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes)
 		if err != nil {
-			// On conflict, clean up the new metadata file and retry
+			if !errors.Is(err, errMetadataVersionConflict) {
+				// Non-conflict error (permissions, transport, etc.): fail immediately.
+				_ = deleteFilerFile(ctx, filerClient, metaDir, newMetadataFileName)
+				return fmt.Errorf("update table xattr (attempt %d): %w", attempt, err)
+			}
+			// Version conflict: clean up the new metadata file and retry
 			_ = deleteFilerFile(ctx, filerClient, metaDir, newMetadataFileName)
 			if attempt < maxRetries-1 {
 				glog.V(1).Infof("iceberg maintenance: version conflict on %s/%s, retrying (attempt %d)", bucketName, tablePath, attempt)
