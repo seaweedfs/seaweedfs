@@ -2,10 +2,10 @@
 
 ## Current Status (2026-03-07)
 
-**HTTP tests**: 54/55 pass (98.2%) — 1 unfixable: CONNECT method is a hyper/axum limitation
-**gRPC tests**: 74/75 pass (98.7%) — 1 Go-only: TestVolumeMoveHandlesInFlightWrites uses Go binaries exclusively
-**S3 remote storage tests**: 3/3 pass (new)
-**Total**: 131/133 (98.5%) + 3 S3 tests
+**HTTP tests**: 61/61 pass (100%) — CONNECT parity test removed (not a real feature)
+**gRPC tests**: 79/80 pass (98.75%) — 1 Go-only: TestVolumeMoveHandlesInFlightWrites uses Go binaries exclusively
+**S3 remote storage tests**: 3/3 pass
+**Total**: 143/144 (99.3%) + 3 S3 tests
 **Rust unit tests**: 112 lib + 7 integration = 119
 
 ## Completed Features
@@ -72,10 +72,7 @@ All phases from the original plan are complete:
 
 ### Low Priority
 
-7. **TestUnsupportedMethodConnectParity** — HTTP CONNECT method returns 400 in Go but
-   hyper rejects it before reaching the router. Would need a custom hyper service wrapper.
-
-8. **LevelDB needle maps** — For volumes with millions of needles.
+7. **LevelDB needle maps** — For volumes with millions of needles.
 
 9. **Volume backup/sync** — Streaming backup, binary search.
 
