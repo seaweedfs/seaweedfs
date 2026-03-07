@@ -300,6 +300,10 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if request.Job.JobType != "" && request.Job.JobType != jobType {
 		return fmt.Errorf("job type %q is not handled by iceberg maintenance handler", request.Job.JobType)
 	}
+	canonicalJobType := request.Job.JobType
+	if canonicalJobType == "" {
+		canonicalJobType = jobType
+	}
 
 	params := request.Job.Parameters
 	bucketName := readStringConfig(params, "bucket_name", "")
@@ -324,7 +328,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	// Send initial progress
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 		JobId:           request.Job.JobId,
-		JobType:         request.Job.JobType,
+		JobType:         canonicalJobType,
 		State:           plugin_pb.JobState_JOB_STATE_ASSIGNED,
 		ProgressPercent: 0,
 		Stage:           "assigned",
@@ -361,7 +365,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		progress := float64(completedOps) / float64(totalOps) * 100
 		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
-			JobType:         request.Job.JobType,
+			JobType:         canonicalJobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 			ProgressPercent: progress,
 			Stage:           op,
@@ -405,7 +409,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 
 	return sender.SendCompleted(&plugin_pb.JobCompleted{
 		JobId:   request.Job.JobId,
-		JobType: request.Job.JobType,
+		JobType: canonicalJobType,
 		Success: success,
 		ErrorMessage: func() string {
 			if lastErr != nil {
