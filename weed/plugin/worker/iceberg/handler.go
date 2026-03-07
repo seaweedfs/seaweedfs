@@ -223,6 +223,9 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
+	if _, err := parseOperations(workerConfig.Operations); err != nil {
+		return fmt.Errorf("invalid operations config: %w", err)
+	}
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
 
