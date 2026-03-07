@@ -1,0 +1,460 @@
+package iceberg
+
+import (
+	"context"
+	"fmt"
+	"path"
+	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// Handler implements the JobHandler interface for Iceberg table maintenance:
+// snapshot expiration, orphan file removal, and manifest rewriting.
+type Handler struct {
+	grpcDialOption grpc.DialOption
+}
+
+// NewHandler creates a new handler for iceberg table maintenance.
+func NewHandler(grpcDialOption grpc.DialOption) *Handler {
+	return &Handler{grpcDialOption: grpcDialOption}
+}
+
+func (h *Handler) Capability() *plugin_pb.JobTypeCapability {
+	return &plugin_pb.JobTypeCapability{
+		JobType:                 jobType,
+		CanDetect:               true,
+		CanExecute:              true,
+		MaxDetectionConcurrency: 1,
+		MaxExecutionConcurrency: 4,
+		DisplayName:             "Iceberg Maintenance",
+		Description:             "Compacts, expires snapshots, removes orphans, and rewrites manifests for Iceberg tables in S3 table buckets",
+		Weight:                  50,
+	}
+}
+
+func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
+	return &plugin_pb.JobTypeDescriptor{
+		JobType:           jobType,
+		DisplayName:       "Iceberg Maintenance",
+		Description:       "Automated maintenance for Iceberg tables: snapshot expiration, orphan removal, manifest rewriting",
+		Icon:              "fas fa-snowflake",
+		DescriptorVersion: 1,
+		AdminConfigForm: &plugin_pb.ConfigForm{
+			FormId:      "iceberg-maintenance-admin",
+			Title:       "Iceberg Maintenance Admin Config",
+			Description: "Admin-side controls for Iceberg table maintenance scope.",
+			Sections: []*plugin_pb.ConfigSection{
+				{
+					SectionId:   "scope",
+					Title:       "Scope",
+					Description: "Filters to restrict which tables are scanned for maintenance.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "bucket_filter",
+							Label:       "Bucket Filter",
+							Description: "Comma-separated wildcard patterns for table buckets (* and ? supported). Blank = all.",
+							Placeholder: "prod-*, staging-*",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "namespace_filter",
+							Label:       "Namespace Filter",
+							Description: "Comma-separated wildcard patterns for namespaces (* and ? supported). Blank = all.",
+							Placeholder: "analytics, events-*",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "table_filter",
+							Label:       "Table Filter",
+							Description: "Comma-separated wildcard patterns for table names (* and ? supported). Blank = all.",
+							Placeholder: "clicks, orders-*",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+					},
+				},
+			},
+			DefaultValues: map[string]*plugin_pb.ConfigValue{
+				"bucket_filter":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"namespace_filter": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"table_filter":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			},
+		},
+		WorkerConfigForm: &plugin_pb.ConfigForm{
+			FormId:      "iceberg-maintenance-worker",
+			Title:       "Iceberg Maintenance Worker Config",
+			Description: "Worker-side thresholds for maintenance operations.",
+			Sections: []*plugin_pb.ConfigSection{
+				{
+					SectionId:   "snapshots",
+					Title:       "Snapshot Expiration",
+					Description: "Controls for automatic snapshot cleanup.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "snapshot_retention_hours",
+							Label:       "Retention (hours)",
+							Description: "Expire snapshots older than this many hours.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+						{
+							Name:        "max_snapshots_to_keep",
+							Label:       "Max Snapshots",
+							Description: "Always keep at least this many most recent snapshots.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+					},
+				},
+				{
+					SectionId:   "compaction",
+					Title:       "Data Compaction",
+					Description: "Controls for bin-packing small Parquet data files.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "target_file_size_bytes",
+							Label:       "Target File Size (bytes)",
+							Description: "Files smaller than this are candidates for compaction.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1024 * 1024}},
+						},
+						{
+							Name:        "min_input_files",
+							Label:       "Min Input Files",
+							Description: "Minimum number of small files in a partition to trigger compaction.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+						},
+					},
+				},
+				{
+					SectionId:   "orphans",
+					Title:       "Orphan Removal",
+					Description: "Controls for orphan file cleanup.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "orphan_older_than_hours",
+							Label:       "Safety Window (hours)",
+							Description: "Only remove orphan files older than this many hours.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+					},
+				},
+				{
+					SectionId:   "general",
+					Title:       "General",
+					Description: "General maintenance settings.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "max_commit_retries",
+							Label:       "Max Commit Retries",
+							Description: "Maximum number of commit retries on version conflict.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 20}},
+						},
+						{
+							Name:        "operations",
+							Label:       "Operations",
+							Description: "Comma-separated list of operations to run: compact, expire_snapshots, remove_orphans, rewrite_manifests, or 'all'.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+					},
+				},
+			},
+			DefaultValues: map[string]*plugin_pb.ConfigValue{
+				"target_file_size_bytes":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+				"min_input_files":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+				"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+				"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+			},
+		},
+		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
+			Enabled:                       false, // disabled by default
+			DetectionIntervalSeconds:      3600,  // 1 hour
+			DetectionTimeoutSeconds:       300,
+			MaxJobsPerDetection:           100,
+			GlobalExecutionConcurrency:    4,
+			PerWorkerExecutionConcurrency: 2,
+			RetryLimit:                    1,
+			RetryBackoffSeconds:           60,
+			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
+		},
+		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
+			"target_file_size_bytes":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+			"min_input_files":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+			"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+			"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+		},
+	}
+}
+
+func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionRequest, sender pluginworker.DetectionSender) error {
+	if request == nil {
+		return fmt.Errorf("run detection request is nil")
+	}
+	if sender == nil {
+		return fmt.Errorf("detection sender is nil")
+	}
+	if request.JobType != "" && request.JobType != jobType {
+		return fmt.Errorf("job type %q is not handled by iceberg maintenance handler", request.JobType)
+	}
+
+	workerConfig := ParseConfig(request.GetWorkerConfigValues())
+	if _, err := parseOperations(workerConfig.Operations); err != nil {
+		return fmt.Errorf("invalid operations config: %w", err)
+	}
+
+	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
+
+	// Get filer addresses from cluster context
+	filerAddresses := make([]string, 0)
+	if request.ClusterContext != nil {
+		filerAddresses = append(filerAddresses, request.ClusterContext.FilerGrpcAddresses...)
+	}
+	if len(filerAddresses) == 0 {
+		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
+		return h.sendEmptyDetection(sender)
+	}
+
+	// Read scope filters
+	bucketFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "bucket_filter", ""))
+	namespaceFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "namespace_filter", ""))
+	tableFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "table_filter", ""))
+
+	// Connect to filer to scan table buckets
+	filerAddress := filerAddresses[0]
+	conn, err := grpc.NewClient(filerAddress, h.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("connect to filer %s: %w", filerAddress, err)
+	}
+	defer conn.Close()
+	filerClient := filer_pb.NewSeaweedFilerClient(conn)
+
+	maxResults := int(request.MaxResults)
+	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, maxResults)
+	if err != nil {
+		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
+		return fmt.Errorf("scan tables: %w", err)
+	}
+
+	_ = sender.SendActivity(pluginworker.BuildDetectorActivity("scan_complete",
+		fmt.Sprintf("found %d table(s) needing maintenance", len(tables)),
+		map[string]*plugin_pb.ConfigValue{
+			"tables_found": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(tables))}},
+		}))
+
+	hasMore := false
+	if maxResults > 0 && len(tables) > maxResults {
+		hasMore = true
+		tables = tables[:maxResults]
+	}
+
+	proposals := make([]*plugin_pb.JobProposal, 0, len(tables))
+	for _, t := range tables {
+		proposal := h.buildMaintenanceProposal(t, filerAddress)
+		proposals = append(proposals, proposal)
+	}
+
+	if err := sender.SendProposals(&plugin_pb.DetectionProposals{
+		JobType:   jobType,
+		Proposals: proposals,
+		HasMore:   hasMore,
+	}); err != nil {
+		return err
+	}
+
+	return sender.SendComplete(&plugin_pb.DetectionComplete{
+		JobType:        jobType,
+		Success:        true,
+		TotalProposals: int32(len(proposals)),
+	})
+}
+
+func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequest, sender pluginworker.ExecutionSender) error {
+	if request == nil || request.Job == nil {
+		return fmt.Errorf("execute request/job is nil")
+	}
+	if sender == nil {
+		return fmt.Errorf("execution sender is nil")
+	}
+	if request.Job.JobType != "" && request.Job.JobType != jobType {
+		return fmt.Errorf("job type %q is not handled by iceberg maintenance handler", request.Job.JobType)
+	}
+	canonicalJobType := request.Job.JobType
+	if canonicalJobType == "" {
+		canonicalJobType = jobType
+	}
+
+	params := request.Job.Parameters
+	bucketName := readStringConfig(params, "bucket_name", "")
+	namespace := readStringConfig(params, "namespace", "")
+	tableName := readStringConfig(params, "table_name", "")
+	tablePath := readStringConfig(params, "table_path", "")
+	filerAddress := readStringConfig(params, "filer_address", "")
+
+	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
+		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
+	}
+	if tablePath == "" {
+		tablePath = path.Join(namespace, tableName)
+	}
+	// Sanitize tablePath to prevent directory traversal.
+	tablePath = path.Clean(tablePath)
+	expected := path.Join(namespace, tableName)
+	if tablePath != expected && !strings.HasPrefix(tablePath, expected+"/") {
+		return fmt.Errorf("invalid table_path %q: must be %q or a subpath", tablePath, expected)
+	}
+
+	workerConfig := ParseConfig(request.GetWorkerConfigValues())
+	ops, opsErr := parseOperations(workerConfig.Operations)
+	if opsErr != nil {
+		return fmt.Errorf("invalid operations config: %w", opsErr)
+	}
+
+	// Send initial progress
+	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId:           request.Job.JobId,
+		JobType:         canonicalJobType,
+		State:           plugin_pb.JobState_JOB_STATE_ASSIGNED,
+		ProgressPercent: 0,
+		Stage:           "assigned",
+		Message:         fmt.Sprintf("maintenance job accepted for %s/%s/%s", bucketName, namespace, tableName),
+		Activities: []*plugin_pb.ActivityEvent{
+			pluginworker.BuildExecutorActivity("assigned", fmt.Sprintf("maintenance job accepted for %s/%s/%s", bucketName, namespace, tableName)),
+		},
+	}); err != nil {
+		return err
+	}
+
+	// Connect to filer
+	conn, err := grpc.NewClient(filerAddress, h.grpcDialOption)
+	if err != nil {
+		return fmt.Errorf("connect to filer %s: %w", filerAddress, err)
+	}
+	defer conn.Close()
+	filerClient := filer_pb.NewSeaweedFilerClient(conn)
+
+	var results []string
+	var lastErr error
+	totalOps := len(ops)
+	completedOps := 0
+
+	// Execute operations in correct Iceberg maintenance order:
+	// expire_snapshots → remove_orphans → rewrite_manifests
+	for _, op := range ops {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		progress := float64(completedOps) / float64(totalOps) * 100
+		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId:           request.Job.JobId,
+			JobType:         canonicalJobType,
+			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+			ProgressPercent: progress,
+			Stage:           op,
+			Message:         fmt.Sprintf("running %s", op),
+			Activities: []*plugin_pb.ActivityEvent{
+				pluginworker.BuildExecutorActivity(op, fmt.Sprintf("starting %s for %s/%s/%s", op, bucketName, namespace, tableName)),
+			},
+		}); err != nil {
+			return err
+		}
+
+		var opResult string
+		var opErr error
+
+		switch op {
+		case "compact":
+			opResult, opErr = h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
+		case "expire_snapshots":
+			opResult, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
+		case "remove_orphans":
+			opResult, opErr = h.removeOrphans(ctx, filerClient, bucketName, tablePath, workerConfig)
+		case "rewrite_manifests":
+			opResult, opErr = h.rewriteManifests(ctx, filerClient, bucketName, tablePath, workerConfig)
+		default:
+			glog.Warningf("unknown maintenance operation: %s", op)
+			continue
+		}
+
+		completedOps++
+		if opErr != nil {
+			glog.Warningf("iceberg maintenance %s failed for %s/%s/%s: %v", op, bucketName, namespace, tableName, opErr)
+			results = append(results, fmt.Sprintf("%s: error: %v", op, opErr))
+			lastErr = opErr
+		} else {
+			results = append(results, fmt.Sprintf("%s: %s", op, opResult))
+		}
+	}
+
+	resultSummary := strings.Join(results, "; ")
+	success := lastErr == nil
+
+	return sender.SendCompleted(&plugin_pb.JobCompleted{
+		JobId:   request.Job.JobId,
+		JobType: canonicalJobType,
+		Success: success,
+		ErrorMessage: func() string {
+			if lastErr != nil {
+				return lastErr.Error()
+			}
+			return ""
+		}(),
+		Result: &plugin_pb.JobResult{
+			Summary: resultSummary,
+			OutputValues: map[string]*plugin_pb.ConfigValue{
+				"bucket":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketName}},
+				"namespace": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: namespace}},
+				"table":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: tableName}},
+			},
+		},
+		Activities: []*plugin_pb.ActivityEvent{
+			pluginworker.BuildExecutorActivity("completed", resultSummary),
+		},
+		CompletedAt: timestamppb.Now(),
+	})
+}
+
+func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error {
+	if err := sender.SendProposals(&plugin_pb.DetectionProposals{
+		JobType:   jobType,
+		Proposals: []*plugin_pb.JobProposal{},
+		HasMore:   false,
+	}); err != nil {
+		return err
+	}
+	return sender.SendComplete(&plugin_pb.DetectionComplete{
+		JobType:        jobType,
+		Success:        true,
+		TotalProposals: 0,
+	})
+}
+
+// Ensure Handler implements JobHandler.
+var _ pluginworker.JobHandler = (*Handler)(nil)
