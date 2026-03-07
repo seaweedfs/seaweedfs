@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"syscall"
 	"time"
 
@@ -93,8 +92,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		if err != nil {
 			return err
 		}
-		if err := wfs.applyLocalMetadataEvent(context.Background(), updateResp.GetMetadataEvent()); err != nil {
-			return fmt.Errorf("update metadata event for %s: %w", oldEntryPath, err)
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateResp.GetMetadataEvent()); applyErr != nil {
+			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 		}
 
 		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
@@ -102,8 +101,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			return err
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), createResp.GetMetadataEvent()); err != nil {
-			return fmt.Errorf("insert metadata event for %s: %w", newParentPath.Child(name), err)
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createResp.GetMetadataEvent()); applyErr != nil {
+			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
 		}
 
 		return nil
