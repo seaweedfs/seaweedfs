@@ -593,7 +593,6 @@ func TestRewriteManifestsExecution(t *testing.T) {
 	// Overwrite the manifest list with all 5 manifests
 	var mlBuf bytes.Buffer
 	seqNum := int64(1)
-	snapID := int64(1)
 	if err := iceberg.WriteManifestList(version, &mlBuf, 1, nil, &seqNum, 0, allManifests); err != nil {
 		t.Fatalf("write manifest list: %v", err)
 	}
@@ -623,7 +622,6 @@ func TestRewriteManifestsExecution(t *testing.T) {
 	fs.mu.Lock()
 	creates := fs.createCalls
 	updates := fs.updateCalls
-	_ = snapID
 	fs.mu.Unlock()
 
 	if creates < 3 {
@@ -761,7 +759,7 @@ func TestFullExecuteFlow(t *testing.T) {
 }
 
 func TestDetectWithFakeFiler(t *testing.T) {
-	fs, _ := startFakeFiler(t)
+	fs, client := startFakeFiler(t)
 
 	now := time.Now().UnixMilli()
 	setup := tableSetup{
@@ -775,19 +773,6 @@ func TestDetectWithFakeFiler(t *testing.T) {
 		},
 	}
 	populateTable(t, fs, setup)
-
-	// Get the filer server address for creating a gRPC connection
-	// We need to start a new fake filer through the standard path
-	fs2, client := startFakeFiler(t)
-
-	// Copy entries from fs to fs2
-	fs.mu.Lock()
-	for dir, dirEntries := range fs.entries {
-		for name, entry := range dirEntries {
-			fs2.putEntry(dir, name, entry)
-		}
-	}
-	fs.mu.Unlock()
 
 	handler := NewHandler(nil)
 
