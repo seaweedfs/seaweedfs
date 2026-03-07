@@ -338,8 +338,12 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
 	entry, err := filer_pb.GetEntry(context.Background(), wfs, fullpath)
 	if err != nil {
-		glog.V(1).Infof("lookupEntry GetEntry %s: %v", fullpath, err)
-		return nil, fuse.ENOENT
+		if err == filer_pb.ErrNotFound {
+			glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			return nil, fuse.ENOENT
+		}
+		glog.Warningf("lookupEntry GetEntry %s: %v", fullpath, err)
+		return nil, fuse.EIO
 	}
 	if entry != nil && entry.Attributes != nil && wfs.option.UidGidMapper != nil {
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
