@@ -156,7 +156,6 @@ func (h *Handler) compactDataFiles(
 		if err := saveFilerFile(ctx, filerClient, dataDir, mergedFileName, mergedData); err != nil {
 			return "", fmt.Errorf("save merged file: %w", err)
 		}
-		writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
 		// Create new DataFile entry for the merged file
 		dfBuilder, err := iceberg.NewDataFileBuilder(
@@ -175,6 +174,7 @@ func (h *Handler) compactDataFiles(
 			_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
 			continue
 		}
+		writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
 		newEntry := iceberg.NewManifestEntry(
 			iceberg.EntryStatusADDED,
