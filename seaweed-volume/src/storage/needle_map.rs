@@ -245,6 +245,39 @@ impl CompactNeedleMap {
         let _ = self.sync();
         self.idx_file = None;
     }
+
+    /// Save the in-memory map to an index file, sorted by needle ID ascending.
+    pub fn save_to_idx(&self, path: &str) -> io::Result<()> {
+        let mut entries: Vec<_> = self.map.iter()
+            .filter(|(_, nv)| nv.size.is_valid())
+            .collect();
+        entries.sort_by_key(|(id, _)| **id);
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+
+        for (id, nv) in entries {
+            idx::write_index_entry(&mut file, *id, nv.offset, nv.size)?;
+        }
+        file.sync_all()?;
+        Ok(())
+    }
+
+    /// Visit all live entries in ascending order by needle ID.
+    pub fn ascending_visit<F>(&self, mut f: F) -> Result<(), String>
+    where
+        F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
+    {
+        let mut entries: Vec<_> = self.map.iter().collect();
+        entries.sort_by_key(|(id, _)| **id);
+        for (&id, nv) in entries {
+            f(id, nv)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

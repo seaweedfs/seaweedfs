@@ -158,26 +158,78 @@ impl VolumeServer for VolumeGrpcService {
     type VacuumVolumeCompactStream = BoxStream<volume_server_pb::VacuumVolumeCompactResponse>;
     async fn vacuum_volume_compact(
         &self,
-        _request: Request<volume_server_pb::VacuumVolumeCompactRequest>,
+        request: Request<volume_server_pb::VacuumVolumeCompactRequest>,
     ) -> Result<Response<Self::VacuumVolumeCompactStream>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("vacuum_volume_compact not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let preallocate = req.preallocate as u64;
+        let state = self.state.clone();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+
+        tokio::task::spawn_blocking(move || {
+            let report_interval: i64 = 128 * 1024 * 1024;
+            let next_report = std::sync::atomic::AtomicI64::new(report_interval);
+
+            let tx_clone = tx.clone();
+            let result = {
+                let mut store = state.store.write().unwrap();
+                store.compact_volume(vid, preallocate, 0, |processed| {
+                    let target = next_report.load(std::sync::atomic::Ordering::Relaxed);
+                    if processed > target {
+                        let resp = volume_server_pb::VacuumVolumeCompactResponse {
+                            processed_bytes: processed,
+                            load_avg_1m: 0.0,
+                        };
+                        let _ = tx_clone.blocking_send(Ok(resp));
+                        next_report.store(
+                            processed + report_interval,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }
+                    true
+                })
+            };
+
+            if let Err(e) = result {
+                let _ = tx.blocking_send(Err(Status::internal(e)));
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as Self::VacuumVolumeCompactStream))
     }
 
     async fn vacuum_volume_commit(
         &self,
-        _request: Request<volume_server_pb::VacuumVolumeCommitRequest>,
+        request: Request<volume_server_pb::VacuumVolumeCommitRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("vacuum_volume_commit not yet implemented"))
+        let vid = VolumeId(request.into_inner().volume_id);
+        let mut store = self.state.store.write().unwrap();
+        match store.commit_compact_volume(vid) {
+            Ok((is_read_only, volume_size)) => {
+                Ok(Response::new(volume_server_pb::VacuumVolumeCommitResponse {
+                    is_read_only,
+                    volume_size,
+                }))
+            }
+            Err(e) => Err(Status::internal(e)),
+        }
     }
 
     async fn vacuum_volume_cleanup(
         &self,
-        _request: Request<volume_server_pb::VacuumVolumeCleanupRequest>,
+        request: Request<volume_server_pb::VacuumVolumeCleanupRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCleanupResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("vacuum_volume_cleanup not yet implemented"))
+        let vid = VolumeId(request.into_inner().volume_id);
+        let mut store = self.state.store.write().unwrap();
+        match store.cleanup_compact_volume(vid) {
+            Ok(()) => Ok(Response::new(volume_server_pb::VacuumVolumeCleanupResponse {})),
+            Err(e) => Err(Status::internal(e)),
+        }
     }
 
     async fn delete_collection(

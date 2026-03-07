@@ -381,6 +381,59 @@ impl Store {
         None
     }
 
+    // ---- Vacuum / Compaction ----
+
+    /// Check the garbage level of a volume.
+    pub fn check_compact_volume(&self, vid: VolumeId) -> Result<f64, String> {
+        if let Some((_, v)) = self.find_volume(vid) {
+            Ok(v.garbage_level())
+        } else {
+            Err(format!("volume id {} is not found during check compact", vid.0))
+        }
+    }
+
+    /// Compact a volume by rewriting only live needles.
+    pub fn compact_volume<F>(
+        &mut self,
+        vid: VolumeId,
+        preallocate: u64,
+        max_bytes_per_second: i64,
+        progress_fn: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(i64) -> bool,
+    {
+        if let Some((_, v)) = self.find_volume_mut(vid) {
+            v.compact_by_index(preallocate, max_bytes_per_second, progress_fn)
+                .map_err(|e| format!("compact volume {}: {}", vid.0, e))
+        } else {
+            Err(format!("volume id {} is not found during compact", vid.0))
+        }
+    }
+
+    /// Commit a completed compaction: swap files and reload.
+    pub fn commit_compact_volume(&mut self, vid: VolumeId) -> Result<(bool, u64), String> {
+        if let Some((_, v)) = self.find_volume_mut(vid) {
+            let is_read_only = v.is_read_only();
+            v.commit_compact()
+                .map_err(|e| format!("commit compact volume {}: {}", vid.0, e))?;
+            let volume_size = v.dat_file_size().unwrap_or(0);
+            Ok((is_read_only, volume_size))
+        } else {
+            Err(format!("volume id {} is not found during commit compact", vid.0))
+        }
+    }
+
+    /// Clean up leftover compaction files.
+    pub fn cleanup_compact_volume(&mut self, vid: VolumeId) -> Result<(), String> {
+        if let Some((_, v)) = self.find_volume_mut(vid) {
+            v.cleanup_compact()
+                .map_err(|e| format!("cleanup volume {}: {}", vid.0, e))
+        } else {
+            Err(format!("volume id {} is not found during cleaning up", vid.0))
+        }
+    }
+
     /// Close all locations and their volumes.
     pub fn close(&mut self) {
         for loc in &mut self.locations {
