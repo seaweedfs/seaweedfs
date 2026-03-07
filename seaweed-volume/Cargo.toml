@@ -29,7 +29,7 @@ prometheus = { version = "0.13", features = ["process"] }
 lazy_static = "1"
 
 # JWT
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # TLS
 rustls = "0.23"
