@@ -12,17 +12,17 @@ use std::fmt;
 pub const NEEDLE_ID_SIZE: usize = 8;
 pub const NEEDLE_ID_EMPTY: u64 = 0;
 pub const COOKIE_SIZE: usize = 4;
-pub const OFFSET_SIZE: usize = 5; // 5-byte offset (8TB max volume)
+pub const OFFSET_SIZE: usize = 4; // 4-byte offset (32GB max volume, matching Go default build)
 pub const SIZE_SIZE: usize = 4;
 pub const NEEDLE_HEADER_SIZE: usize = COOKIE_SIZE + NEEDLE_ID_SIZE + SIZE_SIZE; // 16
 pub const DATA_SIZE_SIZE: usize = 4;
-pub const NEEDLE_MAP_ENTRY_SIZE: usize = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE; // 17
+pub const NEEDLE_MAP_ENTRY_SIZE: usize = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE; // 16
 pub const TIMESTAMP_SIZE: usize = 8;
 pub const NEEDLE_PADDING_SIZE: usize = 8;
 pub const NEEDLE_CHECKSUM_SIZE: usize = 4;
 
-/// Maximum possible volume size with 5-byte offset: 8TB
-/// Formula: 4 * 1024 * 1024 * 1024 * 8 * 256
+/// Maximum possible volume size with 4-byte offset: 32GB
+/// Formula: 4 * 1024 * 1024 * 1024 * 8
 pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8 * 256;
 
 // ============================================================================
@@ -169,22 +169,19 @@ impl From<Size> for i32 {
 // Offset (5 bytes)
 // ============================================================================
 
-/// 5-byte offset encoding for needle positions in .dat files.
+/// 4-byte offset encoding for needle positions in .dat files (matching Go default build).
 ///
-/// The offset is stored divided by NEEDLE_PADDING_SIZE (8), so 5 bytes can
-/// address up to 8TB. The on-disk byte layout in .idx files is:
-///   [b3][b2][b1][b0][b4]  (big-endian lower 4 bytes, then highest byte)
+/// The offset is stored divided by NEEDLE_PADDING_SIZE (8), so 4 bytes can
+/// address up to 32GB. The on-disk byte layout in .idx files is:
+///   [b3][b2][b1][b0]  (big-endian 4 bytes)
 ///
 /// actual_offset = stored_value * 8
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Offset {
-    /// Lower 4 bytes stored as b3(MSB)..b0(LSB)
     pub b0: u8,
     pub b1: u8,
     pub b2: u8,
     pub b3: u8,
-    /// Highest byte (5th byte)
-    pub b4: u8,
 }
 
 impl Offset {
@@ -193,8 +190,7 @@ impl Offset {
         let stored = self.b0 as i64
             + (self.b1 as i64) * 256
             + (self.b2 as i64) * 65536
-            + (self.b3 as i64) * 16777216
-            + (self.b4 as i64) * 4294967296;
+            + (self.b3 as i64) * 16777216;
         stored * NEEDLE_PADDING_SIZE as i64
     }
 
@@ -206,22 +202,20 @@ impl Offset {
             b1: (smaller >> 8) as u8,
             b2: (smaller >> 16) as u8,
             b3: (smaller >> 24) as u8,
-            b4: (smaller >> 32) as u8,
         }
     }
 
-    /// Serialize to 5 bytes in the .idx file format.
-    /// Layout: [b3][b2][b1][b0][b4]
+    /// Serialize to 4 bytes in the .idx file format.
+    /// Layout: [b3][b2][b1][b0] (big-endian)
     pub fn to_bytes(&self, bytes: &mut [u8]) {
         assert!(bytes.len() >= OFFSET_SIZE);
         bytes[0] = self.b3;
         bytes[1] = self.b2;
         bytes[2] = self.b1;
         bytes[3] = self.b0;
-        bytes[4] = self.b4;
     }
 
-    /// Deserialize from 5 bytes in the .idx file format.
+    /// Deserialize from 4 bytes in the .idx file format.
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= OFFSET_SIZE);
         Offset {
@@ -229,12 +223,11 @@ impl Offset {
             b2: bytes[1],
             b1: bytes[2],
             b0: bytes[3],
-            b4: bytes[4],
         }
     }
 
     pub fn is_zero(&self) -> bool {
-        self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0 && self.b4 == 0
+        self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0
     }
 }
 
@@ -467,8 +460,8 @@ mod tests {
 
     #[test]
     fn test_offset_max() {
-        // Max 5-byte stored value = 2^40 - 1
-        let max_stored: i64 = (1i64 << 40) - 1;
+        // Max 4-byte stored value = 2^32 - 1
+        let max_stored: i64 = (1i64 << 32) - 1;
         let max_actual = max_stored * NEEDLE_PADDING_SIZE as i64;
         let offset = Offset::from_actual_offset(max_actual);
         assert_eq!(offset.to_actual_offset(), max_actual);

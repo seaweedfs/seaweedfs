@@ -658,6 +658,29 @@ impl Volume {
         self.no_write_or_delete || self.no_write_can_delete
     }
 
+    pub fn last_compact_revision(&self) -> u16 {
+        self.last_compact_revision
+    }
+
+    /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
+    pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let mut needles = Vec::new();
+        for (&key, nv) in nm.iter() {
+            if !nv.size.is_valid() {
+                continue; // skip deleted
+            }
+            let mut n = Needle {
+                id: key,
+                ..Needle::default()
+            };
+            if let Ok(()) = self.read_needle_data_at(&mut n, nv.offset.to_actual_offset(), nv.size) {
+                needles.push(n);
+            }
+        }
+        Ok(needles)
+    }
+
     /// Insert or update a needle index entry (for low-level blob writes).
     pub fn put_needle_index(&mut self, key: NeedleId, offset: Offset, size: Size) -> Result<(), VolumeError> {
         if let Some(ref mut nm) = self.nm {

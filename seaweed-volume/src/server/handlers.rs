@@ -227,18 +227,39 @@ async fn get_or_head_handler_inner(
         response_headers.insert(header::CONTENT_DISPOSITION, disposition.parse().unwrap());
     }
 
+    // Handle compressed data: if needle is compressed, either pass through or decompress
+    let is_compressed = n.is_compressed();
+    let mut data = n.data;
+    if is_compressed {
+        let accept_encoding = headers.get(header::ACCEPT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if accept_encoding.contains("gzip") {
+            response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+        } else {
+            // Decompress for client
+            use flate2::read::GzDecoder;
+            use std::io::Read as _;
+            let mut decoder = GzDecoder::new(&data[..]);
+            let mut decompressed = Vec::new();
+            if decoder.read_to_end(&mut decompressed).is_ok() {
+                data = decompressed;
+            }
+        }
+    }
+
     // Accept-Ranges
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
     // Check Range header
     if let Some(range_header) = headers.get(header::RANGE) {
         if let Ok(range_str) = range_header.to_str() {
-            return handle_range_request(range_str, &n.data, response_headers);
+            return handle_range_request(range_str, &data, response_headers);
         }
     }
 
     if method == Method::HEAD {
-        response_headers.insert(header::CONTENT_LENGTH, n.data.len().to_string().parse().unwrap());
+        response_headers.insert(header::CONTENT_LENGTH, data.len().to_string().parse().unwrap());
         return (StatusCode::OK, response_headers).into_response();
     }
 
@@ -246,7 +267,7 @@ async fn get_or_head_handler_inner(
         .with_label_values(&["read"])
         .observe(start.elapsed().as_secs_f64());
 
-    (StatusCode::OK, response_headers, n.data).into_response()
+    (StatusCode::OK, response_headers, data).into_response()
 }
 
 /// Handle HTTP Range requests. Returns 206 Partial Content or 416 Range Not Satisfiable.
@@ -435,6 +456,12 @@ pub async fn post_handler(
         .unwrap_or_default()
         .as_secs();
 
+    // Check if upload is pre-compressed
+    let is_gzipped = headers.get(header::CONTENT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s == "gzip")
+        .unwrap_or(false);
+
     let mut n = Needle {
         id: needle_id,
         cookie,
@@ -446,6 +473,9 @@ pub async fn post_handler(
     n.set_has_last_modified_date();
     if is_chunk_manifest {
         n.set_is_chunk_manifest();
+    }
+    if is_gzipped {
+        n.set_is_compressed();
     }
 
     let mut store = state.store.write().unwrap();

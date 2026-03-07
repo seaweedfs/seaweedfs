@@ -201,6 +201,11 @@ impl CompactNeedleMap {
         self.map.remove(&key);
     }
 
+    /// Iterate over all entries in the needle map.
+    pub fn iter(&self) -> impl Iterator<Item = (&NeedleId, &NeedleValue)> {
+        self.map.iter()
+    }
+
     // ---- Metrics accessors ----
 
     pub fn content_size(&self) -> u64 {
