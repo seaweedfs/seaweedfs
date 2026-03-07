@@ -230,7 +230,7 @@ func saveFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, dir,
 
 // deleteFilerFile deletes a file from the filer.
 func deleteFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, fileName string) error {
-	return filer_pb.DoRemove(ctx, client, dir, fileName, false, false, true, false, nil)
+	return filer_pb.DoRemove(ctx, client, dir, fileName, true, false, true, false, nil)
 }
 
 // updateTableMetadataXattr updates the table entry's metadata xattr with
