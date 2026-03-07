@@ -32,8 +32,13 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
-			return fmt.Errorf("apply metadata event dir %s: %w", path, err)
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(parentDir, entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
 		}
 
 		return nil
