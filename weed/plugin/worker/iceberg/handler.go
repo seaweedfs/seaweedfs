@@ -14,6 +14,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+func init() {
+	pluginworker.RegisterHandler(pluginworker.HandlerFactory{
+		JobType:  jobType,
+		Category: pluginworker.CategoryHeavy,
+		Aliases:  []string{"iceberg-maintenance", "iceberg.maintenance", "iceberg"},
+		Build: func(opts pluginworker.HandlerBuildOptions) (pluginworker.JobHandler, error) {
+			return NewHandler(opts.GrpcDialOption), nil
+		},
+	})
+}
+
 // Handler implements the JobHandler interface for Iceberg table maintenance:
 // snapshot expiration, orphan file removal, and manifest rewriting.
 type Handler struct {
