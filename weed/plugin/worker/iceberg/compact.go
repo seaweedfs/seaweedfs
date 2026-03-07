@@ -58,21 +58,24 @@ func (h *Handler) compactDataFiles(
 		return "", fmt.Errorf("parse manifest list: %w", err)
 	}
 
+	// Abort if delete manifests exist — the compactor does not apply deletes,
+	// so carrying them through could produce incorrect results.
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			return "compaction skipped: delete manifests present (not yet supported)", nil
+		}
+	}
+
 	// Collect data file entries from data manifests
 	var allEntries []iceberg.ManifestEntry
 	for _, mf := range manifests {
-		if mf.ManifestContent() != iceberg.ManifestContentData {
-			continue
-		}
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
 		if err != nil {
-			glog.V(2).Infof("iceberg compact: cannot read manifest %s: %v", mf.FilePath(), err)
-			continue
+			return "", fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
 		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
 		if err != nil {
-			glog.V(2).Infof("iceberg compact: cannot parse manifest %s: %v", mf.FilePath(), err)
-			continue
+			return "", fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
 		allEntries = append(allEntries, entries...)
 	}
