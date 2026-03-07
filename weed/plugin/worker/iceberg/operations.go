@@ -374,6 +374,8 @@ func (h *Handler) rewriteManifests(
 	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
+	newSnapshotID := time.Now().UnixMilli()
+	newSeqNum := currentSnap.SequenceNumber + 1
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 
 	// Track written artifacts so we can clean them up if the commit fails.
@@ -401,7 +403,7 @@ func (h *Handler) rewriteManifests(
 	totalEntries := 0
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
-		manifestFileName := fmt.Sprintf("merged-%d-spec%d-%d.avro", snapshotID, se.specID, time.Now().UnixMilli())
+		manifestFileName := fmt.Sprintf("merged-%d-spec%d-%d.avro", newSnapshotID, se.specID, time.Now().UnixMilli())
 		manifestPath := path.Join("metadata", manifestFileName)
 
 		var manifestBuf bytes.Buffer
@@ -411,7 +413,7 @@ func (h *Handler) rewriteManifests(
 			version,
 			se.spec,
 			schema,
-			snapshotID,
+			newSnapshotID,
 			se.entries,
 		)
 		if err != nil {
@@ -433,15 +435,13 @@ func (h *Handler) rewriteManifests(
 	}
 
 	var manifestListBuf bytes.Buffer
-	parentSnap := currentSnap.ParentSnapshotID
-	seqNum := currentSnap.SequenceNumber
-	err = iceberg.WriteManifestList(version, &manifestListBuf, snapshotID, parentSnap, &seqNum, 0, newManifests)
+	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapshotID, &snapshotID, &newSeqNum, 0, newManifests)
 	if err != nil {
 		return "", fmt.Errorf("write manifest list: %w", err)
 	}
 
 	// Save new manifest list
-	manifestListFileName := fmt.Sprintf("snap-%d-%d.avro", snapshotID, time.Now().UnixMilli())
+	manifestListFileName := fmt.Sprintf("snap-%d-%d.avro", newSnapshotID, time.Now().UnixMilli())
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
 		return "", fmt.Errorf("save manifest list: %w", err)
 	}
@@ -449,7 +449,6 @@ func (h *Handler) rewriteManifests(
 
 	// Create new snapshot with the rewritten manifest list
 	manifestListLocation := path.Join("metadata", manifestListFileName)
-	newSnapshotID := time.Now().UnixMilli()
 
 	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
 		// Guard: verify table head hasn't advanced since we planned.
