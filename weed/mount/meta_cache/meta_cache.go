@@ -444,7 +444,11 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 		return mc.applyMetadataResponseDirect(ctx, resp, options, false)
 	}
 
-	mc.applyMetadataSideEffects(resp, options)
+	// Apply side effects but skip directory notifications for dirs that are
+	// currently being built. Notifying a building dir can trigger
+	// markDirectoryReadThrough → DeleteFolderChildren, wiping entries that
+	// EnsureVisited already inserted, leaving an incomplete cache.
+	mc.applyMetadataSideEffectsSkippingBuildingDirs(resp, options)
 	for buildDir, events := range bufferedEvents {
 		state := mc.buildingDirs[buildDir]
 		if state == nil {
@@ -478,6 +482,27 @@ func (mc *MetaCache) applyMetadataSideEffects(resp *filer_pb.SubscribeMetadataRe
 	}
 	for _, dirPath := range sideEffects.dirsToNotify {
 		mc.noteDirectoryUpdate(dirPath)
+	}
+	for _, invalidation := range sideEffects.invalidations {
+		mc.invalidateFunc(invalidation.path, invalidation.entry)
+	}
+}
+
+// applyMetadataSideEffectsSkippingBuildingDirs is like applyMetadataSideEffects
+// but suppresses directory notifications for dirs currently in buildingDirs.
+// This prevents markDirectoryReadThrough from wiping entries mid-build.
+func (mc *MetaCache) applyMetadataSideEffectsSkippingBuildingDirs(resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions) {
+	sideEffects := metadataResponseSideEffects{}
+	if options.NotifyDirectories {
+		sideEffects.dirsToNotify = collectDirectoryNotifications(resp)
+	}
+	if options.InvalidateEntries {
+		sideEffects.invalidations = collectEntryInvalidations(resp)
+	}
+	for _, dirPath := range sideEffects.dirsToNotify {
+		if _, building := mc.buildingDirs[dirPath]; !building {
+			mc.noteDirectoryUpdate(dirPath)
+		}
 	}
 	for _, invalidation := range sideEffects.invalidations {
 		mc.invalidateFunc(invalidation.path, invalidation.entry)
