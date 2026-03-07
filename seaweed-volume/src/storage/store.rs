@@ -116,6 +116,9 @@ impl Store {
         preallocate: u64,
         disk_type: DiskType,
     ) -> Result<(), VolumeError> {
+        if self.find_volume(vid).is_some() {
+            return Err(VolumeError::AlreadyExists);
+        }
         let loc_idx = self.find_free_location(&disk_type).ok_or_else(|| {
             VolumeError::Io(io::Error::new(
                 io::ErrorKind::Other,

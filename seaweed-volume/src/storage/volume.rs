@@ -14,6 +14,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use tracing::warn;
+
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMapKind};
 use crate::storage::super_block::{SuperBlock, ReplicaPlacement, SUPER_BLOCK_SIZE};
@@ -42,6 +44,9 @@ pub enum VolumeError {
 
     #[error("volume not empty")]
     NotEmpty,
+
+    #[error("volume already exists")]
+    AlreadyExists,
 
     #[error("volume is read-only")]
     ReadOnly,
@@ -234,6 +239,14 @@ impl Volume {
     }
 
     fn load_index(&mut self) -> Result<(), VolumeError> {
+        if self.needle_map_kind != NeedleMapKind::InMemory {
+            warn!(
+                volume_id = self.id.0,
+                kind = ?self.needle_map_kind,
+                "only InMemory needle map is currently supported, falling back to InMemory"
+            );
+        }
+
         let idx_path = self.file_name(".idx");
 
         // Ensure idx directory exists
@@ -541,15 +554,15 @@ impl Volume {
     }
 
     fn do_delete_request(&mut self, n: &mut Needle) -> Result<Size, VolumeError> {
-        let (found, size) = if let Some(nm) = &self.nm {
+        let (found, size, stored_offset) = if let Some(nm) = &self.nm {
             if let Some(nv) = nm.get(n.id) {
                 if !nv.size.is_deleted() {
-                    (true, nv.size)
+                    (true, nv.size, nv.offset)
                 } else {
-                    (false, Size(0))
+                    (false, Size(0), Offset::default())
                 }
             } else {
-                (false, Size(0))
+                (false, Size(0), Offset::default())
             }
         } else {
             return Ok(Size(0));
@@ -557,6 +570,15 @@ impl Volume {
 
         if !found {
             return Ok(Size(0));
+        }
+
+        // Cookie validation: read stored needle header and verify cookie matches
+        {
+            let mut existing = Needle::default();
+            self.read_needle_header(&mut existing, stored_offset.to_actual_offset())?;
+            if existing.cookie != n.cookie {
+                return Err(VolumeError::CookieMismatch(n.cookie.0));
+            }
         }
 
         // Write tombstone: append needle with empty data
@@ -784,7 +806,12 @@ pub fn scan_volume_file(
         let body_length = needle::needle_body_length(size, version);
         let total_size = NEEDLE_HEADER_SIZE as i64 + body_length;
 
-        if visitor.read_needle_body() {
+        // Skip full body parsing for deleted needles (tombstone or negative size)
+        if size.is_deleted() || size.0 <= 0 {
+            let mut n = Needle::default();
+            n.read_header(&header);
+            visitor.visit_needle(&n, offset)?;
+        } else if visitor.read_needle_body() {
             let mut buf = vec![0u8; total_size as usize];
             file.seek(SeekFrom::Start(offset as u64))?;
             file.read_exact(&mut buf)?;

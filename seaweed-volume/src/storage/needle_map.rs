@@ -142,16 +142,16 @@ impl CompactNeedleMap {
 
     /// Insert or update an entry. Appends to .idx file if present.
     pub fn put(&mut self, key: NeedleId, offset: Offset, size: Size) -> io::Result<()> {
-        let old = self.map.get(&key).cloned();
-        let nv = NeedleValue { offset, size };
-        self.metric.on_put(key, old.as_ref(), size);
-        self.map.insert(key, nv);
-
-        // Append to index file
+        // Persist to idx file BEFORE mutating in-memory state for crash consistency
         if let Some(ref mut idx_file) = self.idx_file {
             idx::write_index_entry(idx_file, key, offset, size)?;
             self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
         }
+
+        let old = self.map.get(&key).cloned();
+        let nv = NeedleValue { offset, size };
+        self.metric.on_put(key, old.as_ref(), size);
+        self.map.insert(key, nv);
         Ok(())
     }
 
@@ -164,15 +164,15 @@ impl CompactNeedleMap {
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
         if let Some(old) = self.map.get(&key).cloned() {
             if old.size.is_valid() {
-                self.metric.on_delete(&old);
-                let deleted_size = Size(-(old.size.0));
-                self.map.insert(key, NeedleValue { offset, size: deleted_size });
-
-                // Append tombstone to index file
+                // Persist tombstone to idx file BEFORE mutating in-memory state for crash consistency
                 if let Some(ref mut idx_file) = self.idx_file {
                     idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
                     self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
                 }
+
+                self.metric.on_delete(&old);
+                let deleted_size = Size(-(old.size.0));
+                self.map.insert(key, NeedleValue { offset, size: deleted_size });
                 return Ok(Some(old.size));
             }
         }

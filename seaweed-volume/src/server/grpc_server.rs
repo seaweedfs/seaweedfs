@@ -201,8 +201,16 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeDeleteResponse>, Status> {
-        let vid = VolumeId(request.into_inner().volume_id);
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
+        if req.only_empty {
+            let (_, vol) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            if vol.file_count() > 0 {
+                return Err(Status::failed_precondition("volume is not empty"));
+            }
+        }
         store.delete_volume(vid)
             .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))

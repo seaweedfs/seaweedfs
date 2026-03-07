@@ -72,11 +72,15 @@ fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
         Ok(())
     })?;
 
-    // Sort by NeedleId
-    entries.sort_by_key(|&(key, _, _)| key);
+    // Sort by NeedleId, then by actual offset so later entries come last
+    entries.sort_by_key(|&(key, offset, _)| (key, offset.to_actual_offset()));
 
-    // Remove duplicates (keep last entry for each key)
+    // Remove duplicates (keep last/latest entry for each key).
+    // dedup_by_key keeps the first in each run, so we reverse first,
+    // dedup, then reverse back.
+    entries.reverse();
     entries.dedup_by_key(|entry| entry.0);
+    entries.reverse();
 
     // Write sorted entries to .ecx
     let mut ecx_file = File::create(ecx_path)?;
@@ -140,8 +144,7 @@ fn encode_one_batch(
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
-            // Read what we can; zeros fill the rest (already initialized)
-            let _ = dat_file.read_at(&mut buffers[i], read_offset);
+            dat_file.read_at(&mut buffers[i], read_offset)?;
         }
     }
 

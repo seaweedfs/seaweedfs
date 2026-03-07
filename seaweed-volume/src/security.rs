@@ -224,13 +224,17 @@ impl Guard {
         let token = token.ok_or(JwtError::MissingToken)?;
         let claims = decode_jwt(key, token)?;
 
-        if let Some(ref fid) = claims.fid {
-            if fid != expected_fid {
+        match claims.fid {
+            None => {
+                return Err(JwtError::MissingFileIdClaim);
+            }
+            Some(ref fid) if fid != expected_fid => {
                 return Err(JwtError::FileIdMismatch {
                     expected: expected_fid.to_string(),
                     got: fid.to_string(),
                 });
             }
+            _ => {}
         }
 
         Ok(())
@@ -300,6 +304,9 @@ pub enum JwtError {
 
     #[error("JWT error: {0}")]
     Jwt(#[from] jsonwebtoken::errors::Error),
+
+    #[error("JWT token missing required fid claim")]
+    MissingFileIdClaim,
 
     #[error("file ID mismatch: expected {expected}, got {got}")]
     FileIdMismatch { expected: String, got: String },

@@ -32,10 +32,13 @@ fn main() {
         .build()
         .expect("Failed to build tokio runtime");
 
-    rt.block_on(run(config));
+    if let Err(e) = rt.block_on(run(config)) {
+        error!("Volume server failed: {}", e);
+        std::process::exit(1);
+    }
 }
 
-async fn run(config: VolumeServerConfig) {
+async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the store
     let mut store = Store::new(config.index_type);
     store.ip = config.ip.clone();
@@ -59,13 +62,13 @@ async fn run(config: VolumeServerConfig) {
             "Adding storage location: {} (max_volumes={}, disk_type={:?})",
             dir, max_volumes, disk_type
         );
-        if let Err(e) = store.add_location(dir, idx_dir, max_volumes, disk_type) {
-            error!("Failed to add storage location {}: {}", dir, e);
-            return;
-        }
+        store.add_location(dir, idx_dir, max_volumes, disk_type)
+            .map_err(|e| format!("Failed to add storage location {}: {}", dir, e))?;
     }
 
     // Build shared state
+    // TODO: Wire up JWT signing keys from config. Empty keys are acceptable for now
+    // while the Rust volume server is still in development.
     let guard = Guard::new(
         &config.white_list,
         SigningKey(vec![]),
@@ -185,4 +188,5 @@ async fn run(config: VolumeServerConfig) {
     }
 
     info!("Volume server stopped.");
+    Ok(())
 }
