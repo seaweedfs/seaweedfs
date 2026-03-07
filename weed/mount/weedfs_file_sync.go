@@ -167,8 +167,13 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
-			return fmt.Errorf("update metadata event for %s: %w", fileFullPath, err)
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(string(dir), request.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
 		}
 
 		return nil
