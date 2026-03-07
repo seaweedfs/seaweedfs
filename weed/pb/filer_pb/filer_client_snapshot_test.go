@@ -38,9 +38,11 @@ type snapshotListClient struct {
 	entries    []*Entry
 	requests   []*ListEntriesRequest
 	snapshotTs int64
+	listCalled bool
 }
 
 func (c *snapshotListClient) ListEntries(ctx context.Context, in *ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListEntriesResponse], error) {
+	c.listCalled = true
 	c.requests = append(c.requests, proto.Clone(in).(*ListEntriesRequest))
 
 	start := 0
@@ -156,5 +158,8 @@ func TestReadDirAllEntriesWithSnapshotEmptyDirectory(t *testing.T) {
 	// know to replay all buffered events without clock-skew filtering.
 	if snapshotTs != 0 {
 		t.Fatalf("snapshotTs = %d, want 0 for empty directory", snapshotTs)
+	}
+	if !client.listCalled {
+		t.Fatal("ListEntries was not invoked for the empty directory")
 	}
 }

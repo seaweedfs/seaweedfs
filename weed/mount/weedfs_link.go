@@ -55,6 +55,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// update old file to hardlink mode
+	origHardLinkId := oldEntry.HardLinkId
+	origHardLinkCounter := oldEntry.HardLinkCounter
 	if len(oldEntry.HardLinkId) == 0 {
 		oldEntry.HardLinkId = filer.NewHardLinkId()
 		oldEntry.HardLinkCounter = 1
@@ -104,6 +106,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
 		if err != nil {
+			// Rollback: restore original HardLinkId/Counter on the source entry
+			oldEntry.HardLinkId = origHardLinkId
+			oldEntry.HardLinkCounter = origHardLinkCounter
+			rollbackReq := &filer_pb.UpdateEntryRequest{
+				Directory:  oldParentPath,
+				Entry:      oldEntry,
+				Signatures: []int32{wfs.signature},
+			}
+			if _, rollbackErr := filer_pb.UpdateEntryWithResponse(context.Background(), client, rollbackReq); rollbackErr != nil {
+				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
+			}
 			return err
 		}
 

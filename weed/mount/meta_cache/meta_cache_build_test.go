@@ -348,18 +348,19 @@ func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
 
 	// CompleteDirectoryBuild may return ctx.Err() if the select picks
 	// ctx.Done() first, but the operation itself still completes in the
-	// apply loop. We retry with a fresh context to confirm.
-	err := mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100)
-	if err != nil {
-		// The cancelled context may cause enqueueAndWait's select to
-		// return early. Wait briefly for the apply loop to process, then
-		// verify the build completed via its observable side effects.
-		time.Sleep(50 * time.Millisecond)
-	}
+	// apply loop. Poll for the observable side effect instead of using
+	// a fixed sleep.
+	_ = mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100)
 
-	// The directory must be cached — proving CompleteDirectoryBuild ran
-	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
-		t.Fatal("/dir should be cached — CompleteDirectoryBuild must have executed despite cancelled context")
+	// Poll until the build completes or a deadline elapses.
+	deadline := time.After(2 * time.Second)
+	for !mc.IsDirectoryCached(util.FullPath("/dir")) {
+		select {
+		case <-deadline:
+			t.Fatal("/dir should be cached — CompleteDirectoryBuild must have executed despite cancelled context")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 
 	// The pre-existing entry must survive

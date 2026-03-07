@@ -535,6 +535,17 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 
 	mc.Lock()
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
+	// When a directory is deleted or moved, remove its cached descendants
+	// so stale children cannot be served from the local cache.
+	if err == nil && oldPath != "" && message.OldEntry != nil && message.OldEntry.IsDirectory {
+		isDelete := message.NewEntry == nil
+		isMove := message.NewEntry != nil && (message.NewParentPath != resp.Directory || message.NewEntry.Name != message.OldEntry.Name)
+		if isDelete || isMove {
+			if deleteErr := mc.localStore.DeleteFolderChildren(ctx, oldPath); deleteErr != nil {
+				glog.V(2).Infof("delete descendants of %s: %v", oldPath, deleteErr)
+			}
+		}
+	}
 	mc.Unlock()
 	if err != nil {
 		return metadataResponseSideEffects{}, err
