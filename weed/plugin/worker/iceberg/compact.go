@@ -101,6 +101,18 @@ func (h *Handler) compactDataFiles(
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 	dataDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "data")
 
+	// Track written artifacts so we can clean them up if the commit fails.
+	type artifact struct {
+		dir, fileName string
+	}
+	var writtenArtifacts []artifact
+
+	cleanupArtifacts := func() {
+		for _, a := range writtenArtifacts {
+			_ = deleteFilerFile(ctx, filerClient, a.dir, a.fileName)
+		}
+	}
+
 	for binIdx, bin := range bins {
 		select {
 		case <-ctx.Done():
@@ -124,6 +136,7 @@ func (h *Handler) compactDataFiles(
 		if err := saveFilerFile(ctx, filerClient, dataDir, mergedFileName, mergedData); err != nil {
 			return "", fmt.Errorf("save merged file: %w", err)
 		}
+		writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
 
 		// Create new DataFile entry for the merged file
 		dfBuilder, err := iceberg.NewDataFileBuilder(
@@ -212,8 +225,10 @@ func (h *Handler) compactDataFiles(
 	}
 
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
+		cleanupArtifacts()
 		return "", fmt.Errorf("save compact manifest: %w", err)
 	}
+	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestFileName})
 
 	// Include delete manifests from original manifest list
 	var allManifests []iceberg.ManifestFile
@@ -229,13 +244,16 @@ func (h *Handler) compactDataFiles(
 	seqNum := currentSnap.SequenceNumber + 1
 	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests)
 	if err != nil {
+		cleanupArtifacts()
 		return "", fmt.Errorf("write compact manifest list: %w", err)
 	}
 
 	manifestListFileName := fmt.Sprintf("snap-%d.avro", newSnapID)
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
+		cleanupArtifacts()
 		return "", fmt.Errorf("save compact manifest list: %w", err)
 	}
+	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Commit: add new snapshot and update main branch ref
 	manifestListLocation := path.Join("metadata", manifestListFileName)
@@ -272,6 +290,7 @@ func (h *Handler) compactDataFiles(
 		return builder.SetSnapshotRef(table.MainBranch, newSnapID, table.BranchRef)
 	})
 	if err != nil {
+		cleanupArtifacts()
 		return "", fmt.Errorf("commit compaction: %w", err)
 	}
 
