@@ -60,16 +60,16 @@ jobs:
             build_args: TAGS=5BytesOffset
             tag_suffix: _large_disk
             
-          # Full tags - amd64 only
+          # Full tags - multi-arch
           - variant: full
-            platforms: linux/amd64
+            platforms: linux/amd64,linux/arm64
             dockerfile: ./docker/Dockerfile.go_build
             build_args: TAGS=elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb
             tag_suffix: _full
-            
-          # Large disk + full tags - amd64 only
+
+          # Large disk + full tags - multi-arch
           - variant: large_disk_full
-            platforms: linux/amd64
+            platforms: linux/amd64,linux/arm64
             dockerfile: ./docker/Dockerfile.go_build
             build_args: TAGS=5BytesOffset,elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb
             tag_suffix: _large_disk_full
