@@ -68,11 +68,14 @@ func (c *snapshotListClient) ListEntries(ctx context.Context, in *ListEntriesReq
 	}
 
 	responses := make([]*ListEntriesResponse, 0, end-start)
-	for _, entry := range c.entries[start:end] {
-		responses = append(responses, &ListEntriesResponse{
-			Entry:        entry,
-			SnapshotTsNs: snapshotTs,
-		})
+	for i, entry := range c.entries[start:end] {
+		resp := &ListEntriesResponse{
+			Entry: entry,
+		}
+		if i == 0 {
+			resp.SnapshotTsNs = snapshotTs
+		}
+		responses = append(responses, resp)
 	}
 
 	return &snapshotListStream{responses: responses}, nil
