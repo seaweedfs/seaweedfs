@@ -1043,3 +1043,43 @@ func TestListBucketsIssue7796(t *testing.T) {
 			"geoserver should NOT see buckets they neither own nor have permission for")
 	})
 }
+
+func TestListBucketsIssue8516PolicyBasedVisibility(t *testing.T) {
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("listOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::policy-bucket"}]}`))
+
+	identity := &Identity{
+		Name:        "policy-user",
+		Account:     &AccountAdmin,
+		PolicyNames: []string{"listOnly"},
+	}
+
+	req := httptest.NewRequest("GET", "http://s3.amazonaws.com/", nil)
+	buckets := []*filer_pb.Entry{
+		{
+			Name:        "policy-bucket",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.AmzIdentityId: []byte("admin")},
+			Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+		},
+		{
+			Name:        "other-bucket",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3_constants.AmzIdentityId: []byte("admin")},
+			Attributes:  &filer_pb.FuseAttributes{Crtime: time.Now().Unix()},
+		},
+	}
+
+	var visibleBuckets []string
+	for _, entry := range buckets {
+		isOwner := isBucketOwnedByIdentity(entry, identity)
+		if !isOwner {
+			if errCode := iam.VerifyActionPermission(req, identity, s3_constants.ACTION_LIST, entry.Name, ""); errCode != s3err.ErrNone {
+				continue
+			}
+		}
+		visibleBuckets = append(visibleBuckets, entry.Name)
+	}
+
+	assert.Equal(t, []string{"policy-bucket"}, visibleBuckets)
+}

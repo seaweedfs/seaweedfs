@@ -24,6 +24,7 @@ const (
 	defaultHeartbeatInterval   = 30
 	defaultReconnectDelay      = 5
 	defaultPendingSchemaBuffer = 1
+	adminScriptJobType         = "admin_script"
 )
 
 type Options struct {
@@ -32,6 +33,12 @@ type Options struct {
 	SendTimeout            time.Duration
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	LockManager            LockManager
+	// ConfigDefaultsProvider is an optional callback invoked when a job type's
+	// config is being bootstrapped from its descriptor defaults. It can enrich
+	// or replace the default config before it is persisted. If nil, descriptor
+	// defaults are used as-is.
+	ConfigDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 }
 
 // JobTypeInfo contains metadata about a plugin job type.
@@ -52,6 +59,8 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	configDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
+	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
 	nextDetectionAt   map[string]time.Time
@@ -62,6 +71,16 @@ type Plugin struct {
 
 	schedulerExecMu           sync.Mutex
 	schedulerExecReservations map[string]int
+	adminScriptRunMu          sync.RWMutex
+	schedulerDetectionMu      sync.Mutex
+	schedulerDetection        map[string]*schedulerDetectionInfo
+	schedulerRunMu            sync.Mutex
+	schedulerRun              map[string]*schedulerRunInfo
+	schedulerLoopMu           sync.Mutex
+	schedulerLoopState        schedulerLoopState
+	schedulerConfigMu         sync.RWMutex
+	schedulerConfig           SchedulerConfig
+	schedulerWakeCh           chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -80,6 +99,8 @@ type Plugin struct {
 
 	jobsMu sync.RWMutex
 	jobs   map[string]*TrackedJob
+	// serialize stale job cleanup to avoid duplicate expirations
+	staleJobsMu sync.Mutex
 
 	jobDetailsMu sync.Mutex
 
@@ -146,6 +167,8 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		configDefaultsProvider:    options.ConfigDefaultsProvider,
+		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
@@ -154,13 +177,31 @@ func New(options Options) (*Plugin, error) {
 		detectionInFlight:         make(map[string]bool),
 		detectorLeases:            make(map[string]string),
 		schedulerExecReservations: make(map[string]int),
+		schedulerDetection:        make(map[string]*schedulerDetectionInfo),
+		schedulerRun:              make(map[string]*schedulerRunInfo),
 		recentDedupeByType:        make(map[string]map[string]time.Time),
 		jobs:                      make(map[string]*TrackedJob),
 		activities:                make([]JobActivity, 0, 256),
 		persistTicker:             time.NewTicker(2 * time.Second),
+		schedulerWakeCh:           make(chan struct{}, 1),
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
+
+	if cfg, err := plugin.store.LoadSchedulerConfig(); err != nil {
+		glog.Warningf("Plugin failed to load scheduler config: %v", err)
+		plugin.schedulerConfig = DefaultSchedulerConfig()
+	} else if cfg == nil {
+		defaults := DefaultSchedulerConfig()
+		plugin.schedulerConfig = defaults
+		if plugin.store.IsConfigured() {
+			if err := plugin.store.SaveSchedulerConfig(&defaults); err != nil {
+				glog.Warningf("Plugin failed to persist scheduler defaults: %v", err)
+			}
+		}
+	} else {
+		plugin.schedulerConfig = normalizeSchedulerConfig(*cfg)
+	}
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
@@ -361,8 +402,13 @@ func (r *Plugin) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeC
 }
 
 func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
-	return r.store.SaveJobTypeConfig(config)
+	if err := r.store.SaveJobTypeConfig(config); err != nil {
+		return err
+	}
+	r.wakeScheduler()
+	return nil
 }
+
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
@@ -380,6 +426,38 @@ func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
 }
 
+func (r *Plugin) GetSchedulerConfig() SchedulerConfig {
+	if r == nil {
+		return DefaultSchedulerConfig()
+	}
+	r.schedulerConfigMu.RLock()
+	cfg := r.schedulerConfig
+	r.schedulerConfigMu.RUnlock()
+	return normalizeSchedulerConfig(cfg)
+}
+
+func (r *Plugin) UpdateSchedulerConfig(cfg SchedulerConfig) (SchedulerConfig, error) {
+	if r == nil {
+		return DefaultSchedulerConfig(), fmt.Errorf("plugin is not initialized")
+	}
+	normalized := normalizeSchedulerConfig(cfg)
+	if err := r.store.SaveSchedulerConfig(&normalized); err != nil {
+		return SchedulerConfig{}, err
+	}
+	r.schedulerConfigMu.Lock()
+	r.schedulerConfig = normalized
+	r.schedulerConfigMu.Unlock()
+	r.wakeScheduler()
+	return normalized, nil
+}
+
+func (r *Plugin) acquireAdminLock(reason string) (func(), error) {
+	if r == nil || r.lockManager == nil {
+		return func() {}, nil
+	}
+	return r.lockManager.Acquire(reason)
+}
+
 // RunDetectionWithReport requests one detector worker and returns proposals with request metadata.
 func (r *Plugin) RunDetectionWithReport(
 	ctx context.Context,
@@ -387,6 +465,9 @@ func (r *Plugin) RunDetectionWithReport(
 	clusterContext *plugin_pb.ClusterContext,
 	maxResults int32,
 ) (*DetectionReport, error) {
+	releaseGate := r.acquireDetectionExecutionGate(jobType, false)
+	defer releaseGate()
+
 	detector, err := r.pickDetector(jobType)
 	if err != nil {
 		return nil, err
@@ -401,7 +482,10 @@ func (r *Plugin) RunDetectionWithReport(
 	if err != nil {
 		return nil, err
 	}
-	lastSuccessfulRun := r.loadLastSuccessfulRun(jobType)
+	lastCompletedRun := r.loadLastSuccessfulRun(jobType)
+	if strings.EqualFold(strings.TrimSpace(jobType), adminScriptJobType) {
+		lastCompletedRun = r.loadLastCompletedRun(jobType)
+	}
 
 	state := &pendingDetectionState{
 		complete: make(chan *plugin_pb.DetectionComplete, 1),
@@ -442,7 +526,7 @@ func (r *Plugin) RunDetectionWithReport(
 				AdminConfigValues:  adminConfigValues,
 				WorkerConfigValues: workerConfigValues,
 				ClusterContext:     clusterContext,
-				LastSuccessfulRun:  lastSuccessfulRun,
+				LastSuccessfulRun:  lastCompletedRun,
 				MaxResults:         maxResults,
 			},
 		},
@@ -529,16 +613,36 @@ func (r *Plugin) ExecuteJob(
 	if job == nil {
 		return nil, fmt.Errorf("job is nil")
 	}
-	if strings.TrimSpace(job.JobType) == "" {
+	jobType := strings.TrimSpace(job.JobType)
+	if jobType == "" {
 		return nil, fmt.Errorf("job_type is required")
 	}
+	releaseGate := r.acquireDetectionExecutionGate(jobType, true)
+	defer releaseGate()
 
-	executor, err := r.registry.PickExecutor(job.JobType)
+	executor, err := r.registry.PickExecutor(jobType)
 	if err != nil {
 		return nil, err
 	}
 
 	return r.executeJobWithExecutor(ctx, executor, job, clusterContext, attempt)
+}
+
+func (r *Plugin) acquireDetectionExecutionGate(jobType string, execution bool) func() {
+	normalizedJobType := strings.ToLower(strings.TrimSpace(jobType))
+	if execution && normalizedJobType == adminScriptJobType {
+		r.adminScriptRunMu.Lock()
+		return func() {
+			r.adminScriptRunMu.Unlock()
+		}
+	}
+	if normalizedJobType != adminScriptJobType {
+		r.adminScriptRunMu.RLock()
+		return func() {
+			r.adminScriptRunMu.RUnlock()
+		}
+	}
+	return func() {}
 }
 
 func (r *Plugin) executeJobWithExecutor(
@@ -869,6 +973,7 @@ func (r *Plugin) handleWorkerMessage(workerID string, message *plugin_pb.WorkerT
 	switch body := message.Body.(type) {
 	case *plugin_pb.WorkerToAdminMessage_Hello:
 		r.registry.UpsertFromHello(body.Hello)
+		r.wakeScheduler()
 	case *plugin_pb.WorkerToAdminMessage_Heartbeat:
 		r.registry.UpdateHeartbeat(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
@@ -938,14 +1043,6 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		return nil
 	}
 
-	existing, err := r.store.LoadJobTypeConfig(jobType)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return nil
-	}
-
 	workerDefaults := CloneConfigValueMap(descriptor.WorkerDefaultValues)
 	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
 		workerDefaults = CloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
@@ -968,6 +1065,7 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 			PerWorkerExecutionConcurrency: defaults.PerWorkerExecutionConcurrency,
 			RetryLimit:                    defaults.RetryLimit,
 			RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
+			JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
 		}
 	}
 
@@ -981,7 +1079,22 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		UpdatedBy:          "plugin",
 	}
 
-	return r.store.SaveJobTypeConfig(cfg)
+	// Check existence first to avoid calling configDefaultsProvider unnecessarily
+	// (e.g., it may make a blocking gRPC call to fetch master config).
+	existing, err := r.store.LoadJobTypeConfig(jobType)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	if r.configDefaultsProvider != nil {
+		cfg = r.configDefaultsProvider(cfg)
+	}
+
+	_, err = r.store.SaveJobTypeConfigIfNotExists(cfg)
+	return err
 }
 
 func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.DetectionProposals) {
@@ -1276,6 +1389,41 @@ func (r *Plugin) loadLastSuccessfulRun(jobType string) *timestamppb.Timestamp {
 	var latest time.Time
 	for i := range history.SuccessfulRuns {
 		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return timestamppb.New(latest.UTC())
+}
+
+func (r *Plugin) loadLastCompletedRun(jobType string) *timestamppb.Timestamp {
+	history, err := r.store.LoadRunHistory(jobType)
+	if err != nil {
+		glog.Warningf("Plugin failed to load run history for %s: %v", jobType, err)
+		return nil
+	}
+	if history == nil {
+		return nil
+	}
+
+	var latest time.Time
+	for i := range history.SuccessfulRuns {
+		completedAt := history.SuccessfulRuns[i].CompletedAt
+		if completedAt == nil || completedAt.IsZero() {
+			continue
+		}
+		if latest.IsZero() || completedAt.After(latest) {
+			latest = *completedAt
+		}
+	}
+	for i := range history.ErrorRuns {
+		completedAt := history.ErrorRuns[i].CompletedAt
 		if completedAt == nil || completedAt.IsZero() {
 			continue
 		}

@@ -35,6 +35,64 @@ func TestServerAddresses_ToAddressMapOrSrv_shouldHandleIPPortList(t *testing.T) 
 	}
 }
 
+func TestServerAddress_ToHost(t *testing.T) {
+	testCases := []struct {
+		name     string
+		address  ServerAddress
+		expected string
+	}{
+		{
+			name:     "hostname with port",
+			address:  ServerAddress("master.example.com:9333"),
+			expected: "master.example.com",
+		},
+		{
+			name:     "IPv4 with port",
+			address:  ServerAddress("192.168.1.1:9333"),
+			expected: "192.168.1.1",
+		},
+		{
+			name:     "IPv6 with port",
+			address:  ServerAddress("[2001:db8::1]:9333"),
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "hostname without port",
+			address:  ServerAddress("master.example.com"),
+			expected: "master.example.com",
+		},
+		{
+			name:     "hostname with port.grpcPort",
+			address:  ServerAddress("master.example.com:443.10443"),
+			expected: "master.example.com",
+		},
+		{
+			name:     "IPv4 with port.grpcPort",
+			address:  ServerAddress("192.168.1.1:8080.18080"),
+			expected: "192.168.1.1",
+		},
+		{
+			name:     "IPv6 with port.grpcPort",
+			address:  ServerAddress("[2001:db8::1]:8080.18080"),
+			expected: "2001:db8::1",
+		},
+		{
+			name:     "bracketed IPv6 without port",
+			address:  ServerAddress("[2001:db8::1]"),
+			expected: "2001:db8::1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.address.ToHost()
+			if got != tc.expected {
+				t.Errorf("ServerAddress(%q).ToHost() = %q, want %q", tc.address, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestIPv6ServerAddressFormatting(t *testing.T) {
 	testCases := []struct {
 		name         string

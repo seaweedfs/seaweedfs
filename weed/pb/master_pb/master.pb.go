@@ -2973,16 +2973,18 @@ func (*GetMasterConfigurationRequest) Descriptor() ([]byte, []int) {
 }
 
 type GetMasterConfigurationResponse struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	MetricsAddress         string                 `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress,proto3" json:"metrics_address,omitempty"`
-	MetricsIntervalSeconds uint32                 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds,proto3" json:"metrics_interval_seconds,omitempty"`
-	StorageBackends        []*StorageBackend      `protobuf:"bytes,3,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
-	DefaultReplication     string                 `protobuf:"bytes,4,opt,name=default_replication,json=defaultReplication,proto3" json:"default_replication,omitempty"`
-	Leader                 string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`
-	VolumeSizeLimitMB      uint32                 `protobuf:"varint,6,opt,name=volume_size_limit_m_b,json=volumeSizeLimitMB,proto3" json:"volume_size_limit_m_b,omitempty"`
-	VolumePreallocate      bool                   `protobuf:"varint,7,opt,name=volume_preallocate,json=volumePreallocate,proto3" json:"volume_preallocate,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	MetricsAddress          string                 `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress,proto3" json:"metrics_address,omitempty"`
+	MetricsIntervalSeconds  uint32                 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds,proto3" json:"metrics_interval_seconds,omitempty"`
+	StorageBackends         []*StorageBackend      `protobuf:"bytes,3,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
+	DefaultReplication      string                 `protobuf:"bytes,4,opt,name=default_replication,json=defaultReplication,proto3" json:"default_replication,omitempty"`
+	Leader                  string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`
+	VolumeSizeLimitMB       uint32                 `protobuf:"varint,6,opt,name=volume_size_limit_m_b,json=volumeSizeLimitMB,proto3" json:"volume_size_limit_m_b,omitempty"`
+	VolumePreallocate       bool                   `protobuf:"varint,7,opt,name=volume_preallocate,json=volumePreallocate,proto3" json:"volume_preallocate,omitempty"`
+	MaintenanceScripts      string                 `protobuf:"bytes,8,opt,name=maintenance_scripts,json=maintenanceScripts,proto3" json:"maintenance_scripts,omitempty"`
+	MaintenanceSleepMinutes uint32                 `protobuf:"varint,9,opt,name=maintenance_sleep_minutes,json=maintenanceSleepMinutes,proto3" json:"maintenance_sleep_minutes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *GetMasterConfigurationResponse) Reset() {
@@ -3062,6 +3064,20 @@ func (x *GetMasterConfigurationResponse) GetVolumePreallocate() bool {
 		return x.VolumePreallocate
 	}
 	return false
+}
+
+func (x *GetMasterConfigurationResponse) GetMaintenanceScripts() string {
+	if x != nil {
+		return x.MaintenanceScripts
+	}
+	return ""
+}
+
+func (x *GetMasterConfigurationResponse) GetMaintenanceSleepMinutes() uint32 {
+	if x != nil {
+		return x.MaintenanceSleepMinutes
+	}
+	return 0
 }
 
 type ListClusterNodesRequest struct {
@@ -4529,7 +4545,7 @@ const file_master_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"isReadonly\"\x1c\n" +
 	"\x1aVolumeMarkReadonlyResponse\"\x1f\n" +
-	"\x1dGetMasterConfigurationRequest\"\xf3\x02\n" +
+	"\x1dGetMasterConfigurationRequest\"\xe0\x03\n" +
 	"\x1eGetMasterConfigurationResponse\x12'\n" +
 	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x128\n" +
 	"\x18metrics_interval_seconds\x18\x02 \x01(\rR\x16metricsIntervalSeconds\x12D\n" +
@@ -4537,7 +4553,9 @@ const file_master_proto_rawDesc = "" +
 	"\x13default_replication\x18\x04 \x01(\tR\x12defaultReplication\x12\x16\n" +
 	"\x06leader\x18\x05 \x01(\tR\x06leader\x120\n" +
 	"\x15volume_size_limit_m_b\x18\x06 \x01(\rR\x11volumeSizeLimitMB\x12-\n" +
-	"\x12volume_preallocate\x18\a \x01(\bR\x11volumePreallocate\"q\n" +
+	"\x12volume_preallocate\x18\a \x01(\bR\x11volumePreallocate\x12/\n" +
+	"\x13maintenance_scripts\x18\b \x01(\tR\x12maintenanceScripts\x12:\n" +
+	"\x19maintenance_sleep_minutes\x18\t \x01(\rR\x17maintenanceSleepMinutes\"q\n" +
 	"\x17ListClusterNodesRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12\x1f\n" +

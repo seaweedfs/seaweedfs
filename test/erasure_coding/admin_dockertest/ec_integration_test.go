@@ -153,6 +153,38 @@ func waitForUrl(t *testing.T, url string, retries int) {
 	t.Fatalf("Timeout waiting for %s", url)
 }
 
+func fetchJSON(url string, out interface{}) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func mapField(obj map[string]interface{}, key string) (interface{}, bool) {
+	if obj == nil {
+		return nil, false
+	}
+	if value, ok := obj[key]; ok {
+		return value, true
+	}
+	return nil, false
+}
+
+func mapFieldAny(obj map[string]interface{}, keys ...string) (interface{}, bool) {
+	for _, key := range keys {
+		if value, ok := mapField(obj, key); ok {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
 func TestEcEndToEnd(t *testing.T) {
 	defer cleanup()
 	ensureEnvironment(t)
@@ -162,6 +194,28 @@ func TestEcEndToEnd(t *testing.T) {
 	// 1. Configure plugin job types for fast EC detection/execution.
 	t.Log("Configuring plugin job types via API...")
 
+	schedulerConfig := map[string]interface{}{
+		"idle_sleep_seconds": 1,
+	}
+	jsonBody, err := json.Marshal(schedulerConfig)
+	if err != nil {
+		t.Fatalf("Failed to marshal scheduler config: %v", err)
+	}
+	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/scheduler-config", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		t.Fatalf("Failed to create scheduler config request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to update scheduler config: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Failed to update scheduler config (status %d): %s", resp.StatusCode, string(body))
+	}
+	resp.Body.Close()
+
 	// Disable volume balance to reduce interference for this EC-focused test.
 	balanceConfig := map[string]interface{}{
 		"job_type": "volume_balance",
@@ -169,16 +223,16 @@ func TestEcEndToEnd(t *testing.T) {
 			"enabled": false,
 		},
 	}
-	jsonBody, err := json.Marshal(balanceConfig)
+	jsonBody, err = json.Marshal(balanceConfig)
 	if err != nil {
 		t.Fatalf("Failed to marshal volume_balance config: %v", err)
 	}
-	req, err := http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
+	req, err = http.NewRequest("PUT", AdminUrl+"/api/plugin/job-types/volume_balance/config", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		t.Fatalf("Failed to create volume_balance config request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to update volume_balance config: %v", err)
 	}
@@ -275,6 +329,7 @@ func TestEcEndToEnd(t *testing.T) {
 	startTime := time.Now()
 	ecVerified := false
 	var lastBody []byte
+	debugTick := 0
 
 	for time.Since(startTime) < 300*time.Second {
 		// 3.1 Check Master Topology
@@ -300,25 +355,104 @@ func TestEcEndToEnd(t *testing.T) {
 			}
 		}
 
-		// 3.2 Debug: Check workers and jobs
-		wResp, wErr := http.Get(AdminUrl + "/api/plugin/workers")
+		// 3.2 Debug: Check workers, jobs, and scheduler status
+		debugTick++
+
+		var workers []map[string]interface{}
 		workerCount := 0
-		if wErr == nil {
-			var workers []interface{}
-			json.NewDecoder(wResp.Body).Decode(&workers)
-			wResp.Body.Close()
+		ecDetectorCount := 0
+		ecExecutorCount := 0
+		if err := fetchJSON(AdminUrl+"/api/plugin/workers", &workers); err == nil {
 			workerCount = len(workers)
+			for _, worker := range workers {
+				capsValue, ok := mapFieldAny(worker, "capabilities", "Capabilities")
+				if !ok {
+					continue
+				}
+				caps, ok := capsValue.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if capValue, ok := caps["erasure_coding"].(map[string]interface{}); ok {
+					if capValue["can_detect"] == true {
+						ecDetectorCount++
+					}
+					if capValue["can_execute"] == true {
+						ecExecutorCount++
+					}
+				}
+			}
 		}
 
-		tResp, tErr := http.Get(AdminUrl + "/api/plugin/jobs?limit=1000")
+		var tasks []map[string]interface{}
 		taskCount := 0
-		if tErr == nil {
-			var tasks []interface{}
-			json.NewDecoder(tResp.Body).Decode(&tasks)
-			tResp.Body.Close()
+		ecTaskCount := 0
+		ecTaskStates := map[string]int{}
+		if err := fetchJSON(AdminUrl+"/api/plugin/jobs?limit=1000", &tasks); err == nil {
 			taskCount = len(tasks)
+			for _, task := range tasks {
+				jobType, _ := task["job_type"].(string)
+				state, _ := task["state"].(string)
+				if jobType == "erasure_coding" {
+					ecTaskCount++
+					ecTaskStates[state]++
+				}
+			}
 		}
-		t.Logf("Waiting for EC... (Workers: %d, Active Tasks: %d)", workerCount, taskCount)
+
+		t.Logf("Waiting for EC... (Workers: %d det=%d exec=%d, Tasks: %d ec=%d, EC States: %+v)",
+			workerCount, ecDetectorCount, ecExecutorCount, taskCount, ecTaskCount, ecTaskStates)
+
+		if debugTick%3 == 0 {
+			var pluginStatus map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/status", &pluginStatus); err == nil {
+				t.Logf("Plugin status: enabled=%v worker_count=%v worker_grpc_port=%v configured=%v",
+					pluginStatus["enabled"], pluginStatus["worker_count"], pluginStatus["worker_grpc_port"], pluginStatus["configured"])
+			}
+
+			var schedulerStatus map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-status", &schedulerStatus); err == nil {
+				if schedValue, ok := schedulerStatus["scheduler"].(map[string]interface{}); ok {
+					t.Logf("Scheduler status: current_job_type=%v phase=%v last_iteration_had_jobs=%v idle_sleep_seconds=%v last_iteration_done_at=%v next_detection_at=%v",
+						schedValue["current_job_type"], schedValue["current_phase"],
+						schedValue["last_iteration_had_jobs"], schedValue["idle_sleep_seconds"], schedValue["last_iteration_done_at"], schedValue["next_detection_at"])
+				} else {
+					t.Logf("Scheduler status: %v", schedulerStatus)
+				}
+			}
+
+			var schedulerStates []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/scheduler-states", &schedulerStates); err == nil {
+				for _, state := range schedulerStates {
+					if state["job_type"] == "erasure_coding" {
+						t.Logf("EC scheduler state: enabled=%v detection_in_flight=%v detector_available=%v executor_workers=%v next_detection_at=%v last_run_status=%v last_run_started_at=%v last_run_completed_at=%v",
+							state["enabled"], state["detection_in_flight"], state["detector_available"],
+							state["executor_worker_count"], state["next_detection_at"], state["last_run_status"],
+							state["last_run_started_at"], state["last_run_completed_at"])
+						break
+					}
+				}
+			}
+
+			var jobTypes []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/job-types", &jobTypes); err == nil {
+				var names []string
+				for _, jobType := range jobTypes {
+					if name, ok := jobType["job_type"].(string); ok && name != "" {
+						names = append(names, name)
+					}
+				}
+				t.Logf("Plugin job types: %v", names)
+			}
+
+			var activities []map[string]interface{}
+			if err := fetchJSON(AdminUrl+"/api/plugin/activities?job_type=erasure_coding&limit=5", &activities); err == nil {
+				for i := len(activities) - 1; i >= 0; i-- {
+					act := activities[i]
+					t.Logf("EC activity: stage=%v message=%v occurred_at=%v", act["stage"], act["message"], act["occurred_at"])
+				}
+			}
+		}
 
 		time.Sleep(10 * time.Second)
 	}

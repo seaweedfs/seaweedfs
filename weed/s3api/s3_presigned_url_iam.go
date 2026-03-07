@@ -101,21 +101,10 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 	if pm.s3iam == nil || !pm.s3iam.enabled {
 		return nil, fmt.Errorf("IAM integration not enabled")
 	}
-
-	// Validate session token and get identity
-	// Use a proper ARN format for the principal
-	principalArn := fmt.Sprintf("arn:aws:sts::assumed-role/PresignedUser/presigned-session")
-	iamIdentity := &IAMIdentity{
-		SessionToken: req.SessionToken,
-		Principal:    principalArn,
-		Name:         "presigned-user",
-		Account:      &AccountAdmin,
+	if req == nil || strings.TrimSpace(req.SessionToken) == "" {
+		return nil, fmt.Errorf("IAM authorization failed: session token is required")
 	}
 
-	// Determine S3 action from method
-	action := determineS3ActionFromMethodAndPath(req.Method, req.Bucket, req.ObjectKey)
-
-	// Check IAM permissions before generating URL
 	authRequest := &http.Request{
 		Method: req.Method,
 		URL:    &url.URL{Path: "/" + req.Bucket + "/" + req.ObjectKey},
@@ -124,7 +113,16 @@ func (pm *S3PresignedURLManager) GeneratePresignedURLWithIAM(ctx context.Context
 	authRequest.Header.Set("Authorization", "Bearer "+req.SessionToken)
 	authRequest = authRequest.WithContext(ctx)
 
-	errCode := pm.s3iam.AuthorizeAction(ctx, iamIdentity, action, req.Bucket, req.ObjectKey, authRequest)
+	iamIdentity, errCode := pm.s3iam.AuthenticateJWT(ctx, authRequest)
+	if errCode != s3err.ErrNone {
+		return nil, fmt.Errorf("IAM authorization failed: invalid session token")
+	}
+
+	// Determine S3 action from method
+	action := determineS3ActionFromMethodAndPath(req.Method, req.Bucket, req.ObjectKey)
+
+	// Check IAM permissions before generating URL
+	errCode = pm.s3iam.AuthorizeAction(ctx, iamIdentity, action, req.Bucket, req.ObjectKey, authRequest)
 	if errCode != s3err.ErrNone {
 		return nil, fmt.Errorf("IAM authorization failed: user does not have permission for action %s on resource %s/%s", action, req.Bucket, req.ObjectKey)
 	}

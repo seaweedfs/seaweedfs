@@ -678,7 +678,7 @@ func (cr *CoordinatorRegistry) loadCoordinatorAssignmentWithClient(consumerGroup
 	err := clientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Load from individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
-		data, err := filer.ReadInsideFiler(client, CoordinatorAssignmentsDir, fileName)
+		data, err := filer.ReadInsideFiler(context.Background(), client, CoordinatorAssignmentsDir, fileName)
 		if err != nil {
 			return fmt.Errorf("assignment file not found for group %s: %w", consumerGroup, err)
 		}

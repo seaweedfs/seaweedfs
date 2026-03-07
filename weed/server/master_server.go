@@ -333,17 +333,26 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (ms *MasterServer) isAdminServerConnected() bool {
+	if ms == nil || ms.adminLocks == nil {
+		return false
+	}
+	_, _, isLocked := ms.adminLocks.isLocked(cluster.AdminServerPresenceLockName)
+	return isLocked
+}
+
 func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
-	v.SetDefault("master.maintenance.scripts", maintenance.DefaultMasterMaintenanceScripts)
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
-	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetFloat64("master.maintenance.sleep_minutes")
+	if sleepMinutes <= 0 {
+		sleepMinutes = float64(maintenance.DefaultMaintenanceSleepMinutes)
+	}
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
@@ -371,6 +380,10 @@ func (ms *MasterServer) startAdminScripts() {
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster(context.Background()) != "" {
+				if ms.isAdminServerConnected() {
+					glog.V(1).Infof("Skipping master maintenance scripts because admin server is connected")
+					continue
+				}
 				shellOptions.FilerAddress = ms.GetOneFiler(cluster.FilerGroupName(*shellOptions.FilerGroup))
 				if shellOptions.FilerAddress == "" {
 					continue

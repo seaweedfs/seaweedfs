@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -66,6 +67,10 @@ type IdentityAccessManagement struct {
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
+
+	// Cached policy engine for IAM policy fallback evaluation.
+	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
+	iamPolicyEngine *policy_engine.PolicyEngine
 
 	// background polling
 	stopChan     chan struct{}
@@ -658,6 +663,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.rebuildIAMPolicyEngineLocked()
 
 	// Re-add environment-based identities that were preserved
 	for _, envIdent := range envIdentities {
@@ -914,6 +920,7 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1546,6 +1553,165 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 	return iam.credentialManager
 }
 
+type managedPolicyLoader interface {
+	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
+}
+
+type inlinePolicyLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
+func inlinePolicyRuntimeName(userName, policyName string) string {
+	return "__inline_policy__/" + userName + "/" + policyName
+}
+
+func mergePoliciesIntoConfiguration(config *iam_pb.S3ApiConfiguration, policies []*iam_pb.Policy) {
+	if len(policies) == 0 {
+		return
+	}
+
+	existingPolicies := make(map[string]int, len(config.Policies))
+	for idx, policy := range config.Policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
+		existingPolicies[policy.Name] = idx
+	}
+
+	for _, policy := range policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
+		policyCopy := &iam_pb.Policy{Name: policy.Name, Content: policy.Content}
+		if existingIdx, found := existingPolicies[policy.Name]; found {
+			config.Policies[existingIdx] = policyCopy
+			continue
+		}
+
+		config.Policies = append(config.Policies, policyCopy)
+		existingPolicies[policy.Name] = len(config.Policies) - 1
+	}
+}
+
+func appendUniquePolicyName(policyNames []string, policyName string) []string {
+	for _, existingPolicyName := range policyNames {
+		if existingPolicyName == policyName {
+			return policyNames
+		}
+	}
+	return append(policyNames, policyName)
+}
+
+func (iam *IdentityAccessManagement) loadManagedPoliciesForRuntime(ctx context.Context) ([]*iam_pb.Policy, error) {
+	store := iam.credentialManager.GetStore()
+	if store == nil {
+		return nil, nil
+	}
+
+	if loader, ok := store.(managedPolicyLoader); ok {
+		return loader.LoadManagedPolicies(ctx)
+	}
+
+	policies, err := iam.credentialManager.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policyDocument := range policies {
+		content, err := json.Marshal(policyDocument)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal policy %q: %w", name, err)
+		}
+
+		managedPolicies = append(managedPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	return managedPolicies, nil
+}
+
+func (iam *IdentityAccessManagement) hydrateRuntimePolicies(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	if iam.credentialManager == nil || config == nil {
+		return nil
+	}
+
+	managedPolicies, err := iam.loadManagedPoliciesForRuntime(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load managed policies for runtime: %w", err)
+	}
+	mergePoliciesIntoConfiguration(config, managedPolicies)
+
+	store := iam.credentialManager.GetStore()
+	if store == nil {
+		return nil
+	}
+
+	inlineLoader, ok := store.(inlinePolicyLoader)
+	if !ok {
+		return nil
+	}
+
+	inlinePoliciesByUser, err := inlineLoader.LoadInlinePolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load inline policies for runtime: %w", err)
+	}
+
+	if len(inlinePoliciesByUser) == 0 {
+		return nil
+	}
+
+	identityByName := make(map[string]*iam_pb.Identity, len(config.Identities))
+	for _, identity := range config.Identities {
+		identityByName[identity.Name] = identity
+	}
+
+	inlinePolicies := make([]*iam_pb.Policy, 0)
+	for userName, userPolicies := range inlinePoliciesByUser {
+		identity, found := identityByName[userName]
+		if !found {
+			continue
+		}
+
+		for policyName, policyDocument := range userPolicies {
+			content, err := json.Marshal(policyDocument)
+			if err != nil {
+				return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, userName, err)
+			}
+
+			runtimePolicyName := inlinePolicyRuntimeName(userName, policyName)
+			inlinePolicies = append(inlinePolicies, &iam_pb.Policy{
+				Name:    runtimePolicyName,
+				Content: string(content),
+			})
+			identity.PolicyNames = appendUniquePolicyName(identity.PolicyNames, runtimePolicyName)
+		}
+	}
+
+	mergePoliciesIntoConfiguration(config, inlinePolicies)
+	return nil
+}
+
+func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context.Context, policies []*iam_pb.Policy) error {
+	if iam == nil || iam.iamIntegration == nil {
+		return nil
+	}
+
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
+	if !ok {
+		return nil
+	}
+
+	manager := provider.GetIAMManager()
+	if manager == nil {
+		return nil
+	}
+
+	return manager.SyncRuntimePolicies(ctx, policies)
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
@@ -1558,6 +1724,15 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 
 	glog.V(2).Infof("Credential manager returned %d identities and %d accounts",
 		len(s3ApiConfiguration.Identities), len(s3ApiConfiguration.Accounts))
+
+	if err := iam.hydrateRuntimePolicies(context.Background(), s3ApiConfiguration); err != nil {
+		glog.Errorf("Failed to hydrate runtime IAM policies: %v", err)
+		return err
+	}
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), s3ApiConfiguration.Policies); err != nil {
+		glog.Errorf("Failed to sync runtime IAM policies to advanced IAM manager: %v", err)
+		return err
+	}
 
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		glog.Errorf("Failed to load S3 API configuration: %v", err)
@@ -1658,6 +1833,51 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
+// evaluateIAMPolicies evaluates attached IAM policies for a user identity.
+// Returns true if any matching statement explicitly allows the action.
+// Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
+func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil || len(identity.PolicyNames) == 0 {
+		return false
+	}
+
+	iam.m.RLock()
+	engine := iam.iamPolicyEngine
+	iam.m.RUnlock()
+
+	if engine == nil {
+		return false
+	}
+
+	resource := buildResourceARN(bucket, object)
+	principal := buildPrincipalARN(identity, r)
+	s3Action := ResolveS3Action(r, string(action), bucket, object)
+	explicitAllow := false
+	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
+	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
+		conditions[k] = v
+	}
+
+	for _, policyName := range identity.PolicyNames {
+		result := engine.EvaluatePolicy(policyName, &policy_engine.PolicyEvaluationArgs{
+			Action:     s3Action,
+			Resource:   resource,
+			Principal:  principal,
+			Conditions: conditions,
+			Claims:     identity.Claims,
+		})
+
+		if result == policy_engine.PolicyResultDeny {
+			return false
+		}
+		if result == policy_engine.PolicyResultAllow {
+			explicitAllow = true
+		}
+	}
+
+	return explicitAllow
+}
+
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
@@ -1674,11 +1894,24 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	hasAttachedPolicies := len(identity.PolicyNames) > 0
 
-	if (len(identity.Actions) == 0 || hasSessionToken) && iam.iamIntegration != nil {
+	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
 	}
 
+	// Attached IAM policies are authoritative for IAM users. The legacy Actions
+	// field is a lossy projection that cannot represent deny statements,
+	// conditions, or fine-grained action differences such as PutObject vs
+	// DeleteObject.
+	if hasAttachedPolicies {
+		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
+	}
+
+	// Traditional actions-based authorization from static S3 config.
 	if len(identity.Actions) > 0 {
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
@@ -1752,6 +1985,12 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
 	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	iam.ensureIAMPolicyEngine()
+	// Remove old entry first so that a parse failure doesn't leave a stale allow.
+	_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
+		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
+	}
 	return nil
 }
 
@@ -1770,7 +2009,34 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
 	defer iam.m.Unlock()
 	delete(iam.policies, name)
+	if iam.iamPolicyEngine != nil {
+		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	}
 	return nil
+}
+
+// ensureIAMPolicyEngine lazily initializes the shared IAM policy engine.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {
+	if iam.iamPolicyEngine == nil {
+		iam.iamPolicyEngine = policy_engine.NewPolicyEngine()
+	}
+}
+
+// rebuildIAMPolicyEngineLocked rebuilds the entire IAM policy engine cache
+// from the current policies map. Must be called with iam.m held.
+func (iam *IdentityAccessManagement) rebuildIAMPolicyEngineLocked() {
+	if len(iam.policies) == 0 {
+		iam.iamPolicyEngine = nil
+		return
+	}
+	engine := policy_engine.NewPolicyEngine()
+	for name, p := range iam.policies {
+		if err := engine.SetBucketPolicy(name, p.Content); err != nil {
+			glog.Warningf("IAM policy cache rebuild: skipping invalid policy %q: %v", name, err)
+		}
+	}
+	iam.iamPolicyEngine = engine
 }
 
 // ListPolicies lists all policies

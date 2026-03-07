@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -98,6 +99,9 @@ type AdminServer struct {
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
 	plugin             *adminplugin.Plugin
+	pluginLock         *AdminLockManager
+	adminPresenceLock  *adminPresenceLock
+	expireJobHandler   func(jobID string, reason string) (*adminplugin.TrackedJob, bool, error)
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
@@ -134,6 +138,12 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	ctx := context.Background()
 	go masterClient.KeepConnectedToMaster(ctx)
 
+	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
+	presenceLock := newAdminPresenceLock(masterClient)
+	if presenceLock != nil {
+		presenceLock.Start()
+	}
+
 	server := &AdminServer{
 		masterClient:                  masterClient,
 		templateFS:                    templateFS,
@@ -145,6 +155,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
+		pluginLock:                    lockManager,
+		adminPresenceLock:             presenceLock,
 	}
 
 	// Initialize topic retention purger
@@ -223,20 +235,19 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
-	plugin, err := adminplugin.New(adminplugin.Options{
+	pluginOpts := adminplugin.Options{
 		DataDir: dataDir,
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
-	})
+		LockManager:            lockManager,
+		ConfigDefaultsProvider: server.enrichConfigDefaults,
+	}
+	plugin, err := adminplugin.New(pluginOpts)
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
-		plugin, err = adminplugin.New(adminplugin.Options{
-			DataDir: "",
-			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
-				return server.buildDefaultPluginClusterContext(), nil
-			},
-		})
+		pluginOpts.DataDir = ""
+		plugin, err = adminplugin.New(pluginOpts)
 	}
 	if err != nil {
 		glog.Errorf("Failed to initialize plugin: %v", err)
@@ -258,6 +269,89 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	// Load task configurations dynamically using the config update registry
 	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
+}
+
+// enrichConfigDefaults is called by the plugin when bootstrapping a job type's
+// default config from its descriptor. For admin_script, it fetches maintenance
+// scripts from the master and uses them as the script default.
+//
+// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
+// to the admin script plugin worker. Remove after March 2027.
+func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	if cfg.JobType != "admin_script" {
+		return cfg
+	}
+
+	var maintenanceScripts string
+	var sleepMinutes uint32
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		maintenanceScripts = resp.MaintenanceScripts
+		sleepMinutes = resp.MaintenanceSleepMinutes
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("Could not fetch master configuration for admin_script defaults: %v", err)
+		return cfg
+	}
+
+	script := cleanMaintenanceScript(maintenanceScripts)
+	if script == "" {
+		return cfg
+	}
+
+	interval := int64(sleepMinutes)
+	if interval <= 0 {
+		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
+	}
+
+	glog.V(0).Infof("Enriching admin_script defaults from master maintenance scripts (interval=%dm)", interval)
+
+	if cfg.AdminConfigValues == nil {
+		cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
+	}
+	cfg.AdminConfigValues["script"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
+	}
+	cfg.AdminConfigValues["run_interval_minutes"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+	}
+	cfg.UpdatedBy = "master_migration"
+
+	return cfg
+}
+
+// cleanMaintenanceScript strips lock/unlock commands and normalizes a
+// maintenance script string for use with the admin script plugin worker.
+//
+// MIGRATION: Used by enrichConfigDefaults. Remove after March 2027.
+func cleanMaintenanceScript(script string) string {
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Strip inline comments (e.g., "lock # migration note")
+		if idx := strings.Index(trimmed, "#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+			if trimmed == "" {
+				continue
+			}
+		}
+		firstToken := strings.ToLower(strings.Fields(trimmed)[0])
+		if firstToken == "lock" || firstToken == "unlock" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetCredentialManager returns the credential manager
@@ -889,6 +983,13 @@ func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
 }
 
+func (s *AdminServer) acquirePluginLock(reason string) (func(), error) {
+	if s == nil || s.pluginLock == nil {
+		return func() {}, nil
+	}
+	return s.pluginLock.Acquire(reason)
+}
+
 // RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
 func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
 	if s.plugin == nil {
@@ -931,6 +1032,13 @@ func (s *AdminServer) RunPluginDetection(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
@@ -956,6 +1064,13 @@ func (s *AdminServer) RunPluginDetectionWithReport(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
 }
 
@@ -968,6 +1083,17 @@ func (s *AdminServer) ExecutePluginJob(
 ) (*plugin_pb.JobCompleted, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	jobType := ""
+	if job != nil {
+		jobType = strings.TrimSpace(job.JobType)
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin execution %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
 	}
 	return s.plugin.ExecuteJob(ctx, job, clusterContext, attempt)
 }
@@ -1018,6 +1144,17 @@ func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLim
 		return nil, false, fmt.Errorf("plugin is not enabled")
 	}
 	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
+}
+
+// ExpirePluginJob marks an active plugin job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJob(jobID, reason string) (*adminplugin.TrackedJob, bool, error) {
+	if handler := s.expireJobHandler; handler != nil {
+		return handler(jobID, reason)
+	}
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ExpireJob(jobID, reason)
 }
 
 // ListPluginActivities returns plugin job activities for monitoring.
@@ -1236,6 +1373,9 @@ func (s *AdminServer) Shutdown() {
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+	if s.adminPresenceLock != nil {
+		s.adminPresenceLock.Stop()
+	}
 
 	if s.plugin != nil {
 		s.plugin.Shutdown()

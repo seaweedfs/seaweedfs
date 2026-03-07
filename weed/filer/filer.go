@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -54,6 +55,7 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	lazyFetchGroup      singleflight.Group
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
@@ -372,6 +374,14 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 			f.Store.DeleteOneEntry(ctx, entry)
 			return nil, filer_pb.ErrNotFound
+		}
+	}
+
+	if entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
+		if lazy, lazyErr := f.maybeLazyFetchFromRemote(ctx, p); lazyErr != nil {
+			glog.V(1).InfofCtx(ctx, "FindEntry lazy fetch %s: %v", p, lazyErr)
+		} else if lazy != nil {
+			return lazy, nil
 		}
 	}
 

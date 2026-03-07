@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -20,7 +21,7 @@ func (wfs *WFS) subscribeFilerConfEvents() (*meta_cache.MetadataFollower, error)
 
 	// read current conf
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, confDir, confName)
+		content, err := filer.ReadInsideFiler(context.Background(), client, confDir, confName)
 		if err != nil {
 			return err
 		}
