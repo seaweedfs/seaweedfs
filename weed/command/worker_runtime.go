@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding,admin_script"
+const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding,admin_script,iceberg_maintenance"
 
 type pluginWorkerRunOptions struct {
 	AdminServer string
