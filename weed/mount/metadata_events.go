@@ -15,14 +15,14 @@ func (wfs *WFS) applyLocalMetadataEvent(ctx context.Context, event *filer_pb.Sub
 	return wfs.metaCache.ApplyMetadataResponseOwned(ctx, event, meta_cache.LocalMetadataResponseApplyOptions)
 }
 
-func metadataDeleteEvent(directory, name string) *filer_pb.SubscribeMetadataResponse {
+func metadataDeleteEvent(directory, name string, isDirectory bool) *filer_pb.SubscribeMetadataResponse {
 	if name == "" {
 		return nil
 	}
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory: directory,
 		EventNotification: &filer_pb.EventNotification{
-			OldEntry: &filer_pb.Entry{Name: name},
+			OldEntry: &filer_pb.Entry{Name: name, IsDirectory: isDirectory},
 		},
 	}
 }

@@ -118,7 +118,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		return fuse.ENOENT
 	}
 
-	event := metadataDeleteEvent(string(dirFullPath), name)
+	event := metadataDeleteEvent(string(dirFullPath), name, true)
 	if resp != nil && resp.MetadataEvent != nil {
 		event = resp.MetadataEvent
 	}

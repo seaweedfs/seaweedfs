@@ -145,7 +145,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.OK
 	}
 
-	event := metadataDeleteEvent(string(dirFullPath), name)
+	event := metadataDeleteEvent(string(dirFullPath), name, false)
 	if resp != nil && resp.MetadataEvent != nil {
 		event = resp.MetadataEvent
 	}
