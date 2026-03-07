@@ -1,0 +1,123 @@
+name: "Rust Volume Server Tests"
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'seaweed-volume/**'
+      - 'test/volume_server/**'
+      - '.github/workflows/rust-volume-server-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'seaweed-volume/**'
+      - 'test/volume_server/**'
+      - '.github/workflows/rust-volume-server-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}/rust-volume-server-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.24'
+
+jobs:
+  rust-unit-tests:
+    name: Rust Unit Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-
+
+      - name: Build Rust volume server
+        run: cd seaweed-volume && cargo build --release
+
+      - name: Run Rust unit tests
+        run: cd seaweed-volume && cargo test
+
+  rust-integration-tests:
+    name: Rust Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-
+
+      - name: Build Go weed binary
+        run: |
+          cd weed
+          go build -o weed .
+          chmod +x weed
+          ./weed version
+
+      - name: Build Rust volume binary
+        run: cd seaweed-volume && cargo build --release
+
+      - name: Run integration tests
+        env:
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+          RUST_VOLUME_BINARY: ${{ github.workspace }}/seaweed-volume/target/release/seaweed-volume
+        run: |
+          echo "Running Rust volume server integration tests..."
+          go test -v -count=1 -timeout=15m ./test/volume_server/rust/...
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/rust-volume-server-it-logs
+          find /tmp -maxdepth 1 -type d -name "seaweedfs_volume_server_it_*" -print -exec cp -r {} /tmp/rust-volume-server-it-logs/ \; || true
+
+      - name: Archive logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-volume-server-integration-test-logs
+          path: /tmp/rust-volume-server-it-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## Rust Volume Server Integration Test Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Suite: test/volume_server/rust" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Command: go test -v -count=1 -timeout=15m ./test/volume_server/rust/..." >> "$GITHUB_STEP_SUMMARY"
