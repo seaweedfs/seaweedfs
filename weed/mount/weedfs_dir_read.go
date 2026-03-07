@@ -28,10 +28,12 @@ type DirectoryHandle struct {
 	isFinished        bool
 	entryStream       []*filer.Entry
 	entryStreamOffset uint64
+	snapshotTsNs      int64 // snapshot timestamp for consistent readdir in direct mode
 }
 
 func (dh *DirectoryHandle) reset() {
 	dh.isFinished = false
+	dh.snapshotTsNs = 0
 	// Nil out pointers to allow garbage collection of old entries,
 	// then reuse the slice's capacity to avoid re-allocations.
 	for i := range dh.entryStream {
@@ -300,12 +302,15 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 	if input.Offset >= dh.entryStreamOffset {
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
-			entries, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount)
+			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, 0)
 			if err != nil {
 				glog.Errorf("list filer directory: %v", err)
 				return fuse.EIO
 			}
 			dh.entryStream = append(dh.entryStream, entries...)
+			if dh.snapshotTsNs == 0 {
+				dh.snapshotTsNs = snapshotTs
+			}
 		}
 
 		if input.Offset > dh.entryStreamOffset {
@@ -326,10 +331,13 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 			}
 		}
 
-		entries, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize)
+		entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs)
 		if err != nil {
 			glog.Errorf("list filer directory: %v", err)
 			return fuse.EIO
+		}
+		if dh.snapshotTsNs == 0 {
+			dh.snapshotTsNs = snapshotTs
 		}
 
 		bufferFull := false
@@ -352,20 +360,25 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 	return fuse.OK
 }
 
-func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32) ([]*filer.Entry, error) {
+func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32, snapshotTsNs int64) ([]*filer.Entry, int64, error) {
 	entries := make([]*filer.Entry, 0, limit)
-	err := filer_pb.List(ctx, client, string(dirPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		if meta_cache.IsHiddenSystemEntry(string(dirPath), entry.Name) {
+	var actualSnapshotTsNs int64
+	err := client.WithFilerClient(false, func(sc filer_pb.SeaweedFilerClient) error {
+		var innerErr error
+		actualSnapshotTsNs, innerErr = filer_pb.DoSeaweedListWithSnapshot(ctx, sc, dirPath, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if meta_cache.IsHiddenSystemEntry(string(dirPath), entry.Name) {
+				return nil
+			}
+			if uidGidMapper != nil && entry.Attributes != nil {
+				entry.Attributes.Uid, entry.Attributes.Gid = uidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+			}
+			entries = append(entries, filer.FromPbEntry(string(dirPath), entry))
 			return nil
-		}
-		if uidGidMapper != nil && entry.Attributes != nil {
-			entry.Attributes.Uid, entry.Attributes.Gid = uidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
-		}
-		entries = append(entries, filer.FromPbEntry(string(dirPath), entry))
-		return nil
-	}, startFileName, includeStart, limit)
+		}, startFileName, includeStart, limit, snapshotTsNs)
+		return innerErr
+	})
 	if err != nil {
-		return nil, err
+		return nil, actualSnapshotTsNs, err
 	}
-	return entries, nil
+	return entries, actualSnapshotTsNs, nil
 }

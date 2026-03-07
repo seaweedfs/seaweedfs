@@ -84,7 +84,7 @@ func TestLoadDirectoryEntriesDirectFiltersHiddenEntriesAndMapsIds(t *testing.T) 
 		},
 	}
 
-	entries, err := loadDirectoryEntriesDirect(context.Background(), client, mapper, util.FullPath("/"), "", false, 10)
+	entries, _, err := loadDirectoryEntriesDirect(context.Background(), client, mapper, util.FullPath("/"), "", false, 10, 0)
 	if err != nil {
 		t.Fatalf("loadDirectoryEntriesDirect: %v", err)
 	}
