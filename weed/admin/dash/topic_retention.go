@@ -151,17 +151,21 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 			}
 
 			// Only process directories that are versions (start with "v")
-			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
 				versionTime, err := p.parseVersionTime(versionResp.Entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to parse version time from %s: %v", versionResp.Entry.Name, err)
 					continue
 				}
 
+				var modTime time.Time
+				if versionResp.Entry.Attributes != nil {
+					modTime = time.Unix(versionResp.Entry.Attributes.Mtime, 0)
+				}
 				versionDirs = append(versionDirs, VersionDirInfo{
 					Name:        versionResp.Entry.Name,
 					VersionTime: versionTime,
-					ModTime:     time.Unix(versionResp.Entry.Attributes.Mtime, 0),
+					ModTime:     modTime,
 				})
 			}
 		}
@@ -260,6 +264,9 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			return fmt.Errorf("failed to receive entries: %w", err)
 		}
 
+		if resp.Entry == nil {
+			continue
+		}
 		entryPath := filepath.Join(dirPath, resp.Entry.Name)
 
 		if resp.Entry.IsDirectory {

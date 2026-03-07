@@ -9,7 +9,6 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -233,10 +232,12 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
 
 	if resp.EventNotification.NewEntry != nil {
-		// with new entry, the old entry name also exists. This is the first step to create new entry
-		newEntry := filer.FromPbEntry(resp.EventNotification.NewParentPath, resp.EventNotification.NewEntry)
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, "", newEntry); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply metadata event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
+			if resp.EventNotification.NewParentPath != "" {
+				wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.EventNotification.NewParentPath))
+			}
 		}
 
 		oldParent, newParent := util.FullPath(resp.Directory), util.FullPath(resp.EventNotification.NewParentPath)
@@ -244,14 +245,6 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
-
-		// Keep the renamed destination immediately readable even when the directory
-		// itself is not marked as fully cached.
-		if !wfs.metaCache.IsDirectoryCached(newParent) {
-			if err := wfs.metaCache.InsertEntry(ctx, newEntry); err != nil {
-				return err
-			}
-		}
 
 		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
 		if sourceInode != 0 {
@@ -271,8 +264,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 
 	} else if resp.EventNotification.OldEntry != nil {
 		// without new entry, only old entry name exists. This is the second step to delete old entry
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, util.NewFullPath(resp.Directory, resp.EventNotification.OldEntry.Name), nil); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply delete event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
 		}
 	}
 

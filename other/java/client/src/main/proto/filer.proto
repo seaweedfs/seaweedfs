@@ -100,10 +100,12 @@ message ListEntriesRequest {
     string startFromFileName = 3;
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
+    int64 snapshot_ts_ns = 6;
 }
 
 message ListEntriesResponse {
     Entry entry = 1;
+    int64 snapshot_ts_ns = 2;
 }
 
 message RemoteEntry {
@@ -203,6 +205,7 @@ message CreateEntryRequest {
 
 message CreateEntryResponse {
     string error = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 message UpdateEntryRequest {
@@ -212,6 +215,7 @@ message UpdateEntryRequest {
     repeated int32 signatures = 4;
 }
 message UpdateEntryResponse {
+    SubscribeMetadataResponse metadata_event = 1;
 }
 
 message AppendToEntryRequest {
@@ -236,6 +240,7 @@ message DeleteEntryRequest {
 
 message DeleteEntryResponse {
     string error = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 message AtomicRenameEntryRequest {
@@ -469,6 +474,7 @@ message CacheRemoteObjectToLocalClusterRequest {
 }
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 /////////////////////////

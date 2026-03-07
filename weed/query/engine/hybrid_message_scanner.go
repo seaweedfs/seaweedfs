@@ -625,6 +625,9 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 				return err
 			}
 
+			if resp.Entry == nil {
+				continue
+			}
 			// Count files that are not .parquet files (live log files)
 			// Live log files typically have timestamps or are named like log files
 			fileName := resp.Entry.Name

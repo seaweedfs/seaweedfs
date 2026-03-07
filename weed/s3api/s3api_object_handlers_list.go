@@ -615,6 +615,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		entry := resp.Entry
+		if entry == nil {
+			continue
+		}
 		// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
 		// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
 		// behavior if inclusive callers are introduced in the future.

@@ -6,7 +6,6 @@ import (
 	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -28,13 +27,18 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 		}
 
 		glog.V(1).Infof("save entry: %v", request)
-		_, err := client.UpdateEntry(context.Background(), request)
+		resp, err := filer_pb.UpdateEntryWithResponse(context.Background(), client, request)
 		if err != nil {
 			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
 		}
 
-		if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("metaCache.UpdateEntry dir %s: %w", path, err)
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(parentDir, entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
 		}
 
 		return nil

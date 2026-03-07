@@ -10,7 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-func TestHandleRenameResponseCachesTargetForUncachedDirectory(t *testing.T) {
+func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 	uidGidMapper, err := meta_cache.NewUidGidMapper("", "")
 	if err != nil {
 		t.Fatalf("create uid/gid mapper: %v", err)
@@ -73,14 +73,11 @@ func TestHandleRenameResponseCachesTargetForUncachedDirectory(t *testing.T) {
 	}
 
 	entry, findErr := mc.FindEntry(context.Background(), targetPath)
-	if findErr != nil {
-		t.Fatalf("find target entry: %v", findErr)
+	if findErr != filer_pb.ErrNotFound {
+		t.Fatalf("find target entry error = %v, want %v", findErr, filer_pb.ErrNotFound)
 	}
-	if entry == nil {
-		t.Fatalf("target entry %s not cached", targetPath)
-	}
-	if entry.FileSize != 53 {
-		t.Fatalf("cached file size = %d, want 53", entry.FileSize)
+	if entry != nil {
+		t.Fatalf("target entry %s should not be cached for an uncached directory", targetPath)
 	}
 
 	updatedInode, found := inodeToPath.GetInode(targetPath)
