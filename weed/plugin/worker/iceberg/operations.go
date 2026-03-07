@@ -111,8 +111,14 @@ func (h *Handler) expireSnapshots(
 
 	// Collect all files referenced by each set before modifying metadata.
 	// This lets us determine which files become unreferenced.
-	expiredFiles := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
-	keptFiles := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
+	expiredFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
+	if err != nil {
+		return "", fmt.Errorf("collect expired snapshot files: %w", err)
+	}
+	keptFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
+	if err != nil {
+		return "", fmt.Errorf("collect kept snapshot files: %w", err)
+	}
 
 	// Normalize kept file paths for consistent comparison
 	normalizedKept := make(map[string]struct{}, len(keptFiles))
@@ -154,13 +160,15 @@ func (h *Handler) expireSnapshots(
 }
 
 // collectSnapshotFiles returns all file paths (manifest lists, manifest files,
-// data files) referenced by the given snapshots.
+// data files) referenced by the given snapshots. It returns an error if any
+// manifest list or manifest cannot be read/parsed, to prevent delete decisions
+// based on incomplete reference data.
 func collectSnapshotFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	snapshots []table.Snapshot,
-) map[string]struct{} {
+) (map[string]struct{}, error) {
 	files := make(map[string]struct{})
 	for _, snap := range snapshots {
 		if snap.ManifestList == "" {
@@ -170,13 +178,11 @@ func collectSnapshotFiles(
 
 		manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, snap.ManifestList)
 		if err != nil {
-			glog.V(2).Infof("iceberg maintenance: cannot read manifest list %s: %v", snap.ManifestList, err)
-			continue
+			return nil, fmt.Errorf("read manifest list %s: %w", snap.ManifestList, err)
 		}
 		manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
 		if err != nil {
-			glog.V(2).Infof("iceberg maintenance: cannot parse manifest list %s: %v", snap.ManifestList, err)
-			continue
+			return nil, fmt.Errorf("parse manifest list %s: %w", snap.ManifestList, err)
 		}
 
 		for _, mf := range manifests {
@@ -184,20 +190,18 @@ func collectSnapshotFiles(
 
 			manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
 			if err != nil {
-				glog.V(2).Infof("iceberg maintenance: cannot read manifest %s: %v", mf.FilePath(), err)
-				continue
+				return nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 			}
 			entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), false)
 			if err != nil {
-				glog.V(2).Infof("iceberg maintenance: cannot parse manifest %s: %v", mf.FilePath(), err)
-				continue
+				return nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 			}
 			for _, entry := range entries {
 				files[entry.DataFile().FilePath()] = struct{}{}
 			}
 		}
 	}
-	return files
+	return files, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +223,10 @@ func (h *Handler) removeOrphans(
 	}
 
 	// Collect all referenced files from all snapshots
-	referencedFiles := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
+	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
+	if err != nil {
+		return "", fmt.Errorf("collect referenced files: %w", err)
+	}
 
 	// Also reference the current metadata files
 	for mle := range meta.PreviousFiles() {
