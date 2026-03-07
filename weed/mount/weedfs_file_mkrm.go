@@ -88,7 +88,11 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			return err
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(string(dirFullPath), newEntry)
+		}
+		if err := wfs.applyLocalMetadataEvent(context.Background(), event); err != nil {
 			return fmt.Errorf("local mknod %s: %w", entryFullPath, err)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)

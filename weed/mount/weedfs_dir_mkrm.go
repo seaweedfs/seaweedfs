@@ -69,7 +69,11 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			return err
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(string(dirFullPath), newEntry)
+		}
+		if err := wfs.applyLocalMetadataEvent(context.Background(), event); err != nil {
 			return fmt.Errorf("local mkdir dir %s: %w", entryFullPath, err)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
