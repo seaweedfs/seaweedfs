@@ -318,6 +318,12 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if tablePath == "" {
 		tablePath = path.Join(namespace, tableName)
 	}
+	// Sanitize tablePath to prevent directory traversal.
+	tablePath = path.Clean(tablePath)
+	expected := path.Join(namespace, tableName)
+	if tablePath != expected && !strings.HasPrefix(tablePath, expected+"/") {
+		return fmt.Errorf("invalid table_path %q: must be %q or a subpath", tablePath, expected)
+	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
 	ops, opsErr := parseOperations(workerConfig.Operations)
