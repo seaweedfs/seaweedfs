@@ -423,8 +423,8 @@ func TestPartitionKey(t *testing.T) {
 	}{
 		{"empty partition", map[int]any{}, "__unpartitioned__"},
 		{"nil partition", nil, "__unpartitioned__"},
-		{"single field", map[int]any{1: "us-east"}, "1=us-east"},
-		{"multiple fields sorted", map[int]any{3: "2024", 1: "us-east"}, "1=us-east,3=2024"},
+		{"single field", map[int]any{1: "us-east"}, "1=\"us-east\""},
+		{"multiple fields sorted", map[int]any{3: "2024", 1: "us-east"}, "1=\"us-east\"\x003=\"2024\""},
 	}
 
 	for _, tc := range tests {

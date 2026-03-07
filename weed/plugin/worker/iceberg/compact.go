@@ -3,6 +3,7 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -380,6 +381,7 @@ func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []comp
 }
 
 // partitionKey creates a string key from a partition map for grouping.
+// Values are JSON-encoded to avoid ambiguity when values contain commas or '='.
 func partitionKey(partition map[int]any) string {
 	if len(partition) == 0 {
 		return "__unpartitioned__"
@@ -394,9 +396,13 @@ func partitionKey(partition map[int]any) string {
 
 	var parts []string
 	for _, id := range ids {
-		parts = append(parts, fmt.Sprintf("%d=%v", id, partition[id]))
+		v, err := json.Marshal(partition[id])
+		if err != nil {
+			v = []byte(fmt.Sprintf("%x", fmt.Sprintf("%v", partition[id])))
+		}
+		parts = append(parts, fmt.Sprintf("%d=%s", id, v))
 	}
-	return strings.Join(parts, ",")
+	return strings.Join(parts, "\x00")
 }
 
 // mergeParquetFiles reads multiple small Parquet files and merges them into
