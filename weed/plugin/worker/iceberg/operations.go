@@ -578,13 +578,18 @@ func (h *Handler) commitWithRetry(
 		newMetadataLocation := path.Join("metadata", newMetadataFileName)
 		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes, newMetadataLocation)
 		if err != nil {
+			// Use a detached context for cleanup so staged files are removed
+			// even if the original context was canceled.
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			if !errors.Is(err, errMetadataVersionConflict) {
 				// Non-conflict error (permissions, transport, etc.): fail immediately.
-				_ = deleteFilerFile(ctx, filerClient, metaDir, newMetadataFileName)
+				_ = deleteFilerFile(cleanupCtx, filerClient, metaDir, newMetadataFileName)
+				cleanupCancel()
 				return fmt.Errorf("update table xattr (attempt %d): %w", attempt, err)
 			}
 			// Version conflict: clean up the new metadata file and retry
-			_ = deleteFilerFile(ctx, filerClient, metaDir, newMetadataFileName)
+			_ = deleteFilerFile(cleanupCtx, filerClient, metaDir, newMetadataFileName)
+			cleanupCancel()
 			if attempt < maxRetries-1 {
 				glog.V(1).Infof("iceberg maintenance: version conflict on %s/%s, retrying (attempt %d)", bucketName, tablePath, attempt)
 				continue
