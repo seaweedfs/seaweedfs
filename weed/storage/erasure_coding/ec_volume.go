@@ -52,7 +52,16 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 
 	// open ecx file
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		if dirIdx != dir && os.IsNotExist(err) {
+			// fall back to data directory if idx directory does not have the .ecx file
+			if ev.ecxFile, err = os.OpenFile(dataBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+				return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", dataBaseFileName, err)
+			}
+			indexBaseFileName = dataBaseFileName
+			ev.dirIdx = dir
+		} else {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		}
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
