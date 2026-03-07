@@ -1,13 +1,20 @@
 package command
 
-import "testing"
+import (
+	"testing"
+
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
 
 func TestMiniDefaultPluginJobTypes(t *testing.T) {
-	jobTypes, err := parsePluginWorkerJobTypes(defaultMiniPluginJobTypes)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, dialOption, int(pluginworker.DefaultMaxExecutionConcurrency), "")
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(mini default) err = %v", err)
+		t.Fatalf("buildPluginWorkerHandlers(mini default) err = %v", err)
 	}
-	if len(jobTypes) != 4 {
-		t.Fatalf("expected mini default job types to include 4 handlers, got %v", jobTypes)
+	if len(handlers) != 4 {
+		t.Fatalf("expected mini default job types to include 4 handlers, got %d", len(handlers))
 	}
 }

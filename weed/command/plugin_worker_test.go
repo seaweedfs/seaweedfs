@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -15,68 +14,46 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func TestBuildPluginWorkerHandler(t *testing.T) {
+func TestBuildPluginWorkerHandlerExplicitTypes(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-
 	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
 
-	handler, err := buildPluginWorkerHandler("vacuum", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(vacuum) err = %v", err)
+	for _, jobType := range []string{"vacuum", "volume_balance", "erasure_coding", "admin_script", "iceberg_maintenance"} {
+		handlers, err := buildPluginWorkerHandlers(jobType, dialOption, testMaxConcurrency, "")
+		if err != nil {
+			t.Fatalf("buildPluginWorkerHandlers(%s) err = %v", jobType, err)
+		}
+		if len(handlers) != 1 {
+			t.Fatalf("expected 1 handler for %s, got %d", jobType, len(handlers))
+		}
 	}
-	if handler == nil {
-		t.Fatalf("expected non-nil handler")
-	}
+}
 
-	handler, err = buildPluginWorkerHandler("", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(default) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil default handler")
-	}
+func TestBuildPluginWorkerHandlerAliases(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
 
-	handler, err = buildPluginWorkerHandler("volume_balance", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(volume_balance) err = %v", err)
+	for _, alias := range []string{"balance", "ec", "iceberg", "admin", "script"} {
+		handlers, err := buildPluginWorkerHandlers(alias, dialOption, testMaxConcurrency, "")
+		if err != nil {
+			t.Fatalf("buildPluginWorkerHandlers(%s) err = %v", alias, err)
+		}
+		if len(handlers) != 1 {
+			t.Fatalf("expected 1 handler for alias %s, got %d", alias, len(handlers))
+		}
 	}
-	if handler == nil {
-		t.Fatalf("expected non-nil volume_balance handler")
-	}
+}
 
-	handler, err = buildPluginWorkerHandler("balance", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(balance alias) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil balance alias handler")
-	}
-
-	handler, err = buildPluginWorkerHandler("erasure_coding", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(erasure_coding) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil erasure_coding handler")
-	}
-
-	handler, err = buildPluginWorkerHandler("ec", dialOption, testMaxConcurrency, "")
-	if err != nil {
-		t.Fatalf("buildPluginWorkerHandler(ec alias) err = %v", err)
-	}
-	if handler == nil {
-		t.Fatalf("expected non-nil ec alias handler")
-	}
-
-	_, err = buildPluginWorkerHandler("unknown", dialOption, testMaxConcurrency, "")
+func TestBuildPluginWorkerHandlerUnknown(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	_, err := buildPluginWorkerHandlers("unknown", dialOption, 1, "")
 	if err == nil {
-		t.Fatalf("expected unsupported job type error")
+		t.Fatalf("expected error for unknown job type")
 	}
 }
 
 func TestBuildPluginWorkerHandlers(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
-
 	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
 
 	handlers, err := buildPluginWorkerHandlers("vacuum,volume_balance,erasure_coding", dialOption, testMaxConcurrency, "")
@@ -101,49 +78,57 @@ func TestBuildPluginWorkerHandlers(t *testing.T) {
 	}
 }
 
-func TestParsePluginWorkerJobTypes(t *testing.T) {
-	jobTypes, err := parsePluginWorkerJobTypes("")
+func TestBuildPluginWorkerHandlersCategories(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+
+	// "all" should return all 5 registered handlers
+	handlers, err := buildPluginWorkerHandlers("all", dialOption, testMaxConcurrency, "")
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(default) err = %v", err)
+		t.Fatalf("buildPluginWorkerHandlers(all) err = %v", err)
 	}
-	if len(jobTypes) != 1 || jobTypes[0] != "vacuum" {
-		t.Fatalf("expected default [vacuum], got %v", jobTypes)
+	if len(handlers) != 5 {
+		t.Fatalf("expected 5 handlers for 'all', got %d", len(handlers))
 	}
 
-	jobTypes, err = parsePluginWorkerJobTypes(" volume_balance , ec , vacuum , volume_balance ")
+	// "default" should return vacuum, volume_balance, admin_script
+	handlers, err = buildPluginWorkerHandlers("default", dialOption, testMaxConcurrency, "")
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(list) err = %v", err)
+		t.Fatalf("buildPluginWorkerHandlers(default) err = %v", err)
 	}
-	if len(jobTypes) != 3 {
-		t.Fatalf("expected 3 deduped job types, got %d (%v)", len(jobTypes), jobTypes)
-	}
-	if jobTypes[0] != "volume_balance" || jobTypes[1] != "erasure_coding" || jobTypes[2] != "vacuum" {
-		t.Fatalf("unexpected parsed order %v", jobTypes)
+	if len(handlers) != 3 {
+		t.Fatalf("expected 3 handlers for 'default', got %d", len(handlers))
 	}
 
-	if _, err = parsePluginWorkerJobTypes(" , "); err != nil {
-		t.Fatalf("expected empty list to resolve to default vacuum: %v", err)
+	// "heavy" should return erasure_coding, iceberg_maintenance
+	handlers, err = buildPluginWorkerHandlers("heavy", dialOption, testMaxConcurrency, "")
+	if err != nil {
+		t.Fatalf("buildPluginWorkerHandlers(heavy) err = %v", err)
+	}
+	if len(handlers) != 2 {
+		t.Fatalf("expected 2 handlers for 'heavy', got %d", len(handlers))
 	}
 
-	jobTypes, err = parsePluginWorkerJobTypes("admin-script,script,admin_script")
+	// mix category + explicit: "default,iceberg"
+	handlers, err = buildPluginWorkerHandlers("default,iceberg", dialOption, testMaxConcurrency, "")
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(admin script aliases) err = %v", err)
+		t.Fatalf("buildPluginWorkerHandlers(default,iceberg) err = %v", err)
 	}
-	if len(jobTypes) != 1 || jobTypes[0] != "admin_script" {
-		t.Fatalf("expected admin_script alias to resolve, got %v", jobTypes)
+	if len(handlers) != 4 {
+		t.Fatalf("expected 4 handlers for 'default,iceberg', got %d", len(handlers))
 	}
 }
 
 func TestPluginWorkerDefaultJobTypes(t *testing.T) {
-	jobTypes, err := parsePluginWorkerJobTypes(defaultPluginWorkerJobTypes)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	testMaxConcurrency := int(pluginworker.DefaultMaxExecutionConcurrency)
+
+	handlers, err := buildPluginWorkerHandlers(defaultPluginWorkerJobTypes, dialOption, testMaxConcurrency, "")
 	if err != nil {
-		t.Fatalf("parsePluginWorkerJobTypes(default setting) err = %v", err)
+		t.Fatalf("buildPluginWorkerHandlers(default setting) err = %v", err)
 	}
-	if len(jobTypes) != 5 {
-		t.Fatalf("expected default job types to include 5 handlers, got %v", jobTypes)
-	}
-	if !slices.Contains(jobTypes, "iceberg_maintenance") {
-		t.Fatalf("expected iceberg_maintenance in default job types, got %v", jobTypes)
+	if len(handlers) != 5 {
+		t.Fatalf("expected default job types to include 5 handlers, got %d", len(handlers))
 	}
 }
 
