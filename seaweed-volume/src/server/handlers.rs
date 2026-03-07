@@ -14,7 +14,6 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use crate::metrics;
-use crate::security::Guard;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
 use super::volume_server::VolumeServerState;
@@ -1048,6 +1047,7 @@ pub async fn ui_handler(
 // ============================================================================
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ChunkManifest {
     #[serde(default)]
     name: String,
@@ -1063,6 +1063,7 @@ struct ChunkManifest {
 struct ChunkInfo {
     fid: String,
     offset: i64,
+    #[allow(dead_code)]
     size: i64,
 }
 

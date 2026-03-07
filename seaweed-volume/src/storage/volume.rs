@@ -94,7 +94,7 @@ pub struct Volume {
 
     is_compacting: bool,
 
-    last_io_error: Option<io::Error>,
+    _last_io_error: Option<io::Error>,
 }
 
 /// Windows helper: loop seek_read until buffer is fully filled.
@@ -146,7 +146,7 @@ impl Volume {
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             is_compacting: false,
-            last_io_error: None,
+            _last_io_error: None,
         };
 
         v.load(true, true, preallocate, version)?;
@@ -600,7 +600,7 @@ impl Volume {
     }
 
     fn do_delete_request(&mut self, n: &mut Needle) -> Result<Size, VolumeError> {
-        let (found, size, stored_offset) = if let Some(nm) = &self.nm {
+        let (found, size, _stored_offset) = if let Some(nm) = &self.nm {
             if let Some(nv) = nm.get(n.id) {
                 if !nv.size.is_deleted() {
                     (true, nv.size, nv.offset)
@@ -1041,10 +1041,11 @@ impl Volume {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn check_read_write_error(&mut self, err: &io::Error) {
         if err.raw_os_error() == Some(5) {
             // EIO
-            self.last_io_error = Some(io::Error::new(err.kind(), err.to_string()));
+            self._last_io_error = Some(io::Error::new(err.kind(), err.to_string()));
         }
     }
 }

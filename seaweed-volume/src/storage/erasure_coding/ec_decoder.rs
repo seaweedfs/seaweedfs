@@ -4,7 +4,7 @@
 //! and the sorted index (.ecx) + deletion journal (.ecj).
 
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::idx;

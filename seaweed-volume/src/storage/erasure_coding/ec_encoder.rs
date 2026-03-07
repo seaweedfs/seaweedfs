@@ -4,7 +4,9 @@
 //! (1GB large, 1MB small) and encoded across 14 shard files.
 
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io;
+#[cfg(not(unix))]
+use std::io::{Seek, SeekFrom};
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 

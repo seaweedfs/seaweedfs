@@ -107,7 +107,7 @@ fn add_intervals(
     offset: i64,
     size: i64,
     block_size: i64,
-    row_size: i64,
+    _row_size: i64,
     is_large_block: bool,
     large_block_rows_count: usize,
 ) {

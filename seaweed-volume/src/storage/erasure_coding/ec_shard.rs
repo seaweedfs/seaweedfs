@@ -1,8 +1,7 @@
 //! EcVolumeShard: a single shard file (.ec00-.ec13) of an erasure-coded volume.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::io::{self, Write};
 
 use crate::storage::types::*;
 

@@ -856,7 +856,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut stream = request.into_inner();
         let mut target_file: Option<std::fs::File> = None;
-        let mut file_path = String::new();
+        let mut file_path;
         let mut bytes_written: u64 = 0;
 
         while let Some(req) = stream.message().await? {
@@ -1308,7 +1308,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         // Validate disk_id
-        let (loc_count, dest_dir) = {
+        let (_loc_count, dest_dir) = {
             let store = self.state.store.read().unwrap();
             let count = store.locations.len();
             let dir = if (req.disk_id as usize) < count {
@@ -2055,7 +2055,6 @@ impl VolumeServer for VolumeGrpcService {
                     // Read the needle header from EC shards to get cookie
                     // The needle is at the actual offset in the reconstructed data
                     let actual_offset = offset.to_actual_offset();
-                    use crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE;
                     let shard_size = ec_vol.shards.iter()
                         .filter_map(|s| s.as_ref())
                         .map(|s| s.file_size())

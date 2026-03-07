@@ -3,9 +3,8 @@
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
 
-use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Write};
 
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
@@ -76,6 +75,7 @@ impl EcVolume {
 
     // ---- File names ----
 
+    #[allow(dead_code)]
     fn base_name(&self) -> String {
         crate::storage::volume::volume_file_name(&self.dir, &self.collection, self.volume_id)
     }

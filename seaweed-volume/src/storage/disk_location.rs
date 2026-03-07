@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::Path;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use crate::storage::needle_map::NeedleMapKind;

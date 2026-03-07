@@ -152,7 +152,7 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route("/seaweedfsstatic/*path", get(handlers::static_asset_handler))
         .route("/ui/index.html", get(handlers::ui_handler))
-        .route("/", any(|state: State<Arc<VolumeServerState>>, request: Request| async move {
+        .route("/", any(|_state: State<Arc<VolumeServerState>>, request: Request| async move {
             match request.method().clone() {
                 Method::OPTIONS => admin_options_response(),
                 Method::GET => StatusCode::OK.into_response(),
