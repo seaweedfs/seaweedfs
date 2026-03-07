@@ -236,6 +236,13 @@ func (h *Handler) removeOrphans(
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
 
+	// Precompute a normalized lookup set so orphan checks are O(1) per file.
+	normalizedRefs := make(map[string]struct{}, len(referencedFiles))
+	for ref := range referencedFiles {
+		normalizedRefs[ref] = struct{}{}
+		normalizedRefs[normalizeIcebergPath(ref, bucketName, tablePath)] = struct{}{}
+	}
+
 	// List actual files on filer in metadata/ and data/ directories
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, tablePath)
 	safetyThreshold := time.Now().Add(-time.Duration(config.OrphanOlderThanHours) * time.Hour)
@@ -255,21 +262,7 @@ func (h *Handler) removeOrphans(
 			fullPath := path.Join(fe.Dir, entry.Name)
 			relPath := strings.TrimPrefix(fullPath, tableBasePath+"/")
 
-			// Check both the relative path and the normalized form of each
-			// reference. This avoids fragile suffix matching that could
-			// incorrectly match unrelated files with the same base name.
-			isReferenced := false
-			if _, ok := referencedFiles[relPath]; ok {
-				isReferenced = true
-			} else {
-				for ref := range referencedFiles {
-					normalized := normalizeIcebergPath(ref, bucketName, tablePath)
-					if normalized == relPath {
-						isReferenced = true
-						break
-					}
-				}
-			}
+			_, isReferenced := normalizedRefs[relPath]
 
 			if isReferenced {
 				continue
