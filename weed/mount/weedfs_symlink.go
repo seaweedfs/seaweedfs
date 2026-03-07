@@ -59,7 +59,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 
 		event := resp.GetMetadataEvent()
 		if event == nil {
-			event = metadataUpdateEvent(string(dirPath), request.Entry)
+			event = metadataCreateEvent(string(dirPath), request.Entry)
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 			glog.Warningf("symlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)

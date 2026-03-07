@@ -70,7 +70,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 		event := resp.GetMetadataEvent()
 		if event == nil {
-			event = metadataUpdateEvent(string(dirFullPath), newEntry)
+			event = metadataCreateEvent(string(dirFullPath), newEntry)
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 			glog.Warningf("mkdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)

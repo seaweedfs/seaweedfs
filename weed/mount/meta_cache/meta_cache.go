@@ -204,7 +204,9 @@ func (mc *MetaCache) applyMetadataResponseEnqueue(ctx context.Context, resp *fil
 		ctx = context.Background()
 	}
 	req := metadataApplyRequest{
-		ctx:     ctx,
+		// Use a non-cancellable context for the queued mutation so a
+		// cancelled caller doesn't abort the apply loop mid-write.
+		ctx:     context.Background(),
 		kind:    metadataApplyEvent,
 		resp:    resp,
 		options: options,
@@ -555,14 +557,16 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	state := mc.buildingDirs[dirPath]
 	delete(mc.buildingDirs, dirPath)
 
-	if state != nil {
-		for _, event := range state.bufferedEvents {
-			if event.TsNs != 0 && event.TsNs <= snapshotTsNs {
-				continue
-			}
-			if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {
-				return err
-			}
+	if state == nil {
+		return nil
+	}
+
+	for _, event := range state.bufferedEvents {
+		if event.TsNs != 0 && event.TsNs <= snapshotTsNs {
+			continue
+		}
+		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {
+			return err
 		}
 	}
 
@@ -798,6 +802,15 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
 		}
 		return invalidations
+	}
+
+	if filer_pb.IsCreate(resp) && message.NewEntry != nil {
+		newDir := resp.Directory
+		if message.NewParentPath != "" {
+			newDir = message.NewParentPath
+		}
+		newKey := util.NewFullPath(newDir, message.NewEntry.Name)
+		invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
 	}
 
 	if filer_pb.IsDelete(resp) && message.OldEntry != nil {

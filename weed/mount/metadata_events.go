@@ -27,6 +27,19 @@ func metadataDeleteEvent(directory, name string, isDirectory bool) *filer_pb.Sub
 	}
 }
 
+func metadataCreateEvent(directory string, entry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
+	if entry == nil {
+		return nil
+	}
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: directory,
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry:      proto.Clone(entry).(*filer_pb.Entry),
+			NewParentPath: directory,
+		},
+	}
+}
+
 func metadataUpdateEvent(directory string, entry *filer_pb.Entry) *filer_pb.SubscribeMetadataResponse {
 	if entry == nil {
 		return nil

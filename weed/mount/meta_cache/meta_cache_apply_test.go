@@ -99,8 +99,8 @@ func TestApplyMetadataResponseAppliesEventsInOrder(t *testing.T) {
 	if got := countPath(notifications.paths(), util.FullPath("/dir")); got != 3 {
 		t.Fatalf("directory notifications for /dir = %d, want 3", got)
 	}
-	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 2 {
-		t.Fatalf("invalidations for /dir/file.txt = %d, want 2", got)
+	if got := countPath(invalidations.paths(), util.FullPath("/dir/file.txt")); got != 3 {
+		t.Fatalf("invalidations for /dir/file.txt = %d, want 3 (create + update + delete)", got)
 	}
 }
 

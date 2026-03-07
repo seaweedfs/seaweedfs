@@ -109,7 +109,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 		createEvent := createResp.GetMetadataEvent()
 		if createEvent == nil {
-			createEvent = metadataUpdateEvent(string(newParentPath), request.Entry)
+			createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)

@@ -134,21 +134,21 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		SnapshotTsNs:       snapshotTsNs,
 	}
 
-	glog.V(4).InfofCtx(ctx, "read directory: %v", request)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	stream, err := client.ListEntries(ctx, request)
-	if err != nil {
-		return 0, fmt.Errorf("list %s: %v", fullDirPath, err)
-	}
-
-	// Preserve the caller-requested snapshot so it isn't lost when the
-	// server returns no entries (empty directory) or omits SnapshotTsNs.
+	// Preserve the caller-requested snapshot so it isn't lost on errors,
+	// empty directories, or when the server omits SnapshotTsNs.
 	// For first requests (snapshotTsNs==0), generate a client-side cutoff
 	// so callers like CompleteDirectoryBuild get a meaningful boundary.
 	actualSnapshotTsNs = snapshotTsNs
 	if actualSnapshotTsNs == 0 {
 		actualSnapshotTsNs = time.Now().UnixNano()
+	}
+
+	glog.V(4).InfofCtx(ctx, "read directory: %v", request)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.ListEntries(ctx, request)
+	if err != nil {
+		return actualSnapshotTsNs, fmt.Errorf("list %s: %v", fullDirPath, err)
 	}
 
 	var prevEntry *Entry
