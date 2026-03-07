@@ -160,6 +160,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VacuumVolumeCompactRequest>,
     ) -> Result<Response<Self::VacuumVolumeCompactStream>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("vacuum_volume_compact not yet implemented"))
     }
 
@@ -167,6 +168,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VacuumVolumeCommitRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("vacuum_volume_commit not yet implemented"))
     }
 
@@ -174,6 +176,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VacuumVolumeCleanupRequest>,
     ) -> Result<Response<volume_server_pb::VacuumVolumeCleanupResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("vacuum_volume_cleanup not yet implemented"))
     }
 
@@ -421,6 +424,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeCopyRequest>,
     ) -> Result<Response<Self::VolumeCopyStream>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_copy not yet implemented"))
     }
 
@@ -460,6 +464,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<Streaming<volume_server_pb::ReceiveFileRequest>>,
     ) -> Result<Response<volume_server_pb::ReceiveFileResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("receive_file not yet implemented"))
     }
 
@@ -592,6 +597,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeEcShardsRebuildRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsRebuildResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_ec_shards_rebuild not yet implemented"))
     }
 
@@ -599,6 +605,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeEcShardsCopyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsCopyResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_ec_shards_copy not yet implemented"))
     }
 
@@ -606,6 +613,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeEcShardsDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsDeleteResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_ec_shards_delete not yet implemented"))
     }
 
@@ -635,6 +643,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeEcBlobDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcBlobDeleteResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_ec_blob_delete not yet implemented"))
     }
 
@@ -642,6 +651,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         _request: Request<volume_server_pb::VolumeEcShardsToVolumeRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsToVolumeResponse>, Status> {
+        self.state.check_maintenance()?;
         Err(Status::unimplemented("volume_ec_shards_to_volume not yet implemented"))
     }
 
