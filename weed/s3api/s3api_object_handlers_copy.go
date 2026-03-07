@@ -38,7 +38,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// Copy source path.
 	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
-	cpSrcPath, err := url.QueryUnescape(rawCopySource)
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
 		// Save unescaped string as is.
 		cpSrcPath = rawCopySource
@@ -438,7 +440,7 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 				versionId = values.Get("versionId")
 
 				rawPathNoQuery := rawPath[:idx]
-				if unescaped, err := url.QueryUnescape(rawPathNoQuery); err == nil {
+				if unescaped, err := url.PathUnescape(rawPathNoQuery); err == nil {
 					pathForBucket = unescaped
 				} else {
 					pathForBucket = rawPathNoQuery
@@ -470,8 +472,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	glog.V(4).Infof("CopyObjectPart: Raw copy source header=%q", rawCopySource)
 
-	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
-	cpSrcPath, err := url.QueryUnescape(rawCopySource)
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
 		// If unescaping fails, log and use original
 		glog.V(4).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
