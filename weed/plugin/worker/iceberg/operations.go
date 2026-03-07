@@ -376,6 +376,26 @@ func (h *Handler) rewriteManifests(
 	snapshotID := currentSnap.SnapshotID
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 
+	// Track written artifacts so we can clean them up if the commit fails.
+	type artifact struct {
+		dir, fileName string
+	}
+	var writtenArtifacts []artifact
+	committed := false
+
+	defer func() {
+		if committed || len(writtenArtifacts) == 0 {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, a := range writtenArtifacts {
+			if err := deleteFilerFile(cleanupCtx, filerClient, a.dir, a.fileName); err != nil {
+				glog.Warningf("iceberg rewrite-manifests: failed to clean up artifact %s/%s: %v", a.dir, a.fileName, err)
+			}
+		}
+	}()
+
 	// Write one merged manifest per partition spec
 	var newManifests []iceberg.ManifestFile
 	totalEntries := 0
@@ -401,6 +421,7 @@ func (h *Handler) rewriteManifests(
 		if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
 			return "", fmt.Errorf("save merged manifest for spec %d: %w", se.specID, err)
 		}
+		writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestFileName})
 		newManifests = append(newManifests, mergedManifest)
 	}
 
@@ -424,6 +445,7 @@ func (h *Handler) rewriteManifests(
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
 		return "", fmt.Errorf("save manifest list: %w", err)
 	}
+	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
 	// Create new snapshot with the rewritten manifest list
 	manifestListLocation := path.Join("metadata", manifestListFileName)
@@ -466,6 +488,7 @@ func (h *Handler) rewriteManifests(
 		return "", fmt.Errorf("commit manifest rewrite: %w", err)
 	}
 
+	committed = true
 	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(manifests), len(specMap), totalEntries), nil
 }
 
