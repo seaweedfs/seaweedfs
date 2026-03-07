@@ -97,6 +97,7 @@ func (f *fakeFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream g
 		return nil // empty directory
 	}
 
+	var sent uint32
 	for _, entry := range entries {
 		if req.Prefix != "" && !strings.HasPrefix(entry.Name, req.Prefix) {
 			continue
@@ -114,6 +115,10 @@ func (f *fakeFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream g
 		}
 		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
 			return err
+		}
+		sent++
+		if req.Limit > 0 && sent >= req.Limit {
+			break
 		}
 	}
 	return nil
