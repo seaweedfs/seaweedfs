@@ -158,10 +158,14 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 					continue
 				}
 
+				var modTime time.Time
+				if versionResp.Entry.Attributes != nil {
+					modTime = time.Unix(versionResp.Entry.Attributes.Mtime, 0)
+				}
 				versionDirs = append(versionDirs, VersionDirInfo{
 					Name:        versionResp.Entry.Name,
 					VersionTime: versionTime,
-					ModTime:     time.Unix(versionResp.Entry.Attributes.Mtime, 0),
+					ModTime:     modTime,
 				})
 			}
 		}

@@ -132,3 +132,28 @@ func TestReadDirAllEntriesWithSnapshotCarriesSnapshotAcrossPages(t *testing.T) {
 		t.Fatalf("second request marker = %q, want %q", client.requests[1].StartFromFileName, entries[9999].Name)
 	}
 }
+
+func TestReadDirAllEntriesWithSnapshotEmptyDirectory(t *testing.T) {
+	client := &snapshotListClient{
+		entries:    nil, // empty directory
+		snapshotTs: 999888777,
+	}
+	accessor := &snapshotFilerAccessor{client: client}
+
+	var listed []string
+	snapshotTs, err := ReadDirAllEntriesWithSnapshot(context.Background(), accessor, util.FullPath("/empty"), "", func(entry *Entry, isLast bool) error {
+		listed = append(listed, entry.Name)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ReadDirAllEntriesWithSnapshot: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("listed %d entries, want 0", len(listed))
+	}
+	// The client-side initialisation of actualSnapshotTsNs preserves the
+	// caller-requested snapshot even when the server sends no responses.
+	if snapshotTs != 0 {
+		t.Fatalf("snapshotTs = %d, want 0 (no server snapshot echoed)", snapshotTs)
+	}
+}

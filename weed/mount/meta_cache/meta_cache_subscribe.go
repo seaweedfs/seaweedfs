@@ -42,15 +42,6 @@ func mergeProcessors(mainProcessor func(resp *filer_pb.SubscribeMetadataResponse
 	}
 }
 
-func hasSelfSignature(signatures []int32, selfSignature int32) bool {
-	for _, sig := range signatures {
-		if sig == selfSignature {
-			return true
-		}
-	}
-	return false
-}
-
 func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.FilerClient, dir string, lastTsNs int64, onRetry func(lastTsNs int64, err error), followers ...*MetadataFollower) error {
 
 	var prefixes []string
@@ -59,14 +50,11 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		// Fast path: skip events that originated from this mount instance.
-		// The content-based dedup in the apply loop is a fallback, but
-		// checking signatures is O(n) in signature count (typically 1-2) and avoids enqueuing.
-		if msg := resp.GetEventNotification(); msg != nil {
-			if hasSelfSignature(msg.Signatures, selfSignature) {
-				return nil
-			}
-		}
+		// Let all events (including self-originated ones) flow through the
+		// applier so that the directory-build buffering and dedup logic
+		// can handle them consistently. The dedupRing in
+		// applyMetadataResponseNow catches duplicates that were already
+		// applied locally via applyLocalMetadataEvent.
 		return mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions)
 	}
 

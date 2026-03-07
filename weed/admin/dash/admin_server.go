@@ -480,13 +480,18 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					}
 				}
 
+				var createdAt, lastModified time.Time
+				if resp.Entry.Attributes != nil {
+					createdAt = time.Unix(resp.Entry.Attributes.Crtime, 0)
+					lastModified = time.Unix(resp.Entry.Attributes.Mtime, 0)
+				}
 				bucket := S3Bucket{
 					Name:               bucketName,
-					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
+					CreatedAt:          createdAt,
 					LogicalSize:        logicalSize,
 					PhysicalSize:       physicalSize,
 					ObjectCount:        objectCount,
-					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
+					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
 					VersioningStatus:   versioningStatus,

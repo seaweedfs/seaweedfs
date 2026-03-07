@@ -372,8 +372,12 @@ func (mc *MetaCache) enqueueApplyRequest(req metadataApplyRequest) error {
 	// Release the mutex before the potentially-blocking channel send so that
 	// Shutdown can still acquire it to set applyClosed when the channel is full.
 	mc.applyStateMu.Unlock()
-	mc.applyCh <- req
-	return nil
+	select {
+	case mc.applyCh <- req:
+		return nil
+	case <-mc.applyDone:
+		return errMetaCacheClosed
+	}
 }
 
 func (mc *MetaCache) runApplyLoop() {
@@ -759,11 +763,12 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []metad
 	if message.OldEntry != nil && message.NewEntry != nil {
 		oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
 		invalidations = append(invalidations, metadataInvalidation{path: oldKey, entry: message.OldEntry})
-		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != message.NewParentPath {
-			newDir := resp.Directory
-			if message.NewParentPath != "" {
-				newDir = message.NewParentPath
-			}
+		// Normalize NewParentPath: empty means same directory as resp.Directory
+		newDir := resp.Directory
+		if message.NewParentPath != "" {
+			newDir = message.NewParentPath
+		}
+		if message.OldEntry.Name != message.NewEntry.Name || resp.Directory != newDir {
 			newKey := util.NewFullPath(newDir, message.NewEntry.Name)
 			invalidations = append(invalidations, metadataInvalidation{path: newKey, entry: message.NewEntry})
 		}

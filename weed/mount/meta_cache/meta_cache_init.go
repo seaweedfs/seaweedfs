@@ -86,7 +86,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			}
 		}
 		defer func() {
-			if ctx.Err() != nil {
+			if !cleanupDone && ctx.Err() != nil {
 				cleanupBuild("canceled")
 			}
 		}()
