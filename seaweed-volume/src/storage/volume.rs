@@ -361,6 +361,10 @@ impl Volume {
 
     /// Read a needle by its ID from the volume.
     pub fn read_needle(&self, n: &mut Needle) -> Result<i32, VolumeError> {
+        self.read_needle_opt(n, false)
+    }
+
+    pub fn read_needle_opt(&self, n: &mut Needle, read_deleted: bool) -> Result<i32, VolumeError> {
         let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
         let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
 
@@ -368,15 +372,20 @@ impl Volume {
             return Err(VolumeError::NotFound);
         }
 
-        let read_size = nv.size;
+        let mut read_size = nv.size;
         if read_size.is_deleted() {
-            return Err(VolumeError::Deleted);
+            if read_deleted && !read_size.is_tombstone() {
+                // Negate to get original size
+                read_size = Size(-read_size.0);
+            } else {
+                return Err(VolumeError::Deleted);
+            }
         }
         if read_size.0 == 0 {
             return Ok(0);
         }
 
-        self.read_needle_data(n, nv.offset.to_actual_offset(), read_size)?;
+        self.read_needle_data_at(n, nv.offset.to_actual_offset(), read_size)?;
 
         // TTL expiry check
         if n.has_ttl() {
@@ -399,7 +408,7 @@ impl Volume {
     }
 
     /// Read needle data from .dat file at given offset.
-    fn read_needle_data(&self, n: &mut Needle, offset: i64, size: Size) -> Result<(), VolumeError> {
+    pub fn read_needle_data_at(&self, n: &mut Needle, offset: i64, size: Size) -> Result<(), VolumeError> {
         let dat_file = self.dat_file.as_ref().ok_or_else(|| {
             VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
         })?;
@@ -550,7 +559,7 @@ impl Volume {
             if let Some(nv) = nm.get(n.id) {
                 if !nv.offset.is_zero() && nv.size.is_valid() {
                     let mut old = Needle::default();
-                    if self.read_needle_data(&mut old, nv.offset.to_actual_offset(), nv.size).is_ok() {
+                    if self.read_needle_data_at(&mut old, nv.offset.to_actual_offset(), nv.size).is_ok() {
                         if old.cookie == n.cookie
                             && old.checksum == n.checksum
                             && old.data == n.data
@@ -607,15 +616,6 @@ impl Volume {
 
         if !found {
             return Ok(Size(0));
-        }
-
-        // Cookie validation: read stored needle header and verify cookie matches
-        {
-            let mut existing = Needle::default();
-            self.read_needle_header(&mut existing, stored_offset.to_actual_offset())?;
-            if existing.cookie != n.cookie {
-                return Err(VolumeError::CookieMismatch(n.cookie.0));
-            }
         }
 
         // Write tombstone: append needle with empty data
@@ -725,6 +725,10 @@ impl Volume {
         } else {
             Ok(0)
         }
+    }
+
+    pub fn idx_file_size(&self) -> u64 {
+        self.nm.as_ref().map_or(0, |nm| nm.index_file_size())
     }
 
     // ---- Sync / Close ----

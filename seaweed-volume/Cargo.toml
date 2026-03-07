@@ -66,6 +66,10 @@ uuid = { version = "1", features = ["v4"] }
 # HTTP client (for proxying, remote fetch)
 reqwest = { version = "0.12", features = ["rustls-tls", "stream"] }
 
+# Content hashing
+md-5 = "0.10"
+base64 = "0.22"
+
 # Misc
 bytes = "1"
 rand = "0.8"

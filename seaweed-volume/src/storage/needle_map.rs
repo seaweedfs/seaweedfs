@@ -174,7 +174,8 @@ impl CompactNeedleMap {
 
                 self.metric.on_delete(&old);
                 let deleted_size = Size(-(old.size.0));
-                self.map.insert(key, NeedleValue { offset, size: deleted_size });
+                // Keep original offset so readDeleted can find original data (matching Go behavior)
+                self.map.insert(key, NeedleValue { offset: old.offset, size: deleted_size });
                 return Ok(Some(old.size));
             }
         }

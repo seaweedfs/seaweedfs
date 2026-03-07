@@ -191,7 +191,7 @@ impl Store {
         }
         Err(VolumeError::Io(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("volume {} not found on any disk", vid),
+            format!("volume {} not found on disk", vid),
         )))
     }
 
@@ -201,6 +201,12 @@ impl Store {
     pub fn read_volume_needle(&self, vid: VolumeId, n: &mut Needle) -> Result<i32, VolumeError> {
         let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
         vol.read_needle(n)
+    }
+
+    /// Read a needle from a volume, optionally reading deleted needles.
+    pub fn read_volume_needle_opt(&self, vid: VolumeId, n: &mut Needle, read_deleted: bool) -> Result<i32, VolumeError> {
+        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
+        vol.read_needle_opt(n, read_deleted)
     }
 
     /// Write a needle to a volume.

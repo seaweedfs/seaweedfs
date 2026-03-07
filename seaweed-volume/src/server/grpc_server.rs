@@ -36,41 +36,107 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let mut results = Vec::new();
 
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
         for fid_str in &req.file_ids {
-            let result = match needle::FileId::parse(fid_str) {
-                Ok(file_id) => {
-                    let mut n = Needle {
-                        id: file_id.key,
-                        cookie: file_id.cookie,
-                        ..Needle::default()
-                    };
-                    let mut store = self.state.store.write().unwrap();
-                    match store.delete_volume_needle(file_id.volume_id, &mut n) {
-                        Ok(size) => volume_server_pb::DeleteResult {
+            let file_id = match needle::FileId::parse(fid_str) {
+                Ok(fid) => fid,
+                Err(e) => {
+                    results.push(volume_server_pb::DeleteResult {
+                        file_id: fid_str.clone(),
+                        status: 400, // Bad Request
+                        error: e,
+                        size: 0,
+                        version: 0,
+                    });
+                    continue;
+                }
+            };
+
+            let mut n = Needle {
+                id: file_id.key,
+                cookie: file_id.cookie,
+                ..Needle::default()
+            };
+
+            // Cookie validation (unless skip_cookie_check)
+            if !req.skip_cookie_check {
+                let original_cookie = n.cookie;
+                let store = self.state.store.read().unwrap();
+                match store.read_volume_needle(file_id.volume_id, &mut n) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        results.push(volume_server_pb::DeleteResult {
                             file_id: fid_str.clone(),
-                            status: 0,
-                            error: String::new(),
-                            size: size.0 as u32,
-                            version: 0,
-                        },
-                        Err(e) => volume_server_pb::DeleteResult {
-                            file_id: fid_str.clone(),
-                            status: 1,
+                            status: 404, // Not Found
                             error: e.to_string(),
                             size: 0,
                             version: 0,
-                        },
+                        });
+                        continue;
                     }
                 }
-                Err(e) => volume_server_pb::DeleteResult {
+                if n.cookie != original_cookie {
+                    results.push(volume_server_pb::DeleteResult {
+                        file_id: fid_str.clone(),
+                        status: 400, // Bad Request
+                        error: "File Random Cookie does not match.".to_string(),
+                        size: 0,
+                        version: 0,
+                    });
+                    break; // Stop processing on cookie mismatch
+                }
+            }
+
+            // Reject chunk manifest needles
+            if n.is_chunk_manifest() {
+                results.push(volume_server_pb::DeleteResult {
                     file_id: fid_str.clone(),
-                    status: 1,
-                    error: e,
+                    status: 406, // Not Acceptable
+                    error: "ChunkManifest: not allowed in batch delete mode.".to_string(),
                     size: 0,
                     version: 0,
-                },
-            };
-            results.push(result);
+                });
+                continue;
+            }
+
+            n.last_modified = now;
+            n.set_has_last_modified_date();
+
+            let mut store = self.state.store.write().unwrap();
+            match store.delete_volume_needle(file_id.volume_id, &mut n) {
+                Ok(size) => {
+                    if size.0 == 0 {
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: 304, // Not Modified
+                            error: String::new(),
+                            size: 0,
+                            version: 0,
+                        });
+                    } else {
+                        results.push(volume_server_pb::DeleteResult {
+                            file_id: fid_str.clone(),
+                            status: 202, // Accepted
+                            error: String::new(),
+                            size: size.0 as u32,
+                            version: 0,
+                        });
+                    }
+                }
+                Err(e) => {
+                    results.push(volume_server_pb::DeleteResult {
+                        file_id: fid_str.clone(),
+                        status: 500, // Internal Server Error
+                        error: e.to_string(),
+                        size: 0,
+                        version: 0,
+                    });
+                }
+            }
         }
 
         Ok(Response::new(volume_server_pb::BatchDeleteResponse { results }))
@@ -370,7 +436,7 @@ impl VolumeServer for VolumeGrpcService {
         Ok(Response::new(volume_server_pb::ReadVolumeFileStatusResponse {
             volume_id: vid.0,
             idx_file_timestamp_seconds: 0,
-            idx_file_size: 0,
+            idx_file_size: vol.idx_file_size(),
             dat_file_timestamp_seconds: 0,
             dat_file_size: vol.dat_file_size().unwrap_or(0),
             file_count: vol.file_count() as u64,
@@ -411,7 +477,7 @@ impl VolumeServer for VolumeGrpcService {
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         let blob = vol.read_needle_blob(offset, size)
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(|e| Status::internal(format!("read needle blob: {}", e)))?;
 
         Ok(Response::new(volume_server_pb::ReadNeedleBlobResponse {
             needle_blob: blob,
@@ -427,20 +493,24 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = NeedleId(req.needle_id);
 
         let store = self.state.store.read().unwrap();
-        let mut n = Needle { id: needle_id, ..Needle::default() };
-        match store.read_volume_needle(vid, &mut n) {
-            Ok(_) => {
-                let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
-                Ok(Response::new(volume_server_pb::ReadNeedleMetaResponse {
-                    cookie: n.cookie.0,
-                    last_modified: n.last_modified,
-                    crc: n.checksum.0,
-                    ttl: ttl_str,
-                    append_at_ns: n.append_at_ns,
-                }))
-            }
-            Err(e) => Err(Status::not_found(e.to_string())),
-        }
+        let (_, vol) = store.find_volume(vid)
+            .ok_or_else(|| Status::not_found(format!("not found volume id {} and read needle metadata at ec shards is not supported", vid)))?;
+
+        let offset = req.offset;
+        let size = crate::storage::types::Size(req.size);
+
+        let mut n = Needle { id: needle_id, flags: 0x08, ..Needle::default() };
+        vol.read_needle_data_at(&mut n, offset, size)
+            .map_err(|e| Status::internal(format!("read needle meta: {}", e)))?;
+
+        let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
+        Ok(Response::new(volume_server_pb::ReadNeedleMetaResponse {
+            cookie: n.cookie.0,
+            last_modified: n.last_modified,
+            crc: n.checksum.0,
+            ttl: ttl_str,
+            append_at_ns: n.append_at_ns,
+        }))
     }
 
     async fn write_needle_blob(
@@ -724,7 +794,7 @@ impl VolumeServer for VolumeGrpcService {
         let start = now_ns();
 
         // Route ping based on target type
-        let remote_time_ns = if req.target.is_empty() || req.target_type == "volume" {
+        let remote_time_ns = if req.target.is_empty() || req.target_type == "volumeServer" {
             // Volume self-ping: return our own time
             now_ns()
         } else if req.target_type == "master" {

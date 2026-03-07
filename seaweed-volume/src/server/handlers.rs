@@ -66,6 +66,8 @@ pub struct ReadQueryParams {
     #[serde(rename = "response-cache-control")]
     pub response_cache_control: Option<String>,
     pub dl: Option<String>,
+    #[serde(rename = "readDeleted")]
+    pub read_deleted: Option<String>,
 }
 
 // ============================================================================
@@ -127,8 +129,10 @@ async fn get_or_head_handler_inner(
         ..Needle::default()
     };
 
+    let read_deleted = query.read_deleted.as_deref() == Some("true");
+
     let store = state.store.read().unwrap();
-    match store.read_volume_needle(vid, &mut n) {
+    match store.read_volume_needle_opt(vid, &mut n, read_deleted) {
         Ok(count) => {
             if count <= 0 {
                 return StatusCode::NOT_FOUND.into_response();
@@ -379,6 +383,7 @@ pub async fn post_handler(
     metrics::REQUEST_COUNTER.with_label_values(&["write"]).inc();
 
     let path = request.uri().path().to_string();
+    let query = request.uri().query().unwrap_or("").to_string();
     let headers = request.headers().clone();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
@@ -392,11 +397,38 @@ pub async fn post_handler(
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
+    // Check for chunk manifest flag
+    let is_chunk_manifest = query.split('&')
+        .any(|p| p == "cm=true" || p == "cm=1");
+
+    // Validate multipart/form-data has a boundary
+    if let Some(ct) = headers.get(header::CONTENT_TYPE) {
+        if let Ok(ct_str) = ct.to_str() {
+            if ct_str.starts_with("multipart/form-data") && !ct_str.contains("boundary=") {
+                return (StatusCode::BAD_REQUEST, "no multipart boundary param in Content-Type").into_response();
+            }
+        }
+    }
+
+    let content_md5 = headers.get("Content-MD5").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("read body: {}", e)).into_response(),
     };
+
+    // Validate Content-MD5 if provided
+    if let Some(ref expected_md5) = content_md5 {
+        use md5::{Md5, Digest};
+        use base64::Engine;
+        let mut hasher = Md5::new();
+        hasher.update(&body);
+        let actual = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
+        if actual != *expected_md5 {
+            return (StatusCode::BAD_REQUEST, format!("Content-MD5 mismatch: expected {} got {}", expected_md5, actual)).into_response();
+        }
+    }
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -412,6 +444,9 @@ pub async fn post_handler(
         ..Needle::default()
     };
     n.set_has_last_modified_date();
+    if is_chunk_manifest {
+        n.set_is_chunk_manifest();
+    }
 
     let mut store = state.store.write().unwrap();
     match store.write_volume_needle(vid, &mut n) {
@@ -479,6 +514,22 @@ pub async fn delete_handler(
         ..Needle::default()
     };
 
+    // Read needle first to validate cookie (matching Go behavior)
+    let original_cookie = cookie;
+    {
+        let store = state.store.read().unwrap();
+        match store.read_volume_needle(vid, &mut n) {
+            Ok(_) => {}
+            Err(_) => {
+                let result = DeleteResult { size: 0 };
+                return (StatusCode::NOT_FOUND, axum::Json(result)).into_response();
+            }
+        }
+    }
+    if n.cookie != original_cookie {
+        return (StatusCode::BAD_REQUEST, "File Random Cookie does not match.").into_response();
+    }
+
     let mut store = state.store.write().unwrap();
     match store.delete_volume_needle(vid, &mut n) {
         Ok(size) => {
@@ -495,9 +546,6 @@ pub async fn delete_handler(
         Err(crate::storage::volume::VolumeError::NotFound) => {
             let result = DeleteResult { size: 0 };
             (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
-        }
-        Err(crate::storage::volume::VolumeError::CookieMismatch(_)) => {
-            (StatusCode::BAD_REQUEST, "cookie mismatch").into_response()
         }
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("delete error: {}", e)).into_response()
