@@ -486,6 +486,17 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	glog.V(4).Infof("CopyObjectPart: Parsed srcBucket=%q, srcObject=%q, srcVersionId=%q",
 		srcBucket, srcObject, srcVersionId)
 
+	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket {
+		if err := s3a.validateTableBucketObjectPath(srcBucket, srcObject); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	}
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
 	if srcObject == "" || srcBucket == "" {
