@@ -928,7 +928,7 @@ func TestMetadataVersionCAS(t *testing.T) {
 
 	// The table xattr has metadataVersion=1. Try updating with wrong expected version.
 	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
-	err := updateTableMetadataXattr(context.Background(), client, tableDir, 99, []byte(`{}`))
+	err := updateTableMetadataXattr(context.Background(), client, tableDir, 99, []byte(`{}`), "metadata/v100.metadata.json")
 	if err == nil {
 		t.Fatal("expected version conflict error")
 	}
@@ -937,7 +937,7 @@ func TestMetadataVersionCAS(t *testing.T) {
 	}
 
 	// Correct expected version should succeed
-	err = updateTableMetadataXattr(context.Background(), client, tableDir, 1, []byte(`{}`))
+	err = updateTableMetadataXattr(context.Background(), client, tableDir, 1, []byte(`{}`), "metadata/v2.metadata.json")
 	if err != nil {
 		t.Fatalf("expected success with correct version, got: %v", err)
 	}

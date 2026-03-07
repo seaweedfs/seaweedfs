@@ -524,7 +524,8 @@ func (h *Handler) commitWithRetry(
 
 		// Update the table entry's xattr with new metadata (CAS on version)
 		tableDir := path.Join(s3tables.TablesPath, bucketName, tablePath)
-		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes)
+		newMetadataLocation := path.Join("metadata", newMetadataFileName)
+		err = updateTableMetadataXattr(ctx, filerClient, tableDir, currentVersion, metadataBytes, newMetadataLocation)
 		if err != nil {
 			if !errors.Is(err, errMetadataVersionConflict) {
 				// Non-conflict error (permissions, transport, etc.): fail immediately.

@@ -2,6 +2,8 @@ package iceberg
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -235,7 +237,9 @@ func deleteFilerFile(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 // the new Iceberg metadata. It performs a compare-and-swap: if the stored
 // metadataVersion does not match expectedVersion, it returns
 // errMetadataVersionConflict so the caller can retry.
-func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerClient, tableDir string, expectedVersion int, newFullMetadata []byte) error {
+// newMetadataLocation is the table-relative path to the new metadata file
+// (e.g. "metadata/v3.metadata.json").
+func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerClient, tableDir string, expectedVersion int, newFullMetadata []byte, newMetadataLocation string) error {
 	tableName := path.Base(tableDir)
 	parentDir := path.Dir(tableDir)
 
@@ -299,6 +303,14 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 	modifiedAt, _ := json.Marshal(time.Now().Format(time.RFC3339Nano))
 	internalMeta["modifiedAt"] = modifiedAt
 
+	// Update metadataLocation to point to the new metadata file
+	metaLocJSON, _ := json.Marshal(newMetadataLocation)
+	internalMeta["metadataLocation"] = metaLocJSON
+
+	// Regenerate versionToken for consistency with the S3 Tables catalog
+	tokenJSON, _ := json.Marshal(generateIcebergVersionToken())
+	internalMeta["versionToken"] = tokenJSON
+
 	updatedXattr, err := json.Marshal(internalMeta)
 	if err != nil {
 		return fmt.Errorf("marshal updated xattr: %w", err)
@@ -313,4 +325,14 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 		return fmt.Errorf("update table entry: %w", err)
 	}
 	return nil
+}
+
+// generateIcebergVersionToken produces a random hex token, mirroring the
+// logic in s3tables.generateVersionToken (which is unexported).
+func generateIcebergVersionToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
