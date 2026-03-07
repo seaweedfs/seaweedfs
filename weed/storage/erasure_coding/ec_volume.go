@@ -28,6 +28,7 @@ type EcVolume struct {
 	Collection                string
 	dir                       string
 	dirIdx                    string
+	ecxActualDir              string // directory where .ecx/.ecj were actually found (may differ from dirIdx after fallback)
 	ecxFile                   *os.File
 	ecxFileSize               int64
 	ecxCreatedAt              time.Time
@@ -51,6 +52,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
 
 	// open ecx file
+	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
 		if dirIdx != dir && os.IsNotExist(err) {
 			// fall back to data directory if idx directory does not have the .ecx file
@@ -60,7 +62,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %v", indexBaseFileName, firstErr, dataBaseFileName, err)
 			}
 			indexBaseFileName = dataBaseFileName
-			ev.dirIdx = dir
+			ev.ecxActualDir = dir
 		} else {
 			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
 		}
@@ -208,7 +210,7 @@ func (ev *EcVolume) Destroy() {
 func (ev *EcVolume) FileName(ext string) string {
 	switch ext {
 	case ".ecx", ".ecj":
-		return ev.IndexBaseFileName() + ext
+		return EcShardFileName(ev.Collection, ev.ecxActualDir, int(ev.VolumeId)) + ext
 	}
 	// .vif
 	return ev.DataBaseFileName() + ext
