@@ -72,7 +72,12 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 		if err := mc.BeginDirectoryBuild(ctx, path); err != nil {
 			return nil, fmt.Errorf("begin build %s: %w", path, err)
 		}
+		cleanupDone := false
 		cleanupBuild := func(reason string) {
+			if cleanupDone {
+				return
+			}
+			cleanupDone = true
 			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
 				glog.V(2).Infof("clear %s build %s: %v", reason, path, deleteErr)
 			}
