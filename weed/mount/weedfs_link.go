@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -92,8 +93,13 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		if err != nil {
 			return err
 		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateResp.GetMetadataEvent()); applyErr != nil {
+		updateEvent := updateResp.GetMetadataEvent()
+		if updateEvent == nil {
+			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 
 		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
@@ -101,8 +107,13 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			return err
 		}
 
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createResp.GetMetadataEvent()); applyErr != nil {
+		createEvent := createResp.GetMetadataEvent()
+		if createEvent == nil {
+			createEvent = metadataUpdateEvent(string(newParentPath), request.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
 		}
 
 		return nil
