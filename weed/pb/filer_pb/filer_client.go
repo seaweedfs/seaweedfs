@@ -74,7 +74,7 @@ func ReadDirAllEntriesWithSnapshot(ctx context.Context, filerClient FilerClient,
 	var paginationLimit uint32 = 10000
 
 	if snapshotTsNs, err = doListWithSnapshot(ctx, filerClient, fullDirPath, prefix, counterFunc, "", false, paginationLimit, 0); err != nil {
-		return 0, err
+		return snapshotTsNs, err
 	}
 
 	for counter == paginationLimit {
