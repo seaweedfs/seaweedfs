@@ -80,6 +80,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         store: RwLock::new(store),
         guard,
         is_stopping: RwLock::new(false),
+        maintenance: std::sync::atomic::AtomicBool::new(false),
+        state_version: std::sync::atomic::AtomicU32::new(0),
     });
 
     // Build HTTP routers

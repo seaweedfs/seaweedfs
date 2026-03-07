@@ -462,6 +462,11 @@ impl Volume {
     }
 
     fn do_write_request(&mut self, n: &mut Needle, check_cookie: bool) -> Result<(u64, Size, bool), VolumeError> {
+        // Ensure checksum is computed before dedup check
+        if n.checksum == crate::storage::needle::crc::CRC(0) && !n.data.is_empty() {
+            n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
+        }
+
         // Dedup check
         if self.is_file_unchanged(n) {
             return Ok((0, Size(n.data_size as i32), true));
@@ -549,11 +554,6 @@ impl Volume {
                         if old.cookie == n.cookie
                             && old.checksum == n.checksum
                             && old.data == n.data
-                            && old.flags == n.flags
-                            && old.name == n.name
-                            && old.mime == n.mime
-                            && old.pairs == n.pairs
-                            && old.last_modified == n.last_modified
                         {
                             return true;
                         }

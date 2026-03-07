@@ -2452,6 +2452,7 @@ dependencies = [
  "rusty-leveldb",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sysinfo",
  "tempfile",
  "thiserror 1.0.69",

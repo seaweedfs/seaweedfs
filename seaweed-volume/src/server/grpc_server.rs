@@ -6,6 +6,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
@@ -31,6 +32,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::BatchDeleteRequest>,
     ) -> Result<Response<volume_server_pb::BatchDeleteResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let mut results = Vec::new();
 
@@ -82,7 +84,7 @@ impl VolumeServer for VolumeGrpcService {
         let store = self.state.store.read().unwrap();
         let garbage_ratio = match store.find_volume(vid) {
             Some((_, vol)) => vol.garbage_level(),
-            None => return Err(Status::not_found(format!("volume {} not found", vid))),
+            None => return Err(Status::not_found(format!("not found volume id {}", vid))),
         };
         Ok(Response::new(volume_server_pb::VacuumVolumeCheckResponse { garbage_ratio }))
     }
@@ -123,6 +125,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::AllocateVolumeRequest>,
     ) -> Result<Response<volume_server_pb::AllocateVolumeResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let rp = crate::storage::super_block::ReplicaPlacement::from_string(&req.replication)
@@ -149,7 +152,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(request.into_inner().volume_id);
         let store = self.state.store.read().unwrap();
         let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         Ok(Response::new(volume_server_pb::VolumeSyncStatusResponse {
             volume_id: vid.0,
@@ -191,9 +194,8 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VolumeUnmountResponse>, Status> {
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
-        if !store.unmount_volume(vid) {
-            return Err(Status::not_found(format!("volume {} not found", vid)));
-        }
+        // Unmount is idempotent — success even if volume not found
+        store.unmount_volume(vid);
         Ok(Response::new(volume_server_pb::VolumeUnmountResponse {}))
     }
 
@@ -201,14 +203,15 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeDeleteResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         if req.only_empty {
             let (_, vol) = store.find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
             if vol.file_count() > 0 {
-                return Err(Status::failed_precondition("volume is not empty"));
+                return Err(Status::failed_precondition("volume not empty"));
             }
         }
         store.delete_volume(vid)
@@ -220,11 +223,12 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkReadonlyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkReadonlyResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         let (_, vol) = store.find_volume_mut(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
         vol.set_read_only();
         Ok(Response::new(volume_server_pb::VolumeMarkReadonlyResponse {}))
     }
@@ -233,11 +237,12 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkWritableRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkWritableResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         let (_, vol) = store.find_volume_mut(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
         vol.set_writable();
         Ok(Response::new(volume_server_pb::VolumeMarkWritableResponse {}))
     }
@@ -248,12 +253,26 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VolumeConfigureResponse>, Status> {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
-        let rp = crate::storage::super_block::ReplicaPlacement::from_string(&req.replication)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        // Validate replication string — return response error, not gRPC error
+        let rp = match crate::storage::super_block::ReplicaPlacement::from_string(&req.replication) {
+            Ok(rp) => rp,
+            Err(e) => {
+                return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                    error: format!("invalid replica placement: {}", e),
+                }));
+            }
+        };
 
         let mut store = self.state.store.write().unwrap();
-        let (_, vol) = store.find_volume_mut(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+        let (_, vol) = match store.find_volume_mut(vid) {
+            Some(v) => v,
+            None => {
+                return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                    error: format!("volume {} not found on disk, failed to restore mount", vid),
+                }));
+            }
+        };
 
         match vol.set_replica_placement(rp) {
             Ok(()) => Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
@@ -272,7 +291,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(request.into_inner().volume_id);
         let store = self.state.store.read().unwrap();
         let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         Ok(Response::new(volume_server_pb::VolumeStatusResponse {
             is_read_only: vol.is_read_only(),
@@ -288,8 +307,8 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::GetStateResponse>, Status> {
         Ok(Response::new(volume_server_pb::GetStateResponse {
             state: Some(volume_server_pb::VolumeServerState {
-                maintenance: false,
-                version: 0,
+                maintenance: self.state.maintenance.load(Ordering::Relaxed),
+                version: self.state.state_version.load(Ordering::Relaxed),
             }),
         }))
     }
@@ -298,11 +317,37 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::SetStateRequest>,
     ) -> Result<Response<volume_server_pb::SetStateResponse>, Status> {
-        // TODO: Persist state changes. Currently echoes back the request state.
         let req = request.into_inner();
-        Ok(Response::new(volume_server_pb::SetStateResponse {
-            state: req.state,
-        }))
+
+        if let Some(new_state) = &req.state {
+            // Check version matches (optimistic concurrency)
+            let current_version = self.state.state_version.load(Ordering::Relaxed);
+            if new_state.version != current_version {
+                return Err(Status::failed_precondition(format!(
+                    "version mismatch: expected {}, got {}",
+                    current_version, new_state.version
+                )));
+            }
+
+            // Apply state changes
+            self.state.maintenance.store(new_state.maintenance, Ordering::Relaxed);
+            let new_version = self.state.state_version.fetch_add(1, Ordering::Relaxed) + 1;
+
+            Ok(Response::new(volume_server_pb::SetStateResponse {
+                state: Some(volume_server_pb::VolumeServerState {
+                    maintenance: new_state.maintenance,
+                    version: new_version,
+                }),
+            }))
+        } else {
+            // nil state = no-op, return current state
+            Ok(Response::new(volume_server_pb::SetStateResponse {
+                state: Some(volume_server_pb::VolumeServerState {
+                    maintenance: self.state.maintenance.load(Ordering::Relaxed),
+                    version: self.state.state_version.load(Ordering::Relaxed),
+                }),
+            }))
+        }
     }
 
     type VolumeCopyStream = BoxStream<volume_server_pb::VolumeCopyResponse>;
@@ -320,7 +365,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(request.into_inner().volume_id);
         let store = self.state.store.read().unwrap();
         let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         Ok(Response::new(volume_server_pb::ReadVolumeFileStatusResponse {
             volume_id: vid.0,
@@ -363,7 +408,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
         let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         let blob = vol.read_needle_blob(offset, size)
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -402,12 +447,13 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::WriteNeedleBlobRequest>,
     ) -> Result<Response<volume_server_pb::WriteNeedleBlobResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
         let mut store = self.state.store.write().unwrap();
         let (_, vol) = store.find_volume_mut(vid)
-            .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
         // Write the raw needle blob at the end of the dat file (append)
         let dat_size = vol.dat_file_size()
@@ -453,6 +499,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeEcShardsGenerateRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsGenerateResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let collection = &req.collection;
@@ -461,7 +508,7 @@ impl VolumeServer for VolumeGrpcService {
         let dir = {
             let store = self.state.store.read().unwrap();
             let (loc_idx, _) = store.find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
             store.locations[loc_idx].directory.clone()
         };
 
@@ -579,13 +626,21 @@ impl VolumeServer for VolumeGrpcService {
 
         Ok(Response::new(volume_server_pb::VolumeServerStatusResponse {
             disk_statuses,
-            memory_status: None,
+            memory_status: Some(volume_server_pb::MemStatus {
+                goroutines: 1, // Rust doesn't have goroutines, report 1 for tokio runtime
+                all: 0,
+                used: 0,
+                free: 0,
+                self_: 0,
+                heap: 0,
+                stack: 0,
+            }),
             version: env!("CARGO_PKG_VERSION").to_string(),
             data_center: String::new(),
             rack: String::new(),
             state: Some(volume_server_pb::VolumeServerState {
-                maintenance: false,
-                version: 0,
+                maintenance: self.state.maintenance.load(Ordering::Relaxed),
+                version: self.state.state_version.load(Ordering::Relaxed),
             }),
         }))
     }
@@ -636,6 +691,12 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = NeedleId(req.needle_id);
 
         let store = self.state.store.read().unwrap();
+
+        // Check if volume exists first for better error message
+        if store.find_volume(vid).is_none() {
+            return Err(Status::not_found(format!("volume not found {}", vid)));
+        }
+
         let mut n = Needle { id: needle_id, ..Needle::default() };
         match store.read_volume_needle(vid, &mut n) {
             Ok(_) => Ok(Response::new(volume_server_pb::VolumeNeedleStatusResponse {
@@ -646,22 +707,76 @@ impl VolumeServer for VolumeGrpcService {
                 crc: n.checksum.0,
                 ttl: String::new(),
             })),
-            Err(e) => Err(Status::not_found(e.to_string())),
+            Err(_) => Err(Status::not_found(format!("needle {} not found in volume {}", needle_id, vid))),
         }
     }
 
     async fn ping(
         &self,
-        _request: Request<volume_server_pb::PingRequest>,
+        request: Request<volume_server_pb::PingRequest>,
     ) -> Result<Response<volume_server_pb::PingResponse>, Status> {
-        let now = std::time::SystemTime::now()
+        let req = request.into_inner();
+        let now_ns = || std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as i64;
+
+        let start = now_ns();
+
+        // Route ping based on target type
+        let remote_time_ns = if req.target.is_empty() || req.target_type == "volume" {
+            // Volume self-ping: return our own time
+            now_ns()
+        } else if req.target_type == "master" {
+            // Ping the master server
+            match ping_grpc_target(&req.target).await {
+                Ok(t) => t,
+                Err(e) => return Err(Status::internal(format!("ping master {}: {}", req.target, e))),
+            }
+        } else if req.target_type == "filer" {
+            match ping_grpc_target(&req.target).await {
+                Ok(t) => t,
+                Err(e) => return Err(Status::internal(format!("ping filer {}: {}", req.target, e))),
+            }
+        } else {
+            // Unknown target type → return 0
+            0
+        };
+
+        let stop = now_ns();
         Ok(Response::new(volume_server_pb::PingResponse {
-            start_time_ns: now,
-            remote_time_ns: now,
-            stop_time_ns: now,
+            start_time_ns: start,
+            remote_time_ns,
+            stop_time_ns: stop,
         }))
+    }
+}
+
+/// Ping a remote gRPC target and return its time_ns.
+async fn ping_grpc_target(target: &str) -> Result<i64, String> {
+    // For now, just verify the target is reachable by attempting a gRPC connection.
+    // The Go implementation actually calls Ping on the target, but we simplify here.
+    let addr = if target.starts_with("http") {
+        target.to_string()
+    } else {
+        format!("http://{}", target)
+    };
+    match tonic::transport::Channel::from_shared(addr) {
+        Ok(endpoint) => {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                endpoint.connect(),
+            ).await {
+                Ok(Ok(_channel)) => {
+                    Ok(std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64)
+                }
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Err("connection timeout".to_string()),
+            }
+        }
+        Err(e) => Err(e.to_string()),
     }
 }

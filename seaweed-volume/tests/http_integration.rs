@@ -36,6 +36,8 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
         store: RwLock::new(store),
         guard,
         is_stopping: RwLock::new(false),
+        maintenance: std::sync::atomic::AtomicBool::new(false),
+        state_version: std::sync::atomic::AtomicU32::new(0),
     });
     (state, tmp)
 }
@@ -119,22 +121,22 @@ async fn status_returns_json_with_version_and_volumes() {
     let json: serde_json::Value =
         serde_json::from_slice(&body).expect("response is not valid JSON");
 
-    assert!(json.get("version").is_some(), "missing 'version' field");
+    assert!(json.get("Version").is_some(), "missing 'Version' field");
     assert!(
-        json["version"].is_string(),
-        "'version' should be a string"
+        json["Version"].is_string(),
+        "'Version' should be a string"
     );
 
-    assert!(json.get("volumes").is_some(), "missing 'volumes' field");
+    assert!(json.get("Volumes").is_some(), "missing 'Volumes' field");
     assert!(
-        json["volumes"].is_array(),
-        "'volumes' should be an array"
+        json["Volumes"].is_array(),
+        "'Volumes' should be an array"
     );
 
     // We created one volume in test_state, so the array should have one entry
-    let volumes = json["volumes"].as_array().unwrap();
+    let volumes = json["Volumes"].as_array().unwrap();
     assert_eq!(volumes.len(), 1, "expected 1 volume");
-    assert_eq!(volumes[0]["id"], 1);
+    assert_eq!(volumes[0]["Id"], 1);
 }
 
 // ============================================================================

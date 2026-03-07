@@ -184,6 +184,11 @@ impl Guard {
         false
     }
 
+    /// Check if a read signing key is configured.
+    pub fn has_read_signing_key(&self) -> bool {
+        !self.read_signing_key.is_empty()
+    }
+
     /// Validate a request's JWT token.
     /// `is_write` determines which signing key to use.
     /// Returns Ok(()) if valid, or if security is disabled.

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -23,24 +23,30 @@ use super::volume_server::VolumeServerState;
 // ============================================================================
 
 /// Parse volume ID and file ID from URL path.
-/// Supports: "vid,fid", "vid/fid", "vid,fid.ext"
+/// Supports: "vid,fid", "vid/fid", "vid,fid.ext", "vid/fid/filename.ext"
 fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
     let path = path.trim_start_matches('/');
 
-    // Strip extension
-    let path = if let Some(dot) = path.rfind('.') {
-        &path[..dot]
-    } else {
-        path
-    };
-
-    // Try "vid,fid" format
-    let (vid_str, fid_str) = if let Some(pos) = path.find(',') {
+    // Try "vid,fid" or "vid/fid" or "vid/fid/filename" formats
+    let (vid_str, fid_part) = if let Some(pos) = path.find(',') {
         (&path[..pos], &path[pos + 1..])
     } else if let Some(pos) = path.find('/') {
         (&path[..pos], &path[pos + 1..])
     } else {
         return None;
+    };
+
+    // For fid part, strip extension from the fid (not from filename)
+    // "vid,fid.ext" -> fid is before dot
+    // "vid/fid/filename.ext" -> fid is the part before the second slash
+    let fid_str = if let Some(slash_pos) = fid_part.find('/') {
+        // "fid/filename.ext" - fid is before the slash
+        &fid_part[..slash_pos]
+    } else if let Some(dot) = fid_part.rfind('.') {
+        // "fid.ext" - strip extension
+        &fid_part[..dot]
+    } else {
+        fid_part
     };
 
     let vid = VolumeId::parse(vid_str).ok()?;
@@ -50,12 +56,51 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
 }
 
 // ============================================================================
+// Query parameters
+// ============================================================================
+
+#[derive(Deserialize, Default)]
+pub struct ReadQueryParams {
+    #[serde(rename = "response-content-type")]
+    pub response_content_type: Option<String>,
+    #[serde(rename = "response-cache-control")]
+    pub response_cache_control: Option<String>,
+    pub dl: Option<String>,
+}
+
+// ============================================================================
 // Read Handler (GET/HEAD)
 // ============================================================================
+
+/// Called from the method-dispatching store handler with a full Request.
+pub async fn get_or_head_handler_from_request(
+    State(state): State<Arc<VolumeServerState>>,
+    request: Request<Body>,
+) -> Response {
+    let uri = request.uri().clone();
+    let headers = request.headers().clone();
+
+    // Parse query params manually from URI
+    let query_params: ReadQueryParams = uri.query()
+        .and_then(|q| serde_urlencoded::from_str(q).ok())
+        .unwrap_or_default();
+
+    get_or_head_handler_inner(state, headers, query_params, request).await
+}
 
 pub async fn get_or_head_handler(
     State(state): State<Arc<VolumeServerState>>,
     headers: HeaderMap,
+    query: Query<ReadQueryParams>,
+    request: Request<Body>,
+) -> Response {
+    get_or_head_handler_inner(state, headers, query.0, request).await
+}
+
+async fn get_or_head_handler_inner(
+    state: Arc<VolumeServerState>,
+    headers: HeaderMap,
+    query: ReadQueryParams,
     request: Request<Body>,
 ) -> Response {
     let start = std::time::Instant::now();
@@ -70,7 +115,7 @@ pub async fn get_or_head_handler(
     };
 
     // JWT check for reads
-    let token = extract_jwt(&headers);
+    let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state.guard.check_jwt(token.as_deref(), false) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
@@ -100,23 +145,92 @@ pub async fn get_or_head_handler(
         }
     }
 
-    // Build response
-    let etag = n.etag();
-    let mut response_headers = HeaderMap::new();
-    response_headers.insert(header::ETAG, format!("\"{}\"", etag).parse().unwrap());
+    // Validate cookie
+    if n.cookie != cookie {
+        return StatusCode::NOT_FOUND.into_response();
+    }
 
-    // Set Content-Type from needle mime
-    let content_type = if !n.mime.is_empty() {
+    // Build ETag
+    let etag = format!("\"{}\"", n.etag());
+
+    // Build Last-Modified header (RFC 1123 format) — must be done before conditional checks
+    let last_modified_str = if n.last_modified > 0 {
+        use chrono::{TimeZone, Utc};
+        if let Some(dt) = Utc.timestamp_opt(n.last_modified as i64, 0).single() {
+            Some(dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Check If-Modified-Since FIRST (Go checks this before If-None-Match)
+    if n.last_modified > 0 {
+        if let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE) {
+            if let Ok(ims_str) = ims_header.to_str() {
+                // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
+                if let Ok(ims_time) = chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT") {
+                    if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
+                        return StatusCode::NOT_MODIFIED.into_response();
+                    }
+                }
+            }
+        }
+    }
+
+    // Check If-None-Match SECOND
+    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
+        if let Ok(inm) = if_none_match.to_str() {
+            if inm == etag || inm == "*" {
+                return StatusCode::NOT_MODIFIED.into_response();
+            }
+        }
+    }
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::ETAG, etag.parse().unwrap());
+
+    // Set Content-Type: use response-content-type query param override, else from needle mime
+    let content_type = if let Some(ref ct) = query.response_content_type {
+        ct.clone()
+    } else if !n.mime.is_empty() {
         String::from_utf8_lossy(&n.mime).to_string()
     } else {
         "application/octet-stream".to_string()
     };
     response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
 
+    // Cache-Control override from query param
+    if let Some(ref cc) = query.response_cache_control {
+        response_headers.insert(header::CACHE_CONTROL, cc.parse().unwrap());
+    }
+
     // Last-Modified
-    if n.last_modified > 0 {
-        // Simple format — the full HTTP date formatting can be added later
-        response_headers.insert("X-Last-Modified", n.last_modified.to_string().parse().unwrap());
+    if let Some(ref lm) = last_modified_str {
+        response_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
+    }
+
+    // Content-Disposition for download
+    if query.dl.is_some() {
+        // Extract filename from URL path
+        let filename = extract_filename_from_path(&path);
+        let disposition = if filename.is_empty() {
+            "attachment".to_string()
+        } else {
+            format!("attachment; filename=\"{}\"", filename)
+        };
+        response_headers.insert(header::CONTENT_DISPOSITION, disposition.parse().unwrap());
+    }
+
+    // Accept-Ranges
+    response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+
+    // Check Range header
+    if let Some(range_header) = headers.get(header::RANGE) {
+        if let Ok(range_str) = range_header.to_str() {
+            return handle_range_request(range_str, &n.data, response_headers);
+        }
     }
 
     if method == Method::HEAD {
@@ -129,6 +243,120 @@ pub async fn get_or_head_handler(
         .observe(start.elapsed().as_secs_f64());
 
     (StatusCode::OK, response_headers, n.data).into_response()
+}
+
+/// Handle HTTP Range requests. Returns 206 Partial Content or 416 Range Not Satisfiable.
+fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) -> Response {
+    let total = data.len();
+
+    // Parse "bytes=start-end"
+    let range_spec = match range_str.strip_prefix("bytes=") {
+        Some(s) => s,
+        None => return (StatusCode::OK, headers, data.to_vec()).into_response(),
+    };
+
+    // Parse individual ranges
+    let ranges: Vec<(usize, usize)> = range_spec
+        .split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if let Some(pos) = part.find('-') {
+                let start_str = &part[..pos];
+                let end_str = &part[pos + 1..];
+
+                if start_str.is_empty() {
+                    // Suffix range: -N means last N bytes
+                    let suffix: usize = end_str.parse().ok()?;
+                    if suffix > total {
+                        return None;
+                    }
+                    Some((total - suffix, total - 1))
+                } else {
+                    let start: usize = start_str.parse().ok()?;
+                    let end = if end_str.is_empty() {
+                        total - 1
+                    } else {
+                        end_str.parse().ok()?
+                    };
+                    Some((start, end))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if ranges.is_empty() {
+        return (StatusCode::OK, headers, data.to_vec()).into_response();
+    }
+
+    // Check all ranges are valid
+    for &(start, end) in &ranges {
+        if start >= total || end >= total || start > end {
+            headers.insert(
+                "Content-Range",
+                format!("bytes */{}", total).parse().unwrap(),
+            );
+            return (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response();
+        }
+    }
+
+    // If combined range bytes exceed content size, ignore the range (return 200 empty)
+    let combined_bytes: usize = ranges.iter().map(|&(s, e)| e - s + 1).sum();
+    if combined_bytes > total {
+        return (StatusCode::OK, headers).into_response();
+    }
+
+    if ranges.len() == 1 {
+        let (start, end) = ranges[0];
+        let slice = &data[start..=end];
+        headers.insert(
+            "Content-Range",
+            format!("bytes {}-{}/{}", start, end, total).parse().unwrap(),
+        );
+        headers.insert(header::CONTENT_LENGTH, slice.len().to_string().parse().unwrap());
+        (StatusCode::PARTIAL_CONTENT, headers, slice.to_vec()).into_response()
+    } else {
+        // Multi-range: build multipart/byteranges response
+        let boundary = "SeaweedFSBoundary";
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+
+        let mut body = Vec::new();
+        for &(start, end) in &ranges {
+            body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(
+                format!("Content-Type: {}\r\n", content_type).as_bytes(),
+            );
+            body.extend_from_slice(
+                format!("Content-Range: bytes {}-{}/{}\r\n\r\n", start, end, total).as_bytes(),
+            );
+            body.extend_from_slice(&data[start..=end]);
+        }
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+
+        headers.insert(
+            header::CONTENT_TYPE,
+            format!("multipart/byteranges; boundary={}", boundary)
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(header::CONTENT_LENGTH, body.len().to_string().parse().unwrap());
+        (StatusCode::PARTIAL_CONTENT, headers, body).into_response()
+    }
+}
+
+/// Extract filename from URL path like "/vid/fid/filename.ext"
+fn extract_filename_from_path(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 3 {
+        parts[2].to_string()
+    } else {
+        String::new()
+    }
 }
 
 // ============================================================================
@@ -145,12 +373,13 @@ struct UploadResult {
 
 pub async fn post_handler(
     State(state): State<Arc<VolumeServerState>>,
-    headers: HeaderMap,
-    Path(path): Path<String>,
-    body: axum::body::Bytes,
+    request: Request<Body>,
 ) -> Response {
     let start = std::time::Instant::now();
     metrics::REQUEST_COUNTER.with_label_values(&["write"]).inc();
+
+    let path = request.uri().path().to_string();
+    let headers = request.headers().clone();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
@@ -158,24 +387,38 @@ pub async fn post_handler(
     };
 
     // JWT check for writes
-    let token = extract_jwt(&headers);
+    let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state.guard.check_jwt(token.as_deref(), true) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
+
+    // Read body
+    let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("read body: {}", e)).into_response(),
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
     let mut n = Needle {
         id: needle_id,
         cookie,
         data: body.to_vec(),
         data_size: body.len() as u32,
+        last_modified: now,
         ..Needle::default()
     };
+    n.set_has_last_modified_date();
 
     let mut store = state.store.write().unwrap();
     match store.write_volume_needle(vid, &mut n) {
         Ok((_offset, _size, is_unchanged)) => {
             if is_unchanged {
-                return StatusCode::NO_CONTENT.into_response();
+                let etag = format!("\"{}\"", n.etag());
+                return (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response();
             }
 
             let result = UploadResult {
@@ -211,11 +454,13 @@ struct DeleteResult {
 
 pub async fn delete_handler(
     State(state): State<Arc<VolumeServerState>>,
-    headers: HeaderMap,
-    Path(path): Path<String>,
+    request: Request<Body>,
 ) -> Response {
     let start = std::time::Instant::now();
     metrics::REQUEST_COUNTER.with_label_values(&["delete"]).inc();
+
+    let path = request.uri().path().to_string();
+    let headers = request.headers().clone();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
@@ -223,14 +468,10 @@ pub async fn delete_handler(
     };
 
     // JWT check for writes (deletes use write key)
-    let token = extract_jwt(&headers);
+    let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state.guard.check_jwt(token.as_deref(), true) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
-
-    // Whitelist check
-    // Note: In production, remote_addr from the connection should be checked.
-    // This is handled by middleware in the full implementation.
 
     let mut n = Needle {
         id: needle_id,
@@ -242,7 +483,8 @@ pub async fn delete_handler(
     match store.delete_volume_needle(vid, &mut n) {
         Ok(size) => {
             if size.0 == 0 {
-                return StatusCode::NOT_FOUND.into_response();
+                let result = DeleteResult { size: 0 };
+                return (StatusCode::NOT_FOUND, axum::Json(result)).into_response();
             }
             metrics::REQUEST_DURATION
                 .with_label_values(&["delete"])
@@ -251,7 +493,11 @@ pub async fn delete_handler(
             (StatusCode::ACCEPTED, axum::Json(result)).into_response()
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
-            StatusCode::NOT_FOUND.into_response()
+            let result = DeleteResult { size: 0 };
+            (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
+        }
+        Err(crate::storage::volume::VolumeError::CookieMismatch(_)) => {
+            (StatusCode::BAD_REQUEST, "cookie mismatch").into_response()
         }
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("delete error: {}", e)).into_response()
@@ -263,23 +509,6 @@ pub async fn delete_handler(
 // Status Handler
 // ============================================================================
 
-#[derive(Serialize)]
-struct StatusResponse {
-    version: String,
-    volumes: Vec<VolumeStatus>,
-}
-
-#[derive(Serialize)]
-struct VolumeStatus {
-    id: u32,
-    collection: String,
-    size: u64,
-    file_count: i64,
-    delete_count: i64,
-    read_only: bool,
-    version: u8,
-}
-
 pub async fn status_handler(
     State(state): State<Arc<VolumeServerState>>,
 ) -> Response {
@@ -288,24 +517,37 @@ pub async fn status_handler(
 
     for loc in &store.locations {
         for (_vid, vol) in loc.volumes() {
-            volumes.push(VolumeStatus {
-                id: vol.id.0,
-                collection: vol.collection.clone(),
-                size: vol.content_size(),
-                file_count: vol.file_count(),
-                delete_count: vol.deleted_count(),
-                read_only: vol.is_read_only(),
-                version: vol.version().0,
-            });
+            let mut vol_info = serde_json::Map::new();
+            vol_info.insert("Id".to_string(), serde_json::Value::from(vol.id.0));
+            vol_info.insert("Collection".to_string(), serde_json::Value::from(vol.collection.clone()));
+            vol_info.insert("Size".to_string(), serde_json::Value::from(vol.content_size()));
+            vol_info.insert("FileCount".to_string(), serde_json::Value::from(vol.file_count()));
+            vol_info.insert("DeleteCount".to_string(), serde_json::Value::from(vol.deleted_count()));
+            vol_info.insert("ReadOnly".to_string(), serde_json::Value::from(vol.is_read_only()));
+            vol_info.insert("Version".to_string(), serde_json::Value::from(vol.version().0));
+            volumes.push(serde_json::Value::Object(vol_info));
         }
     }
 
-    let status = StatusResponse {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        volumes,
-    };
+    // Build disk statuses
+    let mut disk_statuses = Vec::new();
+    for loc in &store.locations {
+        let dir = &loc.directory;
+        let mut ds = serde_json::Map::new();
+        ds.insert("dir".to_string(), serde_json::Value::from(dir.clone()));
+        // Add disk stats if available
+        if let Ok(path) = std::path::Path::new(&dir).canonicalize() {
+            ds.insert("dir".to_string(), serde_json::Value::from(path.to_string_lossy().to_string()));
+        }
+        disk_statuses.push(serde_json::Value::Object(ds));
+    }
 
-    axum::Json(status).into_response()
+    let mut m = serde_json::Map::new();
+    m.insert("Version".to_string(), serde_json::Value::from(env!("CARGO_PKG_VERSION")));
+    m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
+    m.insert("DiskStatuses".to_string(), serde_json::Value::Array(disk_statuses));
+
+    axum::Json(serde_json::Value::Object(m)).into_response()
 }
 
 // ============================================================================
@@ -337,12 +579,79 @@ pub async fn metrics_handler() -> Response {
 }
 
 // ============================================================================
+// Static Asset Handlers
+// ============================================================================
+
+pub async fn favicon_handler() -> Response {
+    // Return a minimal valid ICO (1x1 transparent)
+    let ico = include_bytes!("favicon.ico");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/x-icon")],
+        ico.as_ref(),
+    )
+        .into_response()
+}
+
+pub async fn static_asset_handler() -> Response {
+    // Return a minimal valid PNG (1x1 transparent)
+    let png: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+        0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+        0x9C, 0x62, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00,
+        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/png")],
+        png,
+    )
+        .into_response()
+}
+
+pub async fn ui_handler(
+    State(state): State<Arc<VolumeServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    // If JWT signing is enabled, require auth
+    let token = extract_jwt(&headers, &axum::http::Uri::from_static("/ui/index.html"));
+    if let Err(e) = state.guard.check_jwt(token.as_deref(), false) {
+        if state.guard.has_read_signing_key() {
+            return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
+        }
+    }
+
+    let html = r#"<!DOCTYPE html>
+<html><head><title>SeaweedFS Volume Server</title></head>
+<body><h1>SeaweedFS Volume Server</h1><p>Rust implementation</p></body></html>"#;
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response()
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
-/// Extract JWT token from Authorization header or `jwt` query parameter.
-fn extract_jwt(headers: &HeaderMap) -> Option<String> {
-    // Check Authorization: Bearer <token>
+/// Extract JWT token from query param, Authorization header, or Cookie.
+/// Query param takes precedence over header, header over cookie.
+fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
+    // 1. Check ?jwt= query parameter
+    if let Some(query) = uri.query() {
+        for pair in query.split('&') {
+            if let Some(value) = pair.strip_prefix("jwt=") {
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    // 2. Check Authorization: Bearer <token>
     if let Some(auth) = headers.get(header::AUTHORIZATION) {
         if let Ok(auth_str) = auth.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -350,6 +659,21 @@ fn extract_jwt(headers: &HeaderMap) -> Option<String> {
             }
         }
     }
+
+    // 3. Check Cookie
+    if let Some(cookie_header) = headers.get(header::COOKIE) {
+        if let Ok(cookie_str) = cookie_header.to_str() {
+            for cookie in cookie_str.split(';') {
+                let cookie = cookie.trim();
+                if let Some(value) = cookie.strip_prefix("jwt=") {
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -365,8 +689,6 @@ mod tests {
     fn test_parse_url_path_comma() {
         let (vid, nid, cookie) = parse_url_path("/3,01637037d6").unwrap();
         assert_eq!(vid, VolumeId(3));
-        // "01637037d6" → 5 bytes → padded to 12 bytes: [0,0,0,0,0,0,0,0x01,0x63,0x70,0x37,0xd6]
-        // NeedleId = first 8 bytes, Cookie = last 4 bytes
         assert_eq!(nid, NeedleId(0x01));
         assert_eq!(cookie, Cookie(0x637037d6));
     }
@@ -384,6 +706,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_url_path_slash_with_filename() {
+        let result = parse_url_path("3/01637037d6/report.txt");
+        assert!(result.is_some());
+        let (vid, _, _) = result.unwrap();
+        assert_eq!(vid, VolumeId(3));
+    }
+
+    #[test]
     fn test_parse_url_path_invalid() {
         assert!(parse_url_path("/invalid").is_none());
         assert!(parse_url_path("").is_none());
@@ -393,12 +723,45 @@ mod tests {
     fn test_extract_jwt_bearer() {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, "Bearer abc123".parse().unwrap());
-        assert_eq!(extract_jwt(&headers), Some("abc123".to_string()));
+        let uri: axum::http::Uri = "/test".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_jwt_query_param() {
+        let headers = HeaderMap::new();
+        let uri: axum::http::Uri = "/test?jwt=mytoken".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("mytoken".to_string()));
+    }
+
+    #[test]
+    fn test_extract_jwt_query_over_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer header_token".parse().unwrap());
+        let uri: axum::http::Uri = "/test?jwt=query_token".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), Some("query_token".to_string()));
     }
 
     #[test]
     fn test_extract_jwt_none() {
         let headers = HeaderMap::new();
-        assert_eq!(extract_jwt(&headers), None);
+        let uri: axum::http::Uri = "/test".parse().unwrap();
+        assert_eq!(extract_jwt(&headers, &uri), None);
+    }
+
+    #[test]
+    fn test_handle_range_single() {
+        let data = b"hello world";
+        let headers = HeaderMap::new();
+        let resp = handle_range_request("bytes=0-4", data, headers);
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+    }
+
+    #[test]
+    fn test_handle_range_invalid() {
+        let data = b"hello";
+        let headers = HeaderMap::new();
+        let resp = handle_range_request("bytes=999-1000", data, headers);
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 }
