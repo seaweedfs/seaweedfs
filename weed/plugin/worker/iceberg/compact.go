@@ -61,10 +61,17 @@ func (h *Handler) compactDataFiles(
 
 	// Abort if delete manifests exist — the compactor does not apply deletes,
 	// so carrying them through could produce incorrect results.
+	// Also detect multiple partition specs — the compactor writes a single
+	// manifest under the current spec which is invalid for spec-evolved tables.
+	specIDs := make(map[int32]struct{})
 	for _, mf := range manifests {
 		if mf.ManifestContent() != iceberg.ManifestContentData {
 			return "compaction skipped: delete manifests present (not yet supported)", nil
 		}
+		specIDs[mf.PartitionSpecID()] = struct{}{}
+	}
+	if len(specIDs) > 1 {
+		return "compaction skipped: multiple partition specs present (not yet supported)", nil
 	}
 
 	// Collect data file entries from data manifests
