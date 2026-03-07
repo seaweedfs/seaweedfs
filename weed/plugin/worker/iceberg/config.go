@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
 
@@ -136,6 +137,8 @@ func readStringConfig(values map[string]*plugin_pb.ConfigValue, field string, fa
 		return strconv.FormatFloat(kind.DoubleValue, 'f', -1, 64)
 	case *plugin_pb.ConfigValue_BoolValue:
 		return strconv.FormatBool(kind.BoolValue)
+	default:
+		glog.V(1).Infof("readStringConfig: unexpected config value type %T for field %q, using fallback", value.Kind, field)
 	}
 	return fallback
 }
@@ -164,6 +167,8 @@ func readInt64Config(values map[string]*plugin_pb.ConfigValue, field string, fal
 			return 1
 		}
 		return 0
+	default:
+		glog.V(1).Infof("readInt64Config: unexpected config value type %T for field %q, using fallback", value.Kind, field)
 	}
 	return fallback
 }
