@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -73,8 +72,9 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		if event == nil {
 			event = metadataUpdateEvent(string(dirFullPath), newEntry)
 		}
-		if err := wfs.applyLocalMetadataEvent(context.Background(), event); err != nil {
-			return fmt.Errorf("local mkdir dir %s: %w", entryFullPath, err)
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("mkdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
 
@@ -126,9 +126,9 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	if resp != nil && resp.MetadataEvent != nil {
 		event = resp.MetadataEvent
 	}
-	if err := wfs.applyLocalMetadataEvent(context.Background(), event); err != nil {
-		glog.V(3).Infof("apply local delete event %s: %v", entryFullPath, err)
-		return fuse.EIO
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("rmdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
