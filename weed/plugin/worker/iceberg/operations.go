@@ -229,7 +229,7 @@ func (h *Handler) removeOrphans(
 	}
 
 	// Reference the active metadata file so it is not treated as orphan
-	referencedFiles[metadataFileName] = struct{}{}
+	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
 
 	// Also reference the current metadata files
 	for mle := range meta.PreviousFiles() {
