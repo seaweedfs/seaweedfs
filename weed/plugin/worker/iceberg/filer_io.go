@@ -174,6 +174,14 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
 	}
 
+	// Inline content is available for small files (metadata, manifests, and
+	// manifest lists written by saveFilerFile). Larger files uploaded via S3
+	// are stored as chunks with empty Content — detect this and return a
+	// clear error rather than silently returning empty data.
+	if len(resp.Entry.Content) == 0 && len(resp.Entry.Chunks) > 0 {
+		return nil, fmt.Errorf("file %s/%s is stored in chunks; only inline content is supported", dir, fileName)
+	}
+
 	return resp.Entry.Content, nil
 }
 
