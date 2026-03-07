@@ -625,16 +625,35 @@ func metadataCreateFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 }
 
 func metadataEventDedupKey(resp *filer_pb.SubscribeMetadataResponse) string {
-	var oldName, newName string
+	var oldName, newName, newParent string
+	hasOld, hasNew := false, false
 	if msg := resp.GetEventNotification(); msg != nil {
 		if msg.OldEntry != nil {
 			oldName = msg.OldEntry.Name
+			hasOld = true
 		}
 		if msg.NewEntry != nil {
 			newName = msg.NewEntry.Name
+			hasNew = true
+			newParent = msg.NewParentPath
 		}
 	}
-	return fmt.Sprintf("%d|%s|%s|%s", resp.TsNs, resp.Directory, oldName, newName)
+	// Encode event shape (create/delete/update/rename) so structurally
+	// different events with the same names are not collapsed.
+	var shape byte
+	switch {
+	case hasOld && hasNew:
+		if resp.Directory != newParent && newParent != "" {
+			shape = 'R' // rename across directories
+		} else {
+			shape = 'U' // update in place
+		}
+	case hasOld:
+		shape = 'D' // delete
+	case hasNew:
+		shape = 'C' // create
+	}
+	return fmt.Sprintf("%d|%c|%s|%s|%s|%s", resp.TsNs, shape, resp.Directory, oldName, newParent, newName)
 }
 
 func (mc *MetaCache) shouldSkipDuplicateEvent(resp *filer_pb.SubscribeMetadataResponse) bool {
