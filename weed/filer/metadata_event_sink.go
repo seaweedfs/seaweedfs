@@ -28,6 +28,10 @@ func metadataEventSinkFromContext(ctx context.Context) *MetadataEventSink {
 	return sink
 }
 
+// Record stores the event, replacing any previously recorded one.
+// Each filer RPC emits at most one NotifyUpdateEvent, so only the last
+// event is retained. If an RPC were to emit multiple events, only the
+// final one would be returned to the caller.
 func (s *MetadataEventSink) Record(event *filer_pb.SubscribeMetadataResponse) {
 	if s == nil || event == nil {
 		return

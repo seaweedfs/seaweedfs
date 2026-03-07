@@ -330,8 +330,13 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 			glog.V(4).Infof("lookupEntry cache hit %s", fullpath)
 			return cachedEntry, fuse.OK
 		}
-		glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
-		return nil, fuse.ENOENT
+		// Re-check: the directory may have been evicted from cache between
+		// our IsDirectoryCached check and FindEntry (e.g. markDirectoryReadThrough).
+		// If it's no longer cached, fall through to the filer lookup below.
+		if wfs.metaCache.IsDirectoryCached(dirPath) {
+			glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			return nil, fuse.ENOENT
+		}
 	}
 
 	// Directory not cached - fetch directly from filer without caching the entire directory.

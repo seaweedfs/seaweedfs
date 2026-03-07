@@ -222,7 +222,7 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 	}
 
 	// Buffered events with TsNs > snapshotTsNs (150) should have been replayed
-	for i := 1; i < 5; i++ {
+	for i := 0; i < 5; i++ {
 		name := fmt.Sprintf("new-%d.txt", i)
 		e, err := mc.FindEntry(context.Background(), util.FullPath("/dir/"+name))
 		if err != nil {

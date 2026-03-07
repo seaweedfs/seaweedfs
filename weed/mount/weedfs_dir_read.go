@@ -302,7 +302,7 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 	if input.Offset >= dh.entryStreamOffset {
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
-			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, 0)
+			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs)
 			if err != nil {
 				glog.Errorf("list filer directory: %v", err)
 				return fuse.EIO

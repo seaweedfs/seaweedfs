@@ -149,9 +149,11 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.OK
 	}
 
-	event := metadataDeleteEvent(string(dirFullPath), name, false)
+	var event *filer_pb.SubscribeMetadataResponse
 	if resp != nil && resp.MetadataEvent != nil {
 		event = resp.MetadataEvent
+	} else {
+		event = metadataDeleteEvent(string(dirFullPath), name, false)
 	}
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("unlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)

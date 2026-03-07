@@ -352,7 +352,9 @@ func (mc *MetaCache) enqueueAndWait(ctx context.Context, req metadataApplyReques
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req.ctx = ctx
+	// Use a non-cancellable context for the queued operation so a
+	// cancelled caller doesn't abort a build/complete mid-way.
+	req.ctx = context.Background()
 	req.done = make(chan error, 1)
 	if err := mc.enqueueApplyRequest(req); err != nil {
 		return err
