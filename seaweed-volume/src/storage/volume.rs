@@ -811,6 +811,16 @@ impl Volume {
         }
     }
 
+    /// Get the modification time of the .dat file as Unix seconds.
+    pub fn dat_file_mod_time(&self) -> u64 {
+        self.dat_file.as_ref()
+            .and_then(|f| f.metadata().ok())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+
     pub fn idx_file_size(&self) -> u64 {
         self.nm.as_ref().map_or(0, |nm| nm.index_file_size())
     }

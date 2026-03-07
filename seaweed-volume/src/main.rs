@@ -88,6 +88,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
         upload_notify: tokio::sync::Notify::new(),
         download_notify: tokio::sync::Notify::new(),
+        data_center: config.data_center.clone(),
+        rack: config.rack.clone(),
     });
 
     // Build HTTP routers

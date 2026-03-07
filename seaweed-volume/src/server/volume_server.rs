@@ -46,6 +46,10 @@ pub struct VolumeServerState {
     /// Notify waiters when inflight bytes decrease.
     pub upload_notify: tokio::sync::Notify,
     pub download_notify: tokio::sync::Notify,
+    /// Data center name from config.
+    pub data_center: String,
+    /// Rack name from config.
+    pub rack: String,
 }
 
 impl VolumeServerState {
