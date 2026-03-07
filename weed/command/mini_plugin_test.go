@@ -10,6 +10,7 @@ import (
 
 func TestMiniDefaultPluginJobTypes(t *testing.T) {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	// defaultMiniPluginJobTypes is an explicit list: "vacuum,volume_balance,erasure_coding,admin_script"
 	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, dialOption, int(pluginworker.DefaultMaxExecutionConcurrency), "")
 	if err != nil {
 		t.Fatalf("buildPluginWorkerHandlers(mini default) err = %v", err)

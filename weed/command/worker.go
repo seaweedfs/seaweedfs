@@ -41,7 +41,7 @@ var (
 	workerAdminServer = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	workerID          = cmdWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
 	workerWorkingDir  = cmdWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
-	workerJobType     = cmdWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types or categories to serve: all, default, heavy, or explicit names (comma-separated)")
+	workerJobType     = cmdWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types or categories to serve: all, default, heavy, or explicit names/aliases such as ec, balance, iceberg (comma-separated)")
 	workerHeartbeat   = cmdWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
 	workerReconnect   = cmdWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
 	workerMaxDetect   = cmdWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")

@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
-	_ "github.com/seaweedfs/seaweedfs/weed/plugin/worker/iceberg" // register handler
+	_ "github.com/seaweedfs/seaweedfs/weed/plugin/worker/handlers" // register all handler subpackages
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"

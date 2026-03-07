@@ -13,6 +13,7 @@ import (
 type JobCategory string
 
 const (
+	CategoryAll     JobCategory = "all"     // pseudo-category matching every handler
 	CategoryDefault JobCategory = "default" // lightweight, safe for any worker
 	CategoryHeavy   JobCategory = "heavy"   // resource-intensive jobs
 )
@@ -61,7 +62,7 @@ func ResolveHandlerFactories(tokens string) ([]HandlerFactory, error) {
 	registryMu.Unlock()
 
 	parts := strings.Split(tokens, ",")
-	var result []HandlerFactory
+	result := make([]HandlerFactory, 0, len(snapshot))
 	seen := make(map[string]bool)
 
 	for _, raw := range parts {
@@ -72,7 +73,7 @@ func ResolveHandlerFactories(tokens string) ([]HandlerFactory, error) {
 
 		if cat, ok := tokenAsCategory(tok); ok {
 			for _, f := range snapshot {
-				if cat == "all" || f.Category == cat {
+				if cat == CategoryAll || f.Category == cat {
 					if !seen[f.JobType] {
 						seen[f.JobType] = true
 						result = append(result, f)
@@ -103,11 +104,11 @@ func ResolveHandlerFactories(tokens string) ([]HandlerFactory, error) {
 // registered handler.
 func tokenAsCategory(tok string) (JobCategory, bool) {
 	switch tok {
-	case "all":
-		return "all", true
-	case "default":
+	case string(CategoryAll):
+		return CategoryAll, true
+	case string(CategoryDefault):
 		return CategoryDefault, true
-	case "heavy":
+	case string(CategoryHeavy):
 		return CategoryHeavy, true
 	default:
 		return "", false

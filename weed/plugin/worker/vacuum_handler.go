@@ -27,6 +27,7 @@ func init() {
 	RegisterHandler(HandlerFactory{
 		JobType:  "vacuum",
 		Category: CategoryDefault,
+		Aliases:  []string{"vol.vacuum", "volume.vacuum"},
 		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
 			return NewVacuumHandler(opts.GrpcDialOption, int32(opts.MaxExecute)), nil
 		},
