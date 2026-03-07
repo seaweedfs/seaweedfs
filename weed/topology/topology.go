@@ -27,6 +27,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	// WarmupPulseMultiplier is the number of heartbeat intervals to wait after
+	// a leader change before treating volume lookup misses as definitive.
+	WarmupPulseMultiplier = 3
+)
+
 type Topology struct {
 	vacuumLockCounter int64
 	NodeImpl
@@ -60,7 +66,8 @@ type Topology struct {
 	topologyId     string
 	topologyIdLock sync.RWMutex
 
-	LastLeaderChangeTime time.Time
+	lastLeaderChangeTime     time.Time
+	lastLeaderChangeTimeLock sync.RWMutex
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -107,6 +114,39 @@ func (t *Topology) IsChildLocked() (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// SetLastLeaderChangeTime records the time of the most recent leader transition.
+func (t *Topology) SetLastLeaderChangeTime(ts time.Time) {
+	t.lastLeaderChangeTimeLock.Lock()
+	defer t.lastLeaderChangeTimeLock.Unlock()
+	t.lastLeaderChangeTime = ts
+}
+
+// GetLastLeaderChangeTime returns the time of the most recent leader transition.
+func (t *Topology) GetLastLeaderChangeTime() time.Time {
+	t.lastLeaderChangeTimeLock.RLock()
+	defer t.lastLeaderChangeTimeLock.RUnlock()
+	return t.lastLeaderChangeTime
+}
+
+// IsWarmingUp returns true if the master recently became leader and may not yet
+// have a complete topology. After a leader change or restart, volume servers need
+// up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
+// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
+// existing volumes to wait for.
+func (t *Topology) IsWarmingUp() bool {
+	if t.GetMaxVolumeId() == 0 {
+		return false
+	}
+	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
+	lastChange := t.GetLastLeaderChangeTime()
+	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+}
+
+// WarmupDuration returns the configured warmup duration based on pulse interval.
+func (t *Topology) WarmupDuration() time.Duration {
+	return time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
 }
 
 func (t *Topology) IsLeader() bool {

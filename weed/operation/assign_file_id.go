@@ -3,8 +3,11 @@ package operation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -154,45 +157,66 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 			continue
 		}
 
-		lastError = WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-			req := &master_pb.AssignRequest{
-				Count:               request.Count,
-				Replication:         request.Replication,
-				Collection:          request.Collection,
-				Ttl:                 request.Ttl,
-				DiskType:            request.DiskType,
-				DataCenter:          request.DataCenter,
-				Rack:                request.Rack,
-				DataNode:            request.DataNode,
-				WritableVolumeCount: request.WritableVolumeCount,
-			}
-			resp, grpcErr := masterClient.Assign(ctx, req)
-			if grpcErr != nil {
-				return grpcErr
-			}
+		waitTime := time.Second
+		maxWaitTime := 6 * time.Second
+		for {
+			lastError = WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+				req := &master_pb.AssignRequest{
+					Count:               request.Count,
+					Replication:         request.Replication,
+					Collection:          request.Collection,
+					Ttl:                 request.Ttl,
+					DiskType:            request.DiskType,
+					DataCenter:          request.DataCenter,
+					Rack:                request.Rack,
+					DataNode:            request.DataNode,
+					WritableVolumeCount: request.WritableVolumeCount,
+				}
+				resp, grpcErr := masterClient.Assign(ctx, req)
+				if grpcErr != nil {
+					return grpcErr
+				}
 
-			if resp.Error != "" {
-				return fmt.Errorf("assignRequest: %v", resp.Error)
+				if resp.Error != "" {
+					return fmt.Errorf("assignRequest: %v", resp.Error)
+				}
+
+				ret.Count = resp.Count
+				ret.Fid = resp.Fid
+				ret.Url = resp.Location.Url
+				ret.PublicUrl = resp.Location.PublicUrl
+				ret.GrpcPort = int(resp.Location.GrpcPort)
+				ret.Error = resp.Error
+				ret.Auth = security.EncodedJwt(resp.Auth)
+				for _, r := range resp.Replicas {
+					ret.Replicas = append(ret.Replicas, Location{
+						Url:        r.Url,
+						PublicUrl:  r.PublicUrl,
+						DataCenter: r.DataCenter,
+					})
+				}
+
+				return nil
+
+			})
+
+			// Retry on Unavailable (master warming up) with backoff, until ctx is done
+			if lastError != nil && strings.Contains(lastError.Error(), "Unavailable") {
+				sleepTime := waitTime
+				if sleepTime > maxWaitTime {
+					sleepTime = maxWaitTime
+				}
+				glog.V(0).Infof("master unavailable for assign, retrying in %v: %v", sleepTime, lastError)
+				select {
+				case <-ctx.Done():
+					return ret, ctx.Err()
+				case <-time.After(sleepTime):
+				}
+				waitTime += waitTime / 2
+				continue
 			}
-
-			ret.Count = resp.Count
-			ret.Fid = resp.Fid
-			ret.Url = resp.Location.Url
-			ret.PublicUrl = resp.Location.PublicUrl
-			ret.GrpcPort = int(resp.Location.GrpcPort)
-			ret.Error = resp.Error
-			ret.Auth = security.EncodedJwt(resp.Auth)
-			for _, r := range resp.Replicas {
-				ret.Replicas = append(ret.Replicas, Location{
-					Url:        r.Url,
-					PublicUrl:  r.PublicUrl,
-					DataCenter: r.DataCenter,
-				})
-			}
-
-			return nil
-
-		})
+			break
+		}
 
 		if lastError != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorChunkAssign).Inc()
