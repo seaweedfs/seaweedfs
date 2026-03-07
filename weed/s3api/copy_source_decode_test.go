@@ -14,13 +14,14 @@ import (
 func TestCopySourceWithExclamationMark(t *testing.T) {
 	// Reproduce https://github.com/seaweedfs/seaweedfs/issues/8544
 	testCases := []struct {
-		name           string
-		rawCopySource  string
-		expectedBucket string
-		expectedObject string
-		dstBucket      string
-		dstObject      string
-		shouldBeEqual  bool
+		name            string
+		rawCopySource   string
+		expectedBucket  string
+		expectedObject  string
+		expectedVersion string
+		dstBucket       string
+		dstObject       string
+		shouldBeEqual   bool
 	}{
 		{
 			name:           "encoded exclamation mark - different dest",
@@ -49,6 +50,36 @@ func TestCopySourceWithExclamationMark(t *testing.T) {
 			dstObject:      "path/to/Another test!.odt",
 			shouldBeEqual:  true,
 		},
+		{
+			name:            "encoded path with versionId",
+			rawCopySource:   "my-bucket/path%2Fto%2FAnother%20test%21.odt?versionId=abc123",
+			expectedBucket:  "my-bucket",
+			expectedObject:  "path/to/Another test!.odt",
+			expectedVersion: "abc123",
+			dstBucket:       "my-bucket",
+			dstObject:       "path/to/Hello.odt",
+			shouldBeEqual:   false,
+		},
+		{
+			name:            "unencoded path with versionId",
+			rawCopySource:   "my-bucket/path/to/Another%20test!.odt?versionId=v2",
+			expectedBucket:  "my-bucket",
+			expectedObject:  "path/to/Another test!.odt",
+			expectedVersion: "v2",
+			dstBucket:       "my-bucket",
+			dstObject:       "path/to/Another test!.odt",
+			shouldBeEqual:   true,
+		},
+		{
+			name:            "plus sign in key with versionId",
+			rawCopySource:   "my-bucket/path/to/file+name.odt?versionId=xyz",
+			expectedBucket:  "my-bucket",
+			expectedObject:  "path/to/file+name.odt",
+			expectedVersion: "xyz",
+			dstBucket:       "my-bucket",
+			dstObject:       "path/to/file+name.odt",
+			shouldBeEqual:   true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -58,13 +89,16 @@ func TestCopySourceWithExclamationMark(t *testing.T) {
 				cpSrcPath = tc.rawCopySource
 			}
 
-			srcBucket, srcObject, _ := pathToBucketObjectAndVersion(tc.rawCopySource, cpSrcPath)
+			srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(tc.rawCopySource, cpSrcPath)
 
 			if srcBucket != tc.expectedBucket {
 				t.Errorf("expected srcBucket=%q, got %q", tc.expectedBucket, srcBucket)
 			}
 			if srcObject != tc.expectedObject {
 				t.Errorf("expected srcObject=%q, got %q", tc.expectedObject, srcObject)
+			}
+			if srcVersionId != tc.expectedVersion {
+				t.Errorf("expected versionId=%q, got %q", tc.expectedVersion, srcVersionId)
 			}
 
 			isEqual := srcBucket == tc.dstBucket && srcObject == tc.dstObject
@@ -143,6 +177,12 @@ func TestCopySourceRoutingWithSpecialChars(t *testing.T) {
 			copySource:    "my-bucket/path/to/file%2Bname.odt",
 			expectSameKey: true,
 		},
+		{
+			name:          "lowercase %2f in copy source",
+			dstURL:        "/my-bucket/path/to/Hello.odt",
+			copySource:    "my-bucket/path%2fto%2fAnother%20test.odt",
+			expectSameKey: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -153,7 +193,7 @@ func TestCopySourceRoutingWithSpecialChars(t *testing.T) {
 			router := mux.NewRouter().SkipClean(true)
 			bucket := router.PathPrefix("/{bucket}").Subrouter()
 			bucket.Methods(http.MethodPut).Path("/{object:(?s).+}").
-				HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").
+				HeadersRegexp("X-Amz-Copy-Source", `(?i).*?(\/|%2F).*?`).
 				HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					capturedDstBucket, capturedDstObject = s3_constants.GetBucketAndObject(r)
 
