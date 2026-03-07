@@ -87,6 +87,9 @@ func TestExtractMetadataVersion(t *testing.T) {
 		{"metadata.json", 0},
 		{"", 0},
 		{"v.metadata.json", 0},
+		{"v7-1709766000.metadata.json", 7},
+		{"v42-abc123.metadata.json", 42},
+		{"v5-.metadata.json", 5},
 	}
 
 	for _, tc := range tests {
