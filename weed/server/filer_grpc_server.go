@@ -95,12 +95,16 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	}
 
-	// For empty listings the snapshot token is not sent.
-	// Callers that paginate (e.g. ReadDirAllEntriesWithSnapshot) treat
-	// snapshotTsNs == 0 as "first page" and will request a fresh snapshot
-	// on the next call, which is correct for empty directories.
-	// Sending an Entry-less response here would crash every raw stream
-	// consumer that assumes resp.Entry is non-nil.
+	// Send a snapshot-only response for empty listings so callers like
+	// ReadDirAllEntriesWithSnapshot / CompleteDirectoryBuild retain a real
+	// snapshot token. All raw stream consumers have nil guards for Entry.
+	if !sentSnapshot {
+		if err = stream.Send(&filer_pb.ListEntriesResponse{
+			SnapshotTsNs: snapshotTsNs,
+		}); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }

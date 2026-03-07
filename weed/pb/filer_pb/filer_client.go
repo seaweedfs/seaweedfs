@@ -142,6 +142,10 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 		return 0, fmt.Errorf("list %s: %v", fullDirPath, err)
 	}
 
+	// Preserve the caller-requested snapshot so it isn't lost when the
+	// server returns no entries (empty directory) or omits SnapshotTsNs.
+	actualSnapshotTsNs = snapshotTsNs
+
 	var prevEntry *Entry
 	count := 0
 	for {
@@ -158,7 +162,7 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 				return actualSnapshotTsNs, recvErr
 			}
 		}
-		if actualSnapshotTsNs == 0 {
+		if resp.SnapshotTsNs != 0 {
 			actualSnapshotTsNs = resp.SnapshotTsNs
 		}
 		if prevEntry != nil {
