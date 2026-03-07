@@ -154,7 +154,12 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			continue
 		}
 
-		if util.FileExists(path.Join(location.IdxDirectory, baseFileName+".ecx")) {
+		indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
+		if !util.FileExists(indexBaseFileName+".ecx") && location.IdxDirectory != location.Directory {
+			// .ecx may be in the data directory if created before -dir.idx was configured
+			indexBaseFileName = path.Join(location.Directory, baseFileName)
+		}
+		if util.FileExists(indexBaseFileName + ".ecx") {
 			// write .ec00 ~ .ec13 files
 			dataBaseFileName := path.Join(location.Directory, baseFileName)
 			if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName); err != nil {
@@ -163,9 +168,8 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 				rebuiltShardIds = generatedShardIds
 			}
 
-			indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
 			if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
-				return nil, fmt.Errorf("RebuildEcxFile %s: %v", dataBaseFileName, err)
+				return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 			}
 
 			break
@@ -283,7 +287,11 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	indexBaseFilename := path.Join(location.IdxDirectory, bName)
 	dataBaseFilename := path.Join(location.Directory, bName)
 
-	if util.FileExists(path.Join(location.IdxDirectory, bName+".ecx")) {
+	ecxExists := util.FileExists(path.Join(location.IdxDirectory, bName+".ecx"))
+	if !ecxExists && location.IdxDirectory != location.Directory {
+		ecxExists = util.FileExists(path.Join(location.Directory, bName+".ecx"))
+	}
+	if ecxExists {
 		for _, shardId := range shardIds {
 			shardFileName := dataBaseFilename + erasure_coding.ToExt(int(shardId))
 			if util.FileExists(shardFileName) {
@@ -303,10 +311,16 @@ func deleteEcShardIdsForEachLocation(bName string, location *storage.DiskLocatio
 	}
 
 	if hasEcxFile && existingShardCount == 0 {
-		if err := os.Remove(indexBaseFilename + ".ecx"); err != nil {
+		// Remove .ecx/.ecj from both idx and data directories
+		// since they may be in either location depending on when -dir.idx was configured
+		if err := os.Remove(indexBaseFilename + ".ecx"); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		os.Remove(indexBaseFilename + ".ecj")
+		if location.IdxDirectory != location.Directory {
+			os.Remove(dataBaseFilename + ".ecx")
+			os.Remove(dataBaseFilename + ".ecj")
+		}
 
 		if !hasIdxFile {
 			// .vif is used for ec volumes and normal volumes
