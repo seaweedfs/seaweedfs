@@ -67,14 +67,12 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     }
 
     // Build shared state
-    // TODO: Wire up JWT signing keys from config. Empty keys are acceptable for now
-    // while the Rust volume server is still in development.
     let guard = Guard::new(
         &config.white_list,
-        SigningKey(vec![]),
-        0,
-        SigningKey(vec![]),
-        0,
+        SigningKey(config.jwt_signing_key.clone()),
+        config.jwt_signing_expires_seconds,
+        SigningKey(config.jwt_read_signing_key.clone()),
+        config.jwt_read_signing_expires_seconds,
     );
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
@@ -82,6 +80,14 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         is_stopping: RwLock::new(false),
         maintenance: std::sync::atomic::AtomicBool::new(false),
         state_version: std::sync::atomic::AtomicU32::new(0),
+        concurrent_upload_limit: config.concurrent_upload_limit,
+        concurrent_download_limit: config.concurrent_download_limit,
+        inflight_upload_data_timeout: config.inflight_upload_data_timeout,
+        inflight_download_data_timeout: config.inflight_download_data_timeout,
+        inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+        inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+        upload_notify: tokio::sync::Notify::new(),
+        download_notify: tokio::sync::Notify::new(),
     });
 
     // Build HTTP routers

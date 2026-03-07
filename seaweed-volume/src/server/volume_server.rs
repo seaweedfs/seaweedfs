@@ -10,7 +10,7 @@
 //! Matches Go's server/volume_server.go.
 
 use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 
 use axum::{
     Router,
@@ -35,6 +35,17 @@ pub struct VolumeServerState {
     pub maintenance: AtomicBool,
     /// State version — incremented on each SetState call.
     pub state_version: AtomicU32,
+    /// Throttling: concurrent upload/download limits (in bytes, 0 = disabled).
+    pub concurrent_upload_limit: i64,
+    pub concurrent_download_limit: i64,
+    pub inflight_upload_data_timeout: std::time::Duration,
+    pub inflight_download_data_timeout: std::time::Duration,
+    /// Current in-flight upload/download bytes.
+    pub inflight_upload_bytes: AtomicI64,
+    pub inflight_download_bytes: AtomicI64,
+    /// Notify waiters when inflight bytes decrease.
+    pub upload_notify: tokio::sync::Notify,
+    pub download_notify: tokio::sync::Notify,
 }
 
 impl VolumeServerState {

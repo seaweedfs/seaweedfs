@@ -91,7 +91,10 @@ pub fn decode_jwt(
 
     let mut validation = Validation::new(Algorithm::HS256);
     // Match Go behavior: tokens without exp are accepted (Go's jwt-go does not require exp)
+    // But if exp IS present, it must be valid (not expired).
     validation.required_spec_claims.clear();
+    validation.validate_exp = true;
+    validation.leeway = 0;
 
     let data = decode::<FileIdClaims>(
         token,

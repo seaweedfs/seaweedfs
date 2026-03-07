@@ -2473,6 +2473,7 @@ dependencies = [
  "flate2",
  "futures",
  "hex",
+ "http-body",
  "hyper",
  "hyper-util",
  "jsonwebtoken",

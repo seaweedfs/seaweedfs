@@ -5,6 +5,7 @@
 //! volume_server_handlers_admin.go.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -19,11 +20,84 @@ use crate::storage::types::*;
 use super::volume_server::VolumeServerState;
 
 // ============================================================================
+// Inflight Throttle Guard
+// ============================================================================
+
+/// RAII guard that subtracts bytes from an atomic counter and notifies waiters on drop.
+struct InflightGuard<'a> {
+    counter: &'a std::sync::atomic::AtomicI64,
+    bytes: i64,
+    notify: &'a tokio::sync::Notify,
+}
+
+impl<'a> Drop for InflightGuard<'a> {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.notify.notify_waiters();
+    }
+}
+
+/// Body wrapper that tracks download inflight bytes and releases them when dropped.
+struct TrackedBody {
+    data: Vec<u8>,
+    state: Arc<VolumeServerState>,
+    bytes: i64,
+}
+
+impl http_body::Body for TrackedBody {
+    type Data = bytes::Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        if self.data.is_empty() {
+            return std::task::Poll::Ready(None);
+        }
+        let data = std::mem::take(&mut self.data);
+        std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from(data)))))
+    }
+}
+
+impl Drop for TrackedBody {
+    fn drop(&mut self) {
+        self.state.inflight_download_bytes.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.state.download_notify.notify_waiters();
+    }
+}
+
+// ============================================================================
 // URL Parsing
 // ============================================================================
 
 /// Parse volume ID and file ID from URL path.
 /// Supports: "vid,fid", "vid/fid", "vid,fid.ext", "vid/fid/filename.ext"
+/// Extract the file_id string (e.g., "3,01637037d6") from a URL path for JWT validation.
+fn extract_file_id(path: &str) -> String {
+    let path = path.trim_start_matches('/');
+    // Strip extension and filename after second slash
+    if let Some(comma) = path.find(',') {
+        let after_comma = &path[comma + 1..];
+        let fid_part = if let Some(slash) = after_comma.find('/') {
+            &after_comma[..slash]
+        } else if let Some(dot) = after_comma.rfind('.') {
+            &after_comma[..dot]
+        } else {
+            after_comma
+        };
+        // Strip "_suffix" from fid (Go does this for filenames appended with underscore)
+        let fid_part = if let Some(underscore) = fid_part.rfind('_') {
+            &fid_part[..underscore]
+        } else {
+            fid_part
+        };
+        format!("{},{}", &path[..comma], fid_part)
+    } else {
+        path.to_string()
+    }
+}
+
 fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
     let path = path.trim_start_matches('/');
 
@@ -68,6 +142,8 @@ pub struct ReadQueryParams {
     pub dl: Option<String>,
     #[serde(rename = "readDeleted")]
     pub read_deleted: Option<String>,
+    /// cm=false disables chunk manifest expansion (returns raw manifest JSON).
+    pub cm: Option<String>,
 }
 
 // ============================================================================
@@ -117,10 +193,35 @@ async fn get_or_head_handler_inner(
     };
 
     // JWT check for reads
+    let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt(token.as_deref(), false) {
+    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, false) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
+
+    // Download throttling
+    let download_guard = if state.concurrent_download_limit > 0 {
+        let timeout = if state.inflight_download_data_timeout.is_zero() {
+            std::time::Duration::from_secs(2)
+        } else {
+            state.inflight_download_data_timeout
+        };
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let current = state.inflight_download_bytes.load(Ordering::Relaxed);
+            if current < state.concurrent_download_limit {
+                break;
+            }
+            if tokio::time::timeout_at(deadline, state.download_notify.notified()).await.is_err() {
+                return (StatusCode::TOO_MANY_REQUESTS, "download limit exceeded").into_response();
+            }
+        }
+        // We'll set the actual bytes after reading the needle (once we know the size)
+        Some(state.clone())
+    } else {
+        None
+    };
 
     // Read needle
     let mut n = Needle {
@@ -152,6 +253,12 @@ async fn get_or_head_handler_inner(
     // Validate cookie
     if n.cookie != cookie {
         return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Chunk manifest expansion
+    let bypass_cm = query.cm.as_deref() == Some("false");
+    if n.is_chunk_manifest() && !bypass_cm {
+        return expand_chunk_manifest(&state, &n, &headers, &method);
     }
 
     // Build ETag
@@ -266,6 +373,22 @@ async fn get_or_head_handler_inner(
     metrics::REQUEST_DURATION
         .with_label_values(&["read"])
         .observe(start.elapsed().as_secs_f64());
+
+    // If download throttling is active, wrap the body so we track when it's fully sent
+    if download_guard.is_some() {
+        let data_len = data.len() as i64;
+        state.inflight_download_bytes.fetch_add(data_len, Ordering::Relaxed);
+        let tracked_body = TrackedBody {
+            data,
+            state: state.clone(),
+            bytes: data_len,
+        };
+        let body = Body::new(tracked_body);
+        let mut resp = Response::new(body);
+        *resp.status_mut() = StatusCode::OK;
+        *resp.headers_mut() = response_headers;
+        return resp;
+    }
 
     (StatusCode::OK, response_headers, data).into_response()
 }
@@ -413,10 +536,51 @@ pub async fn post_handler(
     };
 
     // JWT check for writes
+    let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt(token.as_deref(), true) {
+    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
+
+    // Upload throttling: check inflight bytes against limit
+    let is_replicate = query.split('&').any(|p| p == "type=replicate");
+    let content_length = headers.get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    if !is_replicate && state.concurrent_upload_limit > 0 {
+        // Wait for inflight bytes to drop below limit, or timeout
+        let timeout = if state.inflight_upload_data_timeout.is_zero() {
+            std::time::Duration::from_secs(2)
+        } else {
+            state.inflight_upload_data_timeout
+        };
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let current = state.inflight_upload_bytes.load(Ordering::Relaxed);
+            if current < state.concurrent_upload_limit {
+                break;
+            }
+            // Wait for notification or timeout
+            if tokio::time::timeout_at(deadline, state.upload_notify.notified()).await.is_err() {
+                return (StatusCode::TOO_MANY_REQUESTS, "upload limit exceeded").into_response();
+            }
+        }
+        state.inflight_upload_bytes.fetch_add(content_length, Ordering::Relaxed);
+    }
+
+    // RAII guard to release upload throttle on any exit path
+    let _upload_guard = if !is_replicate && state.concurrent_upload_limit > 0 {
+        Some(InflightGuard {
+            counter: &state.inflight_upload_bytes,
+            bytes: content_length,
+            notify: &state.upload_notify,
+        })
+    } else {
+        None
+    };
 
     // Check for chunk manifest flag
     let is_chunk_manifest = query.split('&')
@@ -479,22 +643,22 @@ pub async fn post_handler(
     }
 
     let mut store = state.store.write().unwrap();
-    match store.write_volume_needle(vid, &mut n) {
+    let resp = match store.write_volume_needle(vid, &mut n) {
         Ok((_offset, _size, is_unchanged)) => {
             if is_unchanged {
                 let etag = format!("\"{}\"", n.etag());
-                return (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response();
+                (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
+            } else {
+                let result = UploadResult {
+                    name: String::new(),
+                    size: n.data_size,
+                    etag: n.etag(),
+                };
+                metrics::REQUEST_DURATION
+                    .with_label_values(&["write"])
+                    .observe(start.elapsed().as_secs_f64());
+                (StatusCode::CREATED, axum::Json(result)).into_response()
             }
-
-            let result = UploadResult {
-                name: String::new(),
-                size: n.data_size,
-                etag: n.etag(),
-            };
-            metrics::REQUEST_DURATION
-                .with_label_values(&["write"])
-                .observe(start.elapsed().as_secs_f64());
-            (StatusCode::CREATED, axum::Json(result)).into_response()
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
             (StatusCode::NOT_FOUND, "volume not found").into_response()
@@ -505,7 +669,10 @@ pub async fn post_handler(
         Err(e) => {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("write error: {}", e)).into_response()
         }
-    }
+    };
+
+    // _upload_guard drops here, releasing inflight bytes
+    resp
 }
 
 // ============================================================================
@@ -533,8 +700,9 @@ pub async fn delete_handler(
     };
 
     // JWT check for writes (deletes use write key)
+    let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt(token.as_deref(), true) {
+    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
@@ -558,6 +726,63 @@ pub async fn delete_handler(
     }
     if n.cookie != original_cookie {
         return (StatusCode::BAD_REQUEST, "File Random Cookie does not match.").into_response();
+    }
+
+    // If this is a chunk manifest, delete child chunks first
+    if n.is_chunk_manifest() {
+        let manifest_data = if n.is_compressed() {
+            use flate2::read::GzDecoder;
+            use std::io::Read as _;
+            let mut decoder = GzDecoder::new(&n.data[..]);
+            let mut decompressed = Vec::new();
+            if decoder.read_to_end(&mut decompressed).is_ok() {
+                decompressed
+            } else {
+                n.data.clone()
+            }
+        } else {
+            n.data.clone()
+        };
+
+        if let Ok(manifest) = serde_json::from_slice::<ChunkManifest>(&manifest_data) {
+            // Delete all child chunks first
+            for chunk in &manifest.chunks {
+                let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
+                    Some(p) => p,
+                    None => {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response();
+                    }
+                };
+                let mut chunk_needle = Needle {
+                    id: chunk_nid,
+                    cookie: chunk_cookie,
+                    ..Needle::default()
+                };
+                // Read the chunk to validate it exists
+                {
+                    let store = state.store.read().unwrap();
+                    if let Err(e) = store.read_volume_needle(chunk_vid, &mut chunk_needle) {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response();
+                    }
+                }
+                // Delete the chunk
+                let mut store = state.store.write().unwrap();
+                if let Err(e) = store.delete_volume_needle(chunk_vid, &mut chunk_needle) {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("delete chunk {}: {}", chunk.fid, e)).into_response();
+                }
+            }
+            // Delete the manifest itself
+            let mut store = state.store.write().unwrap();
+            if let Err(e) = store.delete_volume_needle(vid, &mut n) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("delete manifest: {}", e)).into_response();
+            }
+            metrics::REQUEST_DURATION
+                .with_label_values(&["delete"])
+                .observe(start.elapsed().as_secs_f64());
+            // Return the manifest's declared size (matches Go behavior)
+            let result = DeleteResult { size: manifest.size as i32 };
+            return (StatusCode::ACCEPTED, axum::Json(result)).into_response();
+        }
     }
 
     let mut store = state.store.write().unwrap();
@@ -712,6 +937,110 @@ pub async fn ui_handler(
 }
 
 // ============================================================================
+// Chunk Manifest
+// ============================================================================
+
+#[derive(Deserialize)]
+struct ChunkManifest {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    mime: String,
+    #[serde(default)]
+    size: i64,
+    #[serde(default)]
+    chunks: Vec<ChunkInfo>,
+}
+
+#[derive(Deserialize)]
+struct ChunkInfo {
+    fid: String,
+    offset: i64,
+    size: i64,
+}
+
+/// Expand a chunk manifest needle: read each chunk and concatenate.
+fn expand_chunk_manifest(
+    state: &Arc<VolumeServerState>,
+    n: &Needle,
+    _headers: &HeaderMap,
+    method: &Method,
+) -> Response {
+    let data = if n.is_compressed() {
+        use flate2::read::GzDecoder;
+        use std::io::Read as _;
+        let mut decoder = GzDecoder::new(&n.data[..]);
+        let mut decompressed = Vec::new();
+        if decoder.read_to_end(&mut decompressed).is_err() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "failed to decompress manifest").into_response();
+        }
+        decompressed
+    } else {
+        n.data.clone()
+    };
+
+    let manifest: ChunkManifest = match serde_json::from_slice(&data) {
+        Ok(m) => m,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk manifest: {}", e)).into_response(),
+    };
+
+    // Read and concatenate all chunks
+    let mut result = vec![0u8; manifest.size as usize];
+    let store = state.store.read().unwrap();
+    for chunk in &manifest.chunks {
+        let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
+            Some(p) => p,
+            None => return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response(),
+        };
+        let mut chunk_needle = Needle {
+            id: chunk_nid,
+            cookie: chunk_cookie,
+            ..Needle::default()
+        };
+        match store.read_volume_needle(chunk_vid, &mut chunk_needle) {
+            Ok(_) => {}
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response(),
+        }
+        let chunk_data = if chunk_needle.is_compressed() {
+            use flate2::read::GzDecoder;
+            use std::io::Read as _;
+            let mut decoder = GzDecoder::new(&chunk_needle.data[..]);
+            let mut decompressed = Vec::new();
+            if decoder.read_to_end(&mut decompressed).is_ok() {
+                decompressed
+            } else {
+                chunk_needle.data.clone()
+            }
+        } else {
+            chunk_needle.data.clone()
+        };
+        let offset = chunk.offset as usize;
+        let end = std::cmp::min(offset + chunk_data.len(), result.len());
+        let copy_len = end - offset;
+        if copy_len > 0 {
+            result[offset..offset + copy_len].copy_from_slice(&chunk_data[..copy_len]);
+        }
+    }
+
+    let content_type = if !manifest.mime.is_empty() {
+        manifest.mime.clone()
+    } else {
+        "application/octet-stream".to_string()
+    };
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    response_headers.insert("X-File-Store", "chunked".parse().unwrap());
+
+    if *method == Method::HEAD {
+        response_headers.insert(header::CONTENT_LENGTH, result.len().to_string().parse().unwrap());
+        return (StatusCode::OK, response_headers).into_response();
+    }
+
+    (StatusCode::OK, response_headers, result).into_response()
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -743,7 +1072,7 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
         if let Ok(cookie_str) = cookie_header.to_str() {
             for cookie in cookie_str.split(';') {
                 let cookie = cookie.trim();
-                if let Some(value) = cookie.strip_prefix("jwt=") {
+                if let Some(value) = cookie.strip_prefix("AT=") {
                     if !value.is_empty() {
                         return Some(value.to_string());
                     }

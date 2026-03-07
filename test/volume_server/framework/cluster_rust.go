@@ -193,6 +193,15 @@ func (rc *RustCluster) startRustVolume(dataDir string) error {
 		"--dir", dataDir,
 		"--max", "16",
 		"--master", "127.0.0.1:" + strconv.Itoa(rc.masterPort),
+		"--securityFile", filepath.Join(rc.configDir, "security.toml"),
+		"--concurrentUploadLimitMB", strconv.Itoa(rc.profile.ConcurrentUploadLimitMB),
+		"--concurrentDownloadLimitMB", strconv.Itoa(rc.profile.ConcurrentDownloadLimitMB),
+	}
+	if rc.profile.InflightUploadTimeout > 0 {
+		args = append(args, "--inflightUploadDataTimeout", rc.profile.InflightUploadTimeout.String())
+	}
+	if rc.profile.InflightDownloadTimeout > 0 {
+		args = append(args, "--inflightDownloadDataTimeout", rc.profile.InflightDownloadTimeout.String())
 	}
 
 	rc.volumeCmd = exec.Command(rc.rustVolumeBinary, args...)

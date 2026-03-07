@@ -177,6 +177,10 @@ pub struct Cli {
     /// HTTP port for debugging.
     #[arg(long = "debug.port", default_value_t = 6060)]
     pub debug_port: u16,
+
+    /// Path to security.toml configuration file for JWT signing keys.
+    #[arg(long = "securityFile", default_value = "")]
+    pub security_file: String,
 }
 
 /// Resolved configuration after applying defaults and validation.
@@ -220,6 +224,10 @@ pub struct VolumeServerConfig {
     pub metrics_ip: String,
     pub debug: bool,
     pub debug_port: u16,
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires_seconds: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires_seconds: i64,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -536,6 +544,10 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     let inflight_upload_data_timeout = parse_duration(&cli.inflight_upload_data_timeout);
     let inflight_download_data_timeout = parse_duration(&cli.inflight_download_data_timeout);
 
+    // Parse security config from TOML file
+    let (jwt_signing_key, jwt_signing_expires, jwt_read_signing_key, jwt_read_signing_expires) =
+        parse_security_config(&cli.security_file);
+
     VolumeServerConfig {
         port: cli.port,
         grpc_port,
@@ -575,7 +587,82 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         metrics_ip,
         debug: cli.debug,
         debug_port: cli.debug_port,
+        jwt_signing_key,
+        jwt_signing_expires_seconds: jwt_signing_expires,
+        jwt_read_signing_key: jwt_read_signing_key,
+        jwt_read_signing_expires_seconds: jwt_read_signing_expires,
     }
+}
+
+/// Parse a security.toml file to extract JWT signing keys.
+/// Format:
+/// ```toml
+/// [jwt.signing]
+/// key = "secret"
+/// expires_after_seconds = 60
+///
+/// [jwt.signing.read]
+/// key = "read-secret"
+/// expires_after_seconds = 60
+/// ```
+fn parse_security_config(path: &str) -> (Vec<u8>, i64, Vec<u8>, i64) {
+    if path.is_empty() {
+        return (vec![], 0, vec![], 0);
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (vec![], 0, vec![], 0),
+    };
+
+    let mut signing_key = Vec::new();
+    let mut signing_expires: i64 = 0;
+    let mut read_key = Vec::new();
+    let mut read_expires: i64 = 0;
+
+    // Simple TOML parser for the specific security config format
+    let mut in_jwt_signing = false;
+    let mut in_jwt_signing_read = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "[jwt.signing.read]" {
+            in_jwt_signing = false;
+            in_jwt_signing_read = true;
+            continue;
+        }
+        if trimmed == "[jwt.signing]" {
+            in_jwt_signing = true;
+            in_jwt_signing_read = false;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            in_jwt_signing = false;
+            in_jwt_signing_read = false;
+            continue;
+        }
+
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"');
+            if in_jwt_signing_read {
+                match key {
+                    "key" => read_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => read_expires = value.parse().unwrap_or(0),
+                    _ => {}
+                }
+            } else if in_jwt_signing {
+                match key {
+                    "key" => signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => signing_expires = value.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    (signing_key, signing_expires, read_key, read_expires)
 }
 
 /// Detect the host's IP address.
