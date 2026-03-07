@@ -200,13 +200,17 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 
 			})
 
-			// Retry on Unavailable (master warming up) with backoff
-			if lastError != nil && strings.Contains(lastError.Error(), "Unavailable") && waitTime <= maxWaitTime {
-				glog.V(0).Infof("master unavailable for assign, retrying in %v: %v", waitTime, lastError)
+			// Retry on Unavailable (master warming up) with backoff, until ctx is done
+			if lastError != nil && strings.Contains(lastError.Error(), "Unavailable") {
+				sleepTime := waitTime
+				if sleepTime > maxWaitTime {
+					sleepTime = maxWaitTime
+				}
+				glog.V(0).Infof("master unavailable for assign, retrying in %v: %v", sleepTime, lastError)
 				select {
 				case <-ctx.Done():
 					return ret, ctx.Err()
-				case <-time.After(waitTime):
+				case <-time.After(sleepTime):
 				}
 				waitTime += waitTime / 2
 				continue
