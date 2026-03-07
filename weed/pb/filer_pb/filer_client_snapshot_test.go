@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -140,20 +141,23 @@ func TestReadDirAllEntriesWithSnapshotEmptyDirectory(t *testing.T) {
 	}
 	accessor := &snapshotFilerAccessor{client: client}
 
+	before := time.Now().UnixNano()
 	var listed []string
 	snapshotTs, err := ReadDirAllEntriesWithSnapshot(context.Background(), accessor, util.FullPath("/empty"), "", func(entry *Entry, isLast bool) error {
 		listed = append(listed, entry.Name)
 		return nil
 	})
+	after := time.Now().UnixNano()
 	if err != nil {
 		t.Fatalf("ReadDirAllEntriesWithSnapshot: %v", err)
 	}
 	if len(listed) != 0 {
 		t.Fatalf("listed %d entries, want 0", len(listed))
 	}
-	// The client-side initialisation of actualSnapshotTsNs preserves the
-	// caller-requested snapshot even when the server sends no responses.
-	if snapshotTs != 0 {
-		t.Fatalf("snapshotTs = %d, want 0 (no server snapshot echoed)", snapshotTs)
+	// When the server sends no snapshot (empty directory with no responses),
+	// the client generates a client-side cutoff so callers like
+	// CompleteDirectoryBuild get a meaningful boundary.
+	if snapshotTs < before || snapshotTs > after {
+		t.Fatalf("snapshotTs = %d, want between %d and %d (client-generated)", snapshotTs, before, after)
 	}
 }

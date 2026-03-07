@@ -474,6 +474,7 @@ message CacheRemoteObjectToLocalClusterRequest {
 }
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 /////////////////////////

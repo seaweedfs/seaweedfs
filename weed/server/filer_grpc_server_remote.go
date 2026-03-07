@@ -259,9 +259,11 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	}
 	fs.filer.DeleteChunks(ctx, entry.FullPath, garbage)
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, false, nil)
 
 	resp.Entry = newEntry.ToProtoEntry()
+	resp.MetadataEvent = eventSink.Last()
 
 	return resp, nil
 

@@ -144,7 +144,12 @@ func DoSeaweedListWithSnapshot(ctx context.Context, client SeaweedFilerClient, f
 
 	// Preserve the caller-requested snapshot so it isn't lost when the
 	// server returns no entries (empty directory) or omits SnapshotTsNs.
+	// For first requests (snapshotTsNs==0), generate a client-side cutoff
+	// so callers like CompleteDirectoryBuild get a meaningful boundary.
 	actualSnapshotTsNs = snapshotTsNs
+	if actualSnapshotTsNs == 0 {
+		actualSnapshotTsNs = time.Now().UnixNano()
+	}
 
 	var prevEntry *Entry
 	count := 0
