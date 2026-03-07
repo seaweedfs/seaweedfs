@@ -268,11 +268,11 @@ func (h *Handler) removeOrphans(
 				continue
 			}
 
-			// Check safety window
-			mtime := time.Unix(0, 0)
-			if entry.Attributes != nil {
-				mtime = time.Unix(entry.Attributes.Mtime, 0)
+			// Check safety window — skip entries with unknown age
+			if entry.Attributes == nil {
+				continue
 			}
+			mtime := time.Unix(entry.Attributes.Mtime, 0)
 			if mtime.After(safetyThreshold) {
 				continue
 			}
