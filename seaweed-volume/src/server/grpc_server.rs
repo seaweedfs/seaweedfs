@@ -843,11 +843,101 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<Self::VolumeTailSenderStream>, Status> {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
-        let store = self.state.store.read().unwrap();
-        store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
-        drop(store);
-        Err(Status::unimplemented("volume_tail_sender not yet implemented"))
+
+        let (version, sb_size) = {
+            let store = self.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+            (vol.version().0 as u32, vol.super_block.block_size() as u64)
+        };
+
+        let state = self.state.clone();
+        let (tx, rx) = tokio::sync::mpsc::channel(32);
+        const BUFFER_SIZE_LIMIT: usize = 2 * 1024 * 1024;
+
+        tokio::spawn(async move {
+            let since_ns = req.since_ns;
+            let idle_timeout = req.idle_timeout_seconds;
+            let mut last_timestamp_ns = since_ns;
+            let mut draining_seconds = idle_timeout;
+
+            loop {
+                // Scan for new needles
+                let scan_result = {
+                    let store = state.store.read().unwrap();
+                    if let Some((_, vol)) = store.find_volume(vid) {
+                        vol.scan_raw_needles_from(sb_size)
+                    } else {
+                        break;
+                    }
+                };
+
+                let entries = match scan_result {
+                    Ok(e) => e,
+                    Err(_) => break,
+                };
+
+                // Filter entries since last_timestamp_ns
+                let mut last_processed_ns = last_timestamp_ns;
+                let mut sent_any = false;
+                for (header, body, append_at_ns) in &entries {
+                    if *append_at_ns <= last_timestamp_ns && last_timestamp_ns > 0 {
+                        continue;
+                    }
+                    sent_any = true;
+                    // Send body in chunks of BUFFER_SIZE_LIMIT
+                    let mut i = 0;
+                    while i < body.len() {
+                        let end = std::cmp::min(i + BUFFER_SIZE_LIMIT, body.len());
+                        let is_last_chunk = end >= body.len();
+                        let msg = volume_server_pb::VolumeTailSenderResponse {
+                            needle_header: header.clone(),
+                            needle_body: body[i..end].to_vec(),
+                            is_last_chunk,
+                            version,
+                        };
+                        if tx.send(Ok(msg)).await.is_err() {
+                            return;
+                        }
+                        i = end;
+                    }
+                    if *append_at_ns > last_processed_ns {
+                        last_processed_ns = *append_at_ns;
+                    }
+                }
+
+                if !sent_any {
+                    // Send heartbeat
+                    let msg = volume_server_pb::VolumeTailSenderResponse {
+                        is_last_chunk: true,
+                        version,
+                        ..Default::default()
+                    };
+                    if tx.send(Ok(msg)).await.is_err() {
+                        return;
+                    }
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                if idle_timeout == 0 {
+                    last_timestamp_ns = last_processed_ns;
+                    continue;
+                }
+                if last_processed_ns == last_timestamp_ns {
+                    draining_seconds = draining_seconds.saturating_sub(1);
+                    if draining_seconds == 0 {
+                        return; // EOF
+                    }
+                } else {
+                    last_timestamp_ns = last_processed_ns;
+                    draining_seconds = idle_timeout;
+                }
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream)))
     }
 
     async fn volume_tail_receiver(
@@ -890,71 +980,429 @@ impl VolumeServer for VolumeGrpcService {
 
     async fn volume_ec_shards_rebuild(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsRebuildRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsRebuildRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsRebuildResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("volume_ec_shards_rebuild not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let collection = &req.collection;
+
+        // Find the directory with EC files
+        let store = self.state.store.read().unwrap();
+        let dir = store.find_ec_dir(vid, collection);
+        drop(store);
+
+        let dir = match dir {
+            Some(d) => d,
+            None => {
+                return Ok(Response::new(volume_server_pb::VolumeEcShardsRebuildResponse {
+                    rebuilt_shard_ids: vec![],
+                }));
+            }
+        };
+
+        // Check which shards are missing
+        use crate::storage::erasure_coding::ec_shard::TOTAL_SHARDS_COUNT;
+        let mut missing: Vec<u32> = Vec::new();
+        for shard_id in 0..TOTAL_SHARDS_COUNT as u8 {
+            let shard = crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(&dir, collection, vid, shard_id);
+            if !std::path::Path::new(&shard.file_name()).exists() {
+                missing.push(shard_id as u32);
+            }
+        }
+
+        if missing.is_empty() {
+            return Ok(Response::new(volume_server_pb::VolumeEcShardsRebuildResponse {
+                rebuilt_shard_ids: vec![],
+            }));
+        }
+
+        // Rebuild missing shards by regenerating all EC files
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid)
+            .map_err(|e| Status::internal(format!("rebuild ec shards: {}", e)))?;
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsRebuildResponse {
+            rebuilt_shard_ids: missing,
+        }))
     }
 
     async fn volume_ec_shards_copy(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsCopyRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsCopyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsCopyResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("volume_ec_shards_copy not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        // Validate disk_id
+        let (loc_count, dest_dir) = {
+            let store = self.state.store.read().unwrap();
+            let count = store.locations.len();
+            let dir = if (req.disk_id as usize) < count {
+                store.locations[req.disk_id as usize].directory.clone()
+            } else {
+                return Err(Status::invalid_argument(format!(
+                    "invalid disk_id {}: only have {} disks", req.disk_id, count
+                )));
+            };
+            (count, dir)
+        };
+
+        // Connect to source and copy shard files via CopyFile
+        let source = &req.source_data_node;
+        // Parse source address: "ip:port.grpc_port"
+        let parts: Vec<&str> = source.split('.').collect();
+        if parts.len() != 2 {
+            return Err(Status::internal(format!(
+                "VolumeEcShardsCopy volume {} invalid source_data_node {}", vid, source
+            )));
+        }
+        let grpc_addr = format!("{}:{}", parts[0].rsplit_once(':').map(|(h,_)| h).unwrap_or(parts[0]), parts[1]);
+
+        let channel = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
+            .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} parse source: {}", vid, e)))?
+            .connect()
+            .await
+            .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} connect to {}: {}", vid, grpc_addr, e)))?;
+
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+
+        // Copy each shard
+        for &shard_id in &req.shard_ids {
+            let ext = format!(".ec{:02}", shard_id);
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ext.clone(),
+                compaction_revision: u32::MAX,
+                stop_offset: 0,
+                ..Default::default()
+            };
+            let mut stream = client.copy_file(copy_req).await
+                .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} copy {}: {}", vid, ext, e)))?
+                .into_inner();
+
+            let file_path = {
+                let base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}{}", base, ext)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            while let Some(chunk) = stream.message().await
+                .map_err(|e| Status::internal(format!("recv {}: {}", ext, e)))? {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            }
+        }
+
+        // Copy .ecx file if requested
+        if req.copy_ecx_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecx".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: 0,
+                ..Default::default()
+            };
+            let mut stream = client.copy_file(copy_req).await
+                .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} copy .ecx: {}", vid, e)))?
+                .into_inner();
+
+            let file_path = {
+                let base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.ecx", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            while let Some(chunk) = stream.message().await
+                .map_err(|e| Status::internal(format!("recv .ecx: {}", e)))? {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            }
+        }
+
+        // Copy .vif file if requested
+        if req.copy_vif_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".vif".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: 0,
+                ..Default::default()
+            };
+            let mut stream = client.copy_file(copy_req).await
+                .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} copy .vif: {}", vid, e)))?
+                .into_inner();
+
+            let file_path = {
+                let base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.vif", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            while let Some(chunk) = stream.message().await
+                .map_err(|e| Status::internal(format!("recv .vif: {}", e)))? {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            }
+        }
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsCopyResponse {}))
     }
 
     async fn volume_ec_shards_delete(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsDeleteRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsDeleteResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("volume_ec_shards_delete not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let mut store = self.state.store.write().unwrap();
+        store.delete_ec_shards(vid, &req.collection, &req.shard_ids);
+        Ok(Response::new(volume_server_pb::VolumeEcShardsDeleteResponse {}))
     }
 
     async fn volume_ec_shards_mount(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsMountRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsMountRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsMountResponse>, Status> {
-        Err(Status::unimplemented("volume_ec_shards_mount not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        // Check all requested shards exist on disk
+        {
+            let store = self.state.store.read().unwrap();
+            for &shard_id in &req.shard_ids {
+                if store.find_ec_shard_dir(vid, &req.collection, shard_id as u8).is_none() {
+                    return Err(Status::not_found(format!(
+                        "ec volume {} shards {:?} not found", req.volume_id, req.shard_ids
+                    )));
+                }
+            }
+        }
+
+        let mut store = self.state.store.write().unwrap();
+        store.mount_ec_shards(vid, &req.collection, &req.shard_ids)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsMountResponse {}))
     }
 
     async fn volume_ec_shards_unmount(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsUnmountRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsUnmountRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsUnmountResponse>, Status> {
-        Err(Status::unimplemented("volume_ec_shards_unmount not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let mut store = self.state.store.write().unwrap();
+        store.unmount_ec_shards(vid, &req.shard_ids);
+        Ok(Response::new(volume_server_pb::VolumeEcShardsUnmountResponse {}))
     }
 
     type VolumeEcShardReadStream = BoxStream<volume_server_pb::VolumeEcShardReadResponse>;
     async fn volume_ec_shard_read(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardReadRequest>,
+        request: Request<volume_server_pb::VolumeEcShardReadRequest>,
     ) -> Result<Response<Self::VolumeEcShardReadStream>, Status> {
-        Err(Status::unimplemented("volume_ec_shard_read not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        let store = self.state.store.read().unwrap();
+        let ec_vol = store.ec_volumes.get(&vid)
+            .ok_or_else(|| Status::not_found(format!("ec volume {} shard {} not found", req.volume_id, req.shard_id)))?;
+
+        // Check if the requested needle is deleted
+        if req.file_key > 0 {
+            let needle_id = NeedleId(req.file_key);
+            let deleted_needles = ec_vol.read_deleted_needles()
+                .map_err(|e| Status::internal(e.to_string()))?;
+            if deleted_needles.contains(&needle_id) {
+                let results = vec![Ok(volume_server_pb::VolumeEcShardReadResponse {
+                    is_deleted: true,
+                    ..Default::default()
+                })];
+                return Ok(Response::new(Box::pin(tokio_stream::iter(results))));
+            }
+        }
+
+        // Read from the shard
+        let shard = ec_vol.shards.get(req.shard_id as usize)
+            .and_then(|s| s.as_ref())
+            .ok_or_else(|| Status::not_found(format!("ec volume {} shard {} not mounted", req.volume_id, req.shard_id)))?;
+
+        let read_size = if req.size > 0 { req.size as usize } else { 1024 * 1024 };
+        let mut buf = vec![0u8; read_size];
+        let n = shard.read_at(&mut buf, req.offset as u64)
+            .map_err(|e| Status::internal(e.to_string()))?;
+        buf.truncate(n);
+
+        let results = vec![Ok(volume_server_pb::VolumeEcShardReadResponse {
+            data: buf,
+            is_deleted: false,
+        })];
+        Ok(Response::new(Box::pin(tokio_stream::iter(results))))
     }
 
     async fn volume_ec_blob_delete(
         &self,
-        _request: Request<volume_server_pb::VolumeEcBlobDeleteRequest>,
+        request: Request<volume_server_pb::VolumeEcBlobDeleteRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcBlobDeleteResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("volume_ec_blob_delete not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+        let needle_id = NeedleId(req.file_key);
+
+        let mut store = self.state.store.write().unwrap();
+        if let Some(ec_vol) = store.ec_volumes.get_mut(&vid) {
+            ec_vol.journal_delete(needle_id)
+                .map_err(|e| Status::internal(e.to_string()))?;
+        }
+        // If EC volume not mounted, it's a no-op (matching Go behavior)
+        Ok(Response::new(volume_server_pb::VolumeEcBlobDeleteResponse {}))
     }
 
     async fn volume_ec_shards_to_volume(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsToVolumeRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsToVolumeRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsToVolumeResponse>, Status> {
         self.state.check_maintenance()?;
-        Err(Status::unimplemented("volume_ec_shards_to_volume not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        let store = self.state.store.read().unwrap();
+        let ec_vol = store.ec_volumes.get(&vid)
+            .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
+
+        // Check that all 10 data shards are present
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+        for shard_id in 0..DATA_SHARDS_COUNT as u8 {
+            if ec_vol.shards.get(shard_id as usize).map(|s| s.is_none()).unwrap_or(true) {
+                return Err(Status::internal(format!(
+                    "ec volume {} missing shard {}", req.volume_id, shard_id
+                )));
+            }
+        }
+
+        // Read the .ecx index to find all needles
+        let ecx_path = ec_vol.ecx_file_name();
+        let ecx_data = std::fs::read(&ecx_path)
+            .map_err(|e| Status::internal(format!("read ecx: {}", e)))?;
+        let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
+
+        // Read deleted needles from .ecj
+        let deleted_needles = ec_vol.read_deleted_needles()
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        // Count live entries
+        let mut live_count = 0;
+        for i in 0..entry_count {
+            let start = i * NEEDLE_MAP_ENTRY_SIZE;
+            let (key, _offset, size) = idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
+            if size.is_deleted() || deleted_needles.contains(&key) {
+                continue;
+            }
+            live_count += 1;
+        }
+
+        if live_count == 0 {
+            return Err(Status::failed_precondition(format!(
+                "ec volume {} has no live entries", req.volume_id
+            )));
+        }
+
+        // Reconstruct the volume from EC shards
+        let dir = ec_vol.dir.clone();
+        let collection = ec_vol.collection.clone();
+        drop(store);
+
+        // Read all shard data and reconstruct the .dat file
+        // For simplicity, concatenate the first DATA_SHARDS_COUNT shards
+        let mut dat_data = Vec::new();
+        {
+            let store = self.state.store.read().unwrap();
+            let ec_vol = store.ec_volumes.get(&vid).unwrap();
+            for shard_id in 0..DATA_SHARDS_COUNT as u8 {
+                if let Some(Some(shard)) = ec_vol.shards.get(shard_id as usize) {
+                    let shard_size = shard.file_size() as usize;
+                    let mut buf = vec![0u8; shard_size];
+                    let n = shard.read_at(&mut buf, 0)
+                        .map_err(|e| Status::internal(format!("read shard {}: {}", shard_id, e)))?;
+                    buf.truncate(n);
+                    dat_data.extend_from_slice(&buf);
+                }
+            }
+        }
+
+        // Write the reconstructed .dat file
+        let base = crate::storage::volume::volume_file_name(&dir, &collection, vid);
+        let dat_path = format!("{}.dat", base);
+        std::fs::write(&dat_path, &dat_data)
+            .map_err(|e| Status::internal(format!("write dat: {}", e)))?;
+
+        // Copy the .ecx to .idx (they have the same format)
+        let idx_path = format!("{}.idx", base);
+        std::fs::copy(&ecx_path, &idx_path)
+            .map_err(|e| Status::internal(format!("copy ecx to idx: {}", e)))?;
+
+        // Unmount EC shards and mount the reconstructed volume
+        {
+            let mut store = self.state.store.write().unwrap();
+            // Remove EC volume
+            if let Some(mut ec_vol) = store.ec_volumes.remove(&vid) {
+                ec_vol.close();
+            }
+            // Unmount existing volume if any, then mount fresh
+            store.unmount_volume(vid);
+            store.mount_volume(vid, &collection, DiskType::HardDrive)
+                .map_err(|e| Status::internal(format!("mount volume: {}", e)))?;
+        }
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsToVolumeResponse {}))
     }
 
     async fn volume_ec_shards_info(
         &self,
-        _request: Request<volume_server_pb::VolumeEcShardsInfoRequest>,
+        request: Request<volume_server_pb::VolumeEcShardsInfoRequest>,
     ) -> Result<Response<volume_server_pb::VolumeEcShardsInfoResponse>, Status> {
-        Err(Status::unimplemented("volume_ec_shards_info not yet implemented"))
+        let req = request.into_inner();
+        let vid = VolumeId(req.volume_id);
+
+        let store = self.state.store.read().unwrap();
+        let ec_vol = store.ec_volumes.get(&vid)
+            .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
+
+        let mut shard_infos = Vec::new();
+        for (i, shard) in ec_vol.shards.iter().enumerate() {
+            if let Some(s) = shard {
+                shard_infos.push(volume_server_pb::EcShardInfo {
+                    shard_id: i as u32,
+                    size: s.file_size(),
+                    collection: ec_vol.collection.clone(),
+                    volume_id: req.volume_id,
+                });
+            }
+        }
+
+        // Calculate volume size from shards
+        let volume_size = ec_vol.shards.iter()
+            .filter_map(|s| s.as_ref())
+            .map(|s| s.file_size())
+            .sum::<i64>() as u64;
+
+        Ok(Response::new(volume_server_pb::VolumeEcShardsInfoResponse {
+            ec_shard_infos: shard_infos,
+            volume_size,
+            file_count: 0,
+            file_deleted_count: 0,
+        }))
     }
 
     // ---- Tiered storage ----
@@ -1311,23 +1759,74 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
 
-        // Check if volume exists first for better error message
-        if store.find_volume(vid).is_none() {
-            return Err(Status::not_found(format!("volume not found {}", vid)));
+        // Try normal volume first
+        if let Some(_) = store.find_volume(vid) {
+            let mut n = Needle { id: needle_id, ..Needle::default() };
+            match store.read_volume_needle(vid, &mut n) {
+                Ok(_) => return Ok(Response::new(volume_server_pb::VolumeNeedleStatusResponse {
+                    needle_id: n.id.0,
+                    cookie: n.cookie.0,
+                    size: n.data_size,
+                    last_modified: n.last_modified,
+                    crc: n.checksum.0,
+                    ttl: String::new(),
+                })),
+                Err(_) => return Err(Status::not_found(format!("needle {} not found in volume {}", needle_id, vid))),
+            }
         }
 
-        let mut n = Needle { id: needle_id, ..Needle::default() };
-        match store.read_volume_needle(vid, &mut n) {
-            Ok(_) => Ok(Response::new(volume_server_pb::VolumeNeedleStatusResponse {
-                needle_id: n.id.0,
-                cookie: n.cookie.0,
-                size: n.data_size,
-                last_modified: n.last_modified,
-                crc: n.checksum.0,
-                ttl: String::new(),
-            })),
-            Err(_) => Err(Status::not_found(format!("needle {} not found in volume {}", needle_id, vid))),
+        // Fall back to EC shards
+        if let Some(ec_vol) = store.ec_volumes.get(&vid) {
+            match ec_vol.find_needle_from_ecx(needle_id) {
+                Ok(Some((offset, size))) if !size.is_deleted() && !offset.is_zero() => {
+                    // Read the needle header from EC shards to get cookie
+                    // The needle is at the actual offset in the reconstructed data
+                    let actual_offset = offset.to_actual_offset();
+                    use crate::storage::erasure_coding::ec_shard::ERASURE_CODING_SMALL_BLOCK_SIZE;
+                    let shard_size = ec_vol.shards.iter()
+                        .filter_map(|s| s.as_ref())
+                        .map(|s| s.file_size())
+                        .next()
+                        .unwrap_or(0) as u64;
+
+                    if shard_size > 0 {
+                        // Determine which shard and offset
+                        let shard_id = (actual_offset as u64 / shard_size) as usize;
+                        let shard_offset = actual_offset as u64 % shard_size;
+
+                        if let Some(Some(shard)) = ec_vol.shards.get(shard_id) {
+                            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+                            if shard.read_at(&mut header_buf, shard_offset).is_ok() {
+                                let (cookie, id, _) = Needle::parse_header(&header_buf);
+                                return Ok(Response::new(volume_server_pb::VolumeNeedleStatusResponse {
+                                    needle_id: id.0,
+                                    cookie: cookie.0,
+                                    size: size.0 as u32,
+                                    last_modified: 0,
+                                    crc: 0,
+                                    ttl: String::new(),
+                                }));
+                            }
+                        }
+                    }
+
+                    // Fallback: return index info without cookie
+                    return Ok(Response::new(volume_server_pb::VolumeNeedleStatusResponse {
+                        needle_id: needle_id.0,
+                        cookie: 0,
+                        size: size.0 as u32,
+                        last_modified: 0,
+                        crc: 0,
+                        ttl: String::new(),
+                    }));
+                }
+                _ => {
+                    return Err(Status::not_found(format!("needle {} not found in ec volume {}", needle_id, vid)));
+                }
+            }
         }
+
+        Err(Status::not_found(format!("volume not found {}", vid)))
     }
 
     async fn ping(

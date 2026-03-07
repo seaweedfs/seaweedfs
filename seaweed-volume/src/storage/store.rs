@@ -4,10 +4,13 @@
 //! It coordinates volume placement, lookup, and lifecycle operations.
 //! Matches Go's storage/store.go.
 
+use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::storage::disk_location::DiskLocation;
+use crate::storage::erasure_coding::ec_volume::EcVolume;
+use crate::storage::erasure_coding::ec_shard::EcVolumeShard;
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
@@ -25,6 +28,7 @@ pub struct Store {
     pub public_url: String,
     pub data_center: String,
     pub rack: String,
+    pub ec_volumes: HashMap<VolumeId, EcVolume>,
 }
 
 impl Store {
@@ -39,6 +43,7 @@ impl Store {
             public_url: String::new(),
             data_center: String::new(),
             rack: String::new(),
+            ec_volumes: HashMap::new(),
         }
     }
 
@@ -265,10 +270,124 @@ impl Store {
         ids
     }
 
+    // ---- EC volume operations ----
+
+    /// Mount EC shards for a volume.
+    pub fn mount_ec_shards(
+        &mut self,
+        vid: VolumeId,
+        collection: &str,
+        shard_ids: &[u32],
+    ) -> Result<(), VolumeError> {
+        // Find the directory where the EC files live
+        let dir = self.find_ec_dir(vid, collection)
+            .ok_or_else(|| VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("ec volume {} shards not found on disk", vid),
+            )))?;
+
+        let ec_vol = self.ec_volumes.entry(vid).or_insert_with(|| {
+            EcVolume::new(&dir, &dir, collection, vid).unwrap()
+        });
+
+        for &shard_id in shard_ids {
+            let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            ec_vol.add_shard(shard).map_err(|e| VolumeError::Io(e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Unmount EC shards for a volume.
+    pub fn unmount_ec_shards(
+        &mut self,
+        vid: VolumeId,
+        shard_ids: &[u32],
+    ) {
+        if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
+            for &shard_id in shard_ids {
+                ec_vol.remove_shard(shard_id as u8);
+            }
+            if ec_vol.shard_count() == 0 {
+                let mut vol = self.ec_volumes.remove(&vid).unwrap();
+                vol.close();
+            }
+        }
+    }
+
+    /// Delete EC shard files from disk.
+    pub fn delete_ec_shards(
+        &mut self,
+        vid: VolumeId,
+        collection: &str,
+        shard_ids: &[u32],
+    ) {
+        // Delete shard files from disk
+        for loc in &self.locations {
+            for &shard_id in shard_ids {
+                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id as u8);
+                let path = shard.file_name();
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+
+        // Also unmount if mounted
+        self.unmount_ec_shards(vid, shard_ids);
+
+        // If all shards are gone, remove .ecx and .ecj files
+        let all_gone = self.check_all_ec_shards_deleted(vid, collection);
+        if all_gone {
+            for loc in &self.locations {
+                let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+                let _ = std::fs::remove_file(format!("{}.ecx", base));
+                let _ = std::fs::remove_file(format!("{}.ecj", base));
+            }
+        }
+    }
+
+    /// Check if all EC shard files have been deleted for a volume.
+    fn check_all_ec_shards_deleted(&self, vid: VolumeId, collection: &str) -> bool {
+        for loc in &self.locations {
+            for shard_id in 0..14u8 {
+                let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
+                if std::path::Path::new(&shard.file_name()).exists() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Find the directory containing EC files for a volume.
+    pub fn find_ec_dir(&self, vid: VolumeId, collection: &str) -> Option<String> {
+        for loc in &self.locations {
+            let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+            let ecx_path = format!("{}.ecx", base);
+            if std::path::Path::new(&ecx_path).exists() {
+                return Some(loc.directory.clone());
+            }
+        }
+        None
+    }
+
+    /// Find the directory containing a specific EC shard file.
+    pub fn find_ec_shard_dir(&self, vid: VolumeId, collection: &str, shard_id: u8) -> Option<String> {
+        for loc in &self.locations {
+            let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
+            if std::path::Path::new(&shard.file_name()).exists() {
+                return Some(loc.directory.clone());
+            }
+        }
+        None
+    }
+
     /// Close all locations and their volumes.
     pub fn close(&mut self) {
         for loc in &mut self.locations {
             loc.close();
+        }
+        for (_, mut ec_vol) in self.ec_volumes.drain() {
+            ec_vol.close();
         }
     }
 }

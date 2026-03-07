@@ -681,6 +681,63 @@ impl Volume {
         Ok(needles)
     }
 
+    /// Scan raw needle entries from the .dat file starting at `from_offset`.
+    /// Returns (needle_header_bytes, needle_body_bytes, append_at_ns) for each needle.
+    /// Used by VolumeTailSender to stream raw bytes.
+    pub fn scan_raw_needles_from(&self, from_offset: u64) -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>, VolumeError> {
+        let dat_file = self.dat_file.as_ref().ok_or(VolumeError::NotFound)?;
+        let version = self.super_block.version;
+        let dat_size = dat_file.metadata()?.len();
+        let mut entries = Vec::new();
+        let mut offset = from_offset;
+
+        let mut dat = dat_file.try_clone()?;
+        while offset < dat_size {
+            // Read needle header (16 bytes)
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            dat.seek(SeekFrom::Start(offset))?;
+            match dat.read_exact(&mut header) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            let (_cookie, _id, size) = Needle::parse_header(&header);
+            if size.0 == 0 && _id.is_empty() {
+                break;
+            }
+
+            let body_length = needle::needle_body_length(size, version);
+            let total_size = NEEDLE_HEADER_SIZE as u64 + body_length as u64;
+
+            if size.is_deleted() || size.0 <= 0 {
+                offset += total_size;
+                continue;
+            }
+
+            // Read body bytes
+            let mut body = vec![0u8; body_length as usize];
+            dat.seek(SeekFrom::Start(offset + NEEDLE_HEADER_SIZE as u64))?;
+            match dat.read_exact(&mut body) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            // Parse the needle to get append_at_ns
+            let mut full = vec![0u8; total_size as usize];
+            full[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
+            full[NEEDLE_HEADER_SIZE..].copy_from_slice(&body);
+            let mut n = Needle::default();
+            let _ = n.read_bytes(&full, offset as i64, size, version);
+
+            entries.push((header.to_vec(), body, n.append_at_ns));
+            offset += total_size;
+        }
+
+        Ok(entries)
+    }
+
     /// Insert or update a needle index entry (for low-level blob writes).
     pub fn put_needle_index(&mut self, key: NeedleId, offset: Offset, size: Size) -> Result<(), VolumeError> {
         if let Some(ref mut nm) = self.nm {
