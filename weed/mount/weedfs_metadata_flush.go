@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -147,8 +146,13 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 			return err
 		}
 
-		if err := wfs.applyLocalMetadataEvent(context.Background(), resp.GetMetadataEvent()); err != nil {
-			return fmt.Errorf("update metadata event for %s: %w", fileFullPath, err)
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(string(dir), request.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
 		}
 
 		glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
