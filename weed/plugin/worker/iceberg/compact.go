@@ -502,7 +502,7 @@ func mergeParquetFiles(
 	return outputBuf.Bytes(), totalRows, nil
 }
 
-// schemasEqual compares two parquet schemas by their column structure.
+// schemasEqual compares two parquet schemas structurally.
 func schemasEqual(a, b *parquet.Schema) bool {
 	if a == b {
 		return true
@@ -510,7 +510,7 @@ func schemasEqual(a, b *parquet.Schema) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.String() == b.String()
+	return parquet.EqualNodes(a, b)
 }
 
 // ensureFilerDir ensures a directory exists in the filer.
