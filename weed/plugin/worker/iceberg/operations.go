@@ -514,8 +514,18 @@ func (h *Handler) commitWithRetry(
 	for attempt := int64(0); attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(50*(1<<(attempt-1))) * time.Millisecond // exponential: 50ms, 100ms, 200ms, ...
-			jitter := time.Duration(rand.Int64N(int64(backoff) / 5))          // 0–20% of backoff
-			time.Sleep(backoff + jitter)
+			const maxBackoff = 5 * time.Second
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			jitter := time.Duration(rand.Int64N(int64(backoff) / 5)) // 0–20% of backoff
+			timer := time.NewTimer(backoff + jitter)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
 		}
 
 		// Load current metadata
