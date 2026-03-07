@@ -268,8 +268,14 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 				return err
 			}
 			if resp.Entry != nil && resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
-				partitionDir = resp.Entry.Name
-				break // Use the first partition directory we find
+				// Parse partition range (format: NNNN-NNNN) and match requested partition
+				var pStart, pStop int32
+				if n, scanErr := fmt.Sscanf(resp.Entry.Name, "%04d-%04d", &pStart, &pStop); n == 2 && scanErr == nil {
+					if partition >= pStart && partition < pStop {
+						partitionDir = resp.Entry.Name
+						break
+					}
+				}
 			}
 		}
 		return nil
