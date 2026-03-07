@@ -16,7 +16,7 @@ func TestStateAndStatusRPCs(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -94,7 +94,7 @@ func TestSetStateVersionMismatchAndNilStateNoop(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 

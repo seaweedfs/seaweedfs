@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -42,6 +43,7 @@ type TestCluster struct {
 	filerGrpcPort  int
 	s3Port         int
 	s3Endpoint     string
+	rustVolumeCmd  *exec.Cmd
 }
 
 func TestS3PolicyShellRevised(t *testing.T) {
@@ -822,6 +824,15 @@ enabled = true
 		cancel()
 		return nil, err
 	}
+
+	// If VOLUME_SERVER_IMPL=rust, start a Rust volume server alongside weed mini
+	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+		if err := cluster.startRustVolumeServer(t); err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to start Rust volume server: %v", err)
+		}
+	}
+
 	cluster.isRunning = true
 	return cluster, nil
 }
@@ -840,7 +851,80 @@ func waitForS3Ready(endpoint string, timeout time.Duration) error {
 	return fmt.Errorf("timeout waiting for S3")
 }
 
+// startRustVolumeServer starts a Rust volume server that registers with the same master.
+func (c *TestCluster) startRustVolumeServer(t *testing.T) error {
+	t.Helper()
+
+	rustBinary, err := framework.FindOrBuildRustBinary()
+	if err != nil {
+		return fmt.Errorf("resolve rust volume binary: %v", err)
+	}
+
+	rustVolumePort, err := findAvailablePort()
+	if err != nil {
+		return fmt.Errorf("find rust volume port: %v", err)
+	}
+	rustVolumeGrpcPort, err := findAvailablePort()
+	if err != nil {
+		return fmt.Errorf("find rust volume grpc port: %v", err)
+	}
+
+	rustVolumeDir := filepath.Join(c.dataDir, "rust-volume")
+	if err := os.MkdirAll(rustVolumeDir, 0o755); err != nil {
+		return fmt.Errorf("create rust volume dir: %v", err)
+	}
+
+	securityToml := filepath.Join(c.dataDir, "security.toml")
+
+	args := []string{
+		"--port", strconv.Itoa(rustVolumePort),
+		"--port.grpc", strconv.Itoa(rustVolumeGrpcPort),
+		"--port.public", strconv.Itoa(rustVolumePort),
+		"--ip", "127.0.0.1",
+		"--ip.bind", "127.0.0.1",
+		"--dir", rustVolumeDir,
+		"--max", "16",
+		"--master", "127.0.0.1:" + strconv.Itoa(c.masterPort),
+		"--securityFile", securityToml,
+		"--preStopSeconds", "0",
+	}
+
+	logFile, err := os.Create(filepath.Join(c.dataDir, "rust-volume.log"))
+	if err != nil {
+		return fmt.Errorf("create rust volume log: %v", err)
+	}
+
+	c.rustVolumeCmd = exec.Command(rustBinary, args...)
+	c.rustVolumeCmd.Dir = c.dataDir
+	c.rustVolumeCmd.Stdout = logFile
+	c.rustVolumeCmd.Stderr = logFile
+	if err := c.rustVolumeCmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start rust volume: %v", err)
+	}
+
+	rustEndpoint := fmt.Sprintf("http://127.0.0.1:%d/healthz", rustVolumePort)
+	deadline := time.Now().Add(15 * time.Second)
+	client := &http.Client{Timeout: 1 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(rustEndpoint)
+		if err == nil {
+			resp.Body.Close()
+			t.Logf("Rust volume server ready on port %d (grpc %d)", rustVolumePort, rustVolumeGrpcPort)
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("rust volume server not ready after 15s (port %d)", rustVolumePort)
+}
+
 func (c *TestCluster) Stop() {
+	// Stop Rust volume server first
+	if c.rustVolumeCmd != nil && c.rustVolumeCmd.Process != nil {
+		c.rustVolumeCmd.Process.Kill()
+		c.rustVolumeCmd.Wait()
+	}
+
 	if c.cancel != nil {
 		c.cancel()
 	}

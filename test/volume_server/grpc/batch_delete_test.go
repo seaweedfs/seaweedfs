@@ -18,7 +18,7 @@ func TestBatchDeleteInvalidFidAndMaintenanceMode(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -61,7 +61,7 @@ func TestBatchDeleteCookieMismatchAndSkipCheck(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -124,7 +124,7 @@ func TestBatchDeleteMixedStatusesAndMismatchStopsProcessing(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -219,7 +219,7 @@ func TestBatchDeleteRejectsChunkManifestNeedles(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
 	defer conn.Close()
 

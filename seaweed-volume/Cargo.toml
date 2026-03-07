@@ -1,0 +1,106 @@
+[package]
+name = "seaweed-volume"
+version = "0.1.0"
+edition = "2021"
+description = "SeaweedFS Volume Server — Rust implementation"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+
+# gRPC + protobuf
+tonic = { version = "0.12", features = ["tls"] }
+prost = "0.13"
+prost-types = "0.13"
+
+# HTTP server
+axum = { version = "0.7", features = ["multipart"] }
+http-body = "1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Metrics
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
+lazy_static = "1"
+
+# JWT
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+
+# TLS
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
+
+# LevelDB (via RocksDB for better Rust support)
+# Using rusty-leveldb for pure Rust LevelDB
+rusty-leveldb = "3"
+
+# Reed-Solomon erasure coding
+reed-solomon-erasure = "6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+
+# CRC32 — using Castagnoli polynomial (CRC32-C), matching Go's crc32.Castagnoli
+crc32c = "0.6"
+crc32fast = "1"
+
+# Memory-mapped files
+memmap2 = "0.9"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }
+
+# HTTP client (for proxying, remote fetch)
+reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart"] }
+
+# Content hashing
+md-5 = "0.10"
+base64 = "0.22"
+
+# Compression
+flate2 = "1"
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+
+# Misc
+bytes = "1"
+rand = "0.8"
+chrono = "0.4"
+hex = "0.4"
+parking_lot = "0.12"
+dashmap = "6"
+thiserror = "1"
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+
+# Disk space checking
+sysinfo = "0.31"
+libc = "0.2"
+
+# AWS S3 SDK (for remote storage backends)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+aws-credential-types = "1"
+aws-types = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+tonic-build = "0.12"
