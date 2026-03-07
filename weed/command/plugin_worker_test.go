@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -140,6 +141,9 @@ func TestPluginWorkerDefaultJobTypes(t *testing.T) {
 	}
 	if len(jobTypes) != 5 {
 		t.Fatalf("expected default job types to include 5 handlers, got %v", jobTypes)
+	}
+	if !slices.Contains(jobTypes, "iceberg_maintenance") {
+		t.Fatalf("expected iceberg_maintenance in default job types, got %v", jobTypes)
 	}
 }
 
