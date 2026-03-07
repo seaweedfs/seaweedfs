@@ -3,6 +3,7 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -474,7 +475,7 @@ func ensureFilerDir(ctx context.Context, client filer_pb.SeaweedFilerClient, dir
 	if err == nil {
 		return nil // already exists
 	}
-	if status.Code(err) != codes.NotFound {
+	if !errors.Is(err, filer_pb.ErrNotFound) && status.Code(err) != codes.NotFound {
 		return fmt.Errorf("lookup dir %s: %w", dirPath, err)
 	}
 
