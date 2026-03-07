@@ -324,7 +324,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 			}
 
 			// Only process directories that are versions (start with "v")
-			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
 				versionDir := filepath.Join(topicDir, versionResp.Entry.Name)
 
 				// List all partition directories under the version directory (e.g., 0315-0630)
@@ -352,7 +352,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 					}
 
 					// Only process directories that are partitions (format: NNNN-NNNN)
-					if partitionResp.Entry.IsDirectory {
+					if partitionResp.Entry != nil && partitionResp.Entry.IsDirectory {
 						// Parse partition range to get partition start ID (e.g., "0315-0630" -> 315)
 						var partitionStart, partitionStop int32
 						if n, err := fmt.Sscanf(partitionResp.Entry.Name, "%04d-%04d", &partitionStart, &partitionStop); n != 2 || err != nil {
@@ -387,7 +387,7 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 							}
 
 							// Only process .offset files
-							if !offsetResp.Entry.IsDirectory && strings.HasSuffix(offsetResp.Entry.Name, ".offset") {
+							if offsetResp.Entry != nil && !offsetResp.Entry.IsDirectory && strings.HasSuffix(offsetResp.Entry.Name, ".offset") {
 								consumerGroup := strings.TrimSuffix(offsetResp.Entry.Name, ".offset")
 
 								// Read the offset value from the file

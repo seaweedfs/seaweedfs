@@ -151,7 +151,7 @@ func (p *TopicRetentionPurger) purgeTopicData(topicRetention TopicRetentionConfi
 			}
 
 			// Only process directories that are versions (start with "v")
-			if versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
+			if versionResp.Entry != nil && versionResp.Entry.IsDirectory && strings.HasPrefix(versionResp.Entry.Name, "v") {
 				versionTime, err := p.parseVersionTime(versionResp.Entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to parse version time from %s: %v", versionResp.Entry.Name, err)
