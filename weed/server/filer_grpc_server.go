@@ -88,11 +88,20 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 			return err
 		}
 		if !hasEntries {
-			return nil
+			break
 		}
 
 		includeLastFile = false
 
+	}
+
+	// Ensure empty listings still carry the snapshot token.
+	if !sentSnapshot {
+		if err = stream.Send(&filer_pb.ListEntriesResponse{
+			SnapshotTsNs: snapshotTsNs,
+		}); err != nil {
+			return err
+		}
 	}
 
 	return nil
