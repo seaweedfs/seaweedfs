@@ -62,17 +62,66 @@ impl VolumeServer for VolumeGrpcService {
                 ..Needle::default()
             };
 
+            // Check if this is an EC volume
+            let is_ec_volume = {
+                let store = self.state.store.read().unwrap();
+                store.ec_volumes.contains_key(&file_id.volume_id)
+            };
+
             // Cookie validation (unless skip_cookie_check)
             if !req.skip_cookie_check {
                 let original_cookie = n.cookie;
-                let store = self.state.store.read().unwrap();
-                match store.read_volume_needle(file_id.volume_id, &mut n) {
-                    Ok(_) => {}
-                    Err(e) => {
+                if !is_ec_volume {
+                    let store = self.state.store.read().unwrap();
+                    match store.read_volume_needle(file_id.volume_id, &mut n) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 404,
+                                error: e.to_string(),
+                                size: 0,
+                                version: 0,
+                            });
+                            continue;
+                        }
+                    }
+                } else {
+                    // For EC volumes, verify needle exists in ecx index
+                    let store = self.state.store.read().unwrap();
+                    if let Some(ec_vol) = store.ec_volumes.get(&file_id.volume_id) {
+                        match ec_vol.find_needle_from_ecx(n.id) {
+                            Ok(Some((_, size))) if !size.is_deleted() => {
+                                // Needle exists and is not deleted — cookie check not possible
+                                // for EC volumes without distributed read, so we accept it
+                                n.data_size = size.0 as u32;
+                            }
+                            Ok(_) => {
+                                results.push(volume_server_pb::DeleteResult {
+                                    file_id: fid_str.clone(),
+                                    status: 404,
+                                    error: format!("ec needle {} not found", fid_str),
+                                    size: 0,
+                                    version: 0,
+                                });
+                                continue;
+                            }
+                            Err(e) => {
+                                results.push(volume_server_pb::DeleteResult {
+                                    file_id: fid_str.clone(),
+                                    status: 404,
+                                    error: e.to_string(),
+                                    size: 0,
+                                    version: 0,
+                                });
+                                continue;
+                            }
+                        }
+                    } else {
                         results.push(volume_server_pb::DeleteResult {
                             file_id: fid_str.clone(),
-                            status: 404, // Not Found
-                            error: e.to_string(),
+                            status: 404,
+                            error: format!("ec volume {} not found", file_id.volume_id),
                             size: 0,
                             version: 0,
                         });
@@ -82,12 +131,12 @@ impl VolumeServer for VolumeGrpcService {
                 if n.cookie != original_cookie {
                     results.push(volume_server_pb::DeleteResult {
                         file_id: fid_str.clone(),
-                        status: 400, // Bad Request
+                        status: 400,
                         error: "File Random Cookie does not match.".to_string(),
                         size: 0,
                         version: 0,
                     });
-                    break; // Stop processing on cookie mismatch
+                    break;
                 }
             }
 
@@ -95,7 +144,7 @@ impl VolumeServer for VolumeGrpcService {
             if n.is_chunk_manifest() {
                 results.push(volume_server_pb::DeleteResult {
                     file_id: fid_str.clone(),
-                    status: 406, // Not Acceptable
+                    status: 406,
                     error: "ChunkManifest: not allowed in batch delete mode.".to_string(),
                     size: 0,
                     version: 0,
@@ -106,32 +155,67 @@ impl VolumeServer for VolumeGrpcService {
             n.last_modified = now;
             n.set_has_last_modified_date();
 
-            let mut store = self.state.store.write().unwrap();
-            match store.delete_volume_needle(file_id.volume_id, &mut n) {
-                Ok(size) => {
-                    if size.0 == 0 {
+            if !is_ec_volume {
+                let mut store = self.state.store.write().unwrap();
+                match store.delete_volume_needle(file_id.volume_id, &mut n) {
+                    Ok(size) => {
+                        if size.0 == 0 {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 304,
+                                error: String::new(),
+                                size: 0,
+                                version: 0,
+                            });
+                        } else {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 202,
+                                error: String::new(),
+                                size: size.0 as u32,
+                                version: 0,
+                            });
+                        }
+                    }
+                    Err(e) => {
                         results.push(volume_server_pb::DeleteResult {
                             file_id: fid_str.clone(),
-                            status: 304, // Not Modified
-                            error: String::new(),
+                            status: 500,
+                            error: e.to_string(),
                             size: 0,
-                            version: 0,
-                        });
-                    } else {
-                        results.push(volume_server_pb::DeleteResult {
-                            file_id: fid_str.clone(),
-                            status: 202, // Accepted
-                            error: String::new(),
-                            size: size.0 as u32,
                             version: 0,
                         });
                     }
                 }
-                Err(e) => {
+            } else {
+                // EC volume deletion: journal the delete locally
+                let mut store = self.state.store.write().unwrap();
+                if let Some(ec_vol) = store.ec_volumes.get_mut(&file_id.volume_id) {
+                    match ec_vol.journal_delete(n.id) {
+                        Ok(()) => {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 202,
+                                error: String::new(),
+                                size: n.data_size,
+                                version: 0,
+                            });
+                        }
+                        Err(e) => {
+                            results.push(volume_server_pb::DeleteResult {
+                                file_id: fid_str.clone(),
+                                status: 500,
+                                error: e.to_string(),
+                                size: 0,
+                                version: 0,
+                            });
+                        }
+                    }
+                } else {
                     results.push(volume_server_pb::DeleteResult {
                         file_id: fid_str.clone(),
-                        status: 500, // Internal Server Error
-                        error: e.to_string(),
+                        status: 404,
+                        error: format!("ec volume {} not found", file_id.volume_id),
                         size: 0,
                         version: 0,
                     });
@@ -1695,21 +1779,132 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        let store = self.state.store.read().unwrap();
-        let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+        // Validate volume exists and collection matches
+        let (dat_path, dat_file_size) = {
+            let store = self.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", req.volume_id)))?;
 
-        if vol.collection != req.collection {
-            return Err(Status::invalid_argument(format!(
-                "unexpected input {}, expected collection {}", req.collection, vol.collection
-            )));
-        }
-        drop(store);
+            if vol.collection != req.collection {
+                return Err(Status::invalid_argument(format!(
+                    "existing collection:{} unexpected input: {}", vol.collection, req.collection
+                )));
+            }
 
-        // Backend not supported
-        Err(Status::internal(format!(
-            "destination {} not found", req.destination_backend_name
-        )))
+            // Check if already on remote
+            if vol.has_remote_file {
+                // Already on remote -- return empty stream (matches Go: returns nil)
+                let stream = tokio_stream::empty();
+                return Ok(Response::new(Box::pin(stream) as Self::VolumeTierMoveDatToRemoteStream));
+            }
+
+            // Check if the destination backend already exists in volume info
+            let (backend_type, backend_id) = crate::remote_storage::s3_tier::backend_name_to_type_id(
+                &req.destination_backend_name
+            );
+            for rf in &vol.volume_info.files {
+                if rf.backend_type == backend_type && rf.backend_id == backend_id {
+                    return Err(Status::already_exists(format!(
+                        "destination {} already exists", req.destination_backend_name
+                    )));
+                }
+            }
+
+            let dat_path = vol.dat_path();
+            let dat_file_size = vol.dat_file_size().unwrap_or(0);
+            (dat_path, dat_file_size)
+        };
+
+        // Look up the S3 tier backend
+        let backend = {
+            let registry = self.state.s3_tier_registry.read().unwrap();
+            registry.get(&req.destination_backend_name)
+                .ok_or_else(|| {
+                    let keys = registry.names();
+                    Status::not_found(format!(
+                        "destination {} not found, supported: {:?}",
+                        req.destination_backend_name, keys
+                    ))
+                })?
+        };
+
+        let (backend_type, backend_id) = crate::remote_storage::s3_tier::backend_name_to_type_id(
+            &req.destination_backend_name
+        );
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeTierMoveDatToRemoteResponse, Status>>(16);
+        let state = self.state.clone();
+        let keep_local = req.keep_local_dat_file;
+        let dest_backend_name = req.destination_backend_name.clone();
+
+        tokio::spawn(async move {
+            let result: Result<(), Status> = async {
+                // Upload the .dat file to S3 with progress
+                let tx_progress = tx.clone();
+                let mut last_report = std::time::Instant::now();
+                let (key, size) = backend.upload_file(&dat_path, move |processed, percentage| {
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
+                        last_report = now;
+                        let _ = tx_progress.try_send(Ok(volume_server_pb::VolumeTierMoveDatToRemoteResponse {
+                            processed,
+                            processed_percentage: percentage,
+                        }));
+                    }
+                }).await.map_err(|e| Status::internal(format!(
+                    "backend {} copy file {}: {}", dest_backend_name, dat_path, e
+                )))?;
+
+                // Update volume info with remote file reference
+                {
+                    let mut store = state.store.write().unwrap();
+                    if let Some((_, vol)) = store.find_volume_mut(vid) {
+                        let now_unix = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+
+                        vol.volume_info.files.push(volume_server_pb::RemoteFile {
+                            backend_type: backend_type.clone(),
+                            backend_id: backend_id.clone(),
+                            key,
+                            offset: 0,
+                            file_size: size,
+                            modified_time: now_unix,
+                            extension: ".dat".to_string(),
+                        });
+                        vol.has_remote_file = true;
+
+                        if let Err(e) = vol.save_volume_info() {
+                            return Err(Status::internal(format!(
+                                "volume {} failed to save remote file info: {}", vid, e
+                            )));
+                        }
+
+                        // Optionally remove local .dat file
+                        if !keep_local {
+                            let dat = vol.dat_path();
+                            let _ = std::fs::remove_file(&dat);
+                        }
+                    }
+                }
+
+                // Send final 100% progress
+                let _ = tx.send(Ok(volume_server_pb::VolumeTierMoveDatToRemoteResponse {
+                    processed: dat_file_size as i64,
+                    processed_percentage: 100.0,
+                })).await;
+
+                Ok(())
+            }.await;
+
+            if let Err(e) = result {
+                let _ = tx.send(Err(e)).await;
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as Self::VolumeTierMoveDatToRemoteStream))
     }
 
     type VolumeTierMoveDatFromRemoteStream = BoxStream<volume_server_pb::VolumeTierMoveDatFromRemoteResponse>;
@@ -1721,19 +1916,116 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
-        let store = self.state.store.read().unwrap();
-        let (_, vol) = store.find_volume(vid)
-            .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+        // Validate volume and get remote storage info
+        let (dat_path, storage_name, storage_key) = {
+            let store = self.state.store.read().unwrap();
+            let (_, vol) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", req.volume_id)))?;
 
-        if vol.collection != req.collection {
-            return Err(Status::invalid_argument(format!(
-                "unexpected input {}, expected collection {}", req.collection, vol.collection
-            )));
-        }
-        drop(store);
+            if vol.collection != req.collection {
+                return Err(Status::invalid_argument(format!(
+                    "existing collection:{} unexpected input: {}", vol.collection, req.collection
+                )));
+            }
 
-        // Volume is already on local disk (no remote storage support)
-        Err(Status::internal(format!("volume {} already on local disk", vid)))
+            let (storage_name, storage_key) = vol.remote_storage_name_key();
+            if storage_name.is_empty() || storage_key.is_empty() {
+                return Err(Status::failed_precondition(format!(
+                    "volume {} is already on local disk", vid
+                )));
+            }
+
+            // Check if the dat file already exists locally with data
+            let dat_path = vol.dat_path();
+            if std::path::Path::new(&dat_path).exists() {
+                if let Ok(m) = std::fs::metadata(&dat_path) {
+                    if m.len() > 0 {
+                        return Err(Status::failed_precondition(format!(
+                            "volume {} is already on local disk", vid
+                        )));
+                    }
+                }
+            }
+
+            (dat_path, storage_name, storage_key)
+        };
+
+        // Look up the S3 tier backend
+        let backend = {
+            let registry = self.state.s3_tier_registry.read().unwrap();
+            registry.get(&storage_name)
+                .ok_or_else(|| {
+                    let keys = registry.names();
+                    Status::not_found(format!(
+                        "remote storage {} not found from supported: {:?}",
+                        storage_name, keys
+                    ))
+                })?
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<volume_server_pb::VolumeTierMoveDatFromRemoteResponse, Status>>(16);
+        let state = self.state.clone();
+        let keep_remote = req.keep_remote_dat_file;
+
+        tokio::spawn(async move {
+            let result: Result<(), Status> = async {
+                // Download the .dat file from S3 with progress
+                let tx_progress = tx.clone();
+                let mut last_report = std::time::Instant::now();
+                let storage_name_clone = storage_name.clone();
+                let _size = backend.download_file(&dat_path, &storage_key, move |processed, percentage| {
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_report) >= std::time::Duration::from_secs(1) {
+                        last_report = now;
+                        let _ = tx_progress.try_send(Ok(volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
+                            processed,
+                            processed_percentage: percentage,
+                        }));
+                    }
+                }).await.map_err(|e| Status::internal(format!(
+                    "backend {} copy file {}: {}", storage_name_clone, dat_path, e
+                )))?;
+
+                if !keep_remote {
+                    // Delete remote file
+                    backend.delete_file(&storage_key).await.map_err(|e| Status::internal(format!(
+                        "volume {} failed to delete remote file {}: {}", vid, storage_key, e
+                    )))?;
+
+                    // Update volume info: remove remote file reference
+                    {
+                        let mut store = state.store.write().unwrap();
+                        if let Some((_, vol)) = store.find_volume_mut(vid) {
+                            if !vol.volume_info.files.is_empty() {
+                                vol.volume_info.files.remove(0);
+                            }
+                            vol.has_remote_file = !vol.volume_info.files.is_empty();
+
+                            if let Err(e) = vol.save_volume_info() {
+                                return Err(Status::internal(format!(
+                                    "volume {} failed to save remote file info: {}", vid, e
+                                )));
+                            }
+                        }
+                    }
+                }
+
+                // Send final 100% progress
+                let _ = tx.send(Ok(volume_server_pb::VolumeTierMoveDatFromRemoteResponse {
+                    processed: 0,
+                    processed_percentage: 100.0,
+                })).await;
+
+                Ok(())
+            }.await;
+
+            if let Err(e) = result {
+                let _ = tx.send(Err(e)).await;
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream) as Self::VolumeTierMoveDatFromRemoteStream))
     }
 
     // ---- Server management ----

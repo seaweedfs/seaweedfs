@@ -957,11 +957,31 @@ pub async fn post_handler(
         .map(|s| s == "gzip")
         .unwrap_or(false);
 
+    // Extract MIME type from Content-Type header (needed early for JPEG orientation fix)
+    let mime_type = headers.get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            if ct.starts_with("multipart/") {
+                "application/octet-stream".to_string()
+            } else {
+                ct.to_string()
+            }
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
+    // Only for non-compressed uploads that are JPEG files.
+    let body_data = if !is_gzipped && crate::images::is_jpeg(&mime_type, &path) {
+        crate::images::fix_jpg_orientation(&body)
+    } else {
+        body.to_vec()
+    };
+
     let mut n = Needle {
         id: needle_id,
         cookie,
-        data: body.to_vec(),
-        data_size: body.len() as u32,
+        data_size: body_data.len() as u32,
+        data: body_data,
         last_modified: last_modified,
         ..Needle::default()
     };
@@ -973,24 +993,20 @@ pub async fn post_handler(
         n.set_is_compressed();
     }
 
-    // Extract MIME type from Content-Type header
-    let mime_type = headers.get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| {
-            if ct.starts_with("multipart/") {
-                "application/octet-stream".to_string()
-            } else {
-                ct.to_string()
-            }
-        })
-        .unwrap_or_else(|| "application/octet-stream".to_string());
     if !mime_type.is_empty() {
         n.mime = mime_type.as_bytes().to_vec();
         n.set_has_mime();
     }
 
-    let mut store = state.store.write().unwrap();
-    let resp = match store.write_volume_needle(vid, &mut n) {
+    // Use the write queue if enabled, otherwise write directly.
+    let write_result = if let Some(wq) = state.write_queue.get() {
+        wq.submit(vid, n.clone()).await
+    } else {
+        let mut store = state.store.write().unwrap();
+        store.write_volume_needle(vid, &mut n)
+    };
+
+    let resp = match write_result {
         Ok((_offset, _size, is_unchanged)) => {
             if is_unchanged {
                 let etag = format!("\"{}\"", n.etag());

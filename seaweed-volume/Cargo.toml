@@ -76,6 +76,7 @@ flate2 = "1"
 
 # Image processing
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+kamadak-exif = "0.5"
 
 # Misc
 bytes = "1"

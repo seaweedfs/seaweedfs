@@ -7,6 +7,7 @@ use seaweed_volume::metrics;
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
 use seaweed_volume::server::volume_server::VolumeServerState;
+use seaweed_volume::server::write_queue::WriteQueue;
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
@@ -118,7 +119,18 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         has_master: !config.masters.is_empty(),
         pre_stop_seconds: config.pre_stop_seconds,
         volume_state_notify: tokio::sync::Notify::new(),
+        write_queue: std::sync::OnceLock::new(),
+        s3_tier_registry: std::sync::RwLock::new(
+            seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
+        ),
     });
+
+    // Initialize the batched write queue if enabled
+    if config.enable_write_queue {
+        info!("Batched write queue enabled");
+        let wq = WriteQueue::new(state.clone(), 128);
+        let _ = state.write_queue.set(wq);
+    }
 
     // Run initial disk space check
     {

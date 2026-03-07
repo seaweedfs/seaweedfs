@@ -7,7 +7,7 @@
 **Rust integration tests**: 8/8 pass
 **S3 remote storage tests**: 3/3 pass
 **Total**: 117/117 (100%) + 8 Rust + 3 S3 tests
-**Rust unit tests**: 112 lib + 7 integration = 119
+**Rust unit tests**: 124 lib + 7 integration = 131
 
 ## Completed Features
 
@@ -57,30 +57,23 @@ All phases from the original plan are complete:
   - TestVolumeMoveHandlesInFlightWrites now uses Rust volume servers
   - CI skip list cleaned up (all tests pass with Rust)
 
+- **Production Sprint 4** — Advanced Features:
+  - BatchDelete EC shard support (ecx index lookup + ecj journal deletion)
+  - JPEG EXIF orientation auto-fix on upload (kamadak-exif + image crate)
+  - Async batched write processing (mpsc queue, up to 128 entries per batch)
+  - VolumeTierMoveDatToRemote/FromRemote (S3 multipart upload/download)
+  - S3TierRegistry for managing remote storage backends
+  - VolumeInfo (.vif) persistence for remote file references
+
 ## Remaining Work (Production Readiness)
 
 ### Medium Priority (nice to have)
 
-1. **VolumeTierMoveDatToRemote/FromRemote** — Move volume data to/from remote storage
-   backends (S3, etc.). Currently returns error paths only. Would need to implement
-   full dat file upload/download to S3.
+1. **LevelDB needle maps** — For volumes with millions of needles.
 
-2. **BatchDelete EC shards** — BatchDelete currently only handles regular volumes.
-   Go also checks EC volumes and calls DeleteEcShardNeedle.
+2. **Volume backup/sync** — Streaming backup, binary search.
 
-3. **TLS/HTTPS** — rustls + tokio-rustls for both HTTP and gRPC.
-
-4. **JPEG orientation fix** — Auto-fix EXIF orientation on upload.
-
-6. **Async request processing** — Batched writes with 128-entry queue.
-
-### Low Priority
-
-7. **LevelDB needle maps** — For volumes with millions of needles.
-
-9. **Volume backup/sync** — Streaming backup, binary search.
-
-10. **EC distribution/rebalancing** — Advanced EC operations.
+3. **EC distribution/rebalancing** — Advanced EC operations.
 
 ## Test Commands
 

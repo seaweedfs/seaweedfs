@@ -25,6 +25,7 @@ use crate::security::Guard;
 use crate::storage::store::Store;
 
 use super::handlers;
+use super::write_queue::WriteQueue;
 
 /// Shared state for the volume server.
 pub struct VolumeServerState {
@@ -60,6 +61,10 @@ pub struct VolumeServerState {
     pub pre_stop_seconds: u32,
     /// Notify heartbeat to send an immediate update when volume state changes.
     pub volume_state_notify: tokio::sync::Notify,
+    /// Optional batched write queue for improved throughput under load.
+    pub write_queue: std::sync::OnceLock<WriteQueue>,
+    /// Registry of S3 tier backends for tiered storage operations.
+    pub s3_tier_registry: std::sync::RwLock<crate::remote_storage::s3_tier::S3TierRegistry>,
 }
 
 impl VolumeServerState {

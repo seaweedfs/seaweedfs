@@ -232,6 +232,8 @@ pub struct VolumeServerConfig {
     pub https_key_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
+    /// Enable batched write queue for improved throughput under load.
+    pub enable_write_queue: bool,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -598,6 +600,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         https_key_file: sec.https_key_file,
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
+        enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE").map(|v| v == "1" || v == "true").unwrap_or(false),
     }
 }
 

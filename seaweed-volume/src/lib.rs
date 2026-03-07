@@ -1,4 +1,5 @@
 pub mod config;
+pub mod images;
 pub mod storage;
 pub mod security;
 pub mod server;

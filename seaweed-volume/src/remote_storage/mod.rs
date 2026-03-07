@@ -4,6 +4,7 @@
 //! and a registry to create clients from protobuf RemoteConf messages.
 
 pub mod s3;
+pub mod s3_tier;
 
 use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 

@@ -71,9 +71,147 @@ pub enum VolumeError {
 // VolumeInfo (.vif persistence)
 // ============================================================================
 
+/// Legacy simple VolumeInfo for backward compat with old .vif files.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct VolumeInfo {
     read_only: bool,
+}
+
+/// Protobuf VolumeInfo type alias.
+pub use crate::pb::volume_server_pb::VolumeInfo as PbVolumeInfo;
+pub use crate::pb::volume_server_pb::RemoteFile as PbRemoteFile;
+
+/// Helper module for deserializing protojson uint64 fields that may be strings or numbers.
+mod string_or_u64 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        // Emit as string to match Go's protojson format for uint64
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u64),
+        }
+        match StringOrNum::deserialize(deserializer)? {
+            StringOrNum::Str(s) => s.parse::<u64>().map_err(serde::de::Error::custom),
+            StringOrNum::Num(n) => Ok(n),
+        }
+    }
+}
+
+mod string_or_i64 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i64, D::Error>
+    where D: Deserializer<'de> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(i64),
+        }
+        match StringOrNum::deserialize(deserializer)? {
+            StringOrNum::Str(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
+            StringOrNum::Num(n) => Ok(n),
+        }
+    }
+}
+
+/// Serde-compatible representation of RemoteFile for .vif JSON serialization.
+/// Field names use snake_case to match Go's protobuf JSON output (jsonpb).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct VifRemoteFile {
+    #[serde(default, rename = "backendType")]
+    pub backend_type: String,
+    #[serde(default, rename = "backendId")]
+    pub backend_id: String,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default, with = "string_or_u64")]
+    pub offset: u64,
+    #[serde(default, rename = "fileSize", with = "string_or_u64")]
+    pub file_size: u64,
+    #[serde(default, rename = "modifiedTime", with = "string_or_u64")]
+    pub modified_time: u64,
+    #[serde(default)]
+    pub extension: String,
+}
+
+/// Serde-compatible representation of VolumeInfo for .vif JSON serialization.
+/// Matches Go's protobuf JSON format (jsonpb with EmitUnpopulated=true).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct VifVolumeInfo {
+    #[serde(default)]
+    pub files: Vec<VifRemoteFile>,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub replication: String,
+    #[serde(default, rename = "bytesOffset")]
+    pub bytes_offset: u32,
+    #[serde(default, rename = "datFileSize", with = "string_or_i64")]
+    pub dat_file_size: i64,
+    #[serde(default, rename = "expireAtSec", with = "string_or_u64")]
+    pub expire_at_sec: u64,
+    #[serde(default, rename = "readOnly")]
+    pub read_only: bool,
+}
+
+impl VifVolumeInfo {
+    /// Convert from protobuf VolumeInfo to the serde-compatible struct.
+    pub fn from_pb(pb: &PbVolumeInfo) -> Self {
+        VifVolumeInfo {
+            files: pb.files.iter().map(|f| VifRemoteFile {
+                backend_type: f.backend_type.clone(),
+                backend_id: f.backend_id.clone(),
+                key: f.key.clone(),
+                offset: f.offset,
+                file_size: f.file_size,
+                modified_time: f.modified_time,
+                extension: f.extension.clone(),
+            }).collect(),
+            version: pb.version,
+            replication: pb.replication.clone(),
+            bytes_offset: pb.bytes_offset,
+            dat_file_size: pb.dat_file_size,
+            expire_at_sec: pb.expire_at_sec,
+            read_only: pb.read_only,
+        }
+    }
+
+    /// Convert to protobuf VolumeInfo.
+    pub fn to_pb(&self) -> PbVolumeInfo {
+        PbVolumeInfo {
+            files: self.files.iter().map(|f| PbRemoteFile {
+                backend_type: f.backend_type.clone(),
+                backend_id: f.backend_id.clone(),
+                key: f.key.clone(),
+                offset: f.offset,
+                file_size: f.file_size,
+                modified_time: f.modified_time,
+                extension: f.extension.clone(),
+            }).collect(),
+            version: self.version,
+            replication: self.replication.clone(),
+            bytes_offset: self.bytes_offset,
+            dat_file_size: self.dat_file_size,
+            expire_at_sec: self.expire_at_sec,
+            read_only: self.read_only,
+            ec_shard_config: None,
+        }
+    }
 }
 
 // ============================================================================
@@ -122,6 +260,12 @@ pub struct Volume {
     pub compaction_byte_per_second: i64,
 
     _last_io_error: Option<io::Error>,
+
+    /// Protobuf VolumeInfo for tiered storage (.vif file).
+    pub volume_info: PbVolumeInfo,
+
+    /// Whether this volume has a remote file reference.
+    pub has_remote_file: bool,
 }
 
 /// Windows helper: loop seek_read until buffer is fully filled.
@@ -175,6 +319,8 @@ impl Volume {
             is_compacting: false,
             compaction_byte_per_second: 0,
             _last_io_error: None,
+            volume_info: PbVolumeInfo::default(),
+            has_remote_file: false,
         };
 
         v.load(true, true, preallocate, version)?;
@@ -925,9 +1071,24 @@ impl Volume {
     }
 
     /// Load volume info from .vif file.
+    /// Supports both the protobuf-JSON format (Go-compatible) and legacy JSON.
     fn load_vif(&mut self) {
         let path = self.vif_path();
         if let Ok(content) = fs::read_to_string(&path) {
+            if content.trim().is_empty() {
+                return;
+            }
+            // Try protobuf-JSON (Go-compatible VolumeInfo via VifVolumeInfo)
+            if let Ok(vif_info) = serde_json::from_str::<VifVolumeInfo>(&content) {
+                let pb_info = vif_info.to_pb();
+                if pb_info.read_only {
+                    self.no_write_or_delete = true;
+                }
+                self.has_remote_file = !pb_info.files.is_empty();
+                self.volume_info = pb_info;
+                return;
+            }
+            // Fall back to legacy format
             if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
                 if info.read_only {
                     self.no_write_or_delete = true;
@@ -936,14 +1097,47 @@ impl Volume {
         }
     }
 
-    /// Save volume info to .vif file.
+    /// Save volume info to .vif file in protobuf-JSON format (Go-compatible).
     fn save_vif(&self) {
-        let info = VolumeInfo {
-            read_only: self.no_write_or_delete,
-        };
-        if let Ok(content) = serde_json::to_string(&info) {
+        let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
+        vif.read_only = self.no_write_or_delete;
+        if let Ok(content) = serde_json::to_string_pretty(&vif) {
             let _ = fs::write(&self.vif_path(), content);
         }
+    }
+
+    /// Save full VolumeInfo to .vif file (for tiered storage).
+    pub fn save_volume_info(&mut self) -> Result<(), VolumeError> {
+        self.volume_info.read_only = self.no_write_or_delete;
+        let vif = VifVolumeInfo::from_pb(&self.volume_info);
+        let content = serde_json::to_string_pretty(&vif)
+            .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        fs::write(&self.vif_path(), content)?;
+        Ok(())
+    }
+
+    /// Get the remote storage backend name and key from this volume .vif.
+    pub fn remote_storage_name_key(&self) -> (String, String) {
+        if self.volume_info.files.is_empty() {
+            return (String::new(), String::new());
+        }
+        let rf = &self.volume_info.files[0];
+        let backend_name = if rf.backend_id.is_empty() {
+            rf.backend_type.clone()
+        } else {
+            format!("{}.{}", rf.backend_type, rf.backend_id)
+        };
+        (backend_name, rf.key.clone())
+    }
+
+    /// Get the dat file path for this volume.
+    pub fn dat_path(&self) -> String {
+        self.file_name(".dat")
+    }
+
+    /// Get the directory this volume is stored in.
+    pub fn dir(&self) -> &str {
+        &self.dir
     }
 
     /// Throttle IO during compaction to avoid saturating disk.
