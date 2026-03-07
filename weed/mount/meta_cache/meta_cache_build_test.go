@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -133,6 +134,103 @@ func TestEnsureVisitedReplaysBufferedEventsAfterSnapshot(t *testing.T) {
 	}
 	if afterEntry.FileSize != 9 {
 		t.Fatalf("replayed entry size = %d, want 9", afterEntry.FileSize)
+	}
+}
+
+// TestDirectoryNotificationsSuppressedDuringBuild verifies that metadata events
+// targeting a directory under active build do NOT fire onDirectoryUpdate for
+// that directory. In production, onDirectoryUpdate can trigger
+// markDirectoryReadThrough → DeleteFolderChildren, which would wipe entries
+// that EnsureVisited already inserted mid-build.
+func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
+	mc, _, notifications, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/": true,
+	})
+	defer mc.Shutdown()
+
+	// Start building /dir (simulates the beginning of EnsureVisited)
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+
+	// Insert an entry as EnsureVisited would during the filer listing
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/existing.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 100,
+		},
+	}); err != nil {
+		t.Fatalf("insert entry during build: %v", err)
+	}
+
+	// Simulate multiple metadata events arriving for /dir while the build
+	// is in progress. Each event would normally call noteDirectoryUpdate,
+	// which in production can trigger markDirectoryReadThrough and wipe entries.
+	for i := 0; i < 5; i++ {
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{
+					Name: fmt.Sprintf("new-%d.txt", i),
+					Attributes: &filer_pb.FuseAttributes{
+						Crtime:   int64(10 + i),
+						Mtime:    int64(10 + i),
+						FileMode: 0100644,
+						FileSize: uint64(i + 1),
+					},
+				},
+			},
+			TsNs: int64(200 + i),
+		}
+		if err := mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply event %d: %v", i, err)
+		}
+	}
+
+	// The building directory /dir must NOT have received any notifications.
+	// If it did, markDirectoryReadThrough would wipe the cache mid-build.
+	for _, p := range notifications.paths() {
+		if p == util.FullPath("/dir") {
+			t.Fatal("onDirectoryUpdate was called for /dir during build; this would cause markDirectoryReadThrough to wipe entries mid-build")
+		}
+	}
+
+	// The entry inserted during the build must still be present
+	entry, err := mc.FindEntry(context.Background(), util.FullPath("/dir/existing.txt"))
+	if err != nil {
+		t.Fatalf("entry wiped during build: %v", err)
+	}
+	if entry.FileSize != 100 {
+		t.Fatalf("entry size = %d, want 100", entry.FileSize)
+	}
+
+	// Complete the build — buffered events should be replayed
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/dir"), 150); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	// After build completes, the entry from the listing should still exist
+	entry, err = mc.FindEntry(context.Background(), util.FullPath("/dir/existing.txt"))
+	if err != nil {
+		t.Fatalf("entry lost after build completion: %v", err)
+	}
+	if entry.FileSize != 100 {
+		t.Fatalf("entry size after build = %d, want 100", entry.FileSize)
+	}
+
+	// Buffered events with TsNs > snapshotTsNs (150) should have been replayed
+	for i := 1; i < 5; i++ {
+		name := fmt.Sprintf("new-%d.txt", i)
+		e, err := mc.FindEntry(context.Background(), util.FullPath("/dir/"+name))
+		if err != nil {
+			t.Fatalf("replayed entry %s not found: %v", name, err)
+		}
+		if e.FileSize != uint64(i+1) {
+			t.Fatalf("replayed entry %s size = %d, want %d", name, e.FileSize, i+1)
+		}
 	}
 }
 
