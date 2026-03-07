@@ -143,6 +143,8 @@ const (
 	// Bucket encryption errors
 	ErrNoSuchBucketEncryptionConfiguration
 	ErrInvalidStorageClass
+
+	ErrInvalidAttributeName
 )
 
 // Error message constants for checksum validation
@@ -598,6 +600,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidStorageClass: {
 		Code:           "InvalidStorageClass",
 		Description:    "The storage class you specified is not valid",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidAttributeName: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid attribute name specified",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 }

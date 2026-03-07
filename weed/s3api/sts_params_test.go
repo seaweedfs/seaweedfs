@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -114,6 +116,7 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 
 		assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not return 501 (IAM handler)")
 		assert.Equal(t, http.StatusBadRequest, rr.Code, "Should return 400 (STS handler) for missing params")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
 
 	// Test Case 2: STS Action in Body (Should FAIL current implementation - routed to IAM)
@@ -155,6 +158,7 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		}
 		// Confirm it routed to STS
 		assert.Equal(t, http.StatusServiceUnavailable, rr.Code, "Fixed behavior: Should return 503 from STS handler (service not ready)")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
 
 	// Test Case 3: STS Action in Body with SigV4-style Authorization (Real-world scenario)
@@ -199,5 +203,15 @@ func TestSTSAssumeRolePostBody(t *testing.T) {
 		assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not return 501 (IAM handler)")
 		assert.Contains(t, []int{http.StatusServiceUnavailable, http.StatusForbidden}, rr.Code,
 			"Should return 503 (STS unavailable) or 403 (auth failed), confirming STS routing")
+		assert.Equal(t, rr.Header().Get(request_id.AmzRequestIDHeader), extractSTSRequestID(rr.Body.String()))
 	})
+}
+
+func extractSTSRequestID(body string) string {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(body)
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
 }

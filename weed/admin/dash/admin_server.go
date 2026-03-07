@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -234,22 +235,19 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
-	plugin, err := adminplugin.New(adminplugin.Options{
+	pluginOpts := adminplugin.Options{
 		DataDir: dataDir,
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
-		LockManager: lockManager,
-	})
+		LockManager:            lockManager,
+		ConfigDefaultsProvider: server.enrichConfigDefaults,
+	}
+	plugin, err := adminplugin.New(pluginOpts)
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
-		plugin, err = adminplugin.New(adminplugin.Options{
-			DataDir: "",
-			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
-				return server.buildDefaultPluginClusterContext(), nil
-			},
-			LockManager: lockManager,
-		})
+		pluginOpts.DataDir = ""
+		plugin, err = adminplugin.New(pluginOpts)
 	}
 	if err != nil {
 		glog.Errorf("Failed to initialize plugin: %v", err)
@@ -271,6 +269,89 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	// Load task configurations dynamically using the config update registry
 	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
+}
+
+// enrichConfigDefaults is called by the plugin when bootstrapping a job type's
+// default config from its descriptor. For admin_script, it fetches maintenance
+// scripts from the master and uses them as the script default.
+//
+// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
+// to the admin script plugin worker. Remove after March 2027.
+func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	if cfg.JobType != "admin_script" {
+		return cfg
+	}
+
+	var maintenanceScripts string
+	var sleepMinutes uint32
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		maintenanceScripts = resp.MaintenanceScripts
+		sleepMinutes = resp.MaintenanceSleepMinutes
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("Could not fetch master configuration for admin_script defaults: %v", err)
+		return cfg
+	}
+
+	script := cleanMaintenanceScript(maintenanceScripts)
+	if script == "" {
+		return cfg
+	}
+
+	interval := int64(sleepMinutes)
+	if interval <= 0 {
+		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
+	}
+
+	glog.V(0).Infof("Enriching admin_script defaults from master maintenance scripts (interval=%dm)", interval)
+
+	if cfg.AdminConfigValues == nil {
+		cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
+	}
+	cfg.AdminConfigValues["script"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
+	}
+	cfg.AdminConfigValues["run_interval_minutes"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+	}
+	cfg.UpdatedBy = "master_migration"
+
+	return cfg
+}
+
+// cleanMaintenanceScript strips lock/unlock commands and normalizes a
+// maintenance script string for use with the admin script plugin worker.
+//
+// MIGRATION: Used by enrichConfigDefaults. Remove after March 2027.
+func cleanMaintenanceScript(script string) string {
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Strip inline comments (e.g., "lock # migration note")
+		if idx := strings.Index(trimmed, "#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+			if trimmed == "" {
+				continue
+			}
+		}
+		firstToken := strings.ToLower(strings.Fields(trimmed)[0])
+		if firstToken == "lock" || firstToken == "unlock" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetCredentialManager returns the credential manager

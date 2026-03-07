@@ -256,6 +256,53 @@ func (s *ConfigStore) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig
 	return nil
 }
 
+// SaveJobTypeConfigIfNotExists atomically checks whether a config for the
+// given job type already exists and only persists config when none is found.
+// Returns true if the config was saved, false if a config already existed.
+func (s *ConfigStore) SaveJobTypeConfigIfNotExists(config *plugin_pb.PersistedJobTypeConfig) (bool, error) {
+	if config == nil {
+		return false, fmt.Errorf("job type config is nil")
+	}
+	if config.JobType == "" {
+		return false, fmt.Errorf("job type config has empty job_type")
+	}
+	sanitizedJobType, err := sanitizeJobType(config.JobType)
+	if err != nil {
+		return false, err
+	}
+	config.JobType = sanitizedJobType
+
+	clone := proto.Clone(config).(*plugin_pb.PersistedJobTypeConfig)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.configured {
+		if _, exists := s.memConfigs[config.JobType]; exists {
+			return false, nil
+		}
+		s.memConfigs[config.JobType] = clone
+		return true, nil
+	}
+
+	pbPath := filepath.Join(s.baseDir, jobTypesDirName, config.JobType, configPBFileName)
+	if _, statErr := os.Stat(pbPath); statErr == nil {
+		return false, nil
+	}
+
+	jobTypeDir, err := s.ensureJobTypeDir(config.JobType)
+	if err != nil {
+		return false, err
+	}
+
+	jsonPath := filepath.Join(jobTypeDir, configJSONFileName)
+	if err := writeProtoFiles(clone, filepath.Join(jobTypeDir, configPBFileName), jsonPath); err != nil {
+		return false, fmt.Errorf("save job type config for %s: %w", config.JobType, err)
+	}
+
+	return true, nil
+}
+
 func (s *ConfigStore) LoadJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
 	if _, err := sanitizeJobType(jobType); err != nil {
 		return nil, err

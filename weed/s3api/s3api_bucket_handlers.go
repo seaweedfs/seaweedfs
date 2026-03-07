@@ -88,20 +88,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 			// Skip permission check if user is already the owner (optimization)
 			if !isOwner {
-				hasPermission := false
-				// Check permissions for each bucket
-				// For JWT-authenticated users, use IAM authorization
-				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-				if s3a.iam.iamIntegration != nil && sessionToken != "" {
-					// Use IAM authorization for JWT users
-					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
-					hasPermission = (errCode == s3err.ErrNone)
-				} else {
-					// Use legacy authorization for non-JWT users
-					hasPermission = identity.CanDo(s3_constants.ACTION_LIST, entry.Name, "")
-				}
-
-				if !hasPermission {
+				if errCode := s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, ""); errCode != s3err.ErrNone {
 					continue
 				}
 			}

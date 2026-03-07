@@ -34,6 +34,11 @@ type Options struct {
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	LockManager            LockManager
+	// ConfigDefaultsProvider is an optional callback invoked when a job type's
+	// config is being bootstrapped from its descriptor defaults. It can enrich
+	// or replace the default config before it is persisted. If nil, descriptor
+	// defaults are used as-is.
+	ConfigDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 }
 
 // JobTypeInfo contains metadata about a plugin job type.
@@ -54,6 +59,7 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	configDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
@@ -161,6 +167,7 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		configDefaultsProvider:    options.ConfigDefaultsProvider,
 		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
@@ -401,6 +408,7 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	r.wakeScheduler()
 	return nil
 }
+
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
@@ -1035,14 +1043,6 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		return nil
 	}
 
-	existing, err := r.store.LoadJobTypeConfig(jobType)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return nil
-	}
-
 	workerDefaults := CloneConfigValueMap(descriptor.WorkerDefaultValues)
 	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
 		workerDefaults = CloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
@@ -1079,7 +1079,22 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		UpdatedBy:          "plugin",
 	}
 
-	return r.store.SaveJobTypeConfig(cfg)
+	// Check existence first to avoid calling configDefaultsProvider unnecessarily
+	// (e.g., it may make a blocking gRPC call to fetch master config).
+	existing, err := r.store.LoadJobTypeConfig(jobType)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	if r.configDefaultsProvider != nil {
+		cfg = r.configDefaultsProvider(cfg)
+	}
+
+	_, err = r.store.SaveJobTypeConfigIfNotExists(cfg)
+	return err
 }
 
 func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.DetectionProposals) {

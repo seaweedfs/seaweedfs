@@ -248,7 +248,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrNone // Fallback to existing authorization
 	}
 
-	if identity.SessionToken == "" {
+	if identity == nil || identity.Principal == "" {
 		return s3err.ErrAccessDenied
 	}
 
@@ -292,9 +292,12 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
-		Principal:      identity.Principal,
-		Action:         specificAction,
-		Resource:       resourceArn,
+		Principal: identity.Principal,
+		Action:    specificAction,
+		Resource:  resourceArn,
+		// Static SigV4 IAM users do not carry a session token. IAMManager
+		// evaluates their attached policies directly and only validates STS/OIDC
+		// session state when a token is actually present.
 		SessionToken:   identity.SessionToken,
 		RequestContext: requestContext,
 		PolicyNames:    identity.PolicyNames,

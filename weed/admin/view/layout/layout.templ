@@ -51,14 +51,13 @@ templ Layout(view ViewContext, content templ.Component) {
     <link rel="stylesheet" href="/static/css/admin.css">
 </head>
 <body>
-    <div class="container-fluid">
+    <div class="container-fluid p-0">
         <!-- Header -->
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
             <div class="container-fluid">
                 <a class="navbar-brand fw-bold" href="/admin">
                     <i class="fas fa-server me-2"></i>
                     SeaweedFS Admin
-                    <span class="badge bg-warning text-dark ms-2">ALPHA</span>
                 </a>
                 
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
@@ -245,19 +244,6 @@ templ Layout(view ViewContext, content templ.Component) {
                                 </div>
                             }
                         </li>
-                        <!-- Commented out for later -->
-                        <!--
-                        <li class="nav-item">
-                            <a class="nav-link" href="/metrics">
-                                <i class="fas fa-chart-line me-2"></i>Metrics
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/logs">
-                                <i class="fas fa-file-alt me-2"></i>Logs
-                            </a>
-                        </li>
-                        -->
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
@@ -324,7 +310,7 @@ templ Layout(view ViewContext, content templ.Component) {
             </div>
 
             <!-- Main content -->
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4">
                 <div class="pt-3">
                     @content
                 </div>
