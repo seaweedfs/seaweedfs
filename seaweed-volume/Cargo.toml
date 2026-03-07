@@ -25,7 +25,7 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 clap = { version = "4", features = ["derive"] }
 
 # Metrics
-prometheus = { version = "0.13", features = ["process"] }
+prometheus = { version = "0.13", default-features = false, features = ["process"] }
 lazy_static = "1"
 
 # JWT
