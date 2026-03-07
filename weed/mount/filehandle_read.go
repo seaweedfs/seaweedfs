@@ -162,8 +162,9 @@ func (fh *FileHandle) downloadRemoteEntry(entry *LockedEntry) error {
 
 		fh.SetEntry(resp.Entry)
 
-		if err := fh.wfs.applyLocalMetadataEvent(context.Background(), metadataUpdateEvent(request.Directory, resp.Entry)); err != nil {
-			return fmt.Errorf("apply metadata event for %s: %w", fileFullPath, err)
+		event := metadataUpdateEvent(request.Directory, resp.Entry)
+		if applyErr := fh.wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("CacheRemoteObject %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
 		}
 
 		return nil
