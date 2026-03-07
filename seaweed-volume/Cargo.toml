@@ -74,6 +74,9 @@ base64 = "0.22"
 # Compression
 flate2 = "1"
 
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+
 # Misc
 bytes = "1"
 rand = "0.8"

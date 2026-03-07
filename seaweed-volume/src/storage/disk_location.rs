@@ -185,6 +185,11 @@ impl DiskLocation {
         ids
     }
 
+    /// Iterate over all volumes.
+    pub fn iter_volumes(&self) -> impl Iterator<Item = (&VolumeId, &Volume)> {
+        self.volumes.iter()
+    }
+
     /// Number of free volume slots.
     pub fn free_volume_count(&self) -> i32 {
         let max = self.max_volume_count.load(Ordering::Relaxed);

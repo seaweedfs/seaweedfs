@@ -144,6 +144,17 @@ pub struct ReadQueryParams {
     pub read_deleted: Option<String>,
     /// cm=false disables chunk manifest expansion (returns raw manifest JSON).
     pub cm: Option<String>,
+    /// Image resize width
+    pub width: Option<u32>,
+    /// Image resize height
+    pub height: Option<u32>,
+    /// Image resize mode: "fit" or "fill"
+    pub mode: Option<String>,
+    /// Image crop parameters
+    pub crop_x1: Option<u32>,
+    pub crop_y1: Option<u32>,
+    pub crop_x2: Option<u32>,
+    pub crop_y2: Option<u32>,
 }
 
 // ============================================================================
@@ -358,6 +369,13 @@ async fn get_or_head_handler_inner(
         }
     }
 
+    // Image crop and resize (only for supported image formats)
+    let ext = extract_extension_from_path(&path);
+    if is_image_ext(&ext) {
+        data = maybe_crop_image(&data, &ext, &query);
+        data = maybe_resize_image(&data, &ext, &query);
+    }
+
     // Accept-Ranges
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
 
@@ -508,6 +526,92 @@ fn extract_filename_from_path(path: &str) -> String {
     } else {
         String::new()
     }
+}
+
+// ============================================================================
+// Image processing helpers
+// ============================================================================
+
+fn is_image_ext(ext: &str) -> bool {
+    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif")
+}
+
+fn extract_extension_from_path(path: &str) -> String {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 3 {
+        let filename = parts[2];
+        if let Some(dot_pos) = filename.rfind('.') {
+            return filename[dot_pos..].to_lowercase();
+        }
+    }
+    String::new()
+}
+
+fn maybe_resize_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8> {
+    let width = query.width.unwrap_or(0);
+    let height = query.height.unwrap_or(0);
+    if width == 0 && height == 0 {
+        return data.to_vec();
+    }
+
+    let img = match image::load_from_memory(data) {
+        Ok(img) => img,
+        Err(_) => return data.to_vec(),
+    };
+
+    let (src_w, src_h) = (img.width(), img.height());
+    // Only resize if source is larger than target
+    if (width == 0 || src_w <= width) && (height == 0 || src_h <= height) {
+        return data.to_vec();
+    }
+
+    let mode = query.mode.as_deref().unwrap_or("");
+    let resized = match mode {
+        "fit" => img.resize(width, height, image::imageops::FilterType::Lanczos3),
+        "fill" => img.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3),
+        _ => {
+            if width > 0 && height > 0 && width == height && src_w != src_h {
+                img.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3)
+            } else {
+                img.resize(width, height, image::imageops::FilterType::Lanczos3)
+            }
+        }
+    };
+
+    encode_image(&resized, ext).unwrap_or_else(|| data.to_vec())
+}
+
+fn maybe_crop_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8> {
+    let (x1, y1, x2, y2) = match (query.crop_x1, query.crop_y1, query.crop_x2, query.crop_y2) {
+        (Some(x1), Some(y1), Some(x2), Some(y2)) if x2 > x1 && y2 > y1 => (x1, y1, x2, y2),
+        _ => return data.to_vec(),
+    };
+
+    let img = match image::load_from_memory(data) {
+        Ok(img) => img,
+        Err(_) => return data.to_vec(),
+    };
+
+    let (src_w, src_h) = (img.width(), img.height());
+    if x2 > src_w || y2 > src_h {
+        return data.to_vec();
+    }
+
+    let cropped = img.crop_imm(x1, y1, x2 - x1, y2 - y1);
+    encode_image(&cropped, ext).unwrap_or_else(|| data.to_vec())
+}
+
+fn encode_image(img: &image::DynamicImage, ext: &str) -> Option<Vec<u8>> {
+    use std::io::Cursor;
+    let mut buf = Cursor::new(Vec::new());
+    let format = match ext {
+        ".png" => image::ImageFormat::Png,
+        ".jpg" | ".jpeg" => image::ImageFormat::Jpeg,
+        ".gif" => image::ImageFormat::Gif,
+        _ => return None,
+    };
+    img.write_to(&mut buf, format).ok()?;
+    Some(buf.into_inner())
 }
 
 // ============================================================================

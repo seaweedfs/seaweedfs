@@ -662,6 +662,10 @@ impl Volume {
         self.last_compact_revision
     }
 
+    pub fn last_modified_ts(&self) -> u64 {
+        self.last_modified_ts_seconds
+    }
+
     /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
     pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
         let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;

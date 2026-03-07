@@ -168,6 +168,33 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         })
     };
 
+    // Spawn heartbeat to master (if master addresses are configured)
+    let heartbeat_handle = {
+        let master_addrs = config.masters.clone();
+        if !master_addrs.is_empty() {
+            let hb_config = seaweed_volume::server::heartbeat::HeartbeatConfig {
+                ip: config.ip.clone(),
+                port: config.port,
+                grpc_port: config.grpc_port,
+                public_url: config.public_url.clone(),
+                data_center: config.data_center.clone(),
+                rack: config.rack.clone(),
+                master_addresses: master_addrs.clone(),
+                pulse_seconds: 5,
+            };
+            let hb_shutdown = shutdown_tx.subscribe();
+            let hb_state = state.clone();
+            info!("Will send heartbeats to master: {:?}", master_addrs);
+            Some(tokio::spawn(async move {
+                seaweed_volume::server::heartbeat::run_heartbeat_with_state(
+                    hb_config, hb_state, hb_shutdown
+                ).await;
+            }))
+        } else {
+            None
+        }
+    };
+
     let public_handle = if needs_public {
         let public_router = seaweed_volume::server::volume_server::build_public_router(state.clone());
         let public_addr = format!("{}:{}", config.bind_ip, public_port);
@@ -192,6 +219,9 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     let _ = http_handle.await;
     let _ = grpc_handle.await;
     if let Some(h) = public_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = heartbeat_handle {
         let _ = h.await;
     }
 
