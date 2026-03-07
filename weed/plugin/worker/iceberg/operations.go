@@ -217,7 +217,7 @@ func (h *Handler) removeOrphans(
 	config Config,
 ) (string, error) {
 	// Load current metadata
-	meta, _, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
 		return "", fmt.Errorf("load metadata: %w", err)
 	}
@@ -227,6 +227,9 @@ func (h *Handler) removeOrphans(
 	if err != nil {
 		return "", fmt.Errorf("collect referenced files: %w", err)
 	}
+
+	// Reference the active metadata file so it is not treated as orphan
+	referencedFiles[metadataFileName] = struct{}{}
 
 	// Also reference the current metadata files
 	for mle := range meta.PreviousFiles() {
