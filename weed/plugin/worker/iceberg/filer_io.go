@@ -265,7 +265,13 @@ func updateTableMetadataXattr(ctx context.Context, client filer_pb.SeaweedFilerC
 		return fmt.Errorf("unmarshal existing xattr: %w", err)
 	}
 
-	// Compare-and-swap: verify the stored metadataVersion matches what we expect
+	// Compare-and-swap: verify the stored metadataVersion matches what we expect.
+	// NOTE: This is a client-side CAS — two workers could both read the same
+	// version, pass this check, and race at UpdateEntry (last-write-wins).
+	// The proper fix is server-side precondition support on UpdateEntryRequest
+	// (e.g. expect-version or If-Match semantics). Until then, commitWithRetry
+	// with exponential backoff mitigates but does not eliminate the race.
+	// Avoid scheduling concurrent maintenance on the same table.
 	versionRaw, ok := internalMeta["metadataVersion"]
 	if !ok {
 		return fmt.Errorf("%w: metadataVersion field missing from xattr", errMetadataVersionConflict)
