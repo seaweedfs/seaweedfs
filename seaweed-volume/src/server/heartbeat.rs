@@ -98,14 +98,15 @@ async fn do_heartbeat(
     let mut client = SeaweedClient::new(channel);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
+
+    // Send initial heartbeats BEFORE calling send_heartbeat to avoid deadlock:
+    // the server won't send response headers until it receives the first message,
+    // but send_heartbeat().await waits for response headers.
+    tx.send(collect_heartbeat(config, state)).await?;
+    tx.send(collect_ec_heartbeat(state)).await?;
+
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
-
-    // Send initial volume heartbeat
-    tx.send(collect_heartbeat(config, state)).await?;
-
-    // Send initial EC shards heartbeat
-    tx.send(collect_ec_heartbeat(state)).await?;
 
     info!("Heartbeat stream established with {}", grpc_addr);
 
