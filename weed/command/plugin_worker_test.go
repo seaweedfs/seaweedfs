@@ -138,8 +138,8 @@ func TestPluginWorkerDefaultJobTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsePluginWorkerJobTypes(default setting) err = %v", err)
 	}
-	if len(jobTypes) != 4 {
-		t.Fatalf("expected default job types to include 4 handlers, got %v", jobTypes)
+	if len(jobTypes) != 5 {
+		t.Fatalf("expected default job types to include 5 handlers, got %v", jobTypes)
 	}
 }
 
