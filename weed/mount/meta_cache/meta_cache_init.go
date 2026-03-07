@@ -140,6 +140,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			cleanupBuild("unreplayed")
 			return nil, fmt.Errorf("complete build for %s: %w", path, err)
 		}
+		cleanupDone = true // Prevent deferred cleanup after successful publish
 		return nil, nil
 	})
 	return err
