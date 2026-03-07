@@ -113,7 +113,6 @@ pub struct Guard {
     pub expires_after_sec: i64,
     pub read_signing_key: SigningKey,
     pub read_expires_after_sec: i64,
-    is_write_active: bool,
 }
 
 impl Guard {
@@ -127,7 +126,6 @@ impl Guard {
         let mut guard = Guard {
             whitelist_ips: HashSet::new(),
             whitelist_cidrs: Vec::new(),
-            is_write_active: !signing_key.is_empty(),
             signing_key,
             expires_after_sec,
             read_signing_key,

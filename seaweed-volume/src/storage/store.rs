@@ -159,6 +159,9 @@ impl Store {
         collection: &str,
         disk_type: DiskType,
     ) -> Result<(), VolumeError> {
+        if self.find_volume(vid).is_some() {
+            return Err(VolumeError::AlreadyExists);
+        }
         // Find the location where the .dat file exists
         for loc in &mut self.locations {
             if &loc.disk_type != &disk_type {

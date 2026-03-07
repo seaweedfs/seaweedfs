@@ -126,14 +126,29 @@ pub struct ShardBits(pub u32);
 
 impl ShardBits {
     pub fn add_shard_id(&mut self, id: ShardId) {
+        assert!(
+            (id as usize) < TOTAL_SHARDS_COUNT,
+            "shard id {} out of bounds (max {})",
+            id,
+            TOTAL_SHARDS_COUNT - 1,
+        );
         self.0 |= 1 << id;
     }
 
     pub fn remove_shard_id(&mut self, id: ShardId) {
+        assert!(
+            (id as usize) < TOTAL_SHARDS_COUNT,
+            "shard id {} out of bounds (max {})",
+            id,
+            TOTAL_SHARDS_COUNT - 1,
+        );
         self.0 &= !(1 << id);
     }
 
     pub fn has_shard_id(&self, id: ShardId) -> bool {
+        if (id as usize) >= TOTAL_SHARDS_COUNT {
+            return false;
+        }
         self.0 & (1 << id) != 0
     }
 

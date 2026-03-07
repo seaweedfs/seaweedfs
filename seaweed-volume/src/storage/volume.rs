@@ -621,6 +621,15 @@ impl Volume {
         self.no_write_or_delete || self.no_write_can_delete
     }
 
+    /// Insert or update a needle index entry (for low-level blob writes).
+    pub fn put_needle_index(&mut self, key: NeedleId, offset: Offset, size: Size) -> Result<(), VolumeError> {
+        if let Some(ref mut nm) = self.nm {
+            nm.put(key, offset, size)
+                .map_err(VolumeError::Io)?;
+        }
+        Ok(())
+    }
+
     /// Mark this volume as read-only (no writes or deletes).
     pub fn set_read_only(&mut self) {
         self.no_write_or_delete = true;
@@ -684,24 +693,24 @@ impl Volume {
     // ---- Sync / Close ----
 
     pub fn sync_to_disk(&mut self) -> io::Result<()> {
-        if let Some(ref nm) = self.nm {
-            nm.sync()?;
-        }
         if let Some(ref dat_file) = self.dat_file {
             dat_file.sync_all()?;
+        }
+        if let Some(ref nm) = self.nm {
+            nm.sync()?;
         }
         Ok(())
     }
 
     pub fn close(&mut self) {
-        if let Some(ref nm) = self.nm {
-            let _ = nm.sync();
-        }
-        self.nm = None;
         if let Some(ref dat_file) = self.dat_file {
             let _ = dat_file.sync_all();
         }
         self.dat_file = None;
+        if let Some(ref nm) = self.nm {
+            let _ = nm.sync();
+        }
+        self.nm = None;
     }
 
     /// Remove all volume files from disk.

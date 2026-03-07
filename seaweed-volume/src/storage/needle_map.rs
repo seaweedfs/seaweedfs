@@ -45,6 +45,8 @@ impl NeedleMapMetric {
             if let Some(old_val) = old {
                 if old_val.size.is_valid() {
                     self.file_byte_count.fetch_sub(old_val.size.0 as u64, Ordering::Relaxed);
+                    // Track overwritten bytes as garbage for compaction (garbage_level)
+                    self.deletion_byte_count.fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
                 }
             }
         }

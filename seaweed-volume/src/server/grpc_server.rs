@@ -298,6 +298,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::SetStateRequest>,
     ) -> Result<Response<volume_server_pb::SetStateResponse>, Status> {
+        // TODO: Persist state changes. Currently echoes back the request state.
         let req = request.into_inner();
         Ok(Response::new(volume_server_pb::SetStateResponse {
             state: req.state,
@@ -412,6 +413,12 @@ impl VolumeServer for VolumeGrpcService {
         let dat_size = vol.dat_file_size()
             .map_err(|e| Status::internal(e.to_string()))? as i64;
         vol.write_needle_blob(dat_size, &req.needle_blob)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        // Update the needle index so the written blob is discoverable
+        let needle_id = NeedleId(req.needle_id);
+        let size = Size(req.size);
+        vol.put_needle_index(needle_id, Offset::from_actual_offset(dat_size), size)
             .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(volume_server_pb::WriteNeedleBlobResponse {}))
@@ -556,11 +563,14 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut disk_statuses = Vec::new();
         for loc in &store.locations {
+            let free = loc.available_space.load(std::sync::atomic::Ordering::Relaxed);
+            // TODO: DiskLocation does not yet track total disk size.
+            // Once implemented, compute all/used/percent from real values.
             disk_statuses.push(volume_server_pb::DiskStatus {
                 dir: loc.directory.clone(),
                 all: 0,
                 used: 0,
-                free: loc.available_space.load(std::sync::atomic::Ordering::Relaxed),
+                free,
                 percent_free: 0.0,
                 percent_used: 0.0,
                 disk_type: loc.disk_type.to_string(),

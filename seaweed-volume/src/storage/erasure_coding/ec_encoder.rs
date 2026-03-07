@@ -132,6 +132,22 @@ fn encode_one_batch(
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
 ) -> io::Result<()> {
+    // Each batch allocates block_size * TOTAL_SHARDS_COUNT bytes.
+    // With large blocks (1 GiB) this is 14 GiB -- guard against OOM.
+    let total_alloc = block_size.checked_mul(TOTAL_SHARDS_COUNT).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "block_size * shard count overflows usize")
+    })?;
+    const MAX_BATCH_ALLOC: usize = 1024 * 1024 * 1024; // 1 GiB safety limit
+    if total_alloc > MAX_BATCH_ALLOC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "batch allocation too large ({} bytes, limit {} bytes); block_size={} shards={}",
+                total_alloc, MAX_BATCH_ALLOC, block_size, TOTAL_SHARDS_COUNT,
+            ),
+        ));
+    }
+
     // Allocate buffers for all shards
     let mut buffers: Vec<Vec<u8>> = (0..TOTAL_SHARDS_COUNT)
         .map(|_| vec![0u8; block_size])
@@ -145,6 +161,13 @@ fn encode_one_batch(
         {
             use std::os::unix::fs::FileExt;
             dat_file.read_at(&mut buffers[i], read_offset)?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut f = dat_file.try_clone()?;
+            f.seek(SeekFrom::Start(read_offset))?;
+            f.read(&mut buffers[i])?;
         }
     }
 
