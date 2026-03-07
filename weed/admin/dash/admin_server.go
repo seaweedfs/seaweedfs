@@ -427,7 +427,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				return err
 			}
 
-			if resp.Entry.IsDirectory {
+			if resp.Entry != nil && resp.Entry.IsDirectory {
 				bucketName := resp.Entry.Name
 				if strings.HasPrefix(bucketName, ".") {
 					// Skip internal/system directories from Object Store bucket listing.

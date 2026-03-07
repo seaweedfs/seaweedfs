@@ -232,7 +232,7 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
+			if resp.Entry != nil && resp.Entry.IsDirectory && strings.HasPrefix(resp.Entry.Name, "v") {
 				if latestVersion == "" || resp.Entry.Name > latestVersion {
 					latestVersion = resp.Entry.Name
 				}
@@ -267,7 +267,7 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
+			if resp.Entry != nil && resp.Entry.IsDirectory && strings.Contains(resp.Entry.Name, "-") {
 				partitionDir = resp.Entry.Name
 				break // Use the first partition directory we find
 			}
@@ -303,7 +303,7 @@ func (bc *BrokerClient) getOffsetRangeFromChunkMetadata(topic string, partition 
 			if err != nil {
 				return err
 			}
-			if !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
+			if resp.Entry != nil && !resp.Entry.IsDirectory && resp.Entry.Name != "checkpoint.offset" {
 				// Check for offset ranges in Extended attributes (both log files and parquet files)
 				if resp.Entry.Extended != nil {
 					// Track maximum offset for high water mark

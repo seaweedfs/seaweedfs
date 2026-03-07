@@ -260,6 +260,9 @@ func (p *TopicRetentionPurger) deleteDirectoryRecursively(client filer_pb.Seawee
 			return fmt.Errorf("failed to receive entries: %w", err)
 		}
 
+		if resp.Entry == nil {
+			continue
+		}
 		entryPath := filepath.Join(dirPath, resp.Entry.Name)
 
 		if resp.Entry.IsDirectory {
