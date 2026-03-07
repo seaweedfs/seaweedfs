@@ -147,7 +147,7 @@ func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 	}
 	if resp.Error != "" {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
-		return nil, fmt.Errorf("CreateEntry : %v", resp.Error)
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
 	}
 	return resp, nil
 }
