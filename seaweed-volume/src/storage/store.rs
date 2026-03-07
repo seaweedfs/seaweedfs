@@ -52,6 +52,17 @@ impl Store {
     ) -> io::Result<()> {
         let mut loc = DiskLocation::new(directory, idx_directory, max_volume_count, disk_type);
         loc.load_existing_volumes(self.needle_map_kind)?;
+
+        // Check for duplicate volume IDs across existing locations
+        for vid in loc.volume_ids() {
+            if self.find_volume(vid).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("volume {} already exists in another location, conflicting dir: {}", vid, directory),
+                ));
+            }
+        }
+
         self.locations.push(loc);
         Ok(())
     }

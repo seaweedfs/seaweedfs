@@ -90,6 +90,7 @@ pub fn decode_jwt(
     }
 
     let mut validation = Validation::new(Algorithm::HS256);
+    // Match Go behavior: tokens without exp are accepted (Go's jwt-go does not require exp)
     validation.required_spec_claims.clear();
 
     let data = decode::<FileIdClaims>(
@@ -275,13 +276,13 @@ fn ip_in_cidr(ip: &IpAddr, network: &IpAddr, prefix_len: u8) -> bool {
         (IpAddr::V4(ip), IpAddr::V4(net)) => {
             let ip_bits = u32::from(*ip);
             let net_bits = u32::from(*net);
-            let mask = if prefix_len >= 32 { u32::MAX } else { u32::MAX << (32 - prefix_len) };
+            let mask = if prefix_len == 0 { 0 } else if prefix_len >= 32 { u32::MAX } else { u32::MAX << (32 - prefix_len) };
             (ip_bits & mask) == (net_bits & mask)
         }
         (IpAddr::V6(ip), IpAddr::V6(net)) => {
             let ip_bits = u128::from(*ip);
             let net_bits = u128::from(*net);
-            let mask = if prefix_len >= 128 { u128::MAX } else { u128::MAX << (128 - prefix_len) };
+            let mask = if prefix_len == 0 { 0 } else if prefix_len >= 128 { u128::MAX } else { u128::MAX << (128 - prefix_len) };
             (ip_bits & mask) == (net_bits & mask)
         }
         _ => false, // V4/V6 mismatch

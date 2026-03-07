@@ -98,25 +98,16 @@ fn encode_dat_file(
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
 ) -> io::Result<()> {
-    let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
-    let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
-    let large_row_size = large_block_size * DATA_SHARDS_COUNT;
+    let block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
+    let row_size = block_size * DATA_SHARDS_COUNT;
 
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
 
-    // Process large blocks
-    while remaining >= large_row_size as i64 {
-        encode_one_batch(dat_file, offset, large_block_size, rs, shards)?;
-        offset += large_row_size as u64;
-        remaining -= large_row_size as i64;
-    }
-
-    // Process remaining data in small blocks
+    // Process all data in small blocks to avoid large memory allocations
     while remaining > 0 {
-        let row_size = small_block_size * DATA_SHARDS_COUNT;
         let to_process = remaining.min(row_size as i64);
-        encode_one_batch(dat_file, offset, small_block_size, rs, shards)?;
+        encode_one_batch(dat_file, offset, block_size, rs, shards)?;
         offset += to_process as u64;
         remaining -= to_process;
     }

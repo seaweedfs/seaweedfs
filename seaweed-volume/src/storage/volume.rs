@@ -97,6 +97,22 @@ pub struct Volume {
     last_io_error: Option<io::Error>,
 }
 
+/// Windows helper: loop seek_read until buffer is fully filled.
+#[cfg(windows)]
+fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = file.seek_read(&mut buf[filled..], offset)?;
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected EOF in seek_read"));
+        }
+        filled += n;
+        offset += n as u64;
+    }
+    Ok(())
+}
+
 impl Volume {
     /// Create and load a volume from disk.
     pub fn new(
@@ -261,6 +277,17 @@ impl Volume {
                 let nm = CompactNeedleMap::load_from_idx(&mut idx_file)?;
                 self.nm = Some(nm);
             } else {
+                // Missing .idx with existing .dat could orphan needles
+                let dat_path = self.file_name(".dat");
+                if Path::new(&dat_path).exists() {
+                    let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                    if dat_size > SUPER_BLOCK_SIZE as u64 {
+                        warn!(
+                            volume_id = self.id.0,
+                            ".idx file missing but .dat exists with data; needles may be orphaned"
+                        );
+                    }
+                }
                 self.nm = Some(CompactNeedleMap::new());
             }
         } else {
@@ -389,8 +416,7 @@ impl Volume {
         }
         #[cfg(windows)]
         {
-            use std::os::windows::fs::FileExt;
-            dat_file.seek_read(&mut buf, offset as u64)?;
+            read_exact_at(dat_file, &mut buf, offset as u64)?;
         }
         #[cfg(not(any(unix, windows)))]
         {
@@ -418,8 +444,7 @@ impl Volume {
         }
         #[cfg(windows)]
         {
-            use std::os::windows::fs::FileExt;
-            dat_file.seek_read(&mut buf, offset as u64)?;
+            read_exact_at(dat_file, &mut buf, offset as u64)?;
         }
 
         Ok(buf)
@@ -501,6 +526,10 @@ impl Volume {
             use std::os::unix::fs::FileExt;
             dat_file.read_exact_at(&mut header, offset as u64)?;
         }
+        #[cfg(windows)]
+        {
+            read_exact_at(dat_file, &mut header, offset as u64)?;
+        }
 
         n.read_header(&header);
         Ok(())
@@ -517,7 +546,15 @@ impl Volume {
                 if !nv.offset.is_zero() && nv.size.is_valid() {
                     let mut old = Needle::default();
                     if self.read_needle_data(&mut old, nv.offset.to_actual_offset(), nv.size).is_ok() {
-                        if old.cookie == n.cookie && old.checksum == n.checksum && old.data == n.data {
+                        if old.cookie == n.cookie
+                            && old.checksum == n.checksum
+                            && old.data == n.data
+                            && old.flags == n.flags
+                            && old.name == n.name
+                            && old.mime == n.mime
+                            && old.pairs == n.pairs
+                            && old.last_modified == n.last_modified
+                        {
                             return true;
                         }
                     }
