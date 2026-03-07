@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::config::MinFreeSpace;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::erasure_coding::ec_shard::EcVolumeShard;
@@ -54,8 +55,9 @@ impl Store {
         idx_directory: &str,
         max_volume_count: i32,
         disk_type: DiskType,
+        min_free_space: MinFreeSpace,
     ) -> io::Result<()> {
-        let mut loc = DiskLocation::new(directory, idx_directory, max_volume_count, disk_type);
+        let mut loc = DiskLocation::new(directory, idx_directory, max_volume_count, disk_type, min_free_space);
         loc.load_existing_volumes(self.needle_map_kind)?;
 
         // Check for duplicate volume IDs across existing locations
@@ -111,7 +113,7 @@ impl Store {
             if loc.free_volume_count() <= 0 {
                 continue;
             }
-            if loc.is_disk_space_low {
+            if loc.is_disk_space_low.load(Ordering::Relaxed) {
                 continue;
             }
             let count = loc.volumes_len();
@@ -218,6 +220,13 @@ impl Store {
     pub fn write_volume_needle(
         &mut self, vid: VolumeId, n: &mut Needle,
     ) -> Result<(u64, Size, bool), VolumeError> {
+        // Check disk space on the location containing this volume.
+        // We do this before the mutable borrow to avoid borrow conflicts.
+        let loc_idx = self.find_volume(vid).map(|(i, _)| i).ok_or(VolumeError::NotFound)?;
+        if self.locations[loc_idx].is_disk_space_low.load(Ordering::Relaxed) {
+            return Err(VolumeError::ReadOnly);
+        }
+
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
         vol.write_needle(n, true)
     }
@@ -458,7 +467,7 @@ mod tests {
     fn make_test_store(dirs: &[&str]) -> Store {
         let mut store = Store::new(NeedleMapKind::InMemory);
         for dir in dirs {
-            store.add_location(dir, dir, 10, DiskType::HardDrive).unwrap();
+            store.add_location(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0)).unwrap();
         }
         store
     }
@@ -469,7 +478,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
 
         let mut store = Store::new(NeedleMapKind::InMemory);
-        store.add_location(dir, dir, 10, DiskType::HardDrive).unwrap();
+        store.add_location(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0)).unwrap();
         assert_eq!(store.locations.len(), 1);
         assert_eq!(store.max_volume_count(), 10);
     }
@@ -525,8 +534,8 @@ mod tests {
         let dir2 = tmp2.path().to_str().unwrap();
 
         let mut store = Store::new(NeedleMapKind::InMemory);
-        store.add_location(dir1, dir1, 5, DiskType::HardDrive).unwrap();
-        store.add_location(dir2, dir2, 5, DiskType::HardDrive).unwrap();
+        store.add_location(dir1, dir1, 5, DiskType::HardDrive, MinFreeSpace::Percent(1.0)).unwrap();
+        store.add_location(dir2, dir2, 5, DiskType::HardDrive, MinFreeSpace::Percent(1.0)).unwrap();
         assert_eq!(store.max_volume_count(), 10);
 
         // Add volumes — should go to location with fewest volumes

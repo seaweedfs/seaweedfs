@@ -45,6 +45,18 @@ lazy_static::lazy_static! {
         Opts::new("volume_server_disk_free_bytes", "Disk free space in bytes"),
         &["dir"],
     ).expect("metric can be created");
+
+    /// Current number of in-flight requests.
+    pub static ref INFLIGHT_REQUESTS: IntGauge = IntGauge::new(
+        "volume_server_inflight_requests",
+        "Current number of in-flight requests",
+    ).expect("metric can be created");
+
+    /// Total number of files stored across all volumes.
+    pub static ref VOLUME_FILE_COUNT: IntGauge = IntGauge::new(
+        "volume_server_volume_file_count",
+        "Total number of files stored across all volumes",
+    ).expect("metric can be created");
 }
 
 /// Register all metrics with the custom registry.
@@ -68,6 +80,12 @@ pub fn register_metrics() {
     REGISTRY
         .register(Box::new(DISK_FREE_BYTES.clone()))
         .expect("DISK_FREE_BYTES registered");
+    REGISTRY
+        .register(Box::new(INFLIGHT_REQUESTS.clone()))
+        .expect("INFLIGHT_REQUESTS registered");
+    REGISTRY
+        .register(Box::new(VOLUME_FILE_COUNT.clone()))
+        .expect("VOLUME_FILE_COUNT registered");
 }
 
 /// Gather all metrics and encode them in Prometheus text exposition format.

@@ -154,6 +154,19 @@ pub struct ReadQueryParams {
     pub crop_y1: Option<u32>,
     pub crop_x2: Option<u32>,
     pub crop_y2: Option<u32>,
+    /// S3 response passthrough headers
+    #[serde(rename = "response-content-encoding")]
+    pub response_content_encoding: Option<String>,
+    #[serde(rename = "response-expires")]
+    pub response_expires: Option<String>,
+    #[serde(rename = "response-content-language")]
+    pub response_content_language: Option<String>,
+    #[serde(rename = "response-content-disposition")]
+    pub response_content_disposition: Option<String>,
+    /// Pretty print JSON response
+    pub pretty: Option<String>,
+    /// JSONP callback function name
+    pub callback: Option<String>,
 }
 
 // ============================================================================
@@ -328,6 +341,20 @@ async fn get_or_head_handler_inner(
     // Cache-Control override from query param
     if let Some(ref cc) = query.response_cache_control {
         response_headers.insert(header::CACHE_CONTROL, cc.parse().unwrap());
+    }
+
+    // S3 response passthrough headers
+    if let Some(ref ce) = query.response_content_encoding {
+        response_headers.insert(header::CONTENT_ENCODING, ce.parse().unwrap());
+    }
+    if let Some(ref exp) = query.response_expires {
+        response_headers.insert(header::EXPIRES, exp.parse().unwrap());
+    }
+    if let Some(ref cl) = query.response_content_language {
+        response_headers.insert("Content-Language", cl.parse().unwrap());
+    }
+    if let Some(ref cd) = query.response_content_disposition {
+        response_headers.insert(header::CONTENT_DISPOSITION, cd.parse().unwrap());
     }
 
     // Last-Modified
@@ -532,7 +559,7 @@ fn extract_filename_from_path(path: &str) -> String {
 // ============================================================================
 
 fn is_image_ext(ext: &str) -> bool {
-    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif")
+    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp")
 }
 
 fn extract_extension_from_path(path: &str) -> String {
@@ -607,6 +634,7 @@ fn encode_image(img: &image::DynamicImage, ext: &str) -> Option<Vec<u8>> {
         ".png" => image::ImageFormat::Png,
         ".jpg" | ".jpeg" => image::ImageFormat::Jpeg,
         ".gif" => image::ImageFormat::Gif,
+        ".webp" => image::ImageFormat::WebP,
         _ => return None,
     };
     img.write_to(&mut buf, format).ok()?;
@@ -709,6 +737,11 @@ pub async fn post_handler(
         Err(e) => return (StatusCode::BAD_REQUEST, format!("read body: {}", e)).into_response(),
     };
 
+    // Check file size limit
+    if state.file_size_limit_bytes > 0 && body.len() as i64 > state.file_size_limit_bytes {
+        return (StatusCode::BAD_REQUEST, "file size limit exceeded").into_response();
+    }
+
     // Validate Content-MD5 if provided
     if let Some(ref expected_md5) = content_md5 {
         use md5::{Md5, Digest};
@@ -726,6 +759,16 @@ pub async fn post_handler(
         .unwrap_or_default()
         .as_secs();
 
+    // Parse custom timestamp from query param
+    let ts_str = query.split('&')
+        .find_map(|p| p.strip_prefix("ts="))
+        .unwrap_or("");
+    let last_modified = if !ts_str.is_empty() {
+        ts_str.parse::<u64>().unwrap_or(now)
+    } else {
+        now
+    };
+
     // Check if upload is pre-compressed
     let is_gzipped = headers.get(header::CONTENT_ENCODING)
         .and_then(|v| v.to_str().ok())
@@ -737,7 +780,7 @@ pub async fn post_handler(
         cookie,
         data: body.to_vec(),
         data_size: body.len() as u32,
-        last_modified: now,
+        last_modified: last_modified,
         ..Needle::default()
     };
     n.set_has_last_modified_date();
@@ -746,6 +789,22 @@ pub async fn post_handler(
     }
     if is_gzipped {
         n.set_is_compressed();
+    }
+
+    // Extract MIME type from Content-Type header
+    let mime_type = headers.get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            if ct.starts_with("multipart/") {
+                "application/octet-stream".to_string()
+            } else {
+                ct.to_string()
+            }
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+    if !mime_type.is_empty() {
+        n.mime = mime_type.as_bytes().to_vec();
+        n.set_has_mime();
     }
 
     let mut store = state.store.write().unwrap();
@@ -812,6 +871,17 @@ pub async fn delete_handler(
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
+    // Parse custom timestamp from query param
+    let del_query = request.uri().query().unwrap_or("");
+    let del_ts_str = del_query.split('&')
+        .find_map(|p| p.strip_prefix("ts="))
+        .unwrap_or("");
+    let del_last_modified = if !del_ts_str.is_empty() {
+        del_ts_str.parse::<u64>().unwrap_or(0)
+    } else {
+        0
+    };
+
     let mut n = Needle {
         id: needle_id,
         cookie,
@@ -832,6 +902,12 @@ pub async fn delete_handler(
     }
     if n.cookie != original_cookie {
         return (StatusCode::BAD_REQUEST, "File Random Cookie does not match.").into_response();
+    }
+
+    // Apply custom timestamp if provided
+    if del_last_modified > 0 {
+        n.last_modified = del_last_modified;
+        n.set_has_last_modified_date();
     }
 
     // If this is a chunk manifest, delete child chunks first
@@ -919,6 +995,7 @@ pub async fn delete_handler(
 // ============================================================================
 
 pub async fn status_handler(
+    Query(params): Query<ReadQueryParams>,
     State(state): State<Arc<VolumeServerState>>,
 ) -> Response {
     let store = state.store.read().unwrap();
@@ -956,7 +1033,27 @@ pub async fn status_handler(
     m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
     m.insert("DiskStatuses".to_string(), serde_json::Value::Array(disk_statuses));
 
-    axum::Json(serde_json::Value::Object(m)).into_response()
+    let json_value = serde_json::Value::Object(m);
+
+    let is_pretty = params.pretty.as_deref() == Some("y");
+    let json_body = if is_pretty {
+        serde_json::to_string_pretty(&json_value).unwrap()
+    } else {
+        serde_json::to_string(&json_value).unwrap()
+    };
+
+    if let Some(ref cb) = params.callback {
+        let jsonp = format!("{}({});\n", cb, json_body);
+        Response::builder()
+            .header(header::CONTENT_TYPE, "application/javascript")
+            .body(Body::from(jsonp))
+            .unwrap()
+    } else {
+        Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .unwrap()
+    }
 }
 
 // ============================================================================
@@ -969,6 +1066,10 @@ pub async fn healthz_handler(
     let is_stopping = *state.is_stopping.read().unwrap();
     if is_stopping {
         return (StatusCode::SERVICE_UNAVAILABLE, "stopping").into_response();
+    }
+    // If masters are configured but not heartbeating, return 503
+    if !state.is_heartbeating.load(Ordering::Relaxed) && state.has_master {
+        return (StatusCode::SERVICE_UNAVAILABLE, "lost connection to master").into_response();
     }
     StatusCode::OK.into_response()
 }
@@ -985,6 +1086,53 @@ pub async fn metrics_handler() -> Response {
         body,
     )
         .into_response()
+}
+
+// ============================================================================
+// Stats Handlers
+// ============================================================================
+
+pub async fn stats_counter_handler() -> Response {
+    let body = metrics::gather_metrics();
+    (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain")], body).into_response()
+}
+
+pub async fn stats_memory_handler() -> Response {
+    // Basic memory stats - Rust doesn't have GC stats like Go
+    let info = serde_json::json!({
+        "Version": env!("CARGO_PKG_VERSION"),
+        "Memory": {
+            "Mallocs": 0,
+            "Frees": 0,
+            "HeapSys": 0,
+            "HeapAlloc": 0,
+            "HeapIdle": 0,
+            "HeapReleased": 0,
+        },
+    });
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], info.to_string()).into_response()
+}
+
+pub async fn stats_disk_handler(
+    State(state): State<Arc<VolumeServerState>>,
+) -> Response {
+    let store = state.store.read().unwrap();
+    let mut ds = Vec::new();
+    for loc in &store.locations {
+        let dir = loc.directory.clone();
+        let (all, free) = crate::storage::disk_location::get_disk_stats(&dir);
+        ds.push(serde_json::json!({
+            "dir": dir,
+            "all": all,
+            "used": all - free,
+            "free": free,
+        }));
+    }
+    let info = serde_json::json!({
+        "Version": env!("CARGO_PKG_VERSION"),
+        "DiskStatuses": ds,
+    });
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], info.to_string()).into_response()
 }
 
 // ============================================================================

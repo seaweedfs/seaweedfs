@@ -410,6 +410,8 @@ impl VolumeServer for VolumeGrpcService {
         let (_, vol) = store.find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
         vol.set_read_only();
+        drop(store);
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeMarkReadonlyResponse {}))
     }
 
@@ -424,6 +426,8 @@ impl VolumeServer for VolumeGrpcService {
         let (_, vol) = store.find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
         vol.set_writable();
+        drop(store);
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(volume_server_pb::VolumeMarkWritableResponse {}))
     }
 
@@ -1899,15 +1903,30 @@ impl VolumeServer for VolumeGrpcService {
 
         let mut total_volumes: u64 = 0;
         let mut total_files: u64 = 0;
-        let broken_volume_ids: Vec<u32> = Vec::new();
-        let details: Vec<String> = Vec::new();
+        let mut broken_volume_ids: Vec<u32> = Vec::new();
+        let mut details: Vec<String> = Vec::new();
 
         for vid in &vids {
             let (_, v) = store.find_volume(*vid).ok_or_else(|| {
                 Status::not_found(format!("volume id {} not found", vid.0))
             })?;
             total_volumes += 1;
-            total_files += v.file_count() as u64;
+
+            match v.scrub() {
+                Ok((files, broken)) => {
+                    total_files += files;
+                    if !broken.is_empty() {
+                        broken_volume_ids.push(vid.0);
+                        for msg in broken {
+                            details.push(format!("vol {}: {}", vid.0, msg));
+                        }
+                    }
+                }
+                Err(e) => {
+                    broken_volume_ids.push(vid.0);
+                    details.push(format!("vol {}: scrub error: {}", vid.0, e));
+                }
+            }
         }
 
         Ok(Response::new(volume_server_pb::ScrubVolumeResponse {

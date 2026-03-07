@@ -196,6 +196,7 @@ func (rc *RustCluster) startRustVolume(dataDir string) error {
 		"--securityFile", filepath.Join(rc.configDir, "security.toml"),
 		"--concurrentUploadLimitMB", strconv.Itoa(rc.profile.ConcurrentUploadLimitMB),
 		"--concurrentDownloadLimitMB", strconv.Itoa(rc.profile.ConcurrentDownloadLimitMB),
+		"--preStopSeconds", "0",
 	}
 	if rc.profile.InflightUploadTimeout > 0 {
 		args = append(args, "--inflightUploadDataTimeout", rc.profile.InflightUploadTimeout.String())

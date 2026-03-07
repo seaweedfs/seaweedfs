@@ -32,6 +32,23 @@ All phases from the original plan are complete:
   Supports all S3-compatible providers (AWS, Wasabi, Backblaze, Aliyun, etc.)
 - **Master Heartbeat** — Bidirectional streaming SendHeartbeat RPC, volume/EC registration,
   leader changes, shutdown deregistration. Tested end-to-end with Go master.
+- **Production Sprint 1** — Quick wins:
+  - VolumeMarkReadonly master notification (triggers immediate heartbeat)
+  - Compaction throttling (`maybe_throttle_compaction()`)
+  - File size limit enforcement on upload
+  - `ts` query param for custom timestamps (upload + delete)
+  - TTL expiration check (was already implemented)
+  - Health check heartbeat status (returns 503 if disconnected from master)
+  - preStopSeconds graceful drain before shutdown
+  - S3 response passthrough headers (content-encoding, expires, content-language, content-disposition)
+  - .vif persistence for readonly state across restarts
+  - Webp image support for resize
+- **Production Sprint 2** — Compatibility:
+  - MIME type extraction from Content-Type header
+  - Stats endpoints (/stats/counter, /stats/memory, /stats/disk)
+  - JSON pretty print (?pretty=y) and JSONP (?callback=fn)
+  - Request ID generation (UUID if x-amz-request-id missing)
+  - Advanced Prometheus metrics (INFLIGHT_REQUESTS, VOLUME_FILE_COUNT gauges)
 
 ## Remaining Work (Production Readiness)
 
@@ -44,13 +61,25 @@ All phases from the original plan are complete:
 2. **BatchDelete EC shards** — BatchDelete currently only handles regular volumes.
    Go also checks EC volumes and calls DeleteEcShardNeedle.
 
-3. **VolumeMarkReadonly persist flag** — Go persists readonly state to .vif file.
-   Rust only sets in-memory flag.
+3. **Streaming / meta-only reads** — Go reads large files in pages/streams.
+   Rust reads entire needle into memory. OOM risk for large files.
+
+4. **TLS/HTTPS** — rustls + tokio-rustls for both HTTP and gRPC.
+
+5. **JPEG orientation fix** — Auto-fix EXIF orientation on upload.
+
+6. **Async request processing** — Batched writes with 128-entry queue.
 
 ### Low Priority
 
-4. **TestUnsupportedMethodConnectParity** — HTTP CONNECT method returns 400 in Go but
+7. **TestUnsupportedMethodConnectParity** — HTTP CONNECT method returns 400 in Go but
    hyper rejects it before reaching the router. Would need a custom hyper service wrapper.
+
+8. **LevelDB needle maps** — For volumes with millions of needles.
+
+9. **Volume backup/sync** — Streaming backup, binary search.
+
+10. **EC distribution/rebalancing** — Advanced EC operations.
 
 ## Test Commands
 
@@ -59,7 +88,7 @@ All phases from the original plan are complete:
 cd seaweed-volume && cargo build --release
 
 # Run all Go integration tests with Rust volume server
-VOLUME_SERVER_IMPL=rust go test -v -count=1 -timeout 1200s ./test/volume_server/{grpc,http}/...
+VOLUME_SERVER_IMPL=rust go test -v -count=1 -timeout 1200s ./test/volume_server/grpc/... ./test/volume_server/http/...
 
 # Run S3 remote storage tests
 VOLUME_SERVER_IMPL=rust go test -v -count=1 -timeout 180s -run "TestFetchAndWriteNeedle(FromS3|S3NotFound)" ./test/volume_server/grpc/...

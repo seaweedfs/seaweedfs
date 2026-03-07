@@ -11,6 +11,8 @@ use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 
+use tokio_rustls::TlsAcceptor;
+
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -38,6 +40,26 @@ fn main() {
     }
 }
 
+/// Build a rustls ServerConfig from cert and key PEM files.
+fn load_rustls_config(cert_path: &str, key_path: &str) -> rustls::ServerConfig {
+    let cert_pem = std::fs::read(cert_path)
+        .unwrap_or_else(|e| panic!("Failed to read TLS cert file '{}': {}", cert_path, e));
+    let key_pem = std::fs::read(key_path)
+        .unwrap_or_else(|e| panic!("Failed to read TLS key file '{}': {}", key_path, e));
+
+    let certs = rustls_pemfile::certs(&mut &cert_pem[..])
+        .collect::<Result<Vec<_>, _>>()
+        .expect("Failed to parse TLS certificate PEM");
+    let key = rustls_pemfile::private_key(&mut &key_pem[..])
+        .expect("Failed to parse TLS private key PEM")
+        .expect("No private key found in PEM file");
+
+    rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("Failed to build rustls ServerConfig")
+}
+
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the store
     let mut store = Store::new(config.index_type);
@@ -62,7 +84,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
             "Adding storage location: {} (max_volumes={}, disk_type={:?})",
             dir, max_volumes, disk_type
         );
-        store.add_location(dir, idx_dir, max_volumes, disk_type)
+        let min_free_space = config.min_free_spaces[i].clone();
+        store.add_location(dir, idx_dir, max_volumes, disk_type, min_free_space)
             .map_err(|e| format!("Failed to add storage location {}: {}", dir, e))?;
     }
 
@@ -90,7 +113,36 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         download_notify: tokio::sync::Notify::new(),
         data_center: config.data_center.clone(),
         rack: config.rack.clone(),
+        file_size_limit_bytes: config.file_size_limit_bytes,
+        is_heartbeating: std::sync::atomic::AtomicBool::new(config.masters.is_empty()),
+        has_master: !config.masters.is_empty(),
+        pre_stop_seconds: config.pre_stop_seconds,
+        volume_state_notify: tokio::sync::Notify::new(),
     });
+
+    // Run initial disk space check
+    {
+        let store = state.store.read().unwrap();
+        for loc in &store.locations {
+            loc.check_disk_space();
+        }
+    }
+
+    // Spawn background disk space monitor (checks every 60 seconds)
+    {
+        let monitor_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // skip the first immediate tick
+            loop {
+                interval.tick().await;
+                let store = monitor_state.store.read().unwrap();
+                for loc in &store.locations {
+                    loc.check_disk_space();
+                }
+            }
+        });
+    }
 
     // Build HTTP routers
     let admin_router = seaweed_volume::server::volume_server::build_admin_router(state.clone());
@@ -134,16 +186,41 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
             info!("Received shutdown signal...");
         }
         *state_shutdown.is_stopping.write().unwrap() = true;
+
+        // Graceful drain: wait pre_stop_seconds before shutting down servers
+        let pre_stop = state_shutdown.pre_stop_seconds;
+        if pre_stop > 0 {
+            info!("Pre-stop: waiting {} seconds before shutdown...", pre_stop);
+            tokio::time::sleep(std::time::Duration::from_secs(pre_stop as u64)).await;
+        }
+
         let _ = shutdown_tx_clone.send(());
     });
+
+    // Build optional TLS acceptor for HTTPS
+    let https_tls_acceptor = if !config.https_cert_file.is_empty() && !config.https_key_file.is_empty() {
+        info!("TLS enabled for HTTP server (cert={}, key={})", config.https_cert_file, config.https_key_file);
+        let tls_config = load_rustls_config(&config.https_cert_file, &config.https_key_file);
+        Some(TlsAcceptor::from(Arc::new(tls_config)))
+    } else {
+        None
+    };
 
     // Spawn all servers concurrently
     let admin_listener = tokio::net::TcpListener::bind(&admin_addr)
         .await
         .unwrap_or_else(|e| panic!("Failed to bind HTTP to {}: {}", admin_addr, e));
-    info!("HTTP server listening on {}", admin_addr);
+    let scheme = if https_tls_acceptor.is_some() { "HTTPS" } else { "HTTP" };
+    info!("{} server listening on {}", scheme, admin_addr);
 
-    let http_handle = {
+    let http_handle = if let Some(tls_acceptor) = https_tls_acceptor.clone() {
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            serve_https(admin_listener, admin_router, tls_acceptor, async move {
+                let _ = shutdown_rx.recv().await;
+            }).await;
+        })
+    } else {
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             if let Err(e) = axum::serve(admin_listener, admin_router)
@@ -156,16 +233,38 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     };
 
     let grpc_handle = {
+        let grpc_cert_file = config.grpc_cert_file.clone();
+        let grpc_key_file = config.grpc_key_file.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             let addr = grpc_addr.parse().expect("Invalid gRPC address");
-            info!("gRPC server listening on {}", addr);
-            if let Err(e) = tonic::transport::Server::builder()
-                .add_service(VolumeServerServer::new(grpc_service))
-                .serve_with_shutdown(addr, async move { let _ = shutdown_rx.recv().await; })
-                .await
-            {
-                error!("gRPC server error: {}", e);
+            let use_tls = !grpc_cert_file.is_empty() && !grpc_key_file.is_empty();
+            if use_tls {
+                info!("gRPC server listening on {} (TLS enabled)", addr);
+                let cert = std::fs::read_to_string(&grpc_cert_file)
+                    .unwrap_or_else(|e| panic!("Failed to read gRPC cert '{}': {}", grpc_cert_file, e));
+                let key = std::fs::read_to_string(&grpc_key_file)
+                    .unwrap_or_else(|e| panic!("Failed to read gRPC key '{}': {}", grpc_key_file, e));
+                let identity = tonic::transport::Identity::from_pem(cert, key);
+                let tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+                if let Err(e) = tonic::transport::Server::builder()
+                    .tls_config(tls_config)
+                    .expect("Failed to configure gRPC TLS")
+                    .add_service(VolumeServerServer::new(grpc_service))
+                    .serve_with_shutdown(addr, async move { let _ = shutdown_rx.recv().await; })
+                    .await
+                {
+                    error!("gRPC server error: {}", e);
+                }
+            } else {
+                info!("gRPC server listening on {}", addr);
+                if let Err(e) = tonic::transport::Server::builder()
+                    .add_service(VolumeServerServer::new(grpc_service))
+                    .serve_with_shutdown(addr, async move { let _ = shutdown_rx.recv().await; })
+                    .await
+                {
+                    error!("gRPC server error: {}", e);
+                }
             }
         })
     };
@@ -203,16 +302,26 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         let listener = tokio::net::TcpListener::bind(&public_addr)
             .await
             .unwrap_or_else(|e| panic!("Failed to bind public HTTP to {}: {}", public_addr, e));
-        info!("Public HTTP server listening on {}", public_addr);
-        let mut shutdown_rx = shutdown_tx.subscribe();
-        Some(tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, public_router)
-                .with_graceful_shutdown(async move { let _ = shutdown_rx.recv().await; })
-                .await
-            {
-                error!("Public HTTP server error: {}", e);
-            }
-        }))
+        let pub_scheme = if https_tls_acceptor.is_some() { "HTTPS" } else { "HTTP" };
+        info!("Public {} server listening on {}", pub_scheme, public_addr);
+        if let Some(tls_acceptor) = https_tls_acceptor {
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            Some(tokio::spawn(async move {
+                serve_https(listener, public_router, tls_acceptor, async move {
+                    let _ = shutdown_rx.recv().await;
+                }).await;
+            }))
+        } else {
+            let mut shutdown_rx = shutdown_tx.subscribe();
+            Some(tokio::spawn(async move {
+                if let Err(e) = axum::serve(listener, public_router)
+                    .with_graceful_shutdown(async move { let _ = shutdown_rx.recv().await; })
+                    .await
+                {
+                    error!("Public HTTP server error: {}", e);
+                }
+            }))
+        }
     } else {
         None
     };
@@ -229,4 +338,59 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
 
     info!("Volume server stopped.");
     Ok(())
+}
+
+/// Serve an axum Router over TLS using tokio-rustls.
+/// Accepts TCP connections, performs TLS handshake, then serves HTTP over the encrypted stream.
+async fn serve_https<F>(
+    tcp_listener: tokio::net::TcpListener,
+    app: axum::Router,
+    tls_acceptor: TlsAcceptor,
+    shutdown_signal: F,
+) where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder as HttpBuilder;
+    use hyper_util::service::TowerToHyperService;
+    use tower::Service;
+
+    let mut make_svc = app.into_make_service();
+
+    tokio::pin!(shutdown_signal);
+
+    loop {
+        tokio::select! {
+            _ = &mut shutdown_signal => {
+                info!("HTTPS server shutting down");
+                break;
+            }
+            result = tcp_listener.accept() => {
+                match result {
+                    Ok((tcp_stream, remote_addr)) => {
+                        let tls_acceptor = tls_acceptor.clone();
+                        let tower_svc = make_svc.call(remote_addr).await.expect("infallible");
+                        let hyper_svc = TowerToHyperService::new(tower_svc);
+                        tokio::spawn(async move {
+                            match tls_acceptor.accept(tcp_stream).await {
+                                Ok(tls_stream) => {
+                                    let io = TokioIo::new(tls_stream);
+                                    let builder = HttpBuilder::new(TokioExecutor::new());
+                                    if let Err(e) = builder.serve_connection(io, hyper_svc).await {
+                                        tracing::debug!("HTTPS connection error: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::debug!("TLS handshake failed: {}", e);
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept TCP connection: {}", e);
+                    }
+                }
+            }
+        }
+    }
 }

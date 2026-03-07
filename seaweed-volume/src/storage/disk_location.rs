@@ -7,8 +7,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
+use crate::config::MinFreeSpace;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
@@ -22,12 +23,19 @@ pub struct DiskLocation {
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
     volumes: HashMap<VolumeId, Volume>,
-    pub is_disk_space_low: bool,
+    pub is_disk_space_low: AtomicBool,
     pub available_space: AtomicU64,
+    pub min_free_space: MinFreeSpace,
 }
 
 impl DiskLocation {
-    pub fn new(directory: &str, idx_directory: &str, max_volume_count: i32, disk_type: DiskType) -> Self {
+    pub fn new(
+        directory: &str,
+        idx_directory: &str,
+        max_volume_count: i32,
+        disk_type: DiskType,
+        min_free_space: MinFreeSpace,
+    ) -> Self {
         let idx_dir = if idx_directory.is_empty() {
             directory.to_string()
         } else {
@@ -41,8 +49,9 @@ impl DiskLocation {
             max_volume_count: AtomicI32::new(max_volume_count),
             original_max_volume_count: max_volume_count,
             volumes: HashMap::new(),
-            is_disk_space_low: false,
+            is_disk_space_low: AtomicBool::new(false),
             available_space: AtomicU64::new(0),
+            min_free_space,
         }
     }
 
@@ -210,12 +219,56 @@ impl DiskLocation {
         self.volumes.iter_mut()
     }
 
+    /// Check disk space against min_free_space and update is_disk_space_low.
+    pub fn check_disk_space(&self) {
+        let (total, free) = get_disk_stats(&self.directory);
+        if total == 0 {
+            return;
+        }
+        let is_low = match &self.min_free_space {
+            MinFreeSpace::Percent(pct) => {
+                let free_pct = (free as f64 / total as f64) * 100.0;
+                free_pct < *pct
+            }
+            MinFreeSpace::Bytes(min_bytes) => free < *min_bytes,
+        };
+        self.is_disk_space_low.store(is_low, Ordering::Relaxed);
+        self.available_space.store(free, Ordering::Relaxed);
+    }
+
     /// Close all volumes.
     pub fn close(&mut self) {
         for (_, v) in self.volumes.iter_mut() {
             v.close();
         }
         self.volumes.clear();
+    }
+}
+
+/// Get total and free disk space for a given path.
+/// Returns (total_bytes, free_bytes).
+pub fn get_disk_stats(path: &str) -> (u64, u64) {
+    #[cfg(unix)]
+    {
+        use std::ffi::CString;
+        let c_path = match CString::new(path) {
+            Ok(p) => p,
+            Err(_) => return (0, 0),
+        };
+        unsafe {
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
+                let all = stat.f_blocks as u64 * stat.f_frsize as u64;
+                let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+                return (all, free);
+            }
+        }
+        (0, 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        (0, 0)
     }
 }
 
@@ -260,7 +313,7 @@ mod tests {
     fn test_disk_location_create_volume() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive);
+        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
 
         loc.create_volume(
             VolumeId(1), "", NeedleMapKind::InMemory,
@@ -280,14 +333,14 @@ mod tests {
 
         // Create volumes
         {
-            let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive);
+            let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
             loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
             loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0).unwrap();
             loc.close();
         }
 
         // Reload
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive);
+        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
         loc.load_existing_volumes(NeedleMapKind::InMemory).unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
@@ -300,7 +353,7 @@ mod tests {
     fn test_disk_location_delete_volume() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive);
+        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
 
         loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
         loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
@@ -315,7 +368,7 @@ mod tests {
     fn test_disk_location_delete_collection() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive);
+        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
 
         loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0).unwrap();
         loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0).unwrap();

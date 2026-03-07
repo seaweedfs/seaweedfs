@@ -63,8 +63,8 @@ func TestRustStatusEndpoint(t *testing.T) {
 		t.Fatalf("decode /status JSON: %v", err)
 	}
 
-	if _, ok := payload["version"]; !ok {
-		t.Fatalf("/status JSON missing \"version\" field, keys: %v", keys(payload))
+	if _, ok := payload["Version"]; !ok {
+		t.Fatalf("/status JSON missing \"Version\" field, keys: %v", keys(payload))
 	}
 }
 

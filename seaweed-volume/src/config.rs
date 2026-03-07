@@ -228,6 +228,10 @@ pub struct VolumeServerConfig {
     pub jwt_signing_expires_seconds: i64,
     pub jwt_read_signing_key: Vec<u8>,
     pub jwt_read_signing_expires_seconds: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -545,8 +549,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     let inflight_download_data_timeout = parse_duration(&cli.inflight_download_data_timeout);
 
     // Parse security config from TOML file
-    let (jwt_signing_key, jwt_signing_expires, jwt_read_signing_key, jwt_read_signing_expires) =
-        parse_security_config(&cli.security_file);
+    let sec = parse_security_config(&cli.security_file);
 
     VolumeServerConfig {
         port: cli.port,
@@ -587,14 +590,31 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         metrics_ip,
         debug: cli.debug,
         debug_port: cli.debug_port,
-        jwt_signing_key,
-        jwt_signing_expires_seconds: jwt_signing_expires,
-        jwt_read_signing_key: jwt_read_signing_key,
-        jwt_read_signing_expires_seconds: jwt_read_signing_expires,
+        jwt_signing_key: sec.jwt_signing_key,
+        jwt_signing_expires_seconds: sec.jwt_signing_expires,
+        jwt_read_signing_key: sec.jwt_read_signing_key,
+        jwt_read_signing_expires_seconds: sec.jwt_read_signing_expires,
+        https_cert_file: sec.https_cert_file,
+        https_key_file: sec.https_key_file,
+        grpc_cert_file: sec.grpc_cert_file,
+        grpc_key_file: sec.grpc_key_file,
     }
 }
 
-/// Parse a security.toml file to extract JWT signing keys.
+/// Parsed security configuration from security.toml.
+#[derive(Debug, Default)]
+pub struct SecurityConfig {
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
+}
+
+/// Parse a security.toml file to extract JWT signing keys and TLS configuration.
 /// Format:
 /// ```toml
 /// [jwt.signing]
@@ -604,65 +624,93 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
 /// [jwt.signing.read]
 /// key = "read-secret"
 /// expires_after_seconds = 60
+///
+/// [https.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+///
+/// [grpc.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
 /// ```
-fn parse_security_config(path: &str) -> (Vec<u8>, i64, Vec<u8>, i64) {
+fn parse_security_config(path: &str) -> SecurityConfig {
     if path.is_empty() {
-        return (vec![], 0, vec![], 0);
+        return SecurityConfig::default();
     }
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return (vec![], 0, vec![], 0),
+        Err(_) => return SecurityConfig::default(),
     };
 
-    let mut signing_key = Vec::new();
-    let mut signing_expires: i64 = 0;
-    let mut read_key = Vec::new();
-    let mut read_expires: i64 = 0;
+    let mut cfg = SecurityConfig::default();
 
-    // Simple TOML parser for the specific security config format
-    let mut in_jwt_signing = false;
-    let mut in_jwt_signing_read = false;
+    #[derive(PartialEq)]
+    enum Section {
+        None,
+        JwtSigning,
+        JwtSigningRead,
+        HttpsVolume,
+        GrpcVolume,
+    }
+
+    let mut section = Section::None;
+
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('#') || trimmed.is_empty() {
             continue;
         }
         if trimmed == "[jwt.signing.read]" {
-            in_jwt_signing = false;
-            in_jwt_signing_read = true;
+            section = Section::JwtSigningRead;
             continue;
         }
         if trimmed == "[jwt.signing]" {
-            in_jwt_signing = true;
-            in_jwt_signing_read = false;
+            section = Section::JwtSigning;
+            continue;
+        }
+        if trimmed == "[https.volume]" {
+            section = Section::HttpsVolume;
+            continue;
+        }
+        if trimmed == "[grpc.volume]" {
+            section = Section::GrpcVolume;
             continue;
         }
         if trimmed.starts_with('[') {
-            in_jwt_signing = false;
-            in_jwt_signing_read = false;
+            section = Section::None;
             continue;
         }
 
         if let Some((key, value)) = trimmed.split_once('=') {
             let key = key.trim();
             let value = value.trim().trim_matches('"');
-            if in_jwt_signing_read {
-                match key {
-                    "key" => read_key = value.as_bytes().to_vec(),
-                    "expires_after_seconds" => read_expires = value.parse().unwrap_or(0),
+            match section {
+                Section::JwtSigningRead => match key {
+                    "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => cfg.jwt_read_signing_expires = value.parse().unwrap_or(0),
                     _ => {}
-                }
-            } else if in_jwt_signing {
-                match key {
-                    "key" => signing_key = value.as_bytes().to_vec(),
-                    "expires_after_seconds" => signing_expires = value.parse().unwrap_or(0),
+                },
+                Section::JwtSigning => match key {
+                    "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(0),
                     _ => {}
-                }
+                },
+                Section::HttpsVolume => match key {
+                    "cert" => cfg.https_cert_file = value.to_string(),
+                    "key" => cfg.https_key_file = value.to_string(),
+                    _ => {}
+                },
+                Section::GrpcVolume => match key {
+                    "cert" => cfg.grpc_cert_file = value.to_string(),
+                    "key" => cfg.grpc_key_file = value.to_string(),
+                    _ => {}
+                },
+                Section::None => {}
             }
         }
     }
 
-    (signing_key, signing_expires, read_key, read_expires)
+    cfg
 }
 
 /// Detect the host's IP address.

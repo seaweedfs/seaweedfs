@@ -25,7 +25,7 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
 
     let mut store = Store::new(NeedleMapKind::InMemory);
     store
-        .add_location(dir, dir, 10, DiskType::HardDrive)
+        .add_location(dir, dir, 10, DiskType::HardDrive, seaweed_volume::config::MinFreeSpace::Percent(1.0))
         .expect("failed to add location");
     store
         .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
@@ -38,6 +38,21 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
         is_stopping: RwLock::new(false),
         maintenance: std::sync::atomic::AtomicBool::new(false),
         state_version: std::sync::atomic::AtomicU32::new(0),
+        concurrent_upload_limit: 0,
+        concurrent_download_limit: 0,
+        inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+        inflight_download_data_timeout: std::time::Duration::from_secs(60),
+        inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+        inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+        upload_notify: tokio::sync::Notify::new(),
+        download_notify: tokio::sync::Notify::new(),
+        data_center: String::new(),
+        rack: String::new(),
+        file_size_limit_bytes: 0,
+        is_heartbeating: std::sync::atomic::AtomicBool::new(false),
+        has_master: false,
+        pre_stop_seconds: 0,
+        volume_state_notify: tokio::sync::Notify::new(),
     });
     (state, tmp)
 }

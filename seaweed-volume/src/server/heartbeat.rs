@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
@@ -41,6 +42,7 @@ pub async fn run_heartbeat_with_state(
     loop {
         for master_addr in &config.master_addresses {
             if shutdown_rx.try_recv().is_ok() {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
                 info!("Heartbeat shutting down");
                 return;
             }
@@ -54,6 +56,7 @@ pub async fn run_heartbeat_with_state(
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    state.is_heartbeating.store(false, Ordering::Relaxed);
                     warn!("Heartbeat to {} error: {}", grpc_addr, e);
                 }
             }
@@ -62,6 +65,7 @@ pub async fn run_heartbeat_with_state(
         tokio::select! {
             _ = tokio::time::sleep(pulse) => {}
             _ = shutdown_rx.recv() => {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
                 info!("Heartbeat shutting down");
                 return;
             }
@@ -109,6 +113,7 @@ async fn do_heartbeat(
     let mut response_stream = client.send_heartbeat(stream).await?.into_inner();
 
     info!("Heartbeat stream established with {}", grpc_addr);
+    state.is_heartbeating.store(true, Ordering::Relaxed);
 
     let mut volume_tick = tokio::time::interval(pulse);
     let mut ec_tick = tokio::time::interval(pulse * 17);
@@ -151,7 +156,14 @@ async fn do_heartbeat(
                 }
             }
 
+            _ = state.volume_state_notify.notified() => {
+                if tx.send(collect_heartbeat(config, state)).await.is_err() {
+                    return Ok(None);
+                }
+            }
+
             _ = shutdown_rx.recv() => {
+                state.is_heartbeating.store(false, Ordering::Relaxed);
                 let empty = master_pb::Heartbeat {
                     ip: config.ip.clone(),
                     port: config.port as u32,

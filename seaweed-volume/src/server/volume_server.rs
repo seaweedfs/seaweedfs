@@ -50,6 +50,16 @@ pub struct VolumeServerState {
     pub data_center: String,
     /// Rack name from config.
     pub rack: String,
+    /// File size limit in bytes (0 = no limit).
+    pub file_size_limit_bytes: i64,
+    /// Whether the server is connected to master (heartbeat active).
+    pub is_heartbeating: AtomicBool,
+    /// Whether master addresses are configured.
+    pub has_master: bool,
+    /// Seconds to wait before shutting down servers (graceful drain).
+    pub pre_stop_seconds: u32,
+    /// Notify heartbeat to send an immediate update when volume state changes.
+    pub volume_state_notify: tokio::sync::Notify,
 }
 
 impl VolumeServerState {
@@ -77,6 +87,11 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 
     if let Some(rid) = request_id {
         headers.insert("x-amz-request-id", rid);
+    } else {
+        let id = uuid::Uuid::new_v4().to_string();
+        if let Ok(val) = HeaderValue::from_str(&id) {
+            headers.insert("x-amz-request-id", val);
+        }
     }
 
     if origin.is_some() {
@@ -153,6 +168,9 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
         .route("/metrics", get(handlers::metrics_handler))
+        .route("/stats/counter", get(handlers::stats_counter_handler))
+        .route("/stats/memory", get(handlers::stats_memory_handler))
+        .route("/stats/disk", get(handlers::stats_disk_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route("/seaweedfsstatic/*path", get(handlers::static_asset_handler))
         .route("/ui/index.html", get(handlers::ui_handler))

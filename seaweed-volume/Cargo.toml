@@ -18,7 +18,7 @@ prost-types = "0.13"
 axum = { version = "0.7", features = ["multipart"] }
 http-body = "1"
 hyper = { version = "1", features = ["full"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper-util = { version = "0.1", features = ["tokio", "service", "server-auto", "http1", "http2"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
@@ -91,6 +91,7 @@ futures = "0.3"
 
 # Disk space checking
 sysinfo = "0.31"
+libc = "0.2"
 
 # AWS S3 SDK (for remote storage backends)
 aws-config = { version = "1", features = ["behavior-version-latest"] }

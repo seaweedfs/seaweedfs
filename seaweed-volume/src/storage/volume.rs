@@ -68,6 +68,15 @@ pub enum VolumeError {
 }
 
 // ============================================================================
+// VolumeInfo (.vif persistence)
+// ============================================================================
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VolumeInfo {
+    read_only: bool,
+}
+
+// ============================================================================
 // Volume
 // ============================================================================
 
@@ -93,6 +102,9 @@ pub struct Volume {
     last_compact_revision: u16,
 
     is_compacting: bool,
+
+    /// Compaction speed limit in bytes per second (0 = unlimited).
+    pub compaction_byte_per_second: i64,
 
     _last_io_error: Option<io::Error>,
 }
@@ -146,6 +158,7 @@ impl Volume {
             last_compact_index_offset: 0,
             last_compact_revision: 0,
             is_compacting: false,
+            compaction_byte_per_second: 0,
             _last_io_error: None,
         };
 
@@ -250,6 +263,8 @@ impl Volume {
         if also_load_index {
             self.load_index()?;
         }
+
+        self.load_vif();
 
         Ok(())
     }
@@ -685,6 +700,50 @@ impl Volume {
         Ok(needles)
     }
 
+    /// Scrub the volume by reading and verifying all needles.
+    /// Returns (files_checked, broken_needles) tuple.
+    /// Each needle is read from disk and its CRC checksum is verified.
+    pub fn scrub(&self) -> Result<(u64, Vec<String>), VolumeError> {
+        let _dat_file = self.dat_file.as_ref().ok_or(VolumeError::NotFound)?;
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+
+        let dat_size = self.dat_file_size().map_err(|e| VolumeError::Io(e))?;
+
+        let mut files_checked: u64 = 0;
+        let mut broken = Vec::new();
+
+        for (needle_id, nv) in nm.iter() {
+            if nv.offset.is_zero() || nv.size.is_deleted() {
+                continue;
+            }
+
+            let offset = nv.offset.to_actual_offset();
+            if offset < 0 || offset as u64 >= dat_size {
+                broken.push(format!(
+                    "needle {} offset {} out of range (dat_size={})",
+                    needle_id.0, offset, dat_size
+                ));
+                continue;
+            }
+
+            // Read and verify the needle (read_needle_data_at checks CRC via read_bytes/read_tail)
+            let mut n = Needle {
+                id: *needle_id,
+                ..Needle::default()
+            };
+            match self.read_needle_data_at(&mut n, offset, nv.size) {
+                Ok(_) => {}
+                Err(e) => {
+                    broken.push(format!("needle {} error: {}", needle_id.0, e));
+                }
+            }
+
+            files_checked += 1;
+        }
+
+        Ok((files_checked, broken))
+    }
+
     /// Scan raw needle entries from the .dat file starting at `from_offset`.
     /// Returns (needle_header_bytes, needle_body_bytes, append_at_ns) for each needle.
     /// Used by VolumeTailSender to stream raw bytes.
@@ -754,12 +813,53 @@ impl Volume {
     /// Mark this volume as read-only (no writes or deletes).
     pub fn set_read_only(&mut self) {
         self.no_write_or_delete = true;
+        self.save_vif();
     }
 
     /// Mark this volume as writable (allow writes and deletes).
     pub fn set_writable(&mut self) {
         self.no_write_or_delete = false;
         self.no_write_can_delete = false;
+        self.save_vif();
+    }
+
+    /// Path to .vif file.
+    fn vif_path(&self) -> String {
+        format!("{}/{}.vif", self.dir, self.id.0)
+    }
+
+    /// Load volume info from .vif file.
+    fn load_vif(&mut self) {
+        let path = self.vif_path();
+        if let Ok(content) = fs::read_to_string(&path) {
+            if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
+                if info.read_only {
+                    self.no_write_or_delete = true;
+                }
+            }
+        }
+    }
+
+    /// Save volume info to .vif file.
+    fn save_vif(&self) {
+        let info = VolumeInfo {
+            read_only: self.no_write_or_delete,
+        };
+        if let Ok(content) = serde_json::to_string(&info) {
+            let _ = fs::write(&self.vif_path(), content);
+        }
+    }
+
+    /// Throttle IO during compaction to avoid saturating disk.
+    pub fn maybe_throttle_compaction(&self, bytes_written: u64) {
+        if self.compaction_byte_per_second <= 0 || !self.is_compacting {
+            return;
+        }
+        // Simple throttle: sleep based on bytes written vs allowed rate
+        let sleep_us = (bytes_written as f64 / self.compaction_byte_per_second as f64 * 1_000_000.0) as u64;
+        if sleep_us > 0 {
+            std::thread::sleep(std::time::Duration::from_micros(sleep_us));
+        }
     }
 
     /// Change the replication placement and rewrite the super block.
