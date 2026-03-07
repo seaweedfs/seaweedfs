@@ -216,6 +216,14 @@ impl Store {
         vol.read_needle_opt(n, read_deleted)
     }
 
+    /// Read needle metadata and return streaming info for large file reads.
+    pub fn read_volume_needle_stream_info(
+        &self, vid: VolumeId, n: &mut Needle, read_deleted: bool,
+    ) -> Result<crate::storage::volume::NeedleStreamInfo, VolumeError> {
+        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
+        vol.read_needle_stream_info(n, read_deleted)
+    }
+
     /// Write a needle to a volume.
     pub fn write_volume_needle(
         &mut self, vid: VolumeId, n: &mut Needle,

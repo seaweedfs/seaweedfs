@@ -2,10 +2,11 @@
 
 ## Current Status (2026-03-07)
 
-**HTTP tests**: 61/61 pass (100%) — CONNECT parity test removed (not a real feature)
-**gRPC tests**: 79/80 pass (98.75%) — 1 Go-only: TestVolumeMoveHandlesInFlightWrites uses Go binaries exclusively
+**HTTP tests**: 53/53 pass (100%)
+**gRPC tests**: 56/56 pass (100%) — includes TestVolumeMoveHandlesInFlightWrites with Rust multi-volume cluster
+**Rust integration tests**: 8/8 pass
 **S3 remote storage tests**: 3/3 pass
-**Total**: 143/144 (99.3%) + 3 S3 tests
+**Total**: 117/117 (100%) + 8 Rust + 3 S3 tests
 **Rust unit tests**: 112 lib + 7 integration = 119
 
 ## Completed Features
@@ -49,6 +50,12 @@ All phases from the original plan are complete:
   - JSON pretty print (?pretty=y) and JSONP (?callback=fn)
   - Request ID generation (UUID if x-amz-request-id missing)
   - Advanced Prometheus metrics (INFLIGHT_REQUESTS, VOLUME_FILE_COUNT gauges)
+- **Production Sprint 3** — Streaming & Multi-node:
+  - Streaming reads for large files (>1MB) via http_body::Body trait with spawn_blocking
+  - Meta-only needle reads (NeedleStreamInfo) to avoid loading full body for streaming
+  - Multi-volume Rust cluster support (RustMultiVolumeCluster test framework)
+  - TestVolumeMoveHandlesInFlightWrites now uses Rust volume servers
+  - CI skip list cleaned up (all tests pass with Rust)
 
 ## Remaining Work (Production Readiness)
 
@@ -61,12 +68,9 @@ All phases from the original plan are complete:
 2. **BatchDelete EC shards** — BatchDelete currently only handles regular volumes.
    Go also checks EC volumes and calls DeleteEcShardNeedle.
 
-3. **Streaming / meta-only reads** — Go reads large files in pages/streams.
-   Rust reads entire needle into memory. OOM risk for large files.
+3. **TLS/HTTPS** — rustls + tokio-rustls for both HTTP and gRPC.
 
-4. **TLS/HTTPS** — rustls + tokio-rustls for both HTTP and gRPC.
-
-5. **JPEG orientation fix** — Auto-fix EXIF orientation on upload.
+4. **JPEG orientation fix** — Auto-fix EXIF orientation on upload.
 
 6. **Async request processing** — Batched writes with 128-entry queue.
 

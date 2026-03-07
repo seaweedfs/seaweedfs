@@ -98,6 +98,89 @@ impl Needle {
 
     // ---- Body reading (Version 2/3) ----
 
+    /// Read version 2/3 body metadata only — skips copying the data payload.
+    /// Sets `data_size` and all metadata fields but leaves `data` empty.
+    pub fn read_body_v2_meta_only(&mut self, bytes: &[u8]) -> Result<(), NeedleError> {
+        let len_bytes = bytes.len();
+        let mut index = 0;
+
+        // DataSize (4 bytes)
+        if index + 4 > len_bytes {
+            return Err(NeedleError::IndexOutOfRange(1));
+        }
+        self.data_size = u32::from_be_bytes([bytes[index], bytes[index + 1], bytes[index + 2], bytes[index + 3]]);
+        index += 4;
+
+        // Skip data bytes (do NOT copy them)
+        if index + self.data_size as usize > len_bytes {
+            return Err(NeedleError::IndexOutOfRange(1));
+        }
+        index += self.data_size as usize;
+
+        // Read non-data metadata
+        self.read_body_v2_non_data(&bytes[index..])?;
+        Ok(())
+    }
+
+    /// Read full needle from bytes but skip copying the data payload.
+    /// Sets all metadata fields, checksum, etc. but leaves `data` empty.
+    pub fn read_bytes_meta_only(&mut self, bytes: &[u8], offset: i64, expected_size: Size, version: Version) -> Result<(), NeedleError> {
+        self.read_header(bytes);
+
+        if self.size != expected_size {
+            return Err(NeedleError::SizeMismatch {
+                offset,
+                id: self.id,
+                found: self.size,
+                expected: expected_size,
+            });
+        }
+
+        let body_start = NEEDLE_HEADER_SIZE;
+        let body_end = body_start + self.size.0 as usize;
+
+        if version == VERSION_1 {
+            // V1 has no metadata — data is the entire body
+            self.data_size = self.size.0 as u32;
+        } else {
+            self.read_body_v2_meta_only(&bytes[body_start..body_end])?;
+        }
+
+        // Read tail but skip CRC validation (no data to check against)
+        self.read_tail_meta_only(&bytes[body_end..], version)?;
+        Ok(())
+    }
+
+    /// Read tail without CRC validation (used when data was not read).
+    fn read_tail_meta_only(&mut self, tail_bytes: &[u8], version: Version) -> Result<(), NeedleError> {
+        if tail_bytes.len() < NEEDLE_CHECKSUM_SIZE {
+            return Err(NeedleError::TailTooShort);
+        }
+
+        self.checksum = CRC(u32::from_be_bytes([
+            tail_bytes[0], tail_bytes[1], tail_bytes[2], tail_bytes[3],
+        ]));
+
+        if version == VERSION_3 {
+            let ts_offset = NEEDLE_CHECKSUM_SIZE;
+            if tail_bytes.len() < ts_offset + TIMESTAMP_SIZE {
+                return Err(NeedleError::TailTooShort);
+            }
+            self.append_at_ns = u64::from_be_bytes([
+                tail_bytes[ts_offset],
+                tail_bytes[ts_offset + 1],
+                tail_bytes[ts_offset + 2],
+                tail_bytes[ts_offset + 3],
+                tail_bytes[ts_offset + 4],
+                tail_bytes[ts_offset + 5],
+                tail_bytes[ts_offset + 6],
+                tail_bytes[ts_offset + 7],
+            ]);
+        }
+
+        Ok(())
+    }
+
     /// Read the version 2/3 body data from bytes (size bytes starting after header).
     pub fn read_body_v2(&mut self, bytes: &[u8]) -> Result<(), NeedleError> {
         let len_bytes = bytes.len();

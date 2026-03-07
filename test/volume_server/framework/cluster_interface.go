@@ -32,3 +32,28 @@ func StartVolumeCluster(t testing.TB, profile matrix.Profile) TestCluster {
 	}
 	return StartSingleVolumeCluster(t, profile)
 }
+
+// MultiCluster is the common interface for multi-volume cluster harnesses.
+// Both *MultiVolumeCluster (Go) and *RustMultiVolumeCluster (Rust) satisfy it.
+type MultiCluster interface {
+	MasterAddress() string
+	MasterURL() string
+	BaseDir() string
+	VolumeAdminAddress(index int) string
+	VolumeAdminURL(index int) string
+	VolumePublicAddress(index int) string
+	VolumePublicURL(index int) string
+	VolumeGRPCAddress(index int) string
+	Stop()
+}
+
+// StartMultiVolumeClusterAuto starts a multi-volume cluster using either Go or
+// Rust volume servers, depending on the VOLUME_SERVER_IMPL environment variable.
+// Set VOLUME_SERVER_IMPL=rust to use Rust volume servers.
+func StartMultiVolumeClusterAuto(t testing.TB, profile matrix.Profile, count int) MultiCluster {
+	t.Helper()
+	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+		return StartRustMultiVolumeCluster(t, profile, count)
+	}
+	return StartMultiVolumeCluster(t, profile, count)
+}

@@ -77,6 +77,21 @@ struct VolumeInfo {
 }
 
 // ============================================================================
+// Streaming read support
+// ============================================================================
+
+/// Information needed to stream needle data directly from the dat file
+/// without loading the entire payload into memory.
+pub struct NeedleStreamInfo {
+    /// Cloned file handle for the dat file.
+    pub dat_file: File,
+    /// Absolute byte offset within the dat file where needle data starts.
+    pub data_file_offset: u64,
+    /// Size of the data payload in bytes.
+    pub data_size: u32,
+}
+
+// ============================================================================
 // Volume
 // ============================================================================
 
@@ -472,6 +487,87 @@ impl Volume {
         }
 
         Ok(buf)
+    }
+
+    /// Read needle metadata (header + flags/name/mime/etc) without loading the data payload,
+    /// and return a `NeedleStreamInfo` that can be used to stream data directly from the dat file.
+    ///
+    /// This is used for large needles to avoid loading the entire payload into memory.
+    pub fn read_needle_stream_info(&self, n: &mut Needle, read_deleted: bool) -> Result<NeedleStreamInfo, VolumeError> {
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
+
+        if nv.offset.is_zero() {
+            return Err(VolumeError::NotFound);
+        }
+
+        let mut read_size = nv.size;
+        if read_size.is_deleted() {
+            if read_deleted && !read_size.is_tombstone() {
+                read_size = Size(-read_size.0);
+            } else {
+                return Err(VolumeError::Deleted);
+            }
+        }
+        if read_size.0 == 0 {
+            return Err(VolumeError::NotFound);
+        }
+
+        let dat_file = self.dat_file.as_ref().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+
+        let offset = nv.offset.to_actual_offset();
+        let version = self.version();
+        let actual_size = get_actual_size(read_size, version);
+
+        // Read the full needle bytes (including data) for metadata parsing.
+        // We use read_bytes_meta_only which skips copying the data payload.
+        let mut buf = vec![0u8; actual_size as usize];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            dat_file.read_exact_at(&mut buf, offset as u64)?;
+        }
+        #[cfg(windows)]
+        {
+            read_exact_at(dat_file, &mut buf, offset as u64)?;
+        }
+
+        n.read_bytes_meta_only(&mut buf, offset, read_size, version)?;
+
+        // TTL expiry check
+        if n.has_ttl() {
+            if let Some(ref ttl) = n.ttl {
+                let ttl_minutes = ttl.minutes();
+                if ttl_minutes > 0 && n.has_last_modified_date() && n.append_at_ns > 0 {
+                    let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as u64;
+                    if now_ns >= expire_at_ns {
+                        return Err(VolumeError::NotFound);
+                    }
+                }
+            }
+        }
+
+        // For V1, data starts right after the header
+        // For V2/V3, data starts at header + 4 (DataSize field)
+        let data_file_offset = if version == VERSION_1 {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64
+        } else {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
+        };
+
+        let cloned_file = dat_file.try_clone().map_err(VolumeError::Io)?;
+
+        Ok(NeedleStreamInfo {
+            dat_file: cloned_file,
+            data_file_offset,
+            data_size: n.data_size,
+        })
     }
 
     // ---- Write ----

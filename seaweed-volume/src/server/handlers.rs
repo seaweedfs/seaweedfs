@@ -4,6 +4,7 @@
 //! Matches Go's volume_server_handlers_read.go, volume_server_handlers_write.go,
 //! volume_server_handlers_admin.go.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -63,6 +64,103 @@ impl Drop for TrackedBody {
     fn drop(&mut self) {
         self.state.inflight_download_bytes.fetch_sub(self.bytes, Ordering::Relaxed);
         self.state.download_notify.notify_waiters();
+    }
+}
+
+// ============================================================================
+// Streaming Body for Large Files
+// ============================================================================
+
+/// Threshold in bytes above which we stream needle data instead of buffering.
+const STREAMING_THRESHOLD: u32 = 1024 * 1024; // 1 MB
+
+/// Chunk size for streaming reads from the dat file.
+const STREAMING_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
+
+/// A body that streams needle data from the dat file in chunks using pread,
+/// avoiding loading the entire payload into memory at once.
+struct StreamingBody {
+    dat_file: std::fs::File,
+    data_offset: u64,
+    data_size: u32,
+    pos: usize,
+    /// Pending result from spawn_blocking, polled to completion.
+    pending: Option<tokio::task::JoinHandle<Result<bytes::Bytes, std::io::Error>>>,
+    /// For download throttling — released on drop.
+    state: Option<Arc<VolumeServerState>>,
+    tracked_bytes: i64,
+}
+
+impl http_body::Body for StreamingBody {
+    type Data = bytes::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        loop {
+            // If we have a pending read, poll it
+            if let Some(ref mut handle) = self.pending {
+                match std::pin::Pin::new(handle).poll(cx) {
+                    std::task::Poll::Pending => return std::task::Poll::Pending,
+                    std::task::Poll::Ready(result) => {
+                        self.pending = None;
+                        match result {
+                            Ok(Ok(chunk)) => {
+                                let len = chunk.len();
+                                self.pos += len;
+                                return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(chunk))));
+                            }
+                            Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
+                            Err(e) => return std::task::Poll::Ready(Some(Err(
+                                std::io::Error::new(std::io::ErrorKind::Other, e),
+                            ))),
+                        }
+                    }
+                }
+            }
+
+            let total = self.data_size as usize;
+            if self.pos >= total {
+                return std::task::Poll::Ready(None);
+            }
+
+            let chunk_len = std::cmp::min(STREAMING_CHUNK_SIZE, total - self.pos);
+            let file_offset = self.data_offset + self.pos as u64;
+
+            let file_clone = match self.dat_file.try_clone() {
+                Ok(f) => f,
+                Err(e) => return std::task::Poll::Ready(Some(Err(e))),
+            };
+
+            let handle = tokio::task::spawn_blocking(move || {
+                let mut buf = vec![0u8; chunk_len];
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::FileExt;
+                    file_clone.read_exact_at(&mut buf, file_offset)?;
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::FileExt;
+                    file_clone.seek_read(&mut buf, file_offset)?;
+                }
+                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(buf))
+            });
+
+            self.pending = Some(handle);
+            // Loop back to poll the newly created future
+        }
+    }
+}
+
+impl Drop for StreamingBody {
+    fn drop(&mut self) {
+        if let Some(ref st) = self.state {
+            st.inflight_download_bytes.fetch_sub(self.tracked_bytes, Ordering::Relaxed);
+            st.download_notify.notify_waiters();
+        }
     }
 }
 
@@ -246,7 +344,7 @@ async fn get_or_head_handler_inner(
         None
     };
 
-    // Read needle
+    // Read needle — first do a meta-only read to check if streaming is appropriate
     let mut n = Needle {
         id: needle_id,
         cookie,
@@ -254,14 +352,17 @@ async fn get_or_head_handler_inner(
     };
 
     let read_deleted = query.read_deleted.as_deref() == Some("true");
+    let has_range = headers.contains_key(header::RANGE);
+    let ext = extract_extension_from_path(&path);
+    let is_image = is_image_ext(&ext);
+    let has_image_ops = query.width.is_some() || query.height.is_some()
+        || query.crop_x1.is_some() || query.crop_y1.is_some();
 
+    // Try meta-only read first for potential streaming
     let store = state.store.read().unwrap();
-    match store.read_volume_needle_opt(vid, &mut n, read_deleted) {
-        Ok(count) => {
-            if count <= 0 {
-                return StatusCode::NOT_FOUND.into_response();
-            }
-        }
+    let stream_info = store.read_volume_needle_stream_info(vid, &mut n, read_deleted);
+    let stream_info = match stream_info {
+        Ok(info) => Some(info),
         Err(crate::storage::volume::VolumeError::NotFound) => {
             return StatusCode::NOT_FOUND.into_response();
         }
@@ -271,15 +372,56 @@ async fn get_or_head_handler_inner(
         Err(e) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {}", e)).into_response();
         }
-    }
+    };
+    drop(store);
 
     // Validate cookie
     if n.cookie != cookie {
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // Chunk manifest expansion
+    // Determine if we can stream (large, uncompressed, not manifest, not image needing ops, no range)
     let bypass_cm = query.cm.as_deref() == Some("false");
+    let can_stream = stream_info.is_some()
+        && n.data_size > STREAMING_THRESHOLD
+        && !n.is_compressed()
+        && !(n.is_chunk_manifest() && !bypass_cm)
+        && !(is_image && has_image_ops)
+        && !has_range
+        && method != Method::HEAD;
+
+    // For chunk manifest or any non-streaming path, we need the full data.
+    // If we can't stream, do a full read now.
+    if !can_stream {
+        // Re-read with full data
+        let mut n_full = Needle {
+            id: needle_id,
+            cookie,
+            ..Needle::default()
+        };
+        let store = state.store.read().unwrap();
+        match store.read_volume_needle_opt(vid, &mut n_full, read_deleted) {
+            Ok(count) => {
+                if count <= 0 {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+            }
+            Err(crate::storage::volume::VolumeError::NotFound) => {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            Err(crate::storage::volume::VolumeError::Deleted) => {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {}", e)).into_response();
+            }
+        }
+        drop(store);
+        // Use the full needle from here (it has the same metadata + data)
+        n = n_full;
+    }
+
+    // Chunk manifest expansion (needs full data)
     if n.is_chunk_manifest() && !bypass_cm {
         if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method) {
             return resp;
@@ -374,6 +516,47 @@ async fn get_or_head_handler_inner(
         response_headers.insert(header::CONTENT_DISPOSITION, disposition.parse().unwrap());
     }
 
+    // ---- Streaming path: large uncompressed files ----
+    if can_stream {
+        if let Some(info) = stream_info {
+            response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+            response_headers.insert(
+                header::CONTENT_LENGTH,
+                info.data_size.to_string().parse().unwrap(),
+            );
+
+            metrics::REQUEST_DURATION
+                .with_label_values(&["read"])
+                .observe(start.elapsed().as_secs_f64());
+
+            let tracked_bytes = info.data_size as i64;
+            let tracking_state = if download_guard.is_some() {
+                state.inflight_download_bytes.fetch_add(tracked_bytes, Ordering::Relaxed);
+                Some(state.clone())
+            } else {
+                None
+            };
+
+            let streaming = StreamingBody {
+                dat_file: info.dat_file,
+                data_offset: info.data_file_offset,
+                data_size: info.data_size,
+                pos: 0,
+                pending: None,
+                state: tracking_state,
+                tracked_bytes,
+            };
+
+            let body = Body::new(streaming);
+            let mut resp = Response::new(body);
+            *resp.status_mut() = StatusCode::OK;
+            *resp.headers_mut() = response_headers;
+            return resp;
+        }
+    }
+
+    // ---- Buffered path: small files, compressed, images, range requests ----
+
     // Handle compressed data: if needle is compressed, either pass through or decompress
     let is_compressed = n.is_compressed();
     let mut data = n.data;
@@ -396,8 +579,7 @@ async fn get_or_head_handler_inner(
     }
 
     // Image crop and resize (only for supported image formats)
-    let ext = extract_extension_from_path(&path);
-    if is_image_ext(&ext) {
+    if is_image {
         data = maybe_crop_image(&data, &ext, &query);
         data = maybe_resize_image(&data, &ext, &query);
     }
