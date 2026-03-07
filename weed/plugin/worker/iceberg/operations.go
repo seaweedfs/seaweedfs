@@ -483,9 +483,10 @@ func (h *Handler) commitWithRetry(
 			return fmt.Errorf("load metadata (attempt %d): %w", attempt, err)
 		}
 
-		// Build new metadata
-		location := meta.Location()
-		builder, err := table.MetadataBuilderFromBase(meta, location)
+		// Build new metadata — pass the current metadata file path so the
+		// metadata log correctly records where the previous version lives.
+		currentMetaFilePath := path.Join("metadata", metaFileName)
+		builder, err := table.MetadataBuilderFromBase(meta, currentMetaFilePath)
 		if err != nil {
 			return fmt.Errorf("create metadata builder (attempt %d): %w", attempt, err)
 		}
