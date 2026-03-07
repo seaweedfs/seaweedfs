@@ -112,9 +112,13 @@ func parseOperations(ops string) ([]string, error) {
 }
 
 func extractMetadataVersion(metadataFileName string) int {
-	// Parse "v3.metadata.json" → 3
+	// Parse "v3.metadata.json" or "v3-{nonce}.metadata.json" → 3
 	name := strings.TrimPrefix(metadataFileName, "v")
 	name = strings.TrimSuffix(name, ".metadata.json")
+	// Strip any nonce suffix (e.g. "3-1709766000" → "3")
+	if dashIdx := strings.Index(name, "-"); dashIdx > 0 {
+		name = name[:dashIdx]
+	}
 	version, _ := strconv.Atoi(name)
 	return version
 }

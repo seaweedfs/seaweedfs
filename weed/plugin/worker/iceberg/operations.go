@@ -561,10 +561,11 @@ func (h *Handler) commitWithRetry(
 			return fmt.Errorf("marshal metadata (attempt %d): %w", attempt, err)
 		}
 
-		// Determine new metadata file name
+		// Determine new metadata file name. Include a timestamp suffix so
+		// concurrent writers stage to distinct files instead of clobbering.
 		currentVersion := extractMetadataVersion(metaFileName)
 		newVersion := currentVersion + 1
-		newMetadataFileName := fmt.Sprintf("v%d.metadata.json", newVersion)
+		newMetadataFileName := fmt.Sprintf("v%d-%d.metadata.json", newVersion, time.Now().UnixNano())
 
 		// Save new metadata file
 		metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")

@@ -118,8 +118,9 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 
 	// Parse internal metadata to extract FullMetadata
 	var internalMeta struct {
-		MetadataVersion int `json:"metadataVersion"`
-		Metadata        *struct {
+		MetadataVersion  int    `json:"metadataVersion"`
+		MetadataLocation string `json:"metadataLocation,omitempty"`
+		Metadata         *struct {
 			FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
 		} `json:"metadata,omitempty"`
 	}
@@ -135,7 +136,12 @@ func loadCurrentMetadata(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return nil, "", fmt.Errorf("parse iceberg metadata: %w", err)
 	}
 
-	metadataFileName := fmt.Sprintf("v%d.metadata.json", internalMeta.MetadataVersion)
+	// Use metadataLocation from xattr if available (includes nonce suffix),
+	// otherwise fall back to the canonical name derived from metadataVersion.
+	metadataFileName := path.Base(internalMeta.MetadataLocation)
+	if metadataFileName == "" || metadataFileName == "." {
+		metadataFileName = fmt.Sprintf("v%d.metadata.json", internalMeta.MetadataVersion)
+	}
 	return meta, metadataFileName, nil
 }
 
