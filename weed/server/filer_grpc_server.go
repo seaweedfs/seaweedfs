@@ -95,16 +95,12 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	}
 
-	// Send a snapshot-only response for empty listings so callers like
-	// ReadDirAllEntriesWithSnapshot / CompleteDirectoryBuild retain a real
-	// snapshot token. All raw stream consumers have nil guards for Entry.
-	if !sentSnapshot {
-		if err = stream.Send(&filer_pb.ListEntriesResponse{
-			SnapshotTsNs: snapshotTsNs,
-		}); err != nil {
-			return err
-		}
-	}
+	// For empty directories we intentionally do NOT send a snapshot-only
+	// response (Entry == nil). Many consumers (Java FilerClient, S3 listing,
+	// etc.) treat any received response as an entry. The Go client-side
+	// DoSeaweedListWithSnapshot already initialises actualSnapshotTsNs from
+	// the caller-requested value, so snapshot consistency is preserved
+	// without a server-side send.
 
 	return nil
 }
