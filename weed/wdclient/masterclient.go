@@ -67,7 +67,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 				VolumeOrFileIds: volumeIds,
 			})
 			if err != nil {
-				return fmt.Errorf("master lookup failed: %v", err)
+				return err
 			}
 
 			for _, vidLoc := range resp.VolumeIdLocations {
@@ -111,13 +111,17 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 		cancel()
 
 		if err != nil {
-			// Retry on Unavailable (master warming up) with backoff
-			if strings.Contains(err.Error(), "Unavailable") && waitTime <= maxWaitTime {
-				glog.V(0).Infof("master unavailable for lookup, retrying in %v: %v", waitTime, err)
+			// Retry on Unavailable (master warming up) with backoff, until ctx is done
+			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+				sleepTime := waitTime
+				if sleepTime > maxWaitTime {
+					sleepTime = maxWaitTime
+				}
+				glog.V(0).Infof("master unavailable for lookup, retrying in %v: %v", sleepTime, err)
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
-				case <-time.After(waitTime):
+				case <-time.After(sleepTime):
 				}
 				waitTime += waitTime / 2
 				continue
