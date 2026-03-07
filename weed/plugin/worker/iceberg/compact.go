@@ -106,12 +106,21 @@ func (h *Handler) compactDataFiles(
 		dir, fileName string
 	}
 	var writtenArtifacts []artifact
+	committed := false
 
-	cleanupArtifacts := func() {
-		for _, a := range writtenArtifacts {
-			_ = deleteFilerFile(ctx, filerClient, a.dir, a.fileName)
+	defer func() {
+		if committed || len(writtenArtifacts) == 0 {
+			return
 		}
-	}
+		// Use a detached context so cleanup completes even if ctx was canceled.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, a := range writtenArtifacts {
+			if err := deleteFilerFile(cleanupCtx, filerClient, a.dir, a.fileName); err != nil {
+				glog.Warningf("iceberg compact: failed to clean up artifact %s/%s: %v", a.dir, a.fileName, err)
+			}
+		}
+	}()
 
 	for binIdx, bin := range bins {
 		select {
@@ -225,7 +234,6 @@ func (h *Handler) compactDataFiles(
 	}
 
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
-		cleanupArtifacts()
 		return "", fmt.Errorf("save compact manifest: %w", err)
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestFileName})
@@ -244,13 +252,11 @@ func (h *Handler) compactDataFiles(
 	seqNum := currentSnap.SequenceNumber + 1
 	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapID, &snapshotID, &seqNum, 0, allManifests)
 	if err != nil {
-		cleanupArtifacts()
 		return "", fmt.Errorf("write compact manifest list: %w", err)
 	}
 
 	manifestListFileName := fmt.Sprintf("snap-%d.avro", newSnapID)
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
-		cleanupArtifacts()
 		return "", fmt.Errorf("save compact manifest list: %w", err)
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
@@ -290,10 +296,10 @@ func (h *Handler) compactDataFiles(
 		return builder.SetSnapshotRef(table.MainBranch, newSnapID, table.BranchRef)
 	})
 	if err != nil {
-		cleanupArtifacts()
 		return "", fmt.Errorf("commit compaction: %w", err)
 	}
 
+	committed = true
 	return fmt.Sprintf("compacted %d files into %d (across %d bins)", totalMerged, len(newManifestEntries), len(bins)), nil
 }
 
