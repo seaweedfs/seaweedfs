@@ -333,8 +333,21 @@ func (h *Handler) rewriteManifests(
 		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinInputFiles), nil
 	}
 
-	// Collect all entries from all data manifests
-	var allEntries []iceberg.ManifestEntry
+	// Collect all entries from data manifests, grouped by partition spec ID
+	// so we write one merged manifest per spec (required for spec-evolved tables).
+	type specEntries struct {
+		specID  int32
+		spec    iceberg.PartitionSpec
+		entries []iceberg.ManifestEntry
+	}
+	specMap := make(map[int32]*specEntries)
+
+	// Build a lookup from spec ID to PartitionSpec
+	specByID := make(map[int]iceberg.PartitionSpec)
+	for _, ps := range meta.PartitionSpecs() {
+		specByID[ps.ID()] = ps
+	}
+
 	for _, mf := range manifests {
 		if mf.ManifestContent() != iceberg.ManifestContentData {
 			continue
@@ -347,46 +360,58 @@ func (h *Handler) rewriteManifests(
 		if err != nil {
 			return "", fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
-		allEntries = append(allEntries, entries...)
+
+		sid := mf.PartitionSpecID()
+		se, ok := specMap[sid]
+		if !ok {
+			ps, found := specByID[int(sid)]
+			if !found {
+				return "", fmt.Errorf("partition spec %d not found in table metadata", sid)
+			}
+			se = &specEntries{specID: sid, spec: ps}
+			specMap[sid] = se
+		}
+		se.entries = append(se.entries, entries...)
 	}
 
-	if len(allEntries) == 0 {
+	if len(specMap) == 0 {
 		return "no data entries to rewrite", nil
 	}
 
-	// Write a single merged manifest
-	spec := meta.PartitionSpec()
 	schema := meta.CurrentSchema()
 	version := meta.Version()
 	snapshotID := currentSnap.SnapshotID
-
-	manifestFileName := fmt.Sprintf("merged-%d-%d.avro", snapshotID, time.Now().UnixMilli())
-	manifestPath := path.Join("metadata", manifestFileName)
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 
-	var manifestBuf bytes.Buffer
-	mergedManifest, err := iceberg.WriteManifest(
-		manifestPath,
-		&manifestBuf,
-		version,
-		spec,
-		schema,
-		snapshotID,
-		allEntries,
-	)
-	if err != nil {
-		return "", fmt.Errorf("write merged manifest: %w", err)
-	}
-
-	// Save the merged manifest file to filer
-	if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
-		return "", fmt.Errorf("save merged manifest: %w", err)
-	}
-
-	// Write new manifest list referencing the merged manifest
-	// Also include any delete manifests that were not rewritten
+	// Write one merged manifest per partition spec
 	var newManifests []iceberg.ManifestFile
-	newManifests = append(newManifests, mergedManifest)
+	totalEntries := 0
+	for _, se := range specMap {
+		totalEntries += len(se.entries)
+		manifestFileName := fmt.Sprintf("merged-%d-spec%d-%d.avro", snapshotID, se.specID, time.Now().UnixMilli())
+		manifestPath := path.Join("metadata", manifestFileName)
+
+		var manifestBuf bytes.Buffer
+		mergedManifest, err := iceberg.WriteManifest(
+			manifestPath,
+			&manifestBuf,
+			version,
+			se.spec,
+			schema,
+			snapshotID,
+			se.entries,
+		)
+		if err != nil {
+			return "", fmt.Errorf("write merged manifest for spec %d: %w", se.specID, err)
+		}
+
+		if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
+			return "", fmt.Errorf("save merged manifest for spec %d: %w", se.specID, err)
+		}
+		newManifests = append(newManifests, mergedManifest)
+	}
+
+	// Include any delete manifests that were not rewritten
 	for _, mf := range manifests {
 		if mf.ManifestContent() != iceberg.ManifestContentData {
 			newManifests = append(newManifests, mf)
@@ -448,7 +473,7 @@ func (h *Handler) rewriteManifests(
 		return "", fmt.Errorf("commit manifest rewrite: %w", err)
 	}
 
-	return fmt.Sprintf("rewrote %d manifests into 1 (%d entries)", len(manifests), len(allEntries)), nil
+	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(manifests), len(specMap), totalEntries), nil
 }
 
 // ---------------------------------------------------------------------------
