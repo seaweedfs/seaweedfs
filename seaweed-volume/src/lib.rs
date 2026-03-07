@@ -3,6 +3,7 @@ pub mod storage;
 pub mod security;
 pub mod server;
 pub mod metrics;
+pub mod remote_storage;
 
 /// Generated protobuf modules.
 pub mod pb {

@@ -1806,20 +1806,75 @@ impl VolumeServer for VolumeGrpcService {
             Status::invalid_argument("remote storage configuration is required")
         })?;
 
-        // No remote storage backends are compiled in — fail with the same error
-        // chain as Go: GetRemoteStorage → makeRemoteStorageClient → type not found
-        let remote_type = &remote_conf.r#type;
-        return Err(Status::internal(format!(
-            "get remote client: make remote storage client {}: remote storage type {} not found",
-            remote_conf.name, remote_type,
-        )));
+        // Create remote storage client
+        let client = crate::remote_storage::make_remote_storage_client(remote_conf)
+            .map_err(|e| Status::internal(format!(
+                "get remote client: make remote storage client {}: {}",
+                remote_conf.name, e,
+            )))?;
 
-        // If remote storage were available, the flow would be:
-        // 1. client.read_file(remote_location, offset, size) → data
-        // 2. Build needle: id, cookie, data, checksum, last_modified
-        // 3. store.write_volume_needle(vid, &mut needle)
-        // 4. For each replica: HTTP POST data to replica URL with ?type=replicate
-        // 5. Return FetchAndWriteNeedleResponse { e_tag: needle.etag() }
+        let remote_location = req.remote_location.as_ref().ok_or_else(|| {
+            Status::invalid_argument("remote storage location is required")
+        })?;
+
+        // Read data from remote storage
+        let data = client.read_file(remote_location, req.offset, req.size).await
+            .map_err(|e| Status::internal(format!(
+                "read from remote {:?}: {}", remote_location, e
+            )))?;
+
+        // Build needle and write locally
+        let mut n = Needle {
+            id: NeedleId(req.needle_id),
+            cookie: Cookie(req.cookie),
+            data_size: data.len() as u32,
+            data: data.clone(),
+            ..Needle::default()
+        };
+        n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
+        n.size = crate::storage::types::Size(4 + n.data_size as i32 + 1);
+        n.last_modified = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        n.set_has_last_modified_date();
+
+        let e_tag;
+        {
+            let mut store = self.state.store.write().unwrap();
+            match store.write_volume_needle(vid, &mut n) {
+                Ok(_) => { e_tag = n.etag(); }
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "local write needle {} size {}: {}", req.needle_id, req.size, e
+                    )));
+                }
+            }
+        }
+
+        // Replicate to peers (best-effort, matches Go's concurrent replication)
+        if !req.replicas.is_empty() {
+            let file_id = format!("{},{:x}{:08x}", vid, req.needle_id, req.cookie);
+            let http_client = reqwest::Client::new();
+            for replica in &req.replicas {
+                let url = format!("http://{}/{}?type=replicate", replica.url, file_id);
+                let form = reqwest::multipart::Form::new()
+                    .part("file", reqwest::multipart::Part::bytes(data.clone()));
+                if let Err(e) = http_client.post(&url)
+                    .multipart(form)
+                    .send()
+                    .await
+                {
+                    return Err(Status::internal(format!(
+                        "remote write needle {} size {}: {}", req.needle_id, req.size, e
+                    )));
+                }
+            }
+        }
+
+        Ok(Response::new(volume_server_pb::FetchAndWriteNeedleResponse {
+            e_tag,
+        }))
     }
 
     async fn scrub_volume(

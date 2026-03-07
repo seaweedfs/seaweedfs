@@ -65,7 +65,7 @@ memmap2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
 
 # HTTP client (for proxying, remote fetch)
-reqwest = { version = "0.12", features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart"] }
 
 # Content hashing
 md-5 = "0.10"
@@ -91,6 +91,12 @@ futures = "0.3"
 
 # Disk space checking
 sysinfo = "0.31"
+
+# AWS S3 SDK (for remote storage backends)
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-s3 = "1"
+aws-credential-types = "1"
+aws-types = "1"
 
 [dev-dependencies]
 tempfile = "3"
