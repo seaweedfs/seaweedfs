@@ -258,7 +258,10 @@ async fn get_or_head_handler_inner(
     // Chunk manifest expansion
     let bypass_cm = query.cm.as_deref() == Some("false");
     if n.is_chunk_manifest() && !bypass_cm {
-        return expand_chunk_manifest(&state, &n, &headers, &method);
+        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method) {
+            return resp;
+        }
+        // If manifest expansion fails (invalid JSON etc.), fall through to raw data
     }
 
     // Build ETag
@@ -959,20 +962,20 @@ struct ChunkInfo {
     size: i64,
 }
 
-/// Expand a chunk manifest needle: read each chunk and concatenate.
-fn expand_chunk_manifest(
+/// Try to expand a chunk manifest needle. Returns None if manifest can't be parsed.
+fn try_expand_chunk_manifest(
     state: &Arc<VolumeServerState>,
     n: &Needle,
     _headers: &HeaderMap,
     method: &Method,
-) -> Response {
+) -> Option<Response> {
     let data = if n.is_compressed() {
         use flate2::read::GzDecoder;
         use std::io::Read as _;
         let mut decoder = GzDecoder::new(&n.data[..]);
         let mut decompressed = Vec::new();
         if decoder.read_to_end(&mut decompressed).is_err() {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "failed to decompress manifest").into_response();
+            return None;
         }
         decompressed
     } else {
@@ -981,7 +984,7 @@ fn expand_chunk_manifest(
 
     let manifest: ChunkManifest = match serde_json::from_slice(&data) {
         Ok(m) => m,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk manifest: {}", e)).into_response(),
+        Err(_) => return None,
     };
 
     // Read and concatenate all chunks
@@ -990,7 +993,7 @@ fn expand_chunk_manifest(
     for chunk in &manifest.chunks {
         let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
             Some(p) => p,
-            None => return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response(),
+            None => return Some((StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response()),
         };
         let mut chunk_needle = Needle {
             id: chunk_nid,
@@ -999,7 +1002,7 @@ fn expand_chunk_manifest(
         };
         match store.read_volume_needle(chunk_vid, &mut chunk_needle) {
             Ok(_) => {}
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response(),
+            Err(e) => return Some((StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response()),
         }
         let chunk_data = if chunk_needle.is_compressed() {
             use flate2::read::GzDecoder;
@@ -1034,10 +1037,10 @@ fn expand_chunk_manifest(
 
     if *method == Method::HEAD {
         response_headers.insert(header::CONTENT_LENGTH, result.len().to_string().parse().unwrap());
-        return (StatusCode::OK, response_headers).into_response();
+        return Some((StatusCode::OK, response_headers).into_response());
     }
 
-    (StatusCode::OK, response_headers, result).into_response()
+    Some((StatusCode::OK, response_headers, result).into_response())
 }
 
 // ============================================================================
