@@ -241,14 +241,9 @@ func (h *Handler) compactDataFiles(
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestFileName})
 
-	// Include delete manifests from original manifest list
-	var allManifests []iceberg.ManifestFile
-	allManifests = append(allManifests, newManifest)
-	for _, mf := range manifests {
-		if mf.ManifestContent() != iceberg.ManifestContentData {
-			allManifests = append(allManifests, mf)
-		}
-	}
+	// Build manifest list with only the new manifest (the early abort at the
+	// top of this function guarantees no delete manifests are present).
+	allManifests := []iceberg.ManifestFile{newManifest}
 
 	// Write new manifest list
 	var manifestListBuf bytes.Buffer
