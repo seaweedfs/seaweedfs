@@ -401,7 +401,10 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 									offset := int64(util.BytesToUint64(offsetData))
 
 									// Get the file modification time
-									lastUpdated := time.Unix(offsetResp.Entry.Attributes.Mtime, 0)
+									var lastUpdated time.Time
+									if offsetResp.Entry.Attributes != nil {
+										lastUpdated = time.Unix(offsetResp.Entry.Attributes.Mtime, 0)
+									}
 
 									offsets = append(offsets, ConsumerGroupOffsetInfo{
 										ConsumerGroup: consumerGroup,
