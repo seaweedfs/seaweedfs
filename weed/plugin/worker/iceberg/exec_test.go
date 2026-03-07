@@ -687,7 +687,6 @@ func TestFullExecuteFlow(t *testing.T) {
 	})
 
 	handler := NewHandler(nil)
-	sender := &recordingExecutionSender{}
 
 	// We need to build the request manually since Execute takes gRPC types
 	// but we're connecting directly
@@ -755,7 +754,6 @@ func TestFullExecuteFlow(t *testing.T) {
 		t.Error("orphan.avro should have been deleted")
 	}
 
-	_ = sender // not used in this direct-call approach
 }
 
 func TestDetectWithFakeFiler(t *testing.T) {
