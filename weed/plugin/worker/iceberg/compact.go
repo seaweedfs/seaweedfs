@@ -438,8 +438,11 @@ func mergeParquetFiles(
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
+		readerSchema := reader.Schema()
 		if parquetSchema == nil {
-			parquetSchema = reader.Schema()
+			parquetSchema = readerSchema
+		} else if !schemasEqual(parquetSchema, readerSchema) {
+			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 		sources = append(sources, sourceFile{reader: reader, data: data})
 	}
@@ -480,6 +483,17 @@ func mergeParquetFiles(
 	}
 
 	return outputBuf.Bytes(), totalRows, nil
+}
+
+// schemasEqual compares two parquet schemas by their column structure.
+func schemasEqual(a, b *parquet.Schema) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.String() == b.String()
 }
 
 // ensureFilerDir ensures a directory exists in the filer.
