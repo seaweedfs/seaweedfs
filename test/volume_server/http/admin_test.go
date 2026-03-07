@@ -16,7 +16,7 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	statusReq, err := http.NewRequest(http.MethodGet, cluster.VolumeAdminURL()+"/status", nil)
@@ -77,7 +77,7 @@ func TestOptionsMethodsByPort(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/"))
@@ -117,7 +117,7 @@ func TestOptionsWithOriginIncludesCorsHeaders(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminReq := mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/")
@@ -154,7 +154,7 @@ func TestUiIndexNotExposedWhenJwtSigningEnabled(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P3())
+	cluster := framework.StartVolumeCluster(t, matrix.P3())
 	client := framework.NewHTTPClient()
 
 	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))

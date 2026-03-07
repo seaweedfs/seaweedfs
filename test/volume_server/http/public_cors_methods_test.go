@@ -15,7 +15,7 @@ func TestPublicPortReadOnlyMethodBehavior(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -70,7 +70,7 @@ func TestCorsAndUnsupportedMethodBehavior(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -133,7 +133,7 @@ func TestUnsupportedMethodTraceParity(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -168,7 +168,7 @@ func TestUnsupportedMethodPropfindParity(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -212,7 +212,7 @@ func TestUnsupportedMethodConnectParity(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -256,7 +256,7 @@ func TestPublicPortHeadReadParity(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

@@ -15,7 +15,7 @@ func TestReadPassthroughHeadersAndDownloadDisposition(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -64,7 +64,7 @@ func TestStaticAssetEndpoints(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	faviconResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/favicon.ico"))
@@ -85,7 +85,7 @@ func TestStaticAssetEndpointsOnPublicPort(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P2())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	faviconResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, clusterHarness.VolumePublicURL()+"/favicon.ico"))

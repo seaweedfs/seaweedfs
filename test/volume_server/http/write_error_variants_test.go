@@ -14,7 +14,7 @@ func TestWriteInvalidVidAndFidReturnBadRequest(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	invalidVidReq := newUploadRequest(t, clusterHarness.VolumeAdminURL()+"/invalid,12345678", []byte("x"))
@@ -37,7 +37,7 @@ func TestWriteMalformedMultipartAndMD5Mismatch(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
