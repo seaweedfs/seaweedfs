@@ -98,9 +98,12 @@ async fn run(config: VolumeServerConfig) {
         info!("Starting public HTTP server on {}:{}", config.bind_ip, public_port);
     }
 
-    // Set up graceful shutdown via SIGINT/SIGTERM
+    // Set up graceful shutdown via SIGINT/SIGTERM using broadcast channel
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
+
     let state_shutdown = state.clone();
-    let shutdown = async move {
+    let shutdown_tx_clone = shutdown_tx.clone();
+    tokio::spawn(async move {
         let ctrl_c = tokio::signal::ctrl_c();
         #[cfg(unix)]
         {
@@ -118,7 +121,8 @@ async fn run(config: VolumeServerConfig) {
             info!("Received shutdown signal...");
         }
         *state_shutdown.is_stopping.write().unwrap() = true;
-    };
+        let _ = shutdown_tx_clone.send(());
+    });
 
     // Spawn all servers concurrently
     let admin_listener = tokio::net::TcpListener::bind(&admin_addr)
@@ -126,24 +130,32 @@ async fn run(config: VolumeServerConfig) {
         .unwrap_or_else(|e| panic!("Failed to bind HTTP to {}: {}", admin_addr, e));
     info!("HTTP server listening on {}", admin_addr);
 
-    let http_handle = tokio::spawn(async move {
-        if let Err(e) = axum::serve(admin_listener, admin_router)
-            .with_graceful_shutdown(shutdown)
-            .await
-        {
-            error!("HTTP server error: {}", e);
-        }
-    });
+    let http_handle = {
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(admin_listener, admin_router)
+                .with_graceful_shutdown(async move { let _ = shutdown_rx.recv().await; })
+                .await
+            {
+                error!("HTTP server error: {}", e);
+            }
+        })
+    };
 
-    let grpc_handle = tokio::spawn(async move {
-        let addr = grpc_addr.parse().expect("Invalid gRPC address");
-        info!("gRPC server listening on {}", addr);
-        tonic::transport::Server::builder()
-            .add_service(VolumeServerServer::new(grpc_service))
-            .serve(addr)
-            .await
-            .unwrap_or_else(|e| error!("gRPC server error: {}", e));
-    });
+    let grpc_handle = {
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        tokio::spawn(async move {
+            let addr = grpc_addr.parse().expect("Invalid gRPC address");
+            info!("gRPC server listening on {}", addr);
+            if let Err(e) = tonic::transport::Server::builder()
+                .add_service(VolumeServerServer::new(grpc_service))
+                .serve_with_shutdown(addr, async move { let _ = shutdown_rx.recv().await; })
+                .await
+            {
+                error!("gRPC server error: {}", e);
+            }
+        })
+    };
 
     let public_handle = if needs_public {
         let public_router = seaweed_volume::server::volume_server::build_public_router(state.clone());
@@ -152,8 +164,12 @@ async fn run(config: VolumeServerConfig) {
             .await
             .unwrap_or_else(|e| panic!("Failed to bind public HTTP to {}: {}", public_addr, e));
         info!("Public HTTP server listening on {}", public_addr);
+        let mut shutdown_rx = shutdown_tx.subscribe();
         Some(tokio::spawn(async move {
-            if let Err(e) = axum::serve(listener, public_router).await {
+            if let Err(e) = axum::serve(listener, public_router)
+                .with_graceful_shutdown(async move { let _ = shutdown_rx.recv().await; })
+                .await
+            {
                 error!("Public HTTP server error: {}", e);
             }
         }))

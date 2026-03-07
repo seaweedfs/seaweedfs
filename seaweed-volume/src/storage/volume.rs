@@ -374,10 +374,14 @@ impl Volume {
             use std::os::unix::fs::FileExt;
             dat_file.read_exact_at(&mut buf, offset as u64)?;
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            // Fallback for non-unix (requires &mut)
-            compile_error!("Windows support requires different file I/O approach");
+            use std::os::windows::fs::FileExt;
+            dat_file.seek_read(&mut buf, offset as u64)?;
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            compile_error!("Platform not supported: only unix and windows are supported");
         }
 
         n.read_bytes(&mut buf, offset, size, version)?;
@@ -398,6 +402,11 @@ impl Volume {
         {
             use std::os::unix::fs::FileExt;
             dat_file.read_exact_at(&mut buf, offset as u64)?;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::FileExt;
+            dat_file.seek_read(&mut buf, offset as u64)?;
         }
 
         Ok(buf)

@@ -122,10 +122,10 @@ impl CompactNeedleMap {
     pub fn load_from_idx<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
         let mut nm = CompactNeedleMap::new();
         idx::walk_index_file(reader, 0, |key, offset, size| {
-            if !offset.is_zero() || !size.is_deleted() {
-                nm.set(key, NeedleValue { offset, size });
-            } else {
+            if offset.is_zero() || size.is_deleted() {
                 nm.delete_from_map(key);
+            } else {
+                nm.set(key, NeedleValue { offset, size });
             }
             Ok(())
         })?;
@@ -300,8 +300,9 @@ mod tests {
     #[test]
     fn test_needle_map_load_from_idx() {
         // Build an idx file in memory
+        // Note: offset 0 is reserved for the SuperBlock, so real needles start at offset >= 8
         let mut idx_data = Vec::new();
-        idx::write_index_entry(&mut idx_data, NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        idx::write_index_entry(&mut idx_data, NeedleId(1), Offset::from_actual_offset(8), Size(100)).unwrap();
         idx::write_index_entry(&mut idx_data, NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
         idx::write_index_entry(&mut idx_data, NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
         // Delete needle 2
