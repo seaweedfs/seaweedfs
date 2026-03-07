@@ -383,6 +383,21 @@ func (mc *MetaCache) runApplyLoop() {
 		req.done <- mc.handleApplyRequest(req)
 		close(req.done)
 		if req.kind == metadataShutdown {
+			mc.drainApplyCh()
+			return
+		}
+	}
+}
+
+// drainApplyCh non-blockingly drains any remaining requests from applyCh
+// after a shutdown sentinel, signalling each caller so they don't block.
+func (mc *MetaCache) drainApplyCh() {
+	for {
+		select {
+		case req := <-mc.applyCh:
+			req.done <- errMetaCacheClosed
+			close(req.done)
+		default:
 			return
 		}
 	}
