@@ -279,10 +279,10 @@ impl VolumeServer for VolumeGrpcService {
             volume_id: vid.0,
             collection: vol.collection.clone(),
             replication: vol.super_block.replica_placement.to_string(),
-            ttl: String::new(),
+            ttl: vol.super_block.ttl.to_string(),
             tail_offset: vol.content_size(),
             compact_revision: vol.super_block.compaction_revision as u32,
-            idx_file_size: 0,
+            idx_file_size: vol.idx_file_size(),
             version: vol.version().0 as u32,
         }))
     }
@@ -431,6 +431,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeConfigureRequest>,
     ) -> Result<Response<volume_server_pb::VolumeConfigureResponse>, Status> {
+        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
