@@ -3,6 +3,7 @@ package iceberg
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -309,6 +310,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 
 	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
 		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
+	}
+	if tablePath == "" {
+		tablePath = path.Join(namespace, tableName)
 	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
