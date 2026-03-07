@@ -23,8 +23,15 @@
 #
 # Adjust storageClass and sizes to match your cluster's available StorageClasses.
 # On OpenShift you can discover them with: oc get storageclass
-
+global:
+  enableReplication: true
+  #  replication type is XYZ:
+  # X number of replica in other data centers
+  # Y number of replica in other racks in the same data center
+  # Z number of replica in other servers in the same rack
+  replicationPlacement: "000" # no data replica
 master:
+  replicas: 1
   data:
     type: "persistentVolumeClaim"
     size: "10Gi"
@@ -49,6 +56,7 @@ master:
       type: RuntimeDefault
 
 volume:
+  replicas: 1
   dataDirs:
     - name: data1
       type: "persistentVolumeClaim"
@@ -75,6 +83,7 @@ volume:
       type: RuntimeDefault
 
 filer:
+  replicas: 1
   data:
     type: "persistentVolumeClaim"
     size: "25Gi"
