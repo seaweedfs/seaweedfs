@@ -234,6 +234,153 @@ func TestDirectoryNotificationsSuppressedDuringBuild(t *testing.T) {
 	}
 }
 
+// TestEmptyDirectoryBuildReplaysAllBufferedEvents verifies that when a
+// directory build completes with snapshotTsNs=0 (empty directory — server
+// returned no entries and no snapshot), ALL buffered events are replayed
+// without any TsNs filtering. This prevents clock-skew between client and
+// filer from dropping legitimate mutations.
+func TestEmptyDirectoryBuildReplaysAllBufferedEvents(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/empty")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+
+	// Buffer events with a range of TsNs values — some very old, some recent.
+	// With a client-synthesized snapshot, old events could be incorrectly filtered.
+	tsValues := []int64{1, 50, 500, 5000, 50000}
+	for i, ts := range tsValues {
+		resp := &filer_pb.SubscribeMetadataResponse{
+			Directory: "/empty",
+			EventNotification: &filer_pb.EventNotification{
+				NewEntry: &filer_pb.Entry{
+					Name: fmt.Sprintf("file-%d.txt", i),
+					Attributes: &filer_pb.FuseAttributes{
+						Crtime:   ts,
+						Mtime:    ts,
+						FileMode: 0100644,
+						FileSize: uint64(i + 10),
+					},
+				},
+			},
+			TsNs: ts,
+		}
+		if err := mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply event %d: %v", i, err)
+		}
+	}
+
+	// Complete with snapshotTsNs=0 — simulates empty directory listing
+	if err := mc.CompleteDirectoryBuild(context.Background(), util.FullPath("/empty"), 0); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	// Every buffered event must have been replayed, regardless of TsNs
+	for i := range tsValues {
+		name := fmt.Sprintf("file-%d.txt", i)
+		e, err := mc.FindEntry(context.Background(), util.FullPath("/empty/"+name))
+		if err != nil {
+			t.Fatalf("replayed entry %s not found: %v", name, err)
+		}
+		if e.FileSize != uint64(i+10) {
+			t.Fatalf("replayed entry %s size = %d, want %d", name, e.FileSize, i+10)
+		}
+	}
+
+	if !mc.IsDirectoryCached(util.FullPath("/empty")) {
+		t.Fatal("/empty should be marked cached after build completes")
+	}
+}
+
+// TestBuildCompletionSurvivesCallerCancellation verifies that once
+// CompleteDirectoryBuild is enqueued, a cancelled caller context does not
+// prevent the build from completing. The apply loop uses context.Background()
+// internally, so the operation finishes even if the caller gives up waiting.
+func TestBuildCompletionSurvivesCallerCancellation(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.BeginDirectoryBuild(context.Background(), util.FullPath("/dir")); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+
+	// Insert an entry during the build (as EnsureVisited would)
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/kept.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0100644,
+			FileSize: 42,
+		},
+	}); err != nil {
+		t.Fatalf("insert entry: %v", err)
+	}
+
+	// Buffer an event that should be replayed
+	if err := mc.ApplyMetadataResponse(context.Background(), &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name: "buffered.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   5,
+					Mtime:    5,
+					FileMode: 0100644,
+					FileSize: 77,
+				},
+			},
+		},
+		TsNs: 200,
+	}, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply event: %v", err)
+	}
+
+	// Complete with an already-cancelled context. The operation should still
+	// succeed because enqueueAndWait sets req.ctx = context.Background().
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	// CompleteDirectoryBuild may return ctx.Err() if the select picks
+	// ctx.Done() first, but the operation itself still completes in the
+	// apply loop. We retry with a fresh context to confirm.
+	err := mc.CompleteDirectoryBuild(cancelledCtx, util.FullPath("/dir"), 100)
+	if err != nil {
+		// The cancelled context may cause enqueueAndWait's select to
+		// return early. Wait briefly for the apply loop to process, then
+		// verify the build completed via its observable side effects.
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// The directory must be cached — proving CompleteDirectoryBuild ran
+	if !mc.IsDirectoryCached(util.FullPath("/dir")) {
+		t.Fatal("/dir should be cached — CompleteDirectoryBuild must have executed despite cancelled context")
+	}
+
+	// The pre-existing entry must survive
+	entry, findErr := mc.FindEntry(context.Background(), util.FullPath("/dir/kept.txt"))
+	if findErr != nil {
+		t.Fatalf("find kept entry: %v", findErr)
+	}
+	if entry.FileSize != 42 {
+		t.Fatalf("kept entry size = %d, want 42", entry.FileSize)
+	}
+
+	// The buffered event (TsNs 200 > snapshot 100) must have been replayed
+	buffered, findErr := mc.FindEntry(context.Background(), util.FullPath("/dir/buffered.txt"))
+	if findErr != nil {
+		t.Fatalf("find buffered entry: %v", findErr)
+	}
+	if buffered.FileSize != 77 {
+		t.Fatalf("buffered entry size = %d, want 77", buffered.FileSize)
+	}
+}
+
 func TestBufferedRenameUpdatesOtherDirectoryBeforeBuildCompletes(t *testing.T) {
 	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
 		"/":    true,
