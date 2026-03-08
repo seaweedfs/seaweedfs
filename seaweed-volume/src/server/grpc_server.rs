@@ -2513,15 +2513,7 @@ impl VolumeServer for VolumeGrpcService {
         Ok(Response::new(
             volume_server_pb::VolumeServerStatusResponse {
                 disk_statuses,
-                memory_status: Some(volume_server_pb::MemStatus {
-                    goroutines: 1, // Rust doesn't have goroutines, report 1 for tokio runtime
-                    all: 0,
-                    used: 0,
-                    free: 0,
-                    self_: 0,
-                    heap: 0,
-                    stack: 0,
-                }),
+                memory_status: Some(get_mem_status()),
                 version: crate::version::full_version().to_string(),
                 data_center: self.state.data_center.clone(),
                 rack: self.state.rack.clone(),
@@ -3363,4 +3355,54 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
         Some(disk) => (disk.total_space(), disk.available_space()),
         None => (0, 0),
     }
+}
+
+/// Build memory status info similar to Go's stats.MemStat().
+fn get_mem_status() -> volume_server_pb::MemStatus {
+    let mut mem = volume_server_pb::MemStatus {
+        goroutines: 1,
+        ..Default::default()
+    };
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some((all, free)) = get_system_memory_linux() {
+            mem.all = all;
+            mem.free = free;
+            mem.used = all.saturating_sub(free);
+        }
+        if let Some(rss) = get_process_rss_linux() {
+            mem.self_ = rss;
+            mem.heap = rss;
+        }
+    }
+
+    mem
+}
+
+#[cfg(target_os = "linux")]
+fn get_system_memory_linux() -> Option<(u64, u64)> {
+    unsafe {
+        let mut info: libc::sysinfo = std::mem::zeroed();
+        if libc::sysinfo(&mut info) == 0 {
+            let unit = info.mem_unit as u64;
+            let total = info.totalram as u64 * unit;
+            let free = info.freeram as u64 * unit;
+            return Some((total, free));
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn get_process_rss_linux() -> Option<u64> {
+    let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+    let mut parts = statm.split_whitespace();
+    let _size = parts.next()?;
+    let resident = parts.next()?.parse::<u64>().ok()?;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as i64;
+    if page_size <= 0 {
+        return None;
+    }
+    Some(resident * page_size as u64)
 }
