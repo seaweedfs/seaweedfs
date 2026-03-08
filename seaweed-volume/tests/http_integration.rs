@@ -465,7 +465,7 @@ async fn public_router_does_not_expose_healthz() {
 }
 
 #[tokio::test]
-async fn admin_router_does_not_expose_stats_routes() {
+async fn admin_router_exposes_stats_routes() {
     let (state, _tmp) = test_state();
     let app = build_admin_router(state);
 
@@ -479,7 +479,7 @@ async fn admin_router_does_not_expose_stats_routes() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

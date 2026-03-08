@@ -2350,7 +2350,7 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeTierMoveDatFromRemoteRequest>,
     ) -> Result<Response<Self::VolumeTierMoveDatFromRemoteStream>, Status> {
-        self.state.check_maintenance()?;
+        // Note: Go does NOT check maintenance mode for TierMoveDatFromRemote
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
 
@@ -2522,7 +2522,7 @@ impl VolumeServer for VolumeGrpcService {
                     heap: 0,
                     stack: 0,
                 }),
-                version: env!("CARGO_PKG_VERSION").to_string(),
+                version: crate::version::full_version().to_string(),
                 data_center: self.state.data_center.clone(),
                 rack: self.state.rack.clone(),
                 state: Some(volume_server_pb::VolumeServerState {

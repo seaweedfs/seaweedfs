@@ -29,7 +29,7 @@ fn main() {
     let config = config::parse_cli();
     info!(
         "SeaweedFS Volume Server (Rust) v{}",
-        env!("CARGO_PKG_VERSION")
+        seaweed_volume::version::full_version()
     );
 
     // Register Prometheus metrics

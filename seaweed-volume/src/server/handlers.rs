@@ -1038,21 +1038,37 @@ async fn get_or_head_handler_inner(
     // Handle compressed data: if needle is compressed, either pass through or decompress
     let is_compressed = n.is_compressed();
     let mut data = n.data;
+
+    // Check if image operations are needed — must decompress first regardless of Accept-Encoding
+    let needs_image_ops = is_image
+        && (query.width.is_some() || query.height.is_some() || query.mode.is_some());
+
     if is_compressed {
-        let accept_encoding = headers
-            .get(header::ACCEPT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        if accept_encoding.contains("gzip") {
-            response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
-        } else {
-            // Decompress for client
+        if needs_image_ops {
+            // Always decompress for image operations (Go decompresses before resize/crop)
             use flate2::read::GzDecoder;
             use std::io::Read as _;
             let mut decoder = GzDecoder::new(&data[..]);
             let mut decompressed = Vec::new();
             if decoder.read_to_end(&mut decompressed).is_ok() {
                 data = decompressed;
+            }
+        } else {
+            let accept_encoding = headers
+                .get(header::ACCEPT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if accept_encoding.contains("gzip") {
+                response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+            } else {
+                // Decompress for client
+                use flate2::read::GzDecoder;
+                use std::io::Read as _;
+                let mut decoder = GzDecoder::new(&data[..]);
+                let mut decompressed = Vec::new();
+                if decoder.read_to_end(&mut decompressed).is_ok() {
+                    data = decompressed;
+                }
             }
         }
     }
@@ -1127,9 +1143,10 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
 
                 if start_str.is_empty() {
                     // Suffix range: -N means last N bytes
-                    let suffix: usize = end_str.parse().ok()?;
+                    let mut suffix: usize = end_str.parse().ok()?;
+                    // Go clamps suffix to file size
                     if suffix > total {
-                        return None;
+                        suffix = total;
                     }
                     Some((total - suffix, total - 1))
                 } else {
@@ -1151,9 +1168,18 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
         return (StatusCode::OK, headers, data.to_vec()).into_response();
     }
 
-    // Check all ranges are valid
+    // Clamp range ends and validate (Go clamps end to size-1 instead of returning 416)
+    let ranges: Vec<(usize, usize)> = ranges
+        .into_iter()
+        .map(|(start, mut end)| {
+            if end >= total {
+                end = total - 1;
+            }
+            (start, end)
+        })
+        .collect();
     for &(start, end) in &ranges {
-        if start >= total || end >= total || start > end {
+        if start >= total || start > end {
             headers.insert(
                 "Content-Range",
                 format!("bytes */{}", total).parse().unwrap(),
@@ -1774,7 +1800,15 @@ pub async fn post_handler(
                 metrics::REQUEST_DURATION
                     .with_label_values(&["write"])
                     .observe(start.elapsed().as_secs_f64());
+                let etag = n.etag();
+                let etag_header = if etag.starts_with('"') {
+                    etag.clone()
+                } else {
+                    format!("\"{}\"", etag)
+                };
                 let mut resp = (StatusCode::CREATED, axum::Json(result)).into_response();
+                resp.headers_mut()
+                    .insert(header::ETAG, etag_header.parse().unwrap());
                 resp.headers_mut()
                     .insert("Content-MD5", content_md5_value.parse().unwrap());
                 resp
@@ -2087,7 +2121,7 @@ pub async fn status_handler(
     let mut m = serde_json::Map::new();
     m.insert(
         "Version".to_string(),
-        serde_json::Value::from(env!("CARGO_PKG_VERSION")),
+        serde_json::Value::from(crate::version::full_version()),
     );
     m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
     m.insert(
@@ -2163,7 +2197,7 @@ pub async fn stats_counter_handler() -> Response {
 pub async fn stats_memory_handler() -> Response {
     // Basic memory stats - Rust doesn't have GC stats like Go
     let info = serde_json::json!({
-        "Version": env!("CARGO_PKG_VERSION"),
+        "Version": crate::version::full_version(),
         "Memory": {
             "Mallocs": 0,
             "Frees": 0,
@@ -2195,7 +2229,7 @@ pub async fn stats_disk_handler(State(state): State<Arc<VolumeServerState>>) -> 
         }));
     }
     let info = serde_json::json!({
-        "Version": env!("CARGO_PKG_VERSION"),
+        "Version": crate::version::full_version(),
         "DiskStatuses": ds,
     });
     (

@@ -109,7 +109,9 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
 
     let headers = response.headers_mut();
-    headers.insert("Server", HeaderValue::from_static("SeaweedFS Volume 0.1.0"));
+    if let Ok(val) = HeaderValue::from_str(crate::version::server_header()) {
+        headers.insert("Server", val);
+    }
 
     if let Some(rid) = request_id {
         headers.insert("x-amz-request-id", rid);
