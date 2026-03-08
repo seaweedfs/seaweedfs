@@ -168,6 +168,14 @@ message S3ApiConfiguration {
     repeated Account accounts = 2;
     repeated ServiceAccount service_accounts = 3;
     repeated Policy policies = 4;
+    repeated Group groups = 5;
+}
+
+message Group {
+    string name = 1;
+    repeated string members = 2;       // usernames
+    repeated string policy_names = 3;  // attached managed policy names
+    bool disabled = 4;
 }
 
 message Identity {
