@@ -1055,6 +1055,76 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		changed = false
+	// Group actions
+	case "CreateGroup":
+		var err *IamError
+		response, err = iama.CreateGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "DeleteGroup":
+		var err *IamError
+		response, err = iama.DeleteGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "GetGroup":
+		var err *IamError
+		response, err = iama.GetGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "ListGroups":
+		response = iama.ListGroups(s3cfg, values)
+		changed = false
+	case "AddUserToGroup":
+		var err *IamError
+		response, err = iama.AddUserToGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "RemoveUserFromGroup":
+		var err *IamError
+		response, err = iama.RemoveUserFromGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "AttachGroupPolicy":
+		var err *IamError
+		response, err = iama.AttachGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "DetachGroupPolicy":
+		var err *IamError
+		response, err = iama.DetachGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "ListAttachedGroupPolicies":
+		var err *IamError
+		response, err = iama.ListAttachedGroupPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "ListGroupsForUser":
+		var err *IamError
+		response, err = iama.ListGroupsForUser(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
 	default:
 		errNotImplemented := s3err.GetAPIError(s3err.ErrNotImplemented)
 		errorResponse := newErrorResponse(errNotImplemented.Code, errNotImplemented.Description, reqID)

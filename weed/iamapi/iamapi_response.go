@@ -36,4 +36,15 @@ type (
 	ListServiceAccountsResponse  = iamlib.ListServiceAccountsResponse
 	GetServiceAccountResponse    = iamlib.GetServiceAccountResponse
 	UpdateServiceAccountResponse = iamlib.UpdateServiceAccountResponse
+	// Group response types
+	CreateGroupResponse               = iamlib.CreateGroupResponse
+	DeleteGroupResponse               = iamlib.DeleteGroupResponse
+	GetGroupResponse                  = iamlib.GetGroupResponse
+	ListGroupsResponse                = iamlib.ListGroupsResponse
+	AddUserToGroupResponse            = iamlib.AddUserToGroupResponse
+	RemoveUserFromGroupResponse       = iamlib.RemoveUserFromGroupResponse
+	AttachGroupPolicyResponse         = iamlib.AttachGroupPolicyResponse
+	DetachGroupPolicyResponse         = iamlib.DetachGroupPolicyResponse
+	ListAttachedGroupPoliciesResponse = iamlib.ListAttachedGroupPoliciesResponse
+	ListGroupsForUserResponse         = iamlib.ListGroupsForUserResponse
 )
