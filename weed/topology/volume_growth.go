@@ -140,6 +140,13 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 }
 
 func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
+	// Wait for warmup to complete before searching for slots so the
+	// topology has all volume servers registered.
+	for topo.IsWarmingUp() {
+		glog.V(0).Infof("wait for volume servers to join back")
+		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
+	}
+
 	servers, reservation, e := vg.findEmptySlotsForOneVolume(topo, option, true) // use reservations
 	if e != nil {
 		return nil, e
@@ -150,11 +157,6 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 			reservation.releaseAllReservations()
 		}
 	}()
-
-	for topo.IsWarmingUp() {
-		glog.V(0).Infof("wait for volume servers to join back")
-		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
-	}
 	vid, raftErr := topo.NextVolumeId()
 	if raftErr != nil {
 		return nil, raftErr
