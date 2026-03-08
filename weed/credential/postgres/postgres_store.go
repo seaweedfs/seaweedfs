@@ -140,6 +140,18 @@ func (store *PostgresStore) createTables() error {
 		);
 	`
 
+	// Create groups table
+	groupsTable := `
+		CREATE TABLE IF NOT EXISTS groups (
+			name VARCHAR(255) PRIMARY KEY,
+			members JSONB DEFAULT '[]',
+			policy_names JSONB DEFAULT '[]',
+			disabled BOOLEAN DEFAULT FALSE,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+
 	// Execute table creation
 	if _, err := store.db.Exec(usersTable); err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
@@ -160,6 +172,10 @@ func (store *PostgresStore) createTables() error {
 
 	if _, err := store.db.Exec(serviceAccountsTable); err != nil {
 		return fmt.Errorf("failed to create service_accounts table: %w", err)
+	}
+
+	if _, err := store.db.Exec(groupsTable); err != nil {
+		return fmt.Errorf("failed to create groups table: %w", err)
 	}
 
 	return nil

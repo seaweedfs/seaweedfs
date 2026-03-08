@@ -45,6 +45,11 @@ func (store *FilerEtcStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		return s3cfg, fmt.Errorf("failed to load service accounts: %w", err)
 	}
 
+	// 3b. Load groups
+	if err := store.loadGroupsFromMultiFile(ctx, s3cfg); err != nil {
+		return s3cfg, fmt.Errorf("failed to load groups: %w", err)
+	}
+
 	// 4. Perform migration if we loaded legacy config
 	// This ensures that all identities (including legacy ones) are written to individual files
 	// and the legacy file is renamed.
@@ -171,6 +176,13 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 		}
 	}
 
+	// 2b. Save all groups
+	for _, g := range config.Groups {
+		if err := store.saveGroup(ctx, g); err != nil {
+			return err
+		}
+	}
+
 	// 3. Cleanup removed identities (Full Sync)
 	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		dir := filer.IamConfigDirectory + "/" + IamIdentitiesDirectory
@@ -226,6 +238,37 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 					Name:      entry.Name,
 				}); err != nil {
 					glog.Warningf("Failed to delete obsolete service account file %s: %v", entry.Name, err)
+				}
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// 5. Cleanup removed groups (Full Sync)
+	if err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		dir := filer.IamConfigDirectory + "/" + IamGroupsDirectory
+		entries, err := listEntries(ctx, client, dir)
+		if err != nil {
+			if err == filer_pb.ErrNotFound {
+				return nil
+			}
+			return err
+		}
+
+		validNames := make(map[string]bool)
+		for _, g := range config.Groups {
+			validNames[g.Name+".json"] = true
+		}
+
+		for _, entry := range entries {
+			if !entry.IsDirectory && !validNames[entry.Name] {
+				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+					Directory: dir,
+					Name:      entry.Name,
+				}); err != nil {
+					glog.Warningf("Failed to delete obsolete group file %s: %v", entry.Name, err)
 				}
 			}
 		}
