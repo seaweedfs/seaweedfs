@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -152,7 +153,7 @@ func (s *AdminServer) RemoveGroupMember(ctx context.Context, groupName, username
 		}
 	}
 	if !found {
-		return fmt.Errorf("user %s is not a member of group %s", username, groupName)
+		return fmt.Errorf("user %s is not a member of group %s: %w", username, groupName, credential.ErrUserNotInGroup)
 	}
 	g.Members = newMembers
 	if err := s.credentialManager.UpdateGroup(ctx, g); err != nil {
