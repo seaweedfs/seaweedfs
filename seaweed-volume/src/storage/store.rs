@@ -219,6 +219,52 @@ impl Store {
         )))
     }
 
+    /// Mount a volume by id only (Go's MountVolume behavior).
+    /// Scans all locations for a matching .dat file and loads with its collection prefix.
+    pub fn mount_volume_by_id(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+        if self.find_volume(vid).is_some() {
+            return Err(VolumeError::AlreadyExists);
+        }
+        if let Some((loc_idx, _base_path, collection)) = self.find_volume_file_base(vid) {
+            let loc = &mut self.locations[loc_idx];
+            return loc.create_volume(
+                vid,
+                &collection,
+                self.needle_map_kind,
+                None,
+                None,
+                0,
+                Version::current(),
+            );
+        }
+        Err(VolumeError::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("volume {} not found on disk", vid),
+        )))
+    }
+
+    fn find_volume_file_base(&self, vid: VolumeId) -> Option<(usize, String, String)> {
+        for (loc_idx, loc) in self.locations.iter().enumerate() {
+            if let Ok(entries) = std::fs::read_dir(&loc.directory) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if !name.ends_with(".dat") {
+                        continue;
+                    }
+                    if let Some((collection, file_vid)) = parse_volume_filename(&name) {
+                        if file_vid == vid {
+                            let base = name.trim_end_matches(".dat");
+                            let base_path = format!("{}/{}", loc.directory, base);
+                            return Some((loc_idx, base_path, collection));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Configure a volume's replica placement on disk.
     /// The volume must already be unmounted. This opens the .dat file directly,
     /// modifies the replica_placement byte (offset 1), and writes it back.
@@ -591,6 +637,20 @@ impl Store {
         for (_, mut ec_vol) in self.ec_volumes.drain() {
             ec_vol.close();
         }
+    }
+}
+
+/// Parse a volume filename like "collection_42.dat" or "42.dat" into (collection, VolumeId).
+fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
+    let stem = filename.strip_suffix(".dat")?;
+    if let Some(pos) = stem.rfind('_') {
+        let collection = &stem[..pos];
+        let id_str = &stem[pos + 1..];
+        let id: u32 = id_str.parse().ok()?;
+        Some((collection.to_string(), VolumeId(id)))
+    } else {
+        let id: u32 = stem.parse().ok()?;
+        Some((String::new(), VolumeId(id)))
     }
 }
 
