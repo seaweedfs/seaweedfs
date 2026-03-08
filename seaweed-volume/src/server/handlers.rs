@@ -969,6 +969,33 @@ pub async fn post_handler(
         })
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
+    // Parse TTL from query param (matches Go's r.FormValue("ttl"))
+    let ttl_str = query.split('&')
+        .find_map(|p| p.strip_prefix("ttl="))
+        .unwrap_or("");
+    let ttl = if !ttl_str.is_empty() {
+        crate::storage::needle::TTL::read(ttl_str).ok()
+    } else {
+        None
+    };
+
+    // Extract Seaweed-* custom metadata headers (pairs)
+    let pair_map: std::collections::HashMap<String, String> = headers.iter()
+        .filter_map(|(k, v)| {
+            let key = k.as_str();
+            if key.len() > 8 && key[..8].eq_ignore_ascii_case("seaweed-") {
+                if let Ok(val) = v.to_str() {
+                    // Store with the prefix stripped (matching Go's trimmedPairMap)
+                    Some((key[8..].to_string(), val.to_string()))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
     // Only for non-compressed uploads that are JPEG files.
     let body_data = if !is_gzipped && crate::images::is_jpeg(&mime_type, &path) {
@@ -977,11 +1004,35 @@ pub async fn post_handler(
         body.to_vec()
     };
 
+    // Auto-compress compressible file types (matches Go's IsCompressableFileType).
+    // Only compress if not already gzipped and compression saves >10%.
+    let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
+        let ext = {
+            let dot_pos = path.rfind('.');
+            dot_pos.map(|p| path[p..].to_lowercase()).unwrap_or_default()
+        };
+        if is_compressible_file_type(&ext, &mime_type) {
+            if let Some(compressed) = try_gzip_data(&body_data) {
+                if compressed.len() * 10 < body_data.len() * 9 {
+                    (compressed, true)
+                } else {
+                    (body_data, false)
+                }
+            } else {
+                (body_data, false)
+            }
+        } else {
+            (body_data, false)
+        }
+    } else {
+        (body_data, is_gzipped)
+    };
+
     let mut n = Needle {
         id: needle_id,
         cookie,
-        data_size: body_data.len() as u32,
-        data: body_data,
+        data_size: final_data.len() as u32,
+        data: final_data,
         last_modified: last_modified,
         ..Needle::default()
     };
@@ -989,13 +1040,40 @@ pub async fn post_handler(
     if is_chunk_manifest {
         n.set_is_chunk_manifest();
     }
-    if is_gzipped {
+    if final_is_gzipped {
         n.set_is_compressed();
     }
 
     if !mime_type.is_empty() {
         n.mime = mime_type.as_bytes().to_vec();
         n.set_has_mime();
+    }
+
+    // Set TTL on needle
+    if let Some(ref t) = ttl {
+        if !t.is_empty() {
+            n.ttl = Some(*t);
+            n.set_has_ttl();
+        }
+    }
+
+    // Set pairs on needle
+    if !pair_map.is_empty() {
+        if let Ok(pairs_json) = serde_json::to_vec(&pair_map) {
+            if pairs_json.len() < 65536 {
+                n.pairs_size = pairs_json.len() as u16;
+                n.pairs = pairs_json;
+                n.set_has_pairs();
+            }
+        }
+    }
+
+    // Set filename on needle (matches Go: n.Name = []byte(pu.FileName))
+    let filename = extract_filename_from_path(&path);
+    if !filename.is_empty() && filename.len() < 256 {
+        n.name = filename.as_bytes().to_vec();
+        n.name_size = filename.len() as u8;
+        n.set_has_name();
     }
 
     // Use the write queue if enabled, otherwise write directly.
@@ -1013,7 +1091,7 @@ pub async fn post_handler(
                 (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
             } else {
                 let result = UploadResult {
-                    name: String::new(),
+                    name: filename.clone(),
                     size: n.data_size,
                     etag: n.etag(),
                 };
@@ -1539,6 +1617,60 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
 }
 
 // ============================================================================
+// Auto-compression helpers (matches Go's util.IsCompressableFileType)
+// ============================================================================
+
+/// Check if a file type should be compressed based on extension and MIME type.
+/// Returns true only when we are sure the type is compressible.
+fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
+    // text/*
+    if mtype.starts_with("text/") {
+        return true;
+    }
+    // Compressible image/audio formats
+    match ext {
+        ".svg" | ".bmp" | ".wav" => return true,
+        _ => {}
+    }
+    // Most image/* formats are already compressed
+    if mtype.starts_with("image/") {
+        return false;
+    }
+    // By file extension
+    match ext {
+        ".zip" | ".rar" | ".gz" | ".bz2" | ".xz" | ".zst" | ".br" => return false,
+        ".pdf" | ".txt" | ".html" | ".htm" | ".css" | ".js" | ".json" => return true,
+        ".php" | ".java" | ".go" | ".rb" | ".c" | ".cpp" | ".h" | ".hpp" => return true,
+        ".png" | ".jpg" | ".jpeg" => return false,
+        _ => {}
+    }
+    // By MIME type
+    if mtype.starts_with("application/") {
+        if mtype.ends_with("zstd") { return false; }
+        if mtype.ends_with("xml") { return true; }
+        if mtype.ends_with("script") { return true; }
+        if mtype.ends_with("vnd.rar") { return false; }
+    }
+    if mtype.starts_with("audio/") {
+        let sub = mtype.strip_prefix("audio/").unwrap_or("");
+        if matches!(sub, "wave" | "wav" | "x-wav" | "x-pn-wav") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Try to gzip data. Returns None on error.
+fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(data).ok()?;
+    encoder.finish().ok()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1624,5 +1756,62 @@ mod tests {
         let headers = HeaderMap::new();
         let resp = handle_range_request("bytes=999-1000", data, headers);
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
+
+    #[test]
+    fn test_is_compressible_file_type() {
+        // Text types
+        assert!(is_compressible_file_type("", "text/html"));
+        assert!(is_compressible_file_type("", "text/plain"));
+        assert!(is_compressible_file_type("", "text/css"));
+
+        // Compressible by extension
+        assert!(is_compressible_file_type(".svg", ""));
+        assert!(is_compressible_file_type(".bmp", ""));
+        assert!(is_compressible_file_type(".js", ""));
+        assert!(is_compressible_file_type(".json", ""));
+        assert!(is_compressible_file_type(".html", ""));
+        assert!(is_compressible_file_type(".css", ""));
+        assert!(is_compressible_file_type(".c", ""));
+        assert!(is_compressible_file_type(".go", ""));
+
+        // Already compressed — should NOT compress
+        assert!(!is_compressible_file_type(".zip", ""));
+        assert!(!is_compressible_file_type(".gz", ""));
+        assert!(!is_compressible_file_type(".jpg", ""));
+        assert!(!is_compressible_file_type(".png", ""));
+        assert!(!is_compressible_file_type("", "image/jpeg"));
+        assert!(!is_compressible_file_type("", "image/png"));
+
+        // Application subtypes
+        assert!(is_compressible_file_type("", "application/xml"));
+        assert!(is_compressible_file_type("", "application/javascript"));
+        assert!(!is_compressible_file_type("", "application/zstd"));
+        assert!(!is_compressible_file_type("", "application/vnd.rar"));
+
+        // Audio
+        assert!(is_compressible_file_type(".wav", "audio/wav"));
+        assert!(!is_compressible_file_type("", "audio/mpeg"));
+
+        // Unknown
+        assert!(!is_compressible_file_type(".xyz", "application/octet-stream"));
+    }
+
+    #[test]
+    fn test_try_gzip_data() {
+        let data = b"hello world hello world hello world";
+        let compressed = try_gzip_data(data);
+        assert!(compressed.is_some());
+        let compressed = compressed.unwrap();
+        // Compressed data should be different from original
+        assert!(!compressed.is_empty());
+
+        // Verify we can decompress it
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+        assert_eq!(decompressed, data);
     }
 }

@@ -7,7 +7,7 @@
 **Rust integration tests**: 8/8 pass
 **S3 remote storage tests**: 3/3 pass
 **Total**: 117/117 (100%) + 8 Rust + 3 S3 tests
-**Rust unit tests**: 124 lib + 7 integration = 131
+**Rust unit tests**: 126 lib + 7 integration = 133
 
 ## Completed Features
 
@@ -64,6 +64,12 @@ All phases from the original plan are complete:
   - VolumeTierMoveDatToRemote/FromRemote (S3 multipart upload/download)
   - S3TierRegistry for managing remote storage backends
   - VolumeInfo (.vif) persistence for remote file references
+- **Production Sprint 5** — Upload Compatibility:
+  - TTL query parameter extraction during upload (`ttl=3m`)
+  - Auto-compression for compressible file types (text/*, .js, .css, .json, .svg, etc.)
+  - Seaweed-* custom metadata headers stored as needle pairs (JSON, max 64KB)
+  - Filename extraction from URL path stored in needle name field
+  - Upload response includes filename
 
 ## Remaining Work (Production Readiness)
 
