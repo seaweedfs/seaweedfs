@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/server/constants"
 
 	"google.golang.org/grpc"
 
@@ -152,9 +151,9 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 		}
 	}()
 
-	for !topo.GetLastLeaderChangeTime().Add(constants.VolumePulsePeriod * 2).Before(time.Now()) {
+	for topo.IsWarmingUp() {
 		glog.V(0).Infof("wait for volume servers to join back")
-		time.Sleep(constants.VolumePulsePeriod / 2)
+		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
 	}
 	vid, raftErr := topo.NextVolumeId()
 	if raftErr != nil {
