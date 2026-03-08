@@ -164,7 +164,10 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 				return ok && st.Code() == codes.Unavailable
 			},
 			func() error {
-				return WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+				// Per-attempt timeout to prevent a single slow RPC from consuming the entire retry budget
+				attemptCtx, attemptCancel := context.WithTimeout(ctx, 10*time.Second)
+				defer attemptCancel()
+				return WithMasterServerClient(false, masterFn(attemptCtx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 					req := &master_pb.AssignRequest{
 						Count:               request.Count,
 						Replication:         request.Replication,
@@ -176,7 +179,7 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 						DataNode:            request.DataNode,
 						WritableVolumeCount: request.WritableVolumeCount,
 					}
-					resp, grpcErr := masterClient.Assign(ctx, req)
+					resp, grpcErr := masterClient.Assign(attemptCtx, req)
 					if grpcErr != nil {
 						return grpcErr
 					}
