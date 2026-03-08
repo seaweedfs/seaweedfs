@@ -36,6 +36,9 @@ func (iama *IamApiServer) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 			if len(g.Members) > 0 {
 				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d member(s)", groupName, len(g.Members))}
 			}
+			if len(g.PolicyNames) > 0 {
+				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d attached policy(ies)", groupName, len(g.PolicyNames))}
+			}
 			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
 			return resp, nil
 		}

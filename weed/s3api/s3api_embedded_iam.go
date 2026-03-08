@@ -518,7 +518,10 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (*
 	for _, gn := range groupNames {
 		g, err := e.credentialManager.GetGroup(ctx, gn)
 		if err != nil {
-			continue
+			if errors.Is(err, credential.ErrGroupNotFound) {
+				continue
+			}
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to get group %s: %w", gn, err)}
 		}
 		for _, pn := range g.PolicyNames {
 			if pn == policyName {
@@ -1481,6 +1484,9 @@ func (e *EmbeddedIamApi) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values ur
 		if g.Name == groupName {
 			if len(g.Members) > 0 {
 				return resp, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d member(s). Remove all members first", groupName, len(g.Members))}
+			}
+			if len(g.PolicyNames) > 0 {
+				return resp, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d attached policy(ies). Detach all policies first", groupName, len(g.PolicyNames))}
 			}
 			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
 			return resp, nil
