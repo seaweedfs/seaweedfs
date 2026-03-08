@@ -1649,7 +1649,7 @@ impl Volume {
             }
             entries.push((id, nv.offset, nv.size));
         }
-        entries.sort_by_key(|(id, _, _)| *id);
+        entries.sort_by_key(|(_, offset, _)| *offset);
 
         for (id, offset, size) in entries {
             // Progress callback

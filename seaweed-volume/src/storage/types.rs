@@ -176,7 +176,7 @@ impl From<Size> for i32 {
 ///   [b3][b2][b1][b0]  (big-endian 4 bytes)
 ///
 /// actual_offset = stored_value * 8
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Offset {
     pub b0: u8,
     pub b1: u8,
