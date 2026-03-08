@@ -3,7 +3,9 @@ package filersink
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,7 +227,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 		}
 		if isEofError(uploadErr) {
 			eofBackoff = nextEofBackoff(eofBackoff)
-			glog.V(0).Infof("source connection interrupted replicate manifest %s for %s, backing off %v: %v", sourceFileId, path, eofBackoff, uploadErr)
+			glog.V(0).Infof("source connection interrupted while replicating manifest %s for %s, backing off %v: %v", sourceFileId, path, eofBackoff, uploadErr)
 			time.Sleep(eofBackoff)
 		} else {
 			glog.V(0).Infof("replicate manifest %s for %s: %v", sourceFileId, path, uploadErr)
@@ -304,7 +306,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 		if isEofError(uploadErr) {
 			eofBackoff = nextEofBackoff(eofBackoff)
-			glog.V(0).Infof("source connection interrupted replicate %s for %s, backing off %v: %v", sourceChunk.GetFileIdString(), path, eofBackoff, uploadErr)
+			glog.V(0).Infof("source connection interrupted while replicating %s for %s, backing off %v: %v", sourceChunk.GetFileIdString(), path, eofBackoff, uploadErr)
 			time.Sleep(eofBackoff)
 		} else {
 			glog.V(0).Infof("replicate %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
@@ -337,8 +339,7 @@ func isEofError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "unexpected EOF") || strings.Contains(msg, "read input")
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
 func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
