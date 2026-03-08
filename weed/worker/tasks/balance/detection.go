@@ -205,12 +205,6 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 		return nil, ""
 	}
 
-	// Check if ANY task already exists in ActiveTopology for this volume
-	if clusterInfo.ActiveTopology.HasAnyTask(selectedVolume.VolumeID) {
-		glog.V(2).Infof("BALANCE [%s]: Skipping volume %d, task already exists in ActiveTopology", diskType, selectedVolume.VolumeID)
-		return nil, ""
-	}
-
 	destinationPlan, err := planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
 	if err != nil {
 		glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)
