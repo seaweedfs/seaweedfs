@@ -45,10 +45,6 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 		return nil, raft.NotLeaderError
 	}
 
-	if ms.Topo.IsWarmingUp() {
-		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
-	}
-
 	if req.Count == 0 {
 		req.Count = 1
 	}
@@ -63,6 +59,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
+	}
+
+	if ms.Topo.IsWarmingUp() {
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 	diskType := types.ToDiskType(req.DiskType)
 
