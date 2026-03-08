@@ -123,6 +123,11 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
 	if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		remaining := ms.Topo.RemainingWarmupDuration()
+		if remaining < time.Second {
+			remaining = time.Second
+		}
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
 		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
 			Error: "master is warming up, topology is still loading",
 		})
