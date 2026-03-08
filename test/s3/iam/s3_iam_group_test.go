@@ -338,14 +338,13 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Wait for policy propagation
-		time.Sleep(2 * time.Second)
-
-		// Now user should be able to create the bucket through group policy
-		_, err = userS3Client.CreateBucket(&s3.CreateBucketInput{
-			Bucket: aws.String(bucketName),
-		})
-		require.NoError(t, err, "User with group policy should be allowed")
+		// Wait for policy propagation, then create bucket
+		require.Eventually(t, func() bool {
+			_, err = userS3Client.CreateBucket(&s3.CreateBucketInput{
+				Bucket: aws.String(bucketName),
+			})
+			return err == nil
+		}, 10*time.Second, 500*time.Millisecond, "User with group policy should be allowed")
 		t.Cleanup(func() {
 			userS3Client.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 		})
@@ -367,14 +366,13 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Wait for policy propagation
-		time.Sleep(2 * time.Second)
-
-		// User should now be denied
-		_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(bucketName),
-		})
-		assert.Error(t, err, "User removed from group should be denied")
+		// Wait for policy propagation — user should now be denied
+		require.Eventually(t, func() bool {
+			_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
+				Bucket: aws.String(bucketName),
+			})
+			return err != nil
+		}, 10*time.Second, 500*time.Millisecond, "User removed from group should be denied")
 	})
 }
 
@@ -441,8 +439,6 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
-
 	userS3Client := createS3Client(t, *keyResp.AccessKey.AccessKeyId, *keyResp.AccessKey.SecretAccessKey)
 
 	// Create bucket using admin first so we can test listing
@@ -453,10 +449,12 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 	defer adminS3.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 
 	t.Run("enabled_group_allows_access", func(t *testing.T) {
-		_, err := userS3Client.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(bucketName),
-		})
-		assert.NoError(t, err, "User in enabled group should have access")
+		require.Eventually(t, func() bool {
+			_, err := userS3Client.ListObjects(&s3.ListObjectsInput{
+				Bucket: aws.String(bucketName),
+			})
+			return err == nil
+		}, 10*time.Second, 500*time.Millisecond, "User in enabled group should have access")
 	})
 
 	t.Run("disabled_group_denies_access", func(t *testing.T) {
@@ -468,13 +466,13 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Wait for propagation
-		time.Sleep(2 * time.Second)
-
-		_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(bucketName),
-		})
-		assert.Error(t, err, "User in disabled group should be denied access")
+		// Wait for propagation — user should be denied
+		require.Eventually(t, func() bool {
+			_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
+				Bucket: aws.String(bucketName),
+			})
+			return err != nil
+		}, 10*time.Second, 500*time.Millisecond, "User in disabled group should be denied access")
 	})
 
 	t.Run("re_enabled_group_restores_access", func(t *testing.T) {
@@ -486,13 +484,13 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
-		// Wait for propagation
-		time.Sleep(2 * time.Second)
-
-		_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
-			Bucket: aws.String(bucketName),
-		})
-		assert.NoError(t, err, "User in re-enabled group should have access again")
+		// Wait for propagation — user should have access again
+		require.Eventually(t, func() bool {
+			_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
+				Bucket: aws.String(bucketName),
+			})
+			return err == nil
+		}, 10*time.Second, 500*time.Millisecond, "User in re-enabled group should have access again")
 	})
 }
 
