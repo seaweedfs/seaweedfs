@@ -49,6 +49,8 @@ type IdentityAccessManagement struct {
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
 	policies          map[string]*iam_pb.Policy
+	groups            map[string]*iam_pb.Group // group name -> group
+	userGroups        map[string][]string      // user name -> group names (reverse index)
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -563,6 +565,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	for _, policy := range config.Policies {
 		policies[policy.Name] = policy
 	}
+	groups := make(map[string]*iam_pb.Group)
+	userGroupsMap := make(map[string][]string)
+	for _, g := range config.Groups {
+		groups[g.Name] = g
+		if !g.Disabled {
+			for _, member := range g.Members {
+				userGroupsMap[member] = append(userGroupsMap[member], g.Name)
+			}
+		}
+	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
@@ -663,6 +675,8 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.groups = groups
+	iam.userGroups = userGroupsMap
 	iam.rebuildIAMPolicyEngineLocked()
 
 	// Re-add environment-based identities that were preserved
@@ -911,6 +925,18 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		policies[policy.Name] = policy
 	}
 
+	// Process groups from dynamic config
+	mergedGroups := make(map[string]*iam_pb.Group)
+	mergedUserGroups := make(map[string][]string)
+	for _, g := range config.Groups {
+		mergedGroups[g.Name] = g
+		if !g.Disabled {
+			for _, member := range g.Members {
+				mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
+			}
+		}
+	}
+
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -920,6 +946,8 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.groups = mergedGroups
+	iam.userGroups = mergedUserGroups
 	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
@@ -1837,13 +1865,17 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 // Returns true if any matching statement explicitly allows the action.
 // Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
 func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
-	if identity == nil || len(identity.PolicyNames) == 0 {
-		return false
-	}
-
 	iam.m.RLock()
 	engine := iam.iamPolicyEngine
+	groupNames := iam.userGroups[identity.Name]
+	groupMap := iam.groups
 	iam.m.RUnlock()
+
+	// Collect all policy names: user policies + group policies
+	hasPolicies := len(identity.PolicyNames) > 0 || len(groupNames) > 0
+	if identity == nil || !hasPolicies {
+		return false
+	}
 
 	if engine == nil {
 		return false
@@ -1858,20 +1890,39 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		conditions[k] = v
 	}
 
-	for _, policyName := range identity.PolicyNames {
-		result := engine.EvaluatePolicy(policyName, &policy_engine.PolicyEvaluationArgs{
-			Action:     s3Action,
-			Resource:   resource,
-			Principal:  principal,
-			Conditions: conditions,
-			Claims:     identity.Claims,
-		})
+	evalArgs := &policy_engine.PolicyEvaluationArgs{
+		Action:     s3Action,
+		Resource:   resource,
+		Principal:  principal,
+		Conditions: conditions,
+		Claims:     identity.Claims,
+	}
 
+	// Evaluate user's own policies
+	for _, policyName := range identity.PolicyNames {
+		result := engine.EvaluatePolicy(policyName, evalArgs)
 		if result == policy_engine.PolicyResultDeny {
 			return false
 		}
 		if result == policy_engine.PolicyResultAllow {
 			explicitAllow = true
+		}
+	}
+
+	// Evaluate policies from user's groups (skip disabled groups)
+	for _, gName := range groupNames {
+		g, ok := groupMap[gName]
+		if !ok || g.Disabled {
+			continue
+		}
+		for _, policyName := range g.PolicyNames {
+			result := engine.EvaluatePolicy(policyName, evalArgs)
+			if result == policy_engine.PolicyResultDeny {
+				return false
+			}
+			if result == policy_engine.PolicyResultAllow {
+				explicitAllow = true
+			}
 		}
 	}
 
@@ -1894,7 +1945,10 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
-	hasAttachedPolicies := len(identity.PolicyNames) > 0
+	iam.m.RLock()
+	userGroupNames := iam.userGroups[identity.Name]
+	iam.m.RUnlock()
+	hasAttachedPolicies := len(identity.PolicyNames) > 0 || len(userGroupNames) > 0
 
 	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
