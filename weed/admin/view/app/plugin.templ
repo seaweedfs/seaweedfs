@@ -156,14 +156,7 @@ templ Plugin(page string) {
                             <small class="text-muted">Global</small>
                         </div>
                         <div class="card-body">
-                            <div class="mb-2">
-                                <label class="form-label" for="plugin-scheduler-idle-sleep-overview">Sleep Between Iterations (s)</label>
-                                <input type="number" class="form-control" id="plugin-scheduler-idle-sleep-overview" min="0"/>
-                                <div class="form-text">Used when no jobs are detected.</div>
-                            </div>
-                            <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn-overview">
-                                <i class="fas fa-save me-1"></i>Save Scheduler Settings
-                            </button>
+                            <p class="text-muted mb-0">Detection intervals are configured per job type in the job type settings below.</p>
                         </div>
                     </div>
                 </div>
@@ -275,6 +268,11 @@ templ Plugin(page string) {
                                     </div>
                                 </div>
                                 <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
+                                    <div class="form-text">How often to check for new work.</div>
+                                </div>
+                                <div class="col-12">
                                     <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
                                 </div>
@@ -311,14 +309,7 @@ templ Plugin(page string) {
                             <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler Settings</h5>
                         </div>
                         <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label" for="plugin-scheduler-idle-sleep">Sleep Between Iterations (s)</label>
-                                <input type="number" class="form-control" id="plugin-scheduler-idle-sleep" min="0"/>
-                                <div class="form-text">Used when no jobs are detected.</div>
-                            </div>
-                            <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn">
-                                <i class="fas fa-save me-1"></i>Save Scheduler Settings
-                            </button>
+                            <p class="text-muted mb-0">Detection intervals are configured per job type in the settings above.</p>
                         </div>
                     </div>
 
@@ -632,8 +623,6 @@ templ Plugin(page string) {
                 activities: [],
                 schedulerStates: [],
                 schedulerStatus: null,
-                schedulerConfig: null,
-                schedulerConfigLoaded: false,
                 allJobs: [],
                 allActivities: [],
                 loadedJobType: '',
@@ -2461,6 +2450,7 @@ templ Plugin(page string) {
                 }
 
                 document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
+                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
                 document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
                 document.getElementById('plugin-admin-max-runtime').value = String(pickNumber('job_type_max_runtime_seconds'));
                 document.getElementById('plugin-admin-max-results').value = String(pickNumber('max_jobs_per_detection'));
@@ -2471,9 +2461,6 @@ templ Plugin(page string) {
             }
 
             function collectAdminSettings() {
-                var existingRuntime = (state.config && state.config.admin_runtime) ? state.config.admin_runtime : {};
-                var existingDetectionInterval = Number(existingRuntime.detection_interval_seconds || 0);
-
                 function getInt(id) {
                     var raw = String(document.getElementById(id).value || '').trim();
                     if (!raw) {
@@ -2488,7 +2475,7 @@ templ Plugin(page string) {
 
                 return {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
-                    detection_interval_seconds: existingDetectionInterval,
+                    detection_interval_seconds: getInt('plugin-admin-detection-interval'),
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
                     job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),
                     max_jobs_per_detection: getInt('plugin-admin-max-results'),
@@ -2806,75 +2793,6 @@ templ Plugin(page string) {
                 }
             }
 
-            async function loadSchedulerConfig(forceRefresh) {
-                if (state.schedulerConfigLoaded && !forceRefresh) {
-                    return;
-                }
-                var idleInputs = [
-                    document.getElementById('plugin-scheduler-idle-sleep'),
-                    document.getElementById('plugin-scheduler-idle-sleep-overview'),
-                ].filter(Boolean);
-                if (idleInputs.length === 0) {
-                    return;
-                }
-                try {
-                    var cfg = await pluginRequest('GET', '/api/plugin/scheduler-config');
-                    state.schedulerConfig = cfg || {};
-                    state.schedulerConfigLoaded = true;
-                    var idleSeconds = Number((cfg && cfg.idle_sleep_seconds) || 0);
-                    idleInputs.forEach(function(input) {
-                        input.value = idleSeconds > 0 ? String(idleSeconds) : '';
-                    });
-                } catch (e) {
-                    notify('Failed to load scheduler config: ' + e.message, 'error');
-                }
-            }
-
-            async function saveSchedulerConfig(sourceInput) {
-                var idleInputs = [
-                    document.getElementById('plugin-scheduler-idle-sleep'),
-                    document.getElementById('plugin-scheduler-idle-sleep-overview'),
-                ].filter(Boolean);
-                if (idleInputs.length === 0) {
-                    return;
-                }
-                var raw = '';
-                if (sourceInput) {
-                    raw = String(sourceInput.value || '').trim();
-                }
-                if (!raw) {
-                    for (var i = 0; i < idleInputs.length; i++) {
-                        if (idleInputs[i] === sourceInput) {
-                            continue;
-                        }
-                        var candidate = String(idleInputs[i].value || '').trim();
-                        if (candidate) {
-                            raw = candidate;
-                            break;
-                        }
-                    }
-                }
-                var parsed = raw ? parseInt(raw, 10) : 0;
-                if (Number.isNaN(parsed) || parsed < 0) {
-                    notify('Invalid idle sleep value', 'error');
-                    return;
-                }
-                try {
-                    var updated = await pluginRequest('PUT', '/api/plugin/scheduler-config', {
-                        idle_sleep_seconds: parsed,
-                    });
-                    state.schedulerConfig = updated || {};
-                    state.schedulerConfigLoaded = true;
-                    var idleSeconds = Number((updated && updated.idle_sleep_seconds) || 0);
-                    idleInputs.forEach(function(input) {
-                        input.value = idleSeconds > 0 ? String(idleSeconds) : '';
-                    });
-                    notify('Scheduler settings saved', 'success');
-                } catch (e) {
-                    notify('Failed to save scheduler config: ' + e.message, 'error');
-                }
-            }
-
             function getMaxResults() {
                 var raw = String(document.getElementById('plugin-admin-max-results').value || '').trim();
                 if (!raw) {
@@ -3051,19 +2969,6 @@ templ Plugin(page string) {
                     saveConfig();
                 });
 
-                var saveSchedulerBtn = document.getElementById('plugin-save-scheduler-btn');
-                if (saveSchedulerBtn) {
-                    saveSchedulerBtn.addEventListener('click', function() {
-                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep'));
-                    });
-                }
-                var saveSchedulerBtnOverview = document.getElementById('plugin-save-scheduler-btn-overview');
-                if (saveSchedulerBtnOverview) {
-                    saveSchedulerBtnOverview.addEventListener('click', function() {
-                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep-overview'));
-                    });
-                }
-
                 document.getElementById('plugin-trigger-detection-btn').addEventListener('click', function() {
                     runDetection();
                 });
@@ -3148,7 +3053,6 @@ templ Plugin(page string) {
                 ensureActiveNavigation();
                 renderNavigationState();
                 await refreshAll();
-                await loadSchedulerConfig(false);
 
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
