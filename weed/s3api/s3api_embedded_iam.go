@@ -510,6 +510,25 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (*
 			}
 		}
 	}
+	// Check if policy is attached to any group
+	groupNames, err := e.credentialManager.ListGroups(ctx)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	for _, gn := range groupNames {
+		g, err := e.credentialManager.GetGroup(ctx, gn)
+		if err != nil {
+			continue
+		}
+		for _, pn := range g.PolicyNames {
+			if pn == policyName {
+				return resp, &iamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("policy %s is attached to group %s", policyName, gn),
+				}
+			}
+		}
+	}
 	if err := e.credentialManager.DeletePolicy(ctx, policyName); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 	}
@@ -1630,8 +1649,10 @@ func (e *EmbeddedIamApi) ListAttachedGroupPolicies(s3cfg *iam_pb.S3ApiConfigurat
 		if g.Name == groupName {
 			for _, policyName := range g.PolicyNames {
 				pn := policyName
+				policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
 				resp.ListAttachedGroupPoliciesResult.AttachedPolicies = append(resp.ListAttachedGroupPoliciesResult.AttachedPolicies, &iam.AttachedPolicy{
 					PolicyName: &pn,
+					PolicyArn:  &policyArn,
 				})
 			}
 			return resp, nil

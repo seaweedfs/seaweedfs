@@ -544,6 +544,14 @@ func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		}
 	}
 
+	// Reject deletion if the policy is attached to any group
+	if groupName, attached := isPolicyAttachedToAnyGroup(s3cfg, policyName); attached {
+		return resp, &IamError{
+			Code:  iam.ErrCodeDeleteConflictException,
+			Error: fmt.Errorf("policy %s is still attached to group %s", policyName, groupName),
+		}
+	}
+
 	delete(policies.Policies, policyName)
 	if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
