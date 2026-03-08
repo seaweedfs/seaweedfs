@@ -243,6 +243,10 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
 	if newUserName != "" {
+		// No-op if renaming to the same name
+		if newUserName == userName {
+			return resp, nil
+		}
 		// Check for name collision before renaming
 		for _, ident := range s3cfg.Identities {
 			if ident.Name == newUserName {
