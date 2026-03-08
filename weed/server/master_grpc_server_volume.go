@@ -166,7 +166,6 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
 	notFoundCount := 0
-	hasSuccessfulLookup := false
 	for _, volumeOrFileId := range req.VolumeOrFileIds {
 		vid := volumeOrFileId
 		commaSep := strings.Index(vid, ",")
@@ -189,8 +188,6 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			}
 			if result.NotFound {
 				notFoundCount++
-			} else if len(locations) > 0 {
-				hasSuccessfulLookup = true
 			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 				VolumeOrFileId: result.VolumeOrFileId,
@@ -201,8 +198,8 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	// Only return Unavailable during warmup when ALL lookups failed (no partial results)
-	if notFoundCount > 0 && !hasSuccessfulLookup && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+	// Only return Unavailable during warmup when every requested ID was a transient not-found
+	if notFoundCount == len(req.VolumeOrFileIds) && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
 		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
 		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
