@@ -385,3 +385,26 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 	})
 	return nil
 }
+
+func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	return s.CredentialStore.CreateGroup(ctx, group)
+}
+
+func (s *PropagatingCredentialStore) GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error) {
+	return s.CredentialStore.GetGroup(ctx, groupName)
+}
+
+func (s *PropagatingCredentialStore) DeleteGroup(ctx context.Context, groupName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeleteGroup %s", groupName)
+	return s.CredentialStore.DeleteGroup(ctx, groupName)
+}
+
+func (s *PropagatingCredentialStore) ListGroups(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListGroups(ctx)
+}
+
+func (s *PropagatingCredentialStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	return s.CredentialStore.UpdateGroup(ctx, group)
+}
