@@ -21,6 +21,7 @@ use axum::{
     http::{StatusCode, HeaderValue, Method},
 };
 
+use crate::config::ReadMode;
 use crate::security::Guard;
 use crate::storage::store::Store;
 
@@ -65,6 +66,14 @@ pub struct VolumeServerState {
     pub write_queue: std::sync::OnceLock<WriteQueue>,
     /// Registry of S3 tier backends for tiered storage operations.
     pub s3_tier_registry: std::sync::RwLock<crate::remote_storage::s3_tier::S3TierRegistry>,
+    /// Read mode: local, proxy, or redirect for non-local volumes.
+    pub read_mode: ReadMode,
+    /// First master address for volume lookups (e.g., "localhost:9333").
+    pub master_url: String,
+    /// This server's own address (ip:port) for filtering self from lookup results.
+    pub self_url: String,
+    /// HTTP client for proxy requests and master lookups.
+    pub http_client: reqwest::Client,
 }
 
 impl VolumeServerState {

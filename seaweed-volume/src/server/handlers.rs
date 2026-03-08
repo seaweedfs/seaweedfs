@@ -14,6 +14,7 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::config::ReadMode;
 use crate::metrics;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
@@ -227,6 +228,193 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
 }
 
 // ============================================================================
+// Volume Lookup + Proxy/Redirect
+// ============================================================================
+
+/// A volume location returned by master lookup.
+#[derive(Debug, Deserialize)]
+struct VolumeLocation {
+    url: String,
+    #[serde(rename = "publicUrl")]
+    public_url: String,
+}
+
+/// Master /dir/lookup response.
+#[derive(Debug, Deserialize)]
+struct LookupResult {
+    #[serde(default)]
+    locations: Option<Vec<VolumeLocation>>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// Look up volume locations from the master via HTTP /dir/lookup.
+async fn lookup_volume(
+    client: &reqwest::Client,
+    master_url: &str,
+    volume_id: u32,
+) -> Result<Vec<VolumeLocation>, String> {
+    let url = format!("http://{}/dir/lookup?volumeId={}", master_url, volume_id);
+    let resp = client.get(&url).send().await.map_err(|e| format!("lookup request failed: {}", e))?;
+    let result: LookupResult = resp.json().await.map_err(|e| format!("lookup parse failed: {}", e))?;
+    if let Some(err) = result.error {
+        if !err.is_empty() {
+            return Err(err);
+        }
+    }
+    Ok(result.locations.unwrap_or_default())
+}
+
+/// Extracted request info needed for proxy/redirect (avoids borrowing Request across await).
+struct ProxyRequestInfo {
+    original_headers: HeaderMap,
+    original_query: String,
+    path: String,
+    vid_str: String,
+    fid_str: String,
+}
+
+/// Handle proxy or redirect for a non-local volume read.
+async fn proxy_or_redirect_to_target(
+    state: &VolumeServerState,
+    info: ProxyRequestInfo,
+    vid: VolumeId,
+) -> Response {
+    // Look up volume locations from master
+    let locations = match lookup_volume(&state.http_client, &state.master_url, vid.0).await {
+        Ok(locs) => locs,
+        Err(e) => {
+            tracing::warn!("volume lookup failed for {}: {}", vid.0, e);
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    };
+
+    if locations.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Filter out self, then shuffle remaining
+    let mut candidates: Vec<&VolumeLocation> = locations
+        .iter()
+        .filter(|loc| !loc.url.contains(&state.self_url))
+        .collect();
+
+    if candidates.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // Shuffle for load balancing
+    if candidates.len() >= 2 {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+        candidates.shuffle(&mut rng);
+    }
+
+    let target = candidates[0];
+
+    match state.read_mode {
+        ReadMode::Proxy => {
+            proxy_request(state, &info, target).await
+        }
+        ReadMode::Redirect => {
+            redirect_request(&info, target)
+        }
+        ReadMode::Local => unreachable!(),
+    }
+}
+
+/// Proxy the request to the target volume server.
+async fn proxy_request(
+    state: &VolumeServerState,
+    info: &ProxyRequestInfo,
+    target: &VolumeLocation,
+) -> Response {
+    // Build target URL, adding proxied=true query param
+    let scheme = "http";
+    let target_host = &target.url;
+    let path = info.path.trim_start_matches('/');
+
+    let target_url = if info.original_query.is_empty() {
+        format!("{}://{}/{}?proxied=true", scheme, target_host, path)
+    } else {
+        format!("{}://{}/{}?{}&proxied=true", scheme, target_host, path, info.original_query)
+    };
+
+    // Build the proxy request
+    let mut req_builder = state.http_client.get(&target_url);
+
+    // Forward all original headers
+    for (name, value) in &info.original_headers {
+        if let Ok(v) = value.to_str() {
+            req_builder = req_builder.header(name.as_str(), v);
+        }
+    }
+
+    let resp = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("proxy request to {} failed: {}", target_url, e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    // Build response, copying headers and body from remote
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut response_headers = HeaderMap::new();
+    for (name, value) in resp.headers() {
+        if name.as_str().eq_ignore_ascii_case("server") {
+            continue;
+        }
+        response_headers.insert(name.clone(), value.clone());
+    }
+
+    let body_bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("proxy response read failed: {}", e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let mut response = Response::new(Body::from(body_bytes));
+    *response.status_mut() = status;
+    *response.headers_mut() = response_headers;
+    response
+}
+
+/// Return a redirect response to the target volume server.
+fn redirect_request(
+    info: &ProxyRequestInfo,
+    target: &VolumeLocation,
+) -> Response {
+    let scheme = "http";
+    let target_host = &target.public_url;
+
+    // Build query string: preserve collection, add proxied=true, drop readDeleted (Go parity)
+    let mut query_params = Vec::new();
+    if !info.original_query.is_empty() {
+        for param in info.original_query.split('&') {
+            if let Some((key, value)) = param.split_once('=') {
+                if key == "collection" {
+                    query_params.push(format!("collection={}", value));
+                }
+                // Intentionally drop readDeleted and other params (Go parity)
+            }
+        }
+    }
+    query_params.push("proxied=true".to_string());
+    let query = query_params.join("&");
+
+    let location = format!("{}://{}/{},{}?{}", scheme, target_host, &info.vid_str, &info.fid_str, query);
+
+    Response::builder()
+        .status(StatusCode::MOVED_PERMANENTLY)
+        .header("Location", &location)
+        .body(Body::from(format!("<a href=\"{}\">Moved Permanently</a>.\n\n", location)))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// ============================================================================
 // Query parameters
 // ============================================================================
 
@@ -318,6 +506,58 @@ async fn get_or_head_handler_inner(
     let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, false) {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
+    }
+
+    // Check if volume exists locally; if not, proxy/redirect based on read_mode.
+    // This mirrors Go's hasVolume check in GetOrHeadHandler.
+    // NOTE: The RwLockReadGuard must be dropped before any .await to keep the future Send.
+    let has_volume = state.store.read().unwrap().has_volume(vid);
+
+    if !has_volume {
+        // Check if already proxied (loop prevention)
+        let query_string = request.uri().query().unwrap_or("").to_string();
+        let is_proxied = query_string.contains("proxied=true");
+
+        if is_proxied || state.read_mode == ReadMode::Local || state.master_url.is_empty() {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+
+        // Extract vid_str and fid_str from path for redirect URL construction.
+        // For redirect, fid must be stripped of extension (Go parity: parseURLPath returns raw fid).
+        let trimmed = path.trim_start_matches('/');
+        let (vid_str, fid_str) = if let Some(pos) = trimmed.find(',') {
+            let raw_fid = &trimmed[pos + 1..];
+            // Strip filename after slash: "fid/filename.ext" -> "fid"
+            let fid = if let Some(slash) = raw_fid.find('/') {
+                &raw_fid[..slash]
+            } else if let Some(dot) = raw_fid.rfind('.') {
+                // Strip extension: "fid.ext" -> "fid"
+                &raw_fid[..dot]
+            } else {
+                raw_fid
+            };
+            (trimmed[..pos].to_string(), fid.to_string())
+        } else if let Some(pos) = trimmed.find('/') {
+            let after = &trimmed[pos + 1..];
+            let fid_part = if let Some(slash) = after.find('/') {
+                &after[..slash]
+            } else {
+                after
+            };
+            (trimmed[..pos].to_string(), fid_part.to_string())
+        } else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        let info = ProxyRequestInfo {
+            original_headers: request.headers().clone(),
+            original_query: query_string,
+            path: path.clone(),
+            vid_str,
+            fid_str,
+        };
+
+        return proxy_or_redirect_to_target(&state, info, vid).await;
     }
 
     // Download throttling

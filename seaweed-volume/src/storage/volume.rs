@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
 use crate::storage::needle::needle::{self, Needle, NeedleError, get_actual_size};
-use crate::storage::needle_map::{CompactNeedleMap, NeedleMapKind};
+use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{SuperBlock, ReplicaPlacement, SUPER_BLOCK_SIZE};
 use crate::storage::types::*;
 
@@ -240,7 +240,7 @@ pub struct Volume {
     pub collection: String,
 
     dat_file: Option<File>,
-    nm: Option<CompactNeedleMap>,
+    nm: Option<NeedleMap>,
     needle_map_kind: NeedleMapKind,
 
     pub super_block: SuperBlock,
@@ -340,7 +340,7 @@ impl Volume {
 
     pub fn file_name(&self, ext: &str) -> String {
         match ext {
-            ".idx" | ".cpx" | ".ldb" | ".cpldb" => {
+            ".idx" | ".cpx" | ".ldb" | ".cpldb" | ".rdb" => {
                 format!("{}{}", self.index_file_name(), ext)
             }
             _ => {
@@ -431,13 +431,10 @@ impl Volume {
     }
 
     fn load_index(&mut self) -> Result<(), VolumeError> {
-        if self.needle_map_kind != NeedleMapKind::InMemory {
-            warn!(
-                volume_id = self.id.0,
-                kind = ?self.needle_map_kind,
-                "only InMemory needle map is currently supported, falling back to InMemory"
-            );
-        }
+        let use_redb = matches!(
+            self.needle_map_kind,
+            NeedleMapKind::LevelDb | NeedleMapKind::LevelDbMedium | NeedleMapKind::LevelDbLarge
+        );
 
         let idx_path = self.file_name(".idx");
 
@@ -446,12 +443,23 @@ impl Volume {
             fs::create_dir_all(parent)?;
         }
 
+        if use_redb {
+            self.load_index_redb(&idx_path)?;
+        } else {
+            self.load_index_inmemory(&idx_path)?;
+        }
+
+        Ok(())
+    }
+
+    /// Load index using in-memory CompactNeedleMap.
+    fn load_index_inmemory(&mut self, idx_path: &str) -> Result<(), VolumeError> {
         if self.no_write_or_delete {
             // Open read-only
             if Path::new(&idx_path).exists() {
                 let mut idx_file = File::open(&idx_path)?;
                 let nm = CompactNeedleMap::load_from_idx(&mut idx_file)?;
-                self.nm = Some(nm);
+                self.nm = Some(NeedleMap::InMemory(nm));
             } else {
                 // Missing .idx with existing .dat could orphan needles
                 let dat_path = self.file_name(".dat");
@@ -464,7 +472,7 @@ impl Volume {
                         );
                     }
                 }
-                self.nm = Some(CompactNeedleMap::new());
+                self.nm = Some(NeedleMap::InMemory(CompactNeedleMap::new()));
             }
         } else {
             // Open read-write (create if missing)
@@ -484,7 +492,56 @@ impl Volume {
                 .append(true)
                 .open(&idx_path)?;
             nm.set_idx_file(Box::new(write_file), idx_size);
-            self.nm = Some(nm);
+            self.nm = Some(NeedleMap::InMemory(nm));
+        }
+
+        Ok(())
+    }
+
+    /// Load index using disk-backed RedbNeedleMap.
+    fn load_index_redb(&mut self, idx_path: &str) -> Result<(), VolumeError> {
+        // The redb database file is stored alongside the volume files
+        let rdb_path = self.file_name(".rdb");
+
+        if self.no_write_or_delete {
+            // Open read-only
+            if Path::new(&idx_path).exists() {
+                let mut idx_file = File::open(&idx_path)?;
+                let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file)?;
+                self.nm = Some(NeedleMap::Redb(nm));
+            } else {
+                // Missing .idx with existing .dat could orphan needles
+                let dat_path = self.file_name(".dat");
+                if Path::new(&dat_path).exists() {
+                    let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                    if dat_size > SUPER_BLOCK_SIZE as u64 {
+                        warn!(
+                            volume_id = self.id.0,
+                            ".idx file missing but .dat exists with data; needles may be orphaned"
+                        );
+                    }
+                }
+                self.nm = Some(NeedleMap::Redb(RedbNeedleMap::new(&rdb_path)?));
+            }
+        } else {
+            // Open read-write (create if missing)
+            let idx_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&idx_path)?;
+
+            let idx_size = idx_file.metadata()?.len();
+            let mut idx_reader = io::BufReader::new(&idx_file);
+            let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader)?;
+
+            // Re-open for append-only writes
+            let write_file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(&idx_path)?;
+            nm.set_idx_file(Box::new(write_file), idx_size);
+            self.nm = Some(NeedleMap::Redb(nm));
         }
 
         Ok(())
@@ -927,7 +984,7 @@ impl Volume {
     pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
         let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
         let mut needles = Vec::new();
-        for (&key, nv) in nm.iter() {
+        for (key, nv) in nm.iter_entries() {
             if !nv.size.is_valid() {
                 continue; // skip deleted
             }
@@ -954,7 +1011,7 @@ impl Volume {
         let mut files_checked: u64 = 0;
         let mut broken = Vec::new();
 
-        for (needle_id, nv) in nm.iter() {
+        for (needle_id, nv) in nm.iter_entries() {
             if nv.offset.is_zero() || nv.size.is_deleted() {
                 continue;
             }
@@ -970,7 +1027,7 @@ impl Volume {
 
             // Read and verify the needle (read_needle_data_at checks CRC via read_bytes/read_tail)
             let mut n = Needle {
-                id: *needle_id,
+                id: needle_id,
                 ..Needle::default()
             };
             match self.read_needle_data_at(&mut n, offset, nv.size) {
@@ -1165,6 +1222,163 @@ impl Volume {
         Ok(())
     }
 
+    // ---- Binary search for incremental copy ----
+
+    /// Read a single index entry's offset from the .idx file by entry index.
+    fn read_offset_from_index(&self, m: i64) -> Result<Offset, VolumeError> {
+        let idx_path = self.file_name(".idx");
+        let idx_file = File::open(&idx_path)?;
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        let file_offset = m as u64 * NEEDLE_MAP_ENTRY_SIZE as u64;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            idx_file.read_exact_at(&mut buf, file_offset)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut f = idx_file;
+            f.seek(SeekFrom::Start(file_offset))?;
+            std::io::Read::read_exact(&mut f, &mut buf)?;
+        }
+        let (_key, offset, _size) = idx_entry_from_bytes(&buf);
+        Ok(offset)
+    }
+
+    /// Read the append_at_ns timestamp from a needle at the given offset in the .dat file.
+    fn read_append_at_ns(&self, offset: Offset) -> Result<u64, VolumeError> {
+        let dat_file = self.dat_file.as_ref().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+        let actual_offset = offset.to_actual_offset() as u64;
+        let version = self.version();
+
+        let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            dat_file.read_exact_at(&mut header_buf, actual_offset)?;
+        }
+        #[cfg(not(unix))]
+        {
+            read_exact_at(dat_file, &mut header_buf, actual_offset)?;
+        }
+
+        let (_cookie, _id, size) = Needle::parse_header(&header_buf);
+        if size.0 <= 0 {
+            return Ok(0);
+        }
+
+        let actual_size = get_actual_size(size, version);
+        let mut buf = vec![0u8; actual_size as usize];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            dat_file.read_exact_at(&mut buf, actual_offset)?;
+        }
+        #[cfg(not(unix))]
+        {
+            read_exact_at(dat_file, &mut buf, actual_offset)?;
+        }
+
+        let mut n = Needle::default();
+        n.read_bytes_meta_only(&mut buf, offset.to_actual_offset(), size, version)?;
+        Ok(n.append_at_ns)
+    }
+
+    /// Search right from position m to find the first non-deleted entry.
+    fn read_right_ns(&self, m: i64, max: i64) -> Result<(i64, Offset, u64), VolumeError> {
+        let mut index = m;
+        loop {
+            index += 1;
+            if index >= max {
+                return Ok((index, Offset::default(), 0));
+            }
+            let offset = self.read_offset_from_index(index)?;
+            if !offset.is_zero() {
+                let ts = self.read_append_at_ns(offset)?;
+                return Ok((index, offset, ts));
+            }
+        }
+    }
+
+    /// Search left from position m to find the first non-deleted entry.
+    fn read_left_ns(&self, m: i64) -> Result<(i64, Offset, u64), VolumeError> {
+        let mut index = m;
+        loop {
+            index -= 1;
+            if index < 0 {
+                return Ok((index, Offset::default(), 0));
+            }
+            let offset = self.read_offset_from_index(index)?;
+            if !offset.is_zero() {
+                let ts = self.read_append_at_ns(offset)?;
+                return Ok((index, offset, ts));
+            }
+        }
+    }
+
+    /// Binary search through the .idx file to find the first needle
+    /// with append_at_ns > since_ns. Returns (offset, is_last).
+    /// Matches Go's BinarySearchByAppendAtNs in volume_backup.go.
+    pub fn binary_search_by_append_at_ns(&self, since_ns: u64) -> Result<(Offset, bool), VolumeError> {
+        let file_size = self.idx_file_size() as i64;
+        if file_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected idx file size: {}", file_size),
+            )));
+        }
+
+        let entry_count = file_size / NEEDLE_MAP_ENTRY_SIZE as i64;
+        let mut l: i64 = 0;
+        let mut h: i64 = entry_count;
+
+        while l < h {
+            let m = (l + h) / 2;
+
+            if m == entry_count {
+                return Ok((Offset::default(), true));
+            }
+
+            let offset = self.read_offset_from_index(m)?;
+
+            if offset.is_zero() {
+                let (left_index, _left_offset, left_ns) = self.read_left_ns(m)?;
+                let (right_index, right_offset, right_ns) = self.read_right_ns(m, entry_count)?;
+
+                if right_ns <= since_ns {
+                    l = right_index;
+                    if l == entry_count {
+                        return Ok((Offset::default(), true));
+                    } else {
+                        continue;
+                    }
+                }
+                if since_ns < left_ns {
+                    h = left_index + 1;
+                    continue;
+                }
+                return Ok((right_offset, false));
+            }
+
+            let m_ns = self.read_append_at_ns(offset)?;
+
+            if m_ns <= since_ns {
+                l = m + 1;
+            } else {
+                h = m;
+            }
+        }
+
+        if l == entry_count {
+            return Ok((Offset::default(), true));
+        }
+
+        let offset = self.read_offset_from_index(l)?;
+        Ok((offset, false))
+    }
+
     /// Write a raw needle blob at a specific offset in the .dat file.
     pub fn write_needle_blob(&mut self, offset: i64, needle_blob: &[u8]) -> Result<(), VolumeError> {
         if self.no_write_or_delete {
@@ -1279,7 +1493,7 @@ impl Volume {
         // Collect live entries from needle map (sorted ascending)
         let nm = self.nm.as_ref().ok_or(VolumeError::NotInitialized)?;
         let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
-        for (&id, nv) in nm.iter() {
+        for (id, nv) in nm.iter_entries() {
             if nv.offset.is_zero() || nv.size.is_deleted() {
                 continue;
             }

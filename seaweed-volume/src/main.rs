@@ -98,6 +98,9 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         SigningKey(config.jwt_read_signing_key.clone()),
         config.jwt_read_signing_expires_seconds,
     );
+    let master_url = config.masters.first().cloned().unwrap_or_default();
+    let self_url = format!("{}:{}", config.ip, config.port);
+
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
         guard,
@@ -123,6 +126,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         s3_tier_registry: std::sync::RwLock::new(
             seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
         ),
+        read_mode: config.read_mode,
+        master_url,
+        self_url,
+        http_client: reqwest::Client::new(),
     });
 
     // Initialize the batched write queue if enabled

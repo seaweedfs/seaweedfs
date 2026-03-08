@@ -57,6 +57,10 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
         s3_tier_registry: std::sync::RwLock::new(
             seaweed_volume::remote_storage::s3_tier::S3TierRegistry::new(),
         ),
+        read_mode: seaweed_volume::config::ReadMode::Local,
+        master_url: String::new(),
+        self_url: String::new(),
+        http_client: reqwest::Client::new(),
     });
     (state, tmp)
 }

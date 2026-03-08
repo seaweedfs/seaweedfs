@@ -204,6 +204,10 @@ mod tests {
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
             s3_tier_registry: std::sync::RwLock::new(crate::remote_storage::s3_tier::S3TierRegistry::new()),
+            read_mode: crate::config::ReadMode::Local,
+            master_url: String::new(),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
         })
     }
 

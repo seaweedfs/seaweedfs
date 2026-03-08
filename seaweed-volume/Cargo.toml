@@ -41,6 +41,9 @@ rustls-pemfile = "2"
 # Using rusty-leveldb for pure Rust LevelDB
 rusty-leveldb = "3"
 
+# Disk-backed needle map (alternative to in-memory HashMap)
+redb = "3"
+
 # Reed-Solomon erasure coding
 reed-solomon-erasure = "6"
 
@@ -65,7 +68,7 @@ memmap2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
 
 # HTTP client (for proxying, remote fetch)
-reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart"] }
+reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart", "json"] }
 
 # Content hashing
 md-5 = "0.10"

@@ -2972,6 +2972,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redb"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae323eb086579a3769daa2c753bb96deb95993c534711e0dbe881b5192906a06"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3349,6 +3358,7 @@ dependencies = [
  "prost",
  "prost-types",
  "rand 0.8.5",
+ "redb",
  "reed-solomon-erasure",
  "reqwest",
  "rustls 0.23.37",

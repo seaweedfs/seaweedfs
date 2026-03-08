@@ -394,16 +394,40 @@ impl VolumeServer for VolumeGrpcService {
         let dat_size = v.dat_file_size().unwrap_or(0);
         let dat_path = v.file_name(".dat");
         let super_block_size = v.super_block.block_size() as u64;
-        drop(store);
 
         // If since_ns is very large (after all data), return empty
         if req.since_ns == u64::MAX || dat_size <= super_block_size {
+            drop(store);
             let stream = tokio_stream::iter(Vec::new());
             return Ok(Response::new(Box::pin(stream)));
         }
 
-        // For since_ns=0, start from super block end; otherwise would need binary search
-        let start_offset = super_block_size;
+        // Use binary search to find the starting offset
+        let start_offset = if req.since_ns == 0 {
+            super_block_size
+        } else {
+            match v.binary_search_by_append_at_ns(req.since_ns) {
+                Ok((_offset, true)) => {
+                    // All entries are before since_ns — nothing to send
+                    drop(store);
+                    let stream = tokio_stream::iter(Vec::new());
+                    return Ok(Response::new(Box::pin(stream)));
+                }
+                Ok((offset, false)) => {
+                    let actual = offset.to_actual_offset();
+                    if actual <= 0 {
+                        super_block_size
+                    } else {
+                        actual as u64
+                    }
+                }
+                Err(_e) => {
+                    // On error, fall back to streaming from superblock end
+                    super_block_size
+                }
+            }
+        };
+        drop(store);
 
         // Read the .dat file
         let file = std::fs::File::open(&dat_path)
