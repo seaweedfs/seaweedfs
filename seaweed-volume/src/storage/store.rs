@@ -459,6 +459,26 @@ impl Store {
     where
         F: Fn(i64) -> bool,
     {
+        let loc_idx = self.find_volume(vid).map(|(i, _)| i).ok_or_else(|| {
+            format!("volume id {} is not found during compact", vid.0)
+        })?;
+
+        let dir = self.locations[loc_idx].directory.clone();
+        let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
+        
+        // Compute required space from current volume sizes
+        let required_space = {
+            let (_, v) = self.find_volume(vid).unwrap();
+            v.dat_file_size().unwrap_or(0) + v.idx_file_size()
+        };
+
+        if free < required_space {
+            return Err(format!(
+                "not enough free space to compact volume {}. Required: {}, Free: {}",
+                vid.0, required_space, free
+            ));
+        }
+
         if let Some((_, v)) = self.find_volume_mut(vid) {
             v.compact_by_index(preallocate, max_bytes_per_second, progress_fn)
                 .map_err(|e| format!("compact volume {}: {}", vid.0, e))
@@ -585,7 +605,7 @@ mod tests {
             data_size: 11,
             ..Needle::default()
         };
-        let (offset, size, unchanged) = store.write_volume_needle(VolumeId(1), &mut n).unwrap();
+        let (offset, _size, unchanged) = store.write_volume_needle(VolumeId(1), &mut n).unwrap();
         assert!(!unchanged);
         assert!(offset > 0);
 
