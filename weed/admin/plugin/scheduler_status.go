@@ -9,6 +9,7 @@ import (
 type SchedulerStatus struct {
 	Now                  time.Time                `json:"now"`
 	SchedulerTickSeconds int                      `json:"scheduler_tick_seconds"`
+	IdleSleepSeconds     int                      `json:"idle_sleep_seconds,omitempty"`
 	NextDetectionAt      *time.Time               `json:"next_detection_at,omitempty"`
 	CurrentJobType       string                   `json:"current_job_type,omitempty"`
 	CurrentPhase         string                   `json:"current_phase,omitempty"`
@@ -215,17 +216,22 @@ func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 	now := time.Now().UTC()
 	loopState := r.snapshotSchedulerLoopState()
+	schedulerConfig := r.GetSchedulerConfig()
 	status := SchedulerStatus{
 		Now:                  now,
 		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
 		InProcessJobs:        r.listInProcessJobs(now),
+		IdleSleepSeconds:     int(schedulerConfig.IdleSleepSeconds),
 		CurrentJobType:       loopState.currentJobType,
 		CurrentPhase:         loopState.currentPhase,
 		LastIterationHadJobs: loopState.lastIterationHadJobs,
 	}
 	nextDetectionAt := r.earliestNextDetectionAt()
 	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
-		nextDetectionAt = loopState.lastIterationCompleted.Add(defaultSchedulerIdleSleep)
+		idleSleep := schedulerConfig.IdleSleepDuration()
+		if idleSleep > 0 {
+			nextDetectionAt = loopState.lastIterationCompleted.Add(idleSleep)
+		}
 	}
 	if !nextDetectionAt.IsZero() {
 		at := nextDetectionAt

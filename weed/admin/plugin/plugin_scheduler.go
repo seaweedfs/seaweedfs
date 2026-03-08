@@ -64,7 +64,7 @@ func (r *Plugin) schedulerLoop() {
 		}
 
 		r.setSchedulerLoopState("", "sleeping")
-		idleSleep := defaultSchedulerIdleSleep
+		idleSleep := r.GetSchedulerConfig().IdleSleepDuration()
 		if nextRun := r.earliestNextDetectionAt(); !nextRun.IsZero() {
 			if until := time.Until(nextRun); until <= 0 {
 				idleSleep = 0
