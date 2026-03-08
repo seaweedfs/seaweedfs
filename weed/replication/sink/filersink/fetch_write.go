@@ -183,7 +183,6 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 		return "", fmt.Errorf("upload manifest data: %w", err)
 	}
 
-	eofBackoff := time.Duration(0)
 	retryName := fmt.Sprintf("replicate manifest chunk %s", sourceFileId)
 	err = util.RetryUntil(retryName, func() error {
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
@@ -217,7 +216,6 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 			return fmt.Errorf("upload manifest result: %v", uploadResult.Error)
 		}
 
-		eofBackoff = 0
 		fileId = currentFileId
 		return nil
 	}, func(uploadErr error) (shouldContinue bool) {
@@ -225,13 +223,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceFileId, path, uploadErr)
 			return false
 		}
-		if isEofError(uploadErr) {
-			eofBackoff = nextEofBackoff(eofBackoff)
-			glog.V(0).Infof("source connection interrupted while replicating manifest %s for %s, backing off %v: %v", sourceFileId, path, eofBackoff, uploadErr)
-			time.Sleep(eofBackoff)
-		} else {
-			glog.V(0).Infof("replicate manifest %s for %s: %v", sourceFileId, path, uploadErr)
-		}
+		glog.V(0).Infof("replicate manifest %s for %s: %v", sourceFileId, path, uploadErr)
 		return true
 	})
 	if err != nil {
