@@ -128,7 +128,7 @@ func (r *Plugin) runSchedulerIteration() bool {
 		}
 		initialDelay := time.Duration(0)
 		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
-			initialDelay = policy.DetectionInterval / 2
+			initialDelay = 5 * time.Second
 		}
 		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
 			continue
