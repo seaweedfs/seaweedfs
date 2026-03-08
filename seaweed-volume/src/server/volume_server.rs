@@ -217,7 +217,11 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/:vid/:fid/:filename", any(admin_store_handler))
         .fallback(admin_store_handler);
     if ui_enabled {
-        router = router.route("/ui/index.html", get(handlers::ui_handler));
+        router = router
+            .route("/ui/index.html", get(handlers::ui_handler))
+            .route("/stats/disk", get(handlers::stats_disk_handler))
+            .route("/stats/counter", get(handlers::stats_counter_handler))
+            .route("/stats/memory", get(handlers::stats_memory_handler));
     }
     router
         .layer(middleware::from_fn(common_headers_middleware))
