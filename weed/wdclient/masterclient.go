@@ -62,18 +62,18 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 			result = make(map[string][]Location)
 			lookupErrors = nil
 
-			// Resolve master first so GetMaster() blocking doesn't consume the RPC timeout
-			master := p.masterClient.GetMaster(ctx)
+			// Per-attempt timeout bounds both master resolution and the RPC
+			// so a single attempt cannot consume the entire retry budget.
+			timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
+			defer cancel()
+
+			master := p.masterClient.GetMaster(timeoutCtx)
 			if master == "" {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				return status.Errorf(codes.Unavailable, "no master available")
 			}
-
-			// Use a timeout for the master lookup to prevent indefinite blocking
-			timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
-			defer cancel()
 
 			return pb.WithMasterClient(false, master, p.masterClient.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 				resp, err := client.LookupVolume(timeoutCtx, &master_pb.LookupVolumeRequest{
