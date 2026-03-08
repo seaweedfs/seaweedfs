@@ -203,22 +203,22 @@ function setupMobileSidebar() {
     const backdrop = document.getElementById('sidebarBackdrop');
     if (!sidebar || !backdrop) return;
 
-    // Close sidebar when backdrop is clicked
-    backdrop.addEventListener('click', function () {
+    const hideSidebar = () => {
         const bsCollapse = bootstrap.Collapse.getInstance(sidebar);
         if (bsCollapse) {
             bsCollapse.hide();
         }
-    });
+    };
+
+    // Close sidebar when backdrop is clicked
+    backdrop.addEventListener('click', hideSidebar);
 
     // Close sidebar when a nav link is clicked (on mobile)
+    const sidebarToggler = document.querySelector("button[data-bs-target='#sidebarMenu']");
     sidebar.querySelectorAll('a.nav-link:not([data-bs-toggle="collapse"])').forEach(function (link) {
         link.addEventListener('click', function () {
-            if (window.innerWidth < 768) {
-                const bsCollapse = bootstrap.Collapse.getInstance(sidebar);
-                if (bsCollapse) {
-                    bsCollapse.hide();
-                }
+            if (sidebarToggler && getComputedStyle(sidebarToggler).display !== 'none') {
+                hideSidebar();
             }
         });
     });
