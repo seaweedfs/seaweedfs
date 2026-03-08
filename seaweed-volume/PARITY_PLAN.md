@@ -139,27 +139,21 @@ The Rust server is a drop-in replacement only when all of these hold:
 
 ## Verified Gaps As Of 2026-03-08
 
-These are real code gaps found in the current Rust source, not stale items from older docs.
+The startup/runtime gaps that were verified in the initial audit are now closed:
 
 1. Heartbeat metadata parity
-   Go sends stable server `Id`, `LocationUuids`, per-disk `DiskTags`, and correct `HasNoVolumes`.
-   Rust currently omits those fields, even though `--id` and `--tags` are parsed.
-   Risk: Go master may not treat Rust volume servers identically for identity, placement, and duplicate-directory detection.
+   Closed by `8ade1c51d` and retained in current HEAD.
 
 2. Dedicated metrics/debug listener parity
-   Go honors `--metricsPort`, `--metricsIp`, `--pprof`, and `--debug`.
-   Rust parses these flags but currently serves metrics only on the admin router and does not expose equivalent debug listeners.
-   Risk: deployment scripts that rely on dedicated metrics or profiling ports will not behave the same.
+   Closed by `fbe0e5829`.
 
 3. Master-provided metrics push settings
-   Go updates `metricsAddress` and `metricsIntervalSec` from master heartbeat responses and pushes metrics.
-   Rust does not consume those fields.
-   Risk: Prometheus push-gateway setups configured via master are silently ignored.
+   Closed by `fbe0e5829`.
 
 4. Slow-read tuning parity
-   Go uses `hasSlowRead` and `readBufferSizeMB` in read paths and storage locking behavior.
-   Rust accepts both flags but the values are not currently wired into the read implementation.
-   Risk: production latency and lock behavior can diverge under large-file read pressure.
+   Closed by `66e3900dc`.
+
+There are no remaining verified gaps from the initial startup/runtime audit. The broader line-by-line comparison batches below are still required to either confirm parity or surface new gaps.
 
 ## Execution Plan
 
