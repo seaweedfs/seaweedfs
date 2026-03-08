@@ -2,6 +2,7 @@ package operation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -95,5 +96,13 @@ func TestAssignStopsOnContextCancel(t *testing.T) {
 	// Should stop within a reasonable time after context deadline
 	if elapsed > 5*time.Second {
 		t.Errorf("took %v, expected to stop near context deadline of 2s", elapsed)
+	}
+	// Verify the loop actually retried (not just an immediate failure)
+	if calls := srv.callCount.Load(); calls <= 1 {
+		t.Errorf("expected multiple retry attempts, got %d calls", calls)
+	}
+	// Verify the error is from context deadline
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
