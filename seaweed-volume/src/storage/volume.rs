@@ -173,13 +173,15 @@ pub struct VifEcShardConfig {
 pub struct VifVolumeInfo {
     #[serde(default)]
     pub files: Vec<VifRemoteFile>,
+    #[serde(default)]
     pub version: u32,
-    pub collection: String,
-    pub replica_placement: u32,
-    pub ttl: String,
-    #[serde(default, rename = "datFileSize")]
-    pub dat_file_size: u64,
-    #[serde(default, rename = "expireAtSec")]
+    #[serde(default)]
+    pub replication: String,
+    #[serde(default, rename = "bytesOffset")]
+    pub bytes_offset: u32,
+    #[serde(default, rename = "datFileSize", with = "string_or_i64")]
+    pub dat_file_size: i64,
+    #[serde(default, rename = "expireAtSec", with = "string_or_u64")]
     pub expire_at_sec: u64,
     #[serde(default, rename = "readOnly")]
     pub read_only: bool,
@@ -205,9 +207,8 @@ impl VifVolumeInfo {
                 })
                 .collect(),
             version: pb.version,
-            collection: pb.collection.clone(),
-            replica_placement: pb.replica_placement,
-            ttl: pb.ttl.clone(),
+            replication: pb.replication.clone(),
+            bytes_offset: pb.bytes_offset,
             dat_file_size: pb.dat_file_size,
             expire_at_sec: pb.expire_at_sec,
             read_only: pb.read_only,
@@ -235,9 +236,8 @@ impl VifVolumeInfo {
                 })
                 .collect(),
             version: self.version,
-            collection: self.collection.clone(),
-            replica_placement: self.replica_placement,
-            ttl: self.ttl.clone(),
+            replication: self.replication.clone(),
+            bytes_offset: self.bytes_offset,
             dat_file_size: self.dat_file_size,
             expire_at_sec: self.expire_at_sec,
             read_only: self.read_only,

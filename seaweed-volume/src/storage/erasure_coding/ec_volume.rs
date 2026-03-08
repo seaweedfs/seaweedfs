@@ -28,8 +28,8 @@ pub struct EcVolume {
 }
 
 pub fn read_ec_shard_config(dir: &str, volume_id: VolumeId) -> (u32, u32) {
-    let mut data_shards = 10;
-    let mut parity_shards = 4;
+    let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
+    let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
     let vif_path = format!("{}/{}.vif", dir, volume_id.0);
     if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
         if let Ok(vif_info) = serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content) {
