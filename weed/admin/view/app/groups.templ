@@ -110,11 +110,13 @@ templ Groups(data dash.GroupsPageData) {
                                         </td>
                                         <td>
                                             <button class="btn btn-sm btn-outline-primary me-1"
-                                                    onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewGroup('%s')", group.Name)} }>
+                                                    data-group-name={group.Name}
+                                                    data-action="view">
                                                 <i class="fas fa-eye"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-danger"
-                                                    onclick={ templ.ComponentScript{Call: fmt.Sprintf("deleteGroup('%s')", group.Name)} }>
+                                                    data-group-name={group.Name}
+                                                    data-action="delete">
                                                 <i class="fas fa-trash"></i>
                                             </button>
                                         </td>
@@ -257,14 +259,15 @@ templ Groups(data dash.GroupsPageData) {
         async function viewGroup(name) {
             currentGroupName = name;
             document.getElementById('viewGroupTitle').textContent = 'Group: ' + name;
-            await refreshGroupDetails();
+            await refreshGroupDetails(name);
             new bootstrap.Modal(document.getElementById('viewGroupModal')).show();
         }
 
-        async function refreshGroupDetails() {
+        async function refreshGroupDetails(requestedName) {
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName));
+                const response = await fetch('/api/groups/' + encodeURIComponent(requestedName));
                 if (!response.ok) throw new Error('Failed to fetch group');
+                if (requestedName !== currentGroupName) return; // stale response
                 const group = await response.json();
 
                 // Render members using DOM APIs to prevent XSS
@@ -338,7 +341,7 @@ templ Groups(data dash.GroupsPageData) {
                     body: JSON.stringify({ username: username })
                 });
                 if (response.ok) {
-                    await refreshGroupDetails();
+                    await refreshGroupDetails(currentGroupName);
                     showAlert('Member added', 'success');
                 } else {
                     const error = await response.json().catch(() => ({}));
@@ -355,7 +358,7 @@ templ Groups(data dash.GroupsPageData) {
                     method: 'DELETE'
                 });
                 if (response.ok) {
-                    await refreshGroupDetails();
+                    await refreshGroupDetails(currentGroupName);
                     showAlert('Member removed', 'success');
                 } else {
                     const error = await response.json().catch(() => ({}));
@@ -376,7 +379,7 @@ templ Groups(data dash.GroupsPageData) {
                     body: JSON.stringify({ policy_name: policyName })
                 });
                 if (response.ok) {
-                    await refreshGroupDetails();
+                    await refreshGroupDetails(currentGroupName);
                     showAlert('Policy attached', 'success');
                 } else {
                     const error = await response.json().catch(() => ({}));
@@ -393,7 +396,7 @@ templ Groups(data dash.GroupsPageData) {
                     method: 'DELETE'
                 });
                 if (response.ok) {
-                    await refreshGroupDetails();
+                    await refreshGroupDetails(currentGroupName);
                     showAlert('Policy detached', 'success');
                 } else {
                     const error = await response.json().catch(() => ({}));
@@ -422,5 +425,15 @@ templ Groups(data dash.GroupsPageData) {
                 showAlert('Failed to update status: ' + error.message, 'error');
             }
         }
+
+        // Event delegation for group action buttons
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const name = btn.dataset.groupName;
+            if (!name) return;
+            if (btn.dataset.action === 'view') viewGroup(name);
+            else if (btn.dataset.action === 'delete') deleteGroup(name);
+        });
     </script>
 }

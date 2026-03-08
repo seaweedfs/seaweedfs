@@ -8,6 +8,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
+// cloneGroup creates a deep copy of an iam_pb.Group to avoid mutating stored state.
+func cloneGroup(g *iam_pb.Group) *iam_pb.Group {
+	clone := &iam_pb.Group{
+		Name:     g.Name,
+		Disabled: g.Disabled,
+	}
+	if g.Members != nil {
+		clone.Members = make([]string, len(g.Members))
+		copy(clone.Members, g.Members)
+	}
+	if g.PolicyNames != nil {
+		clone.PolicyNames = make([]string, len(g.PolicyNames))
+		copy(clone.PolicyNames, g.PolicyNames)
+	}
+	return clone
+}
+
 func (s *AdminServer) GetGroups(ctx context.Context) ([]GroupData, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
@@ -99,6 +116,10 @@ func (s *AdminServer) AddGroupMember(ctx context.Context, groupName, username st
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
+	g = cloneGroup(g)
+	if _, err := s.credentialManager.GetUser(ctx, username); err != nil {
+		return fmt.Errorf("user %s not found: %w", username, err)
+	}
 	for _, m := range g.Members {
 		if m == username {
 			return nil // already a member
@@ -120,6 +141,7 @@ func (s *AdminServer) RemoveGroupMember(ctx context.Context, groupName, username
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
+	g = cloneGroup(g)
 	found := false
 	var newMembers []string
 	for _, m := range g.Members {
@@ -148,6 +170,10 @@ func (s *AdminServer) AttachGroupPolicy(ctx context.Context, groupName, policyNa
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
+	g = cloneGroup(g)
+	if _, err := s.credentialManager.GetPolicy(ctx, policyName); err != nil {
+		return fmt.Errorf("policy %s not found: %w", policyName, err)
+	}
 	for _, p := range g.PolicyNames {
 		if p == policyName {
 			return nil // already attached
@@ -169,6 +195,7 @@ func (s *AdminServer) DetachGroupPolicy(ctx context.Context, groupName, policyNa
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
+	g = cloneGroup(g)
 	found := false
 	var newPolicies []string
 	for _, p := range g.PolicyNames {
@@ -197,6 +224,7 @@ func (s *AdminServer) SetGroupStatus(ctx context.Context, groupName string, enab
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
+	g = cloneGroup(g)
 	g.Disabled = !enabled
 	if err := s.credentialManager.UpdateGroup(ctx, g); err != nil {
 		return fmt.Errorf("failed to update group: %w", err)
