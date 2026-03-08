@@ -7,7 +7,7 @@
 **Rust integration tests**: 8/8 pass
 **S3 remote storage tests**: 3/3 pass
 **Total**: 117/117 (100%) + 8 Rust + 3 S3 tests
-**Rust unit tests**: 126 lib + 7 integration = 133
+**Rust unit tests**: 137 lib + 7 integration = 144
 
 ## Completed Features
 
@@ -71,15 +71,14 @@ All phases from the original plan are complete:
   - Filename extraction from URL path stored in needle name field
   - Upload response includes filename
 
+- **Production Sprint 6** — Storage & Networking:
+  - Redb disk-backed needle maps (pure Rust, no C deps) via `NeedleMap` enum
+  - Binary search for `VolumeIncrementalCopy` with `since_ns > 0`
+  - Proxy/redirect read modes for non-local volumes (master lookup, HTTP proxy, 301 redirect)
+
 ## Remaining Work (Production Readiness)
 
-### Medium Priority (nice to have)
-
-1. **LevelDB needle maps** — For volumes with millions of needles.
-
-2. **Volume backup/sync** — Streaming backup, binary search.
-
-3. **EC distribution/rebalancing** — Advanced EC operations.
+No major remaining items. All phases and production sprints are complete.
 
 ## Test Commands
 
