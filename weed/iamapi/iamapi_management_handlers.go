@@ -243,14 +243,33 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
 	if newUserName != "" {
+		// Check for name collision before renaming
+		for _, ident := range s3cfg.Identities {
+			if ident.Name == newUserName {
+				return resp, &IamError{
+					Code:  iam.ErrCodeEntityAlreadyExistsException,
+					Error: fmt.Errorf("user %s already exists", newUserName),
+				}
+			}
+		}
+		// Check for inline policy collision
+		policies := Policies{}
+		if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+		}
+		if policies.InlinePolicies != nil {
+			if _, exists := policies.InlinePolicies[newUserName]; exists {
+				return resp, &IamError{
+					Code:  iam.ErrCodeEntityAlreadyExistsException,
+					Error: fmt.Errorf("inline policies already exist for user %s", newUserName),
+				}
+			}
+		}
+
 		for _, ident := range s3cfg.Identities {
 			if userName == ident.Name {
 				ident.Name = newUserName
 				// Move any inline policies from old username to new username
-				policies := Policies{}
-				if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
-					return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
-				}
 				if policies.InlinePolicies != nil {
 					if userPolicies, exists := policies.InlinePolicies[userName]; exists {
 						delete(policies.InlinePolicies, userName)
