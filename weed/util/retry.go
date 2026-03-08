@@ -90,11 +90,25 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 	waitTime := time.Second
 	maxWaitTime := RetryWaitTime
 	deadline := time.Now().Add(maxDuration)
+	var lastErr error
 	for {
+		if ctx.Err() != nil {
+			if lastErr != nil {
+				return lastErr
+			}
+			return ctx.Err()
+		}
+		if time.Until(deadline) <= 0 {
+			if lastErr != nil {
+				glog.V(0).Infof("retry %s: giving up after %v: %v", name, maxDuration, lastErr)
+				return lastErr
+			}
+		}
 		err := operation()
 		if err == nil {
 			return nil
 		}
+		lastErr = err
 		if !shouldRetry(err) {
 			return err
 		}
