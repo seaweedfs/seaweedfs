@@ -59,21 +59,30 @@ pub struct NeedleMapMetric {
 }
 
 impl NeedleMapMetric {
-    /// Update metrics based on a Put operation.
+    /// Update metrics based on a Put operation (additive-only, matching Go's logPut).
     fn on_put(&self, key: NeedleId, old: Option<&NeedleValue>, new_size: Size) {
-        if new_size.is_valid() {
-            if old.is_none() || !old.unwrap().size.is_valid() {
-                self.file_count.fetch_add(1, Ordering::Relaxed);
-            }
-            self.file_byte_count.fetch_add(new_size.0 as u64, Ordering::Relaxed);
-            if let Some(old_val) = old {
-                if old_val.size.is_valid() {
-                    self.file_byte_count.fetch_sub(old_val.size.0 as u64, Ordering::Relaxed);
-                    // Track overwritten bytes as garbage for compaction (garbage_level)
-                    self.deletion_byte_count.fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
-                }
+        self.maybe_set_max_file_key(key);
+        // Go: always LogFileCounter(newSize) which does FileCounter++ and FileByteCounter += newSize
+        self.file_count.fetch_add(1, Ordering::Relaxed);
+        self.file_byte_count.fetch_add(new_size.0 as u64, Ordering::Relaxed);
+        // Go: if oldSize > 0 && oldSize.IsValid() { LogDeletionCounter(oldSize) }
+        if let Some(old_val) = old {
+            if old_val.size.0 > 0 && old_val.size.is_valid() {
+                self.deletion_count.fetch_add(1, Ordering::Relaxed);
+                self.deletion_byte_count.fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
             }
         }
+    }
+
+    /// Update metrics based on a Delete operation (additive-only, matching Go's logDelete).
+    fn on_delete(&self, old: &NeedleValue) {
+        if old.size.0 > 0 {
+            self.deletion_count.fetch_add(1, Ordering::Relaxed);
+            self.deletion_byte_count.fetch_add(old.size.0 as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn maybe_set_max_file_key(&self, key: NeedleId) {
         let key_val: u64 = key.into();
         loop {
             let current = self.max_file_key.load(Ordering::Relaxed);
@@ -83,16 +92,6 @@ impl NeedleMapMetric {
             if self.max_file_key.compare_exchange(current, key_val, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
                 break;
             }
-        }
-    }
-
-    /// Update metrics based on a Delete operation.
-    fn on_delete(&self, old: &NeedleValue) {
-        if old.size.is_valid() {
-            self.deletion_count.fetch_add(1, Ordering::Relaxed);
-            self.deletion_byte_count.fetch_add(old.size.0 as u64, Ordering::Relaxed);
-            self.file_count.fetch_sub(1, Ordering::Relaxed);
-            self.file_byte_count.fetch_sub(old.size.0 as u64, Ordering::Relaxed);
         }
     }
 }
@@ -221,6 +220,7 @@ impl CompactNeedleMap {
 
     /// Remove from map during loading (handle deletions in idx walk).
     fn delete_from_map(&mut self, key: NeedleId) {
+        self.metric.maybe_set_max_file_key(key);
         if let Some(old) = self.map.get(&key).cloned() {
             if old.size.is_valid() {
                 self.metric.on_delete(&old);
@@ -815,7 +815,8 @@ mod tests {
         let deleted = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
         assert_eq!(deleted, Some(Size(100)));
 
-        assert_eq!(nm.file_count(), 0);
+        // Additive-only: file_count stays at 1 after delete
+        assert_eq!(nm.file_count(), 1);
         assert_eq!(nm.deleted_count(), 1);
         assert_eq!(nm.deleted_size(), 100);
     }
@@ -831,15 +832,15 @@ mod tests {
         assert_eq!(nm.content_size(), 600);
         assert_eq!(nm.max_file_key(), NeedleId(3));
 
-        // Update existing
+        // Update existing — additive-only: file_count increments, content_size adds
         nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250)).unwrap();
-        assert_eq!(nm.file_count(), 3); // still 3
-        assert_eq!(nm.content_size(), 650); // 100 + 250 + 300
+        assert_eq!(nm.file_count(), 4); // 3 + 1 (always increments)
+        assert_eq!(nm.content_size(), 850); // 600 + 250 (always adds)
 
-        // Delete
+        // Delete — additive-only: file_count unchanged
         nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
-        assert_eq!(nm.file_count(), 2);
-        assert_eq!(nm.deleted_count(), 1);
+        assert_eq!(nm.file_count(), 4); // unchanged
+        assert_eq!(nm.deleted_count(), 2); // 1 from overwrite + 1 from delete
     }
 
     #[test]
@@ -859,7 +860,8 @@ mod tests {
         assert!(nm.get(NeedleId(1)).is_some());
         assert!(nm.get(NeedleId(2)).is_none()); // deleted
         assert!(nm.get(NeedleId(3)).is_some());
-        assert_eq!(nm.file_count(), 2);
+        // Additive-only: put(1)+put(2)+put(3) = 3, delete doesn't decrement
+        assert_eq!(nm.file_count(), 3);
     }
 
     #[test]
@@ -909,7 +911,8 @@ mod tests {
         let deleted = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
         assert_eq!(deleted, Some(Size(100)));
 
-        assert_eq!(nm.file_count(), 0);
+        // Additive-only: file_count stays at 1 after delete
+        assert_eq!(nm.file_count(), 1);
         assert_eq!(nm.deleted_count(), 1);
         assert_eq!(nm.deleted_size(), 100);
 
@@ -932,15 +935,15 @@ mod tests {
         assert_eq!(nm.content_size(), 600);
         assert_eq!(nm.max_file_key(), NeedleId(3));
 
-        // Update existing
+        // Update existing — additive-only: file_count increments, content_size adds
         nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250)).unwrap();
-        assert_eq!(nm.file_count(), 3);
-        assert_eq!(nm.content_size(), 650); // 100 + 250 + 300
+        assert_eq!(nm.file_count(), 4); // 3 + 1 (always increments)
+        assert_eq!(nm.content_size(), 850); // 600 + 250 (always adds)
 
-        // Delete
+        // Delete — additive-only: file_count unchanged
         nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
-        assert_eq!(nm.file_count(), 2);
-        assert_eq!(nm.deleted_count(), 1);
+        assert_eq!(nm.file_count(), 4); // unchanged
+        assert_eq!(nm.deleted_count(), 2); // 1 from overwrite + 1 from delete
     }
 
     #[test]

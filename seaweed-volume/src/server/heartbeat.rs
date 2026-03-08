@@ -31,6 +31,11 @@ pub struct HeartbeatConfig {
 }
 
 /// Run the heartbeat loop using VolumeServerState.
+///
+/// Mirrors Go's `volume_grpc_client_to_master.go` heartbeat():
+/// - On leader redirect: sleep 3s, then connect directly to the new leader
+/// - On duplicate UUID error: exponential backoff (2s, 4s, 8s), exit after 3 retries
+/// - On other errors: sleep pulse interval, reset to seed master list iteration
 pub async fn run_heartbeat_with_state(
     config: HeartbeatConfig,
     state: Arc<VolumeServerState>,
@@ -42,6 +47,8 @@ pub async fn run_heartbeat_with_state(
     );
 
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
+    let mut new_leader: Option<String> = None;
+    let mut duplicate_retry_count: u32 = 0;
 
     loop {
         for master_addr in &config.master_addresses {
@@ -51,19 +58,91 @@ pub async fn run_heartbeat_with_state(
                 return;
             }
 
-            let grpc_addr = to_grpc_address(master_addr);
+            // If we have a leader redirect, sleep 3s then connect to the leader
+            // instead of iterating through the seed list
+            let target_addr = if let Some(ref leader) = new_leader {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                leader.clone()
+            } else {
+                master_addr.clone()
+            };
+
+            let grpc_addr = to_grpc_address(&target_addr);
             info!("Connecting heartbeat to master {}", grpc_addr);
 
-            match do_heartbeat(&config, &state, &grpc_addr, pulse, &mut shutdown_rx).await {
+            // Determine what action to take after the heartbeat attempt.
+            // We convert the error to a string immediately so the non-Send
+            // Box<dyn Error> is dropped before any .await point.
+            enum PostAction {
+                LeaderRedirect(String),
+                Done,
+                SleepDuplicate(Duration),
+                SleepPulse,
+            }
+            let action = match do_heartbeat(&config, &state, &grpc_addr, pulse, &mut shutdown_rx).await {
                 Ok(Some(leader)) => {
                     info!("Master leader changed to {}", leader);
+                    PostAction::LeaderRedirect(leader)
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    duplicate_retry_count = 0;
+                    PostAction::Done
+                }
                 Err(e) => {
+                    let err_msg = e.to_string();
+                    // Drop `e` (non-Send) before any .await
+                    drop(e);
                     state.is_heartbeating.store(false, Ordering::Relaxed);
-                    warn!("Heartbeat to {} error: {}", grpc_addr, e);
+                    warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
+
+                    if err_msg.contains("duplicate") && err_msg.contains("UUID") {
+                        duplicate_retry_count += 1;
+                        if duplicate_retry_count > 3 {
+                            error!("Shut down Volume Server due to persistent duplicate volume directories after 3 retries");
+                            error!("Please check if another volume server is using the same directory");
+                            std::process::exit(1);
+                        }
+                        let retry_delay = Duration::from_secs(2u64.pow(duplicate_retry_count));
+                        warn!(
+                            "Waiting {:?} before retrying due to duplicate UUID detection (attempt {}/3)...",
+                            retry_delay, duplicate_retry_count
+                        );
+                        PostAction::SleepDuplicate(retry_delay)
+                    } else {
+                        duplicate_retry_count = 0;
+                        PostAction::SleepPulse
+                    }
+                }
+            };
+
+            match action {
+                PostAction::LeaderRedirect(leader) => {
+                    new_leader = Some(leader);
+                    break;
+                }
+                PostAction::Done => {
+                    new_leader = None;
+                }
+                PostAction::SleepDuplicate(delay) => {
+                    new_leader = None;
+                    tokio::time::sleep(delay).await;
+                }
+                PostAction::SleepPulse => {
+                    new_leader = None;
+                    tokio::time::sleep(pulse).await;
                 }
             }
+
+            // If we connected to a leader (not seed list), break out after one attempt
+            // so we either reconnect to the new leader or fall back to seed list
+            if new_leader.is_some() {
+                break;
+            }
+        }
+
+        // If we have a leader redirect, skip the sleep and reconnect immediately
+        if new_leader.is_some() {
+            continue;
         }
 
         tokio::select! {
@@ -213,6 +292,8 @@ async fn do_heartbeat(
                     let delta_hb = master_pb::Heartbeat {
                         ip: config.ip.clone(),
                         port: config.port as u32,
+                        grpc_port: config.grpc_port as u32,
+                        public_url: config.public_url.clone(),
                         data_center: config.data_center.clone(),
                         rack: config.rack.clone(),
                         new_volumes: new_vols,

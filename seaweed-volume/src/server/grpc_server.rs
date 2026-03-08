@@ -1089,22 +1089,15 @@ impl VolumeServer for VolumeGrpcService {
         self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+        let needle_id = NeedleId(req.needle_id);
+        let size = Size(req.size);
 
         let mut store = self.state.store.write().unwrap();
         let (_, vol) = store.find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
-        // Write the raw needle blob at the end of the dat file (append)
-        let dat_size = vol.dat_file_size()
-            .map_err(|e| Status::internal(e.to_string()))? as i64;
-        vol.write_needle_blob(dat_size, &req.needle_blob)
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        // Update the needle index so the written blob is discoverable
-        let needle_id = NeedleId(req.needle_id);
-        let size = Size(req.size);
-        vol.put_needle_index(needle_id, Offset::from_actual_offset(dat_size), size)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        vol.write_needle_blob_and_index(needle_id, &req.needle_blob, size)
+            .map_err(|e| Status::internal(format!("write blob needle {} size {}: {}", needle_id.0, size.0, e)))?;
 
         Ok(Response::new(volume_server_pb::WriteNeedleBlobResponse {}))
     }
@@ -1184,11 +1177,25 @@ impl VolumeServer for VolumeGrpcService {
             let mut draining_seconds = idle_timeout;
 
             loop {
-                // Scan for new needles
+                // Use binary search to find starting offset, then scan from there
                 let scan_result = {
                     let store = state.store.read().unwrap();
                     if let Some((_, vol)) = store.find_volume(vid) {
-                        vol.scan_raw_needles_from(sb_size)
+                        let start_offset = if last_timestamp_ns > 0 {
+                            match vol.binary_search_by_append_at_ns(last_timestamp_ns) {
+                                Ok((offset, _is_last)) => {
+                                    if offset.is_zero() {
+                                        sb_size
+                                    } else {
+                                        offset.to_actual_offset() as u64
+                                    }
+                                }
+                                Err(_) => sb_size,
+                            }
+                        } else {
+                            sb_size
+                        };
+                        vol.scan_raw_needles_from(start_offset)
                     } else {
                         break;
                     }
@@ -1240,7 +1247,7 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
                 if idle_timeout == 0 {
                     last_timestamp_ns = last_processed_ns;
@@ -1351,18 +1358,44 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let collection = &req.collection;
 
-        // Find the volume's directory
-        let dir = {
+        // Find the volume's directory and validate collection
+        let (dir, vol_version, dat_file_size) = {
             let store = self.state.store.read().unwrap();
-            let (loc_idx, _) = store.find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
-            store.locations[loc_idx].directory.clone()
+            let (loc_idx, vol) = store.find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            if vol.collection != req.collection {
+                return Err(Status::internal(format!(
+                    "existing collection:{} unexpected input: {}", vol.collection, req.collection
+                )));
+            }
+            let version = vol.version().0 as u32;
+            let dat_size = vol.dat_file_size().unwrap_or(0) as i64;
+            (store.locations[loc_idx].directory.clone(), version, dat_size)
         };
 
         let (data_shards, parity_shards) = crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, vid);
 
         crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid, data_shards as usize, parity_shards as usize)
             .map_err(|e| Status::internal(e.to_string()))?;
+
+        // Write .vif file with EC shard metadata
+        {
+            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
+            let vif_path = format!("{}.vif", base);
+            let vif = crate::storage::volume::VifVolumeInfo {
+                version: vol_version,
+                dat_file_size,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: data_shards,
+                    parity_shards: parity_shards,
+                }),
+                ..Default::default()
+            };
+            let content = serde_json::to_string_pretty(&vif)
+                .map_err(|e| Status::internal(format!("serialize vif: {}", e)))?;
+            std::fs::write(&vif_path, content)
+                .map_err(|e| Status::internal(format!("write vif: {}", e)))?;
+        }
 
         Ok(Response::new(volume_server_pb::VolumeEcShardsGenerateResponse {}))
     }
@@ -1467,7 +1500,7 @@ impl VolumeServer for VolumeGrpcService {
                 is_ec_volume: true,
                 ext: ext.clone(),
                 compaction_revision: u32::MAX,
-                stop_offset: 0,
+                stop_offset: i64::MAX as u64,
                 ..Default::default()
             };
             let mut stream = client.copy_file(copy_req).await
@@ -1496,7 +1529,7 @@ impl VolumeServer for VolumeGrpcService {
                 is_ec_volume: true,
                 ext: ".ecx".to_string(),
                 compaction_revision: u32::MAX,
-                stop_offset: 0,
+                stop_offset: i64::MAX as u64,
                 ..Default::default()
             };
             let mut stream = client.copy_file(copy_req).await
@@ -1517,6 +1550,36 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
+        // Copy .ecj file if requested
+        if req.copy_ecj_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecj".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client.copy_file(copy_req).await
+                .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {} copy .ecj: {}", vid, e)))?
+                .into_inner();
+
+            let file_path = {
+                let base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+                format!("{}.ecj", base)
+            };
+            let mut file = std::fs::File::create(&file_path)
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            while let Some(chunk) = stream.message().await
+                .map_err(|e| Status::internal(format!("recv .ecj: {}", e)))? {
+                use std::io::Write;
+                file.write_all(&chunk.file_content)
+                    .map_err(|e| Status::internal(format!("write {}: {}", file_path, e)))?;
+            }
+        }
+
         // Copy .vif file if requested
         if req.copy_vif_file {
             let copy_req = volume_server_pb::CopyFileRequest {
@@ -1525,7 +1588,7 @@ impl VolumeServer for VolumeGrpcService {
                 is_ec_volume: true,
                 ext: ".vif".to_string(),
                 compaction_revision: u32::MAX,
-                stop_offset: 0,
+                stop_offset: i64::MAX as u64,
                 ..Default::default()
             };
             let mut stream = client.copy_file(copy_req).await
@@ -1672,38 +1735,41 @@ impl VolumeServer for VolumeGrpcService {
         let ec_vol = store.ec_volumes.get(&vid)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
-        // Check that all 10 data shards are present
-        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
-        for shard_id in 0..DATA_SHARDS_COUNT as u8 {
-            if ec_vol.shards.get(shard_id as usize).map(|s| s.is_none()).unwrap_or(true) {
+        if ec_vol.collection != req.collection {
+            return Err(Status::internal(format!(
+                "existing collection:{} unexpected input: {}", ec_vol.collection, req.collection
+            )));
+        }
+
+        // Use EC context data shard count from the volume
+        let data_shards = ec_vol.data_shards as usize;
+
+        // Check that all data shards are present
+        for shard_id in 0..data_shards {
+            if ec_vol.shards.get(shard_id).map(|s| s.is_none()).unwrap_or(true) {
                 return Err(Status::internal(format!(
                     "ec volume {} missing shard {}", req.volume_id, shard_id
                 )));
             }
         }
 
-        // Read the .ecx index to find all needles
+        // Read the .ecx index to check for live entries
         let ecx_path = ec_vol.ecx_file_name();
         let ecx_data = std::fs::read(&ecx_path)
             .map_err(|e| Status::internal(format!("read ecx: {}", e)))?;
         let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
 
-        // Read deleted needles from .ecj
-        let deleted_needles = ec_vol.read_deleted_needles()
-            .map_err(|e| Status::internal(e.to_string()))?;
-
-        // Count live entries
-        let mut live_count = 0;
+        let mut has_live = false;
         for i in 0..entry_count {
             let start = i * NEEDLE_MAP_ENTRY_SIZE;
-            let (key, _offset, size) = idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
-            if size.is_deleted() || deleted_needles.contains(&key) {
-                continue;
+            let (_, _, size) = idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
+            if !size.is_deleted() {
+                has_live = true;
+                break;
             }
-            live_count += 1;
         }
 
-        if live_count == 0 {
+        if !has_live {
             return Err(Status::failed_precondition(format!(
                 "ec volume {} has no live entries", req.volume_id
             )));
@@ -1714,34 +1780,17 @@ impl VolumeServer for VolumeGrpcService {
         let collection = ec_vol.collection.clone();
         drop(store);
 
-        // Read all shard data and reconstruct the .dat file
-        // For simplicity, concatenate the first DATA_SHARDS_COUNT shards
-        let mut dat_data = Vec::new();
-        {
-            let store = self.state.store.read().unwrap();
-            let ec_vol = store.ec_volumes.get(&vid).unwrap();
-            for shard_id in 0..DATA_SHARDS_COUNT as u8 {
-                if let Some(Some(shard)) = ec_vol.shards.get(shard_id as usize) {
-                    let shard_size = shard.file_size() as usize;
-                    let mut buf = vec![0u8; shard_size];
-                    let n = shard.read_at(&mut buf, 0)
-                        .map_err(|e| Status::internal(format!("read shard {}: {}", shard_id, e)))?;
-                    buf.truncate(n);
-                    dat_data.extend_from_slice(&buf);
-                }
-            }
-        }
+        // Calculate .dat file size from .ecx entries
+        let dat_file_size = crate::storage::erasure_coding::ec_decoder::find_dat_file_size(&dir, &collection, vid)
+            .map_err(|e| Status::internal(format!("FindDatFileSize: {}", e)))?;
 
-        // Write the reconstructed .dat file
-        let base = crate::storage::volume::volume_file_name(&dir, &collection, vid);
-        let dat_path = format!("{}.dat", base);
-        std::fs::write(&dat_path, &dat_data)
-            .map_err(|e| Status::internal(format!("write dat: {}", e)))?;
+        // Write .dat file using block-interleaved reading from shards
+        crate::storage::erasure_coding::ec_decoder::write_dat_file_from_shards(&dir, &collection, vid, dat_file_size, data_shards)
+            .map_err(|e| Status::internal(format!("WriteDatFile: {}", e)))?;
 
-        // Copy the .ecx to .idx (they have the same format)
-        let idx_path = format!("{}.idx", base);
-        std::fs::copy(&ecx_path, &idx_path)
-            .map_err(|e| Status::internal(format!("copy ecx to idx: {}", e)))?;
+        // Write .idx file from .ecx and .ecj files
+        crate::storage::erasure_coding::ec_decoder::write_idx_file_from_ec_index(&dir, &collection, vid)
+            .map_err(|e| Status::internal(format!("WriteIdxFileFromEcIndex: {}", e)))?;
 
         // Unmount EC shards and mount the reconstructed volume
         {

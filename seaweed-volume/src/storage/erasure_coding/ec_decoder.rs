@@ -4,12 +4,54 @@
 //! and the sorted index (.ecx) + deletion journal (.ecj).
 
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::idx;
+use crate::storage::needle::needle::get_actual_size;
+use crate::storage::super_block::SUPER_BLOCK_SIZE;
 use crate::storage::types::*;
 use crate::storage::volume::volume_file_name;
+
+/// Calculate .dat file size from the max offset entry in .ecx.
+/// Reads the volume version from the first EC shard (.ec00) superblock,
+/// then scans .ecx entries to find the largest (offset + needle_actual_size).
+pub fn find_dat_file_size(
+    dir: &str,
+    collection: &str,
+    volume_id: VolumeId,
+) -> io::Result<i64> {
+    let base = volume_file_name(dir, collection, volume_id);
+
+    // Read volume version from .ec00 superblock
+    let ec00_path = format!("{}.ec00", base);
+    let mut ec00 = File::open(&ec00_path)?;
+    let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
+    ec00.read_exact(&mut sb_buf)?;
+    let version = Version(sb_buf[0]);
+
+    // Start with at least the superblock size
+    let mut dat_size: i64 = SUPER_BLOCK_SIZE as i64;
+
+    // Scan .ecx entries
+    let ecx_path = format!("{}.ecx", base);
+    let ecx_data = std::fs::read(&ecx_path)?;
+    let entry_count = ecx_data.len() / NEEDLE_MAP_ENTRY_SIZE;
+
+    for i in 0..entry_count {
+        let start = i * NEEDLE_MAP_ENTRY_SIZE;
+        let (_, offset, size) = idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
+        if size.is_deleted() {
+            continue;
+        }
+        let entry_stop = offset.to_actual_offset() + get_actual_size(size, version);
+        if entry_stop > dat_size {
+            dat_size = entry_stop;
+        }
+    }
+
+    Ok(dat_size)
+}
 
 /// Reconstruct a .dat file from EC data shards.
 ///

@@ -23,7 +23,7 @@ pub const NEEDLE_CHECKSUM_SIZE: usize = 4;
 
 /// Maximum possible volume size with 4-byte offset: 32GB
 /// Formula: 4 * 1024 * 1024 * 1024 * 8
-pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8 * 256;
+pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
 
 // ============================================================================
 // NeedleId

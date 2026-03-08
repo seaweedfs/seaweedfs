@@ -82,6 +82,12 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 kamadak-exif = "0.5"
 
+# Multipart form-data parsing
+multer = "3"
+
+# MIME type guessing from file extensions
+mime_guess = "2"
+
 # Misc
 bytes = "1"
 rand = "0.8"

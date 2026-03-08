@@ -844,15 +844,77 @@ async fn get_or_head_handler_inner(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::ETAG, etag.parse().unwrap());
 
-    // Set Content-Type: use response-content-type query param override, else from needle mime
+    // H1: Emit pairs as response headers
+    if n.has_pairs() && !n.pairs.is_empty() {
+        if let Ok(pair_map) =
+            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
+        {
+            for (k, v) in &pair_map {
+                if let (Ok(hname), Ok(hval)) = (
+                    axum::http::HeaderName::from_bytes(k.as_bytes()),
+                    axum::http::HeaderValue::from_str(v),
+                ) {
+                    response_headers.insert(hname, hval);
+                }
+            }
+        }
+    }
+
+    // H8: Use needle stored name when URL path has no filename (only vid,fid)
+    let mut filename = extract_filename_from_path(&path);
+    let mut ext = ext;
+    if n.name_size > 0 && filename.is_empty() {
+        filename = String::from_utf8_lossy(&n.name).to_string();
+        if ext.is_empty() {
+            if let Some(dot_pos) = filename.rfind('.') {
+                ext = filename[dot_pos..].to_lowercase();
+            }
+        }
+    }
+
+    // H6: Determine Content-Type: filter application/octet-stream, use mime_guess
     let content_type = if let Some(ref ct) = query.response_content_type {
-        ct.clone()
-    } else if !n.mime.is_empty() {
-        String::from_utf8_lossy(&n.mime).to_string()
+        Some(ct.clone())
     } else {
-        "application/octet-stream".to_string()
+        // Get MIME from needle, but filter out application/octet-stream
+        let needle_mime = if !n.mime.is_empty() {
+            let mt = String::from_utf8_lossy(&n.mime).to_string();
+            if mt.starts_with("application/octet-stream") {
+                String::new()
+            } else {
+                mt
+            }
+        } else {
+            String::new()
+        };
+
+        if !needle_mime.is_empty() {
+            Some(needle_mime)
+        } else {
+            // Fall through to extension-based detection
+            let detect_ext = if !ext.is_empty() {
+                ext.clone()
+            } else if !filename.is_empty() {
+                if let Some(dot_pos) = filename.rfind('.') {
+                    filename[dot_pos..].to_lowercase()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            if !detect_ext.is_empty() {
+                mime_guess::from_ext(detect_ext.trim_start_matches('.'))
+                    .first()
+                    .map(|m| m.to_string())
+            } else {
+                None // Omit Content-Type entirely
+            }
+        }
     };
-    response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    if let Some(ref ct) = content_type {
+        response_headers.insert(header::CONTENT_TYPE, ct.parse().unwrap());
+    }
 
     // Cache-Control override from query param
     if let Some(ref cc) = query.response_cache_control {
@@ -878,16 +940,23 @@ async fn get_or_head_handler_inner(
         response_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
     }
 
-    // Content-Disposition for download
-    if query.dl.is_some() {
-        // Extract filename from URL path
-        let filename = extract_filename_from_path(&path);
-        let disposition = if filename.is_empty() {
-            "attachment".to_string()
+    // H7: Content-Disposition — inline by default, attachment only when dl is truthy
+    // Only set if not already set by response-content-disposition query param
+    if !response_headers.contains_key(header::CONTENT_DISPOSITION) && !filename.is_empty() {
+        let disposition_type = if let Some(ref dl_val) = query.dl {
+            // Parse dl as bool: "true", "1" -> attachment; anything else -> inline
+            if dl_val == "true" || dl_val == "1" {
+                "attachment"
+            } else {
+                "inline"
+            }
         } else {
-            format!("attachment; filename=\"{}\"", filename)
+            "inline"
         };
-        response_headers.insert(header::CONTENT_DISPOSITION, disposition.parse().unwrap());
+        let disposition = format!("{}; filename=\"{}\"", disposition_type, filename);
+        if let Ok(hval) = disposition.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
     }
 
     // ---- Streaming path: large uncompressed files ----
@@ -1232,6 +1301,10 @@ struct UploadResult {
     size: u32,
     #[serde(rename = "eTag")]
     etag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mime: Option<String>,
+    #[serde(rename = "contentMd5", skip_serializing_if = "Option::is_none")]
+    content_md5: Option<String>,
 }
 
 pub async fn post_handler(
@@ -1247,7 +1320,7 @@ pub async fn post_handler(
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
-        None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
+        None => return json_error(StatusCode::BAD_REQUEST, "invalid URL path"),
     };
 
     // JWT check for writes
@@ -1257,7 +1330,7 @@ pub async fn post_handler(
         .guard
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
-        return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
+        return json_error(StatusCode::UNAUTHORIZED, format!("JWT error: {}", e));
     }
 
     // Upload throttling: check inflight bytes against limit
@@ -1287,7 +1360,7 @@ pub async fn post_handler(
                 .await
                 .is_err()
             {
-                return (StatusCode::TOO_MANY_REQUESTS, "upload limit exceeded").into_response();
+                return json_error(StatusCode::TOO_MANY_REQUESTS, "upload limit exceeded");
             }
         }
         state
@@ -1313,11 +1386,10 @@ pub async fn post_handler(
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         if let Ok(ct_str) = ct.to_str() {
             if ct_str.starts_with("multipart/form-data") && !ct_str.contains("boundary=") {
-                return (
+                return json_error(
                     StatusCode::BAD_REQUEST,
                     "no multipart boundary param in Content-Type",
-                )
-                    .into_response();
+                );
             }
         }
     }
@@ -1330,12 +1402,83 @@ pub async fn post_handler(
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
         Ok(b) => b,
-        Err(e) => return (StatusCode::BAD_REQUEST, format!("read body: {}", e)).into_response(),
+        Err(e) => return json_error(StatusCode::BAD_REQUEST, format!("read body: {}", e)),
     };
 
+    // H5: Multipart form-data parsing
+    let content_type_str = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    let (body_data_raw, parsed_filename, parsed_content_type, _parsed_content_encoding) =
+        if content_type_str.starts_with("multipart/form-data") {
+            // Extract boundary from Content-Type
+            let boundary = content_type_str
+                .split(';')
+                .find_map(|part| {
+                    let part = part.trim();
+                    if let Some(val) = part.strip_prefix("boundary=") {
+                        Some(val.trim_matches('"').to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+
+            let mut multipart =
+                multer::Multipart::new(futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }), boundary);
+
+            let mut file_data: Option<Vec<u8>> = None;
+            let mut file_name: Option<String> = None;
+            let mut file_content_type: Option<String> = None;
+            let mut file_content_encoding: Option<String> = None;
+
+            while let Ok(Some(field)) = multipart.next_field().await {
+                let field_name = field.name().map(|s| s.to_string());
+                let fname = field.file_name().map(|s| {
+                    // Clean Windows backslashes
+                    let cleaned = s.replace('\\', "/");
+                    cleaned
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&cleaned)
+                        .to_string()
+                });
+                let fct = field.content_type().map(|m| m.to_string());
+
+                if let Ok(data) = field.bytes().await {
+                    if file_data.is_none() {
+                        // First file field
+                        file_data = Some(data.to_vec());
+                        file_name = fname;
+                        file_content_type = fct;
+                        // Content-Encoding comes from headers, not multipart field
+                        file_content_encoding = None;
+                    }
+                    let _ = field_name; // suppress unused warning
+                }
+            }
+
+            if let Some(data) = file_data {
+                (
+                    data,
+                    file_name.unwrap_or_default(),
+                    file_content_type,
+                    file_content_encoding,
+                )
+            } else {
+                // No file field found, use raw body
+                (body.to_vec(), String::new(), None, None)
+            }
+        } else {
+            (body.to_vec(), String::new(), None, None)
+        };
+
     // Check file size limit
-    if state.file_size_limit_bytes > 0 && body.len() as i64 > state.file_size_limit_bytes {
-        return (StatusCode::BAD_REQUEST, "file size limit exceeded").into_response();
+    if state.file_size_limit_bytes > 0 && body_data_raw.len() as i64 > state.file_size_limit_bytes {
+        return json_error(StatusCode::BAD_REQUEST, "file size limit exceeded");
     }
 
     // Validate Content-MD5 if provided
@@ -1343,17 +1486,16 @@ pub async fn post_handler(
         use base64::Engine;
         use md5::{Digest, Md5};
         let mut hasher = Md5::new();
-        hasher.update(&body);
+        hasher.update(&body_data_raw);
         let actual = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
         if actual != *expected_md5 {
-            return (
+            return json_error(
                 StatusCode::BAD_REQUEST,
                 format!(
                     "Content-MD5 mismatch: expected {} got {}",
                     expected_md5, actual
                 ),
-            )
-                .into_response();
+            );
         }
     }
 
@@ -1380,18 +1522,22 @@ pub async fn post_handler(
         .map(|s| s == "gzip")
         .unwrap_or(false);
 
-    // Extract MIME type from Content-Type header (needed early for JPEG orientation fix)
-    let mime_type = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| {
-            if ct.starts_with("multipart/") {
-                "application/octet-stream".to_string()
-            } else {
-                ct.to_string()
-            }
-        })
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+    // Extract MIME type: prefer multipart-parsed content type, else from Content-Type header
+    let mime_type = if let Some(ref pct) = parsed_content_type {
+        pct.clone()
+    } else {
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| {
+                if ct.starts_with("multipart/") {
+                    "application/octet-stream".to_string()
+                } else {
+                    ct.to_string()
+                }
+            })
+            .unwrap_or_else(|| "application/octet-stream".to_string())
+    };
 
     // Parse TTL from query param (matches Go's r.FormValue("ttl"))
     let ttl_str = query
@@ -1425,10 +1571,13 @@ pub async fn post_handler(
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
     // Only for non-compressed uploads that are JPEG files.
     let body_data = if !is_gzipped && crate::images::is_jpeg(&mime_type, &path) {
-        crate::images::fix_jpg_orientation(&body)
+        crate::images::fix_jpg_orientation(&body_data_raw)
     } else {
-        body.to_vec()
+        body_data_raw
     };
+
+    // H3: Capture original data size BEFORE auto-compression
+    let original_data_size = body_data.len() as u32;
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
@@ -1497,7 +1646,12 @@ pub async fn post_handler(
     }
 
     // Set filename on needle (matches Go: n.Name = []byte(pu.FileName))
-    let filename = extract_filename_from_path(&path);
+    // Prefer multipart-parsed filename, else extract from URL path
+    let filename = if !parsed_filename.is_empty() {
+        parsed_filename
+    } else {
+        extract_filename_from_path(&path)
+    };
     if !filename.is_empty() && filename.len() < 256 {
         n.name = filename.as_bytes().to_vec();
         n.name_size = filename.len() as u8;
@@ -1533,11 +1687,10 @@ pub async fn post_handler(
         .await
         {
             tracing::error!("replicated write failed: {}", e);
-            return (
+            return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("replication failed: {}", e),
-            )
-                .into_response();
+            );
         }
         }
     }
@@ -1548,28 +1701,46 @@ pub async fn post_handler(
                 let etag = format!("\"{}\"", n.etag());
                 (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
             } else {
+                // H2: Compute Content-MD5 as base64(md5(original_data))
+                let content_md5_value = {
+                    use base64::Engine;
+                    use md5::{Digest, Md5};
+                    let mut hasher = Md5::new();
+                    hasher.update(&n.data);
+                    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+                };
                 let result = UploadResult {
                     name: filename.clone(),
-                    size: n.data_size,
+                    size: original_data_size, // H3: use original size, not compressed
                     etag: n.etag(),
+                    mime: if mime_type.is_empty() {
+                        None
+                    } else {
+                        Some(mime_type.clone())
+                    },
+                    content_md5: Some(content_md5_value.clone()),
                 };
                 metrics::REQUEST_DURATION
                     .with_label_values(&["write"])
                     .observe(start.elapsed().as_secs_f64());
-                (StatusCode::CREATED, axum::Json(result)).into_response()
+                let mut resp = (StatusCode::CREATED, axum::Json(result)).into_response();
+                resp.headers_mut().insert(
+                    "Content-MD5",
+                    content_md5_value.parse().unwrap(),
+                );
+                resp
             }
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
-            (StatusCode::NOT_FOUND, "volume not found").into_response()
+            json_error(StatusCode::NOT_FOUND, "volume not found")
         }
         Err(crate::storage::volume::VolumeError::ReadOnly) => {
-            (StatusCode::FORBIDDEN, "volume is read-only").into_response()
+            json_error(StatusCode::FORBIDDEN, "volume is read-only")
         }
-        Err(e) => (
+        Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("write error: {}", e),
-        )
-            .into_response(),
+        ),
     };
 
     // _upload_guard drops here, releasing inflight bytes
@@ -1599,7 +1770,7 @@ pub async fn delete_handler(
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
-        None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
+        None => return json_error(StatusCode::BAD_REQUEST, "invalid URL path"),
     };
 
     // JWT check for writes (deletes use write key)
@@ -1609,19 +1780,27 @@ pub async fn delete_handler(
         .guard
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
-        return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
+        return json_error(StatusCode::UNAUTHORIZED, format!("JWT error: {}", e));
     }
 
-    // Parse custom timestamp from query param
+    // H9: Parse custom timestamp from query param; default to now (not 0)
     let del_query = request.uri().query().unwrap_or("");
     let del_ts_str = del_query
         .split('&')
         .find_map(|p| p.strip_prefix("ts="))
         .unwrap_or("");
     let del_last_modified = if !del_ts_str.is_empty() {
-        del_ts_str.parse::<u64>().unwrap_or(0)
+        del_ts_str.parse::<u64>().unwrap_or_else(|_| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        })
     } else {
-        0
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     };
 
     let mut n = Needle {
@@ -1643,18 +1822,15 @@ pub async fn delete_handler(
         }
     }
     if n.cookie != original_cookie {
-        return (
+        return json_error(
             StatusCode::BAD_REQUEST,
             "File Random Cookie does not match.",
-        )
-            .into_response();
+        );
     }
 
-    // Apply custom timestamp if provided
-    if del_last_modified > 0 {
-        n.last_modified = del_last_modified;
-        n.set_has_last_modified_date();
-    }
+    // Apply custom timestamp (always set — defaults to now per H9)
+    n.last_modified = del_last_modified;
+    n.set_has_last_modified_date();
 
     // If this is a chunk manifest, delete child chunks first
     if n.is_chunk_manifest() {
@@ -1678,11 +1854,10 @@ pub async fn delete_handler(
                 let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
                     Some(p) => p,
                     None => {
-                        return (
+                        return json_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             format!("invalid chunk fid: {}", chunk.fid),
-                        )
-                            .into_response();
+                        );
                     }
                 };
                 let mut chunk_needle = Needle {
@@ -1694,31 +1869,28 @@ pub async fn delete_handler(
                 {
                     let store = state.store.read().unwrap();
                     if let Err(e) = store.read_volume_needle(chunk_vid, &mut chunk_needle) {
-                        return (
+                        return json_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             format!("read chunk {}: {}", chunk.fid, e),
-                        )
-                            .into_response();
+                        );
                     }
                 }
                 // Delete the chunk
                 let mut store = state.store.write().unwrap();
                 if let Err(e) = store.delete_volume_needle(chunk_vid, &mut chunk_needle) {
-                    return (
+                    return json_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("delete chunk {}: {}", chunk.fid, e),
-                    )
-                        .into_response();
+                    );
                 }
             }
             // Delete the manifest itself
             let mut store = state.store.write().unwrap();
             if let Err(e) = store.delete_volume_needle(vid, &mut n) {
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("delete manifest: {}", e),
-                )
-                    .into_response();
+                );
             }
             metrics::REQUEST_DURATION
                 .with_label_values(&["delete"])
@@ -1757,11 +1929,10 @@ pub async fn delete_handler(
             .await
             {
                 tracing::error!("replicated delete failed: {}", e);
-                return (
+                return json_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("replication failed: {}", e),
-                )
-                    .into_response();
+                );
             }
         }
     }
@@ -1782,11 +1953,10 @@ pub async fn delete_handler(
             let result = DeleteResult { size: 0 };
             (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
         }
-        Err(e) => (
+        Err(e) => json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("delete error: {}", e),
-        )
-            .into_response(),
+        ),
     }
 }
 
@@ -2150,6 +2320,12 @@ fn try_expand_chunk_manifest(
 // Helpers
 // ============================================================================
 
+/// Return a JSON error response: `{"error": "<msg>"}`.
+fn json_error(status: StatusCode, msg: impl Into<String>) -> Response {
+    let body = serde_json::json!({"error": msg.into()});
+    (status, axum::Json(body)).into_response()
+}
+
 /// Extract JWT token from query param, Authorization header, or Cookie.
 /// Query param takes precedence over header, header over cookie.
 fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
@@ -2164,11 +2340,11 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
         }
     }
 
-    // 2. Check Authorization: Bearer <token>
+    // 2. Check Authorization: Bearer <token> (case-insensitive prefix)
     if let Some(auth) = headers.get(header::AUTHORIZATION) {
         if let Ok(auth_str) = auth.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Some(token.to_string());
+            if auth_str.len() >= 7 && auth_str[..7].eq_ignore_ascii_case("bearer ") {
+                return Some(auth_str[7..].to_string());
             }
         }
     }

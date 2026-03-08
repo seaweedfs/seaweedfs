@@ -538,20 +538,21 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         other => panic!("Unknown readMode: {}. Use local|proxy|redirect", other),
     };
 
-    // Parse whitelist
-    let white_list: Vec<String> = cli
+    // Parse security config from TOML file
+    let sec = parse_security_config(&cli.security_file);
+
+    // Parse whitelist: merge CLI --whiteList with guard.white_list from security.toml
+    let mut white_list: Vec<String> = cli
         .white_list
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
+    white_list.extend(sec.guard_white_list.iter().cloned());
 
     // Parse durations
     let inflight_upload_data_timeout = parse_duration(&cli.inflight_upload_data_timeout);
     let inflight_download_data_timeout = parse_duration(&cli.inflight_download_data_timeout);
-
-    // Parse security config from TOML file
-    let sec = parse_security_config(&cli.security_file);
 
     VolumeServerConfig {
         port: cli.port,
@@ -615,6 +616,8 @@ pub struct SecurityConfig {
     pub https_key_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
+    /// IPs from [guard] white_list in security.toml
+    pub guard_white_list: Vec<String>,
 }
 
 /// Parse a security.toml file to extract JWT signing keys and TLS configuration.
@@ -654,6 +657,7 @@ fn parse_security_config(path: &str) -> SecurityConfig {
         JwtSigningRead,
         HttpsVolume,
         GrpcVolume,
+        Guard,
     }
 
     let mut section = Section::None;
@@ -677,6 +681,10 @@ fn parse_security_config(path: &str) -> SecurityConfig {
         }
         if trimmed == "[grpc.volume]" {
             section = Section::GrpcVolume;
+            continue;
+        }
+        if trimmed == "[guard]" {
+            section = Section::Guard;
             continue;
         }
         if trimmed.starts_with('[') {
@@ -706,6 +714,16 @@ fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::GrpcVolume => match key {
                     "cert" => cfg.grpc_cert_file = value.to_string(),
                     "key" => cfg.grpc_key_file = value.to_string(),
+                    _ => {}
+                },
+                Section::Guard => match key {
+                    "white_list" => {
+                        cfg.guard_white_list = value
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
                     _ => {}
                 },
                 Section::None => {}

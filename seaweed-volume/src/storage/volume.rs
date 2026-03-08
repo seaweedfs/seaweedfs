@@ -927,6 +927,16 @@ impl Volume {
         n: &mut Needle,
         check_cookie: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
+        // TTL inheritance from volume (matching Go's writeNeedle2)
+        {
+            use crate::storage::needle::ttl::TTL;
+            let needle_ttl = n.ttl.unwrap_or(TTL::EMPTY);
+            if needle_ttl == TTL::EMPTY && self.super_block.ttl != TTL::EMPTY {
+                n.set_has_ttl();
+                n.ttl = Some(self.super_block.ttl);
+            }
+        }
+
         // Ensure checksum is computed before dedup check
         if n.checksum == crate::storage::needle::crc::CRC(0) && !n.data.is_empty() {
             n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
@@ -1047,7 +1057,20 @@ impl Volume {
         })?;
 
         let offset = dat_file.seek(SeekFrom::End(0))?;
-        dat_file.write_all(&bytes)?;
+
+        // Check volume size limit before writing (matching Go's Append)
+        if offset >= MAX_POSSIBLE_VOLUME_SIZE && !n.data.is_empty() {
+            return Err(VolumeError::SizeLimitExceeded {
+                current: offset,
+                limit: MAX_POSSIBLE_VOLUME_SIZE,
+            });
+        }
+
+        if let Err(e) = dat_file.write_all(&bytes) {
+            // Truncate back to pre-write position on error (matching Go)
+            let _ = dat_file.set_len(offset);
+            return Err(VolumeError::Io(e));
+        }
 
         Ok((offset, n.size, actual_size))
     }
@@ -1282,7 +1305,7 @@ impl Volume {
 
     /// Path to .vif file.
     fn vif_path(&self) -> String {
-        format!("{}/{}.vif", self.dir, self.id.0)
+        format!("{}.vif", self.data_file_name())
     }
 
     /// Load volume info from .vif file.
@@ -1558,19 +1581,49 @@ impl Volume {
         Ok(())
     }
 
+    /// Write a needle blob and update the needle map index.
+    /// Matches Go's Volume.WriteNeedleBlob which appends to dat and calls nm.Put.
+    pub fn write_needle_blob_and_index(
+        &mut self,
+        needle_id: NeedleId,
+        needle_blob: &[u8],
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        // Check volume size limit
+        let content_size = self.content_size();
+        if MAX_POSSIBLE_VOLUME_SIZE < content_size + needle_blob.len() as u64 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!("volume size limit {} exceeded! current size is {}", MAX_POSSIBLE_VOLUME_SIZE, content_size),
+            )));
+        }
+
+        // Append blob at end of dat file
+        let dat_size = self.dat_file_size()? as i64;
+        self.write_needle_blob(dat_size, needle_blob)?;
+
+        // Update needle map index
+        let offset = Offset::from_actual_offset(dat_size);
+        if let Some(ref mut nm) = self.nm {
+            nm.put(needle_id, offset, size)?;
+        }
+
+        Ok(())
+    }
+
     pub fn needs_replication(&self) -> bool {
         self.super_block.replica_placement.get_copy_count() > 1
     }
 
-    /// Garbage ratio: deleted_size / (content_size + deleted_size)
+    /// Garbage ratio: deleted_size / content_size (matching Go's garbageLevel).
+    /// content_size is the additive-only FileByteCounter.
     pub fn garbage_level(&self) -> f64 {
         let content = self.content_size();
-        let deleted = self.deleted_size();
-        let total = content + deleted;
-        if total == 0 {
+        if content == 0 {
             return 0.0;
         }
-        deleted as f64 / total as f64
+        let deleted = self.deleted_size();
+        deleted as f64 / content as f64
     }
 
     pub fn dat_file_size(&self) -> io::Result<u64> {
@@ -2213,7 +2266,8 @@ mod tests {
             })
             .unwrap();
         assert!(deleted_size.0 > 0);
-        assert_eq!(v.file_count(), 0);
+        // Additive-only: file_count stays at 1 after delete
+        assert_eq!(v.file_count(), 1);
         assert_eq!(v.deleted_count(), 1);
 
         // Read should fail with Deleted
@@ -2384,7 +2438,8 @@ mod tests {
             ..Needle::default()
         };
         v.delete_needle(&mut del).unwrap();
-        assert_eq!(v.file_count(), 2);
+        // Additive-only: file_count stays at 3 after delete
+        assert_eq!(v.file_count(), 3);
         assert_eq!(v.deleted_count(), 1);
 
         let dat_size_before = v.dat_file_size().unwrap();
