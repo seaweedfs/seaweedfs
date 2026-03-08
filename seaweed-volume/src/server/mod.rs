@@ -1,5 +1,6 @@
-pub mod volume_server;
-pub mod handlers;
+pub mod debug;
 pub mod grpc_server;
+pub mod handlers;
 pub mod heartbeat;
+pub mod volume_server;
 pub mod write_queue;

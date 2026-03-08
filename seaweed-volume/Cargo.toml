@@ -50,6 +50,7 @@ reed-solomon-erasure = "6"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+pprof = { version = "0.15", features = ["prost-codec"] }
 
 # Config
 toml = "0.8"

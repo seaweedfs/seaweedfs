@@ -136,6 +136,14 @@ async fn do_heartbeat(
                                 std::sync::atomic::Ordering::Relaxed,
                             );
                         }
+                        let metrics_changed = apply_metrics_push_settings(
+                            state,
+                            &hb_resp.metrics_address,
+                            hb_resp.metrics_interval_seconds,
+                        );
+                        if metrics_changed {
+                            state.metrics_notify.notify_waiters();
+                        }
                         if !hb_resp.leader.is_empty() {
                             return Ok(Some(hb_resp.leader));
                         }
@@ -194,6 +202,22 @@ async fn do_heartbeat(
             }
         }
     }
+}
+
+fn apply_metrics_push_settings(
+    state: &VolumeServerState,
+    address: &str,
+    interval_seconds: u32,
+) -> bool {
+    let mut runtime = state.metrics_runtime.write().unwrap();
+    if runtime.push_gateway.address == address
+        && runtime.push_gateway.interval_seconds == interval_seconds
+    {
+        return false;
+    }
+    runtime.push_gateway.address = address.to_string();
+    runtime.push_gateway.interval_seconds = interval_seconds;
+    true
 }
 
 /// Collect volume information into a Heartbeat message.
@@ -315,8 +339,12 @@ fn collect_ec_heartbeat(state: &Arc<VolumeServerState>) -> master_pb::Heartbeat 
 mod tests {
     use super::*;
     use crate::config::MinFreeSpace;
+    use crate::config::ReadMode;
+    use crate::remote_storage::s3_tier::S3TierRegistry;
+    use crate::security::{Guard, SigningKey};
     use crate::storage::needle_map::NeedleMapKind;
     use crate::storage::types::{DiskType, VolumeId};
+    use std::sync::RwLock;
 
     fn test_config() -> HeartbeatConfig {
         HeartbeatConfig {
@@ -329,6 +357,41 @@ mod tests {
             master_addresses: Vec::new(),
             pulse_seconds: 5,
         }
+    }
+
+    fn test_state_with_store(store: Store) -> Arc<VolumeServerState> {
+        Arc::new(VolumeServerState {
+            store: RwLock::new(store),
+            guard: Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0),
+            is_stopping: RwLock::new(false),
+            maintenance: std::sync::atomic::AtomicBool::new(false),
+            state_version: std::sync::atomic::AtomicU32::new(0),
+            concurrent_upload_limit: 0,
+            concurrent_download_limit: 0,
+            inflight_upload_data_timeout: std::time::Duration::from_secs(60),
+            inflight_download_data_timeout: std::time::Duration::from_secs(60),
+            inflight_upload_bytes: std::sync::atomic::AtomicI64::new(0),
+            inflight_download_bytes: std::sync::atomic::AtomicI64::new(0),
+            upload_notify: tokio::sync::Notify::new(),
+            download_notify: tokio::sync::Notify::new(),
+            data_center: String::new(),
+            rack: String::new(),
+            file_size_limit_bytes: 0,
+            is_heartbeating: std::sync::atomic::AtomicBool::new(false),
+            has_master: true,
+            pre_stop_seconds: 0,
+            volume_state_notify: tokio::sync::Notify::new(),
+            write_queue: std::sync::OnceLock::new(),
+            s3_tier_registry: std::sync::RwLock::new(S3TierRegistry::new()),
+            read_mode: ReadMode::Local,
+            master_url: String::new(),
+            self_url: String::new(),
+            http_client: reqwest::Client::new(),
+            metrics_runtime: std::sync::RwLock::new(Default::default()),
+            metrics_notify: tokio::sync::Notify::new(),
+            has_slow_read: true,
+            read_buffer_size_bytes: 4 * 1024 * 1024,
+        })
     }
 
     #[test]
@@ -391,5 +454,20 @@ mod tests {
 
         assert!(heartbeat.volumes.is_empty());
         assert!(heartbeat.has_no_volumes);
+    }
+
+    #[test]
+    fn test_apply_metrics_push_settings_updates_runtime_state() {
+        let store = Store::new(NeedleMapKind::InMemory);
+        let state = test_state_with_store(store);
+
+        assert!(apply_metrics_push_settings(&state, "pushgateway:9091", 15,));
+        {
+            let runtime = state.metrics_runtime.read().unwrap();
+            assert_eq!(runtime.push_gateway.address, "pushgateway:9091");
+            assert_eq!(runtime.push_gateway.interval_seconds, 15);
+        }
+
+        assert!(!apply_metrics_push_settings(&state, "pushgateway:9091", 15,));
     }
 }

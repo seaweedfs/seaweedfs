@@ -42,10 +42,7 @@ impl WriteQueue {
     /// The worker holds a reference to `state` for accessing the store.
     pub fn new(state: Arc<VolumeServerState>, capacity: usize) -> Self {
         let (tx, rx) = mpsc::channel(capacity);
-        let worker = WriteQueueWorker {
-            rx,
-            state,
-        };
+        let worker = WriteQueueWorker { rx, state };
         tokio::spawn(worker.run());
         WriteQueue { tx }
     }
@@ -53,11 +50,7 @@ impl WriteQueue {
     /// Submit a write request and wait for the result.
     ///
     /// Returns `Err` if the worker has shut down or the response channel was dropped.
-    pub async fn submit(
-        &self,
-        volume_id: VolumeId,
-        needle: Needle,
-    ) -> WriteResult {
+    pub async fn submit(&self, volume_id: VolumeId, needle: Needle) -> WriteResult {
         let (response_tx, response_rx) = oneshot::channel();
         let request = WriteRequest {
             volume_id,
@@ -166,20 +159,15 @@ mod tests {
 
     /// Helper to create a minimal VolumeServerState for testing.
     fn make_test_state() -> Arc<VolumeServerState> {
-        use std::sync::RwLock;
-        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
         use crate::security::{Guard, SigningKey};
-        use crate::storage::store::Store;
+        use crate::server::volume_server::RuntimeMetricsConfig;
         use crate::storage::needle_map::NeedleMapKind;
+        use crate::storage::store::Store;
+        use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32};
+        use std::sync::RwLock;
 
         let store = Store::new(NeedleMapKind::InMemory);
-        let guard = Guard::new(
-            &[],
-            SigningKey(vec![]),
-            0,
-            SigningKey(vec![]),
-            0,
-        );
+        let guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);
 
         Arc::new(VolumeServerState {
             store: RwLock::new(store),
@@ -203,11 +191,17 @@ mod tests {
             pre_stop_seconds: 0,
             volume_state_notify: tokio::sync::Notify::new(),
             write_queue: std::sync::OnceLock::new(),
-            s3_tier_registry: std::sync::RwLock::new(crate::remote_storage::s3_tier::S3TierRegistry::new()),
+            s3_tier_registry: std::sync::RwLock::new(
+                crate::remote_storage::s3_tier::S3TierRegistry::new(),
+            ),
             read_mode: crate::config::ReadMode::Local,
             master_url: String::new(),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
+            metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
+            metrics_notify: tokio::sync::Notify::new(),
+            has_slow_read: true,
+            read_buffer_size_bytes: 4 * 1024 * 1024,
         })
     }
 

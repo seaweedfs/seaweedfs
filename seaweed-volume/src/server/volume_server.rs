@@ -9,16 +9,16 @@
 //!
 //! Matches Go's server/volume_server.go.
 
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
+use std::sync::{Arc, RwLock};
 
 use axum::{
-    Router,
-    routing::{get, any},
-    middleware::{self, Next},
     extract::{Request, State},
+    http::{HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
-    http::{StatusCode, HeaderValue, Method},
+    routing::{any, get},
+    Router,
 };
 
 use crate::config::ReadMode;
@@ -27,6 +27,11 @@ use crate::storage::store::Store;
 
 use super::handlers;
 use super::write_queue::WriteQueue;
+
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeMetricsConfig {
+    pub push_gateway: crate::metrics::PushGatewayConfig,
+}
 
 /// Shared state for the volume server.
 pub struct VolumeServerState {
@@ -74,6 +79,12 @@ pub struct VolumeServerState {
     pub self_url: String,
     /// HTTP client for proxy requests and master lookups.
     pub http_client: reqwest::Client,
+    /// Metrics push settings learned from master heartbeat responses.
+    pub metrics_runtime: std::sync::RwLock<RuntimeMetricsConfig>,
+    pub metrics_notify: tokio::sync::Notify,
+    /// Read tuning flags for large-file streaming.
+    pub has_slow_read: bool,
+    pub read_buffer_size_bytes: usize,
 }
 
 impl VolumeServerState {
@@ -86,6 +97,10 @@ impl VolumeServerState {
     }
 }
 
+pub fn build_metrics_router() -> Router {
+    Router::new().route("/metrics", get(handlers::metrics_handler))
+}
+
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.
 async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let origin = request.headers().get("origin").cloned();
@@ -94,10 +109,7 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
 
     let headers = response.headers_mut();
-    headers.insert(
-        "Server",
-        HeaderValue::from_static("SeaweedFS Volume 0.1.0"),
-    );
+    headers.insert("Server", HeaderValue::from_static("SeaweedFS Volume 0.1.0"));
 
     if let Some(rid) = request_id {
         headers.insert("x-amz-request-id", rid);
@@ -110,7 +122,10 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 
     if origin.is_some() {
         headers.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
-        headers.insert("Access-Control-Allow-Credentials", HeaderValue::from_static("true"));
+        headers.insert(
+            "Access-Control-Allow-Credentials",
+            HeaderValue::from_static("true"),
+        );
     }
 
     response
@@ -119,28 +134,30 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 /// Admin store handler — dispatches based on HTTP method.
 /// Matches Go's privateStoreHandler: GET/HEAD → read, POST/PUT → write,
 /// DELETE → delete, OPTIONS → CORS headers, anything else → 400.
-async fn admin_store_handler(
-    state: State<Arc<VolumeServerState>>,
-    request: Request,
-) -> Response {
+async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
     match request.method().clone() {
-        Method::GET | Method::HEAD => handlers::get_or_head_handler_from_request(state, request).await,
+        Method::GET | Method::HEAD => {
+            handlers::get_or_head_handler_from_request(state, request).await
+        }
         Method::POST | Method::PUT => handlers::post_handler(state, request).await,
         Method::DELETE => handlers::delete_handler(state, request).await,
         Method::OPTIONS => admin_options_response(),
-        _ => (StatusCode::BAD_REQUEST, format!("{{\"error\":\"unsupported method {}\"}}", request.method())).into_response(),
+        _ => (
+            StatusCode::BAD_REQUEST,
+            format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
+        )
+            .into_response(),
     }
 }
 
 /// Public store handler — dispatches based on HTTP method.
 /// Matches Go's publicReadOnlyHandler: GET/HEAD → read, OPTIONS → CORS,
 /// anything else → 200 (passthrough no-op).
-async fn public_store_handler(
-    state: State<Arc<VolumeServerState>>,
-    request: Request,
-) -> Response {
+async fn public_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
     match request.method().clone() {
-        Method::GET | Method::HEAD => handlers::get_or_head_handler_from_request(state, request).await,
+        Method::GET | Method::HEAD => {
+            handlers::get_or_head_handler_from_request(state, request).await
+        }
         Method::OPTIONS => public_options_response(),
         _ => StatusCode::OK.into_response(),
     }
@@ -181,20 +198,31 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
-        .route("/metrics", get(handlers::metrics_handler))
         .route("/stats/counter", get(handlers::stats_counter_handler))
         .route("/stats/memory", get(handlers::stats_memory_handler))
         .route("/stats/disk", get(handlers::stats_disk_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
-        .route("/seaweedfsstatic/*path", get(handlers::static_asset_handler))
+        .route(
+            "/seaweedfsstatic/*path",
+            get(handlers::static_asset_handler),
+        )
         .route("/ui/index.html", get(handlers::ui_handler))
-        .route("/", any(|_state: State<Arc<VolumeServerState>>, request: Request| async move {
-            match request.method().clone() {
-                Method::OPTIONS => admin_options_response(),
-                Method::GET => StatusCode::OK.into_response(),
-                _ => (StatusCode::BAD_REQUEST, format!("{{\"error\":\"unsupported method {}\"}}", request.method())).into_response(),
-            }
-        }))
+        .route(
+            "/",
+            any(
+                |_state: State<Arc<VolumeServerState>>, request: Request| async move {
+                    match request.method().clone() {
+                        Method::OPTIONS => admin_options_response(),
+                        Method::GET => StatusCode::OK.into_response(),
+                        _ => (
+                            StatusCode::BAD_REQUEST,
+                            format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
+                        )
+                            .into_response(),
+                    }
+                },
+            ),
+        )
         .route("/:path", any(admin_store_handler))
         .route("/:vid/:fid", any(admin_store_handler))
         .route("/:vid/:fid/:filename", any(admin_store_handler))
@@ -207,14 +235,22 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
         .route("/healthz", get(handlers::healthz_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
-        .route("/seaweedfsstatic/*path", get(handlers::static_asset_handler))
-        .route("/", any(|_state: State<Arc<VolumeServerState>>, request: Request| async move {
-            match request.method().clone() {
-                Method::OPTIONS => public_options_response(),
-                Method::GET => StatusCode::OK.into_response(),
-                _ => StatusCode::OK.into_response(),
-            }
-        }))
+        .route(
+            "/seaweedfsstatic/*path",
+            get(handlers::static_asset_handler),
+        )
+        .route(
+            "/",
+            any(
+                |_state: State<Arc<VolumeServerState>>, request: Request| async move {
+                    match request.method().clone() {
+                        Method::OPTIONS => public_options_response(),
+                        Method::GET => StatusCode::OK.into_response(),
+                        _ => StatusCode::OK.into_response(),
+                    }
+                },
+            ),
+        )
         .route("/:path", any(public_store_handler))
         .route("/:vid/:fid", any(public_store_handler))
         .route("/:vid/:fid/:filename", any(public_store_handler))

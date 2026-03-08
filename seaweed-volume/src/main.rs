@@ -6,8 +6,11 @@ use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 use seaweed_volume::security::{Guard, SigningKey};
+use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
-use seaweed_volume::server::volume_server::VolumeServerState;
+use seaweed_volume::server::volume_server::{
+    build_metrics_router, RuntimeMetricsConfig, VolumeServerState,
+};
 use seaweed_volume::server::write_queue::WriteQueue;
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
@@ -136,6 +139,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         master_url,
         self_url,
         http_client: reqwest::Client::new(),
+        metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
+        metrics_notify: tokio::sync::Notify::new(),
+        has_slow_read: config.has_slow_read,
+        read_buffer_size_bytes: (config.read_buffer_size_mb.max(1) as usize) * 1024 * 1024,
     });
 
     // Initialize the batched write queue if enabled
@@ -170,7 +177,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     }
 
     // Build HTTP routers
-    let admin_router = seaweed_volume::server::volume_server::build_admin_router(state.clone());
+    let mut admin_router = seaweed_volume::server::volume_server::build_admin_router(state.clone());
+    if config.pprof {
+        admin_router = admin_router.merge(build_debug_router());
+    }
     let admin_addr = format!("{}:{}", config.bind_ip, config.port);
 
     let public_port = config.public_port;
@@ -382,18 +392,115 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         None
     };
 
+    let metrics_handle = if config.metrics_port > 0 {
+        let metrics_router = build_metrics_router();
+        let metrics_addr = format!("{}:{}", config.metrics_ip, config.metrics_port);
+        info!("Metrics server listening on {}", metrics_addr);
+        let listener = tokio::net::TcpListener::bind(&metrics_addr)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to bind metrics HTTP to {}: {}", metrics_addr, e));
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        Some(tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, metrics_router)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+            {
+                error!("Metrics HTTP server error: {}", e);
+            }
+        }))
+    } else {
+        None
+    };
+
+    let debug_handle = if config.debug {
+        let debug_addr = format!("0.0.0.0:{}", config.debug_port);
+        info!("Debug pprof server listening on {}", debug_addr);
+        let listener = tokio::net::TcpListener::bind(&debug_addr)
+            .await
+            .unwrap_or_else(|e| panic!("Failed to bind debug HTTP to {}: {}", debug_addr, e));
+        let debug_router = build_debug_router();
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        Some(tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, debug_router)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.recv().await;
+                })
+                .await
+            {
+                error!("Debug HTTP server error: {}", e);
+            }
+        }))
+    } else {
+        None
+    };
+
+    let metrics_push_handle = {
+        let push_state = state.clone();
+        let push_instance = format!("{}:{}", config.ip, config.port);
+        let push_shutdown = shutdown_tx.subscribe();
+        Some(tokio::spawn(async move {
+            run_metrics_push_loop(push_state, push_instance, push_shutdown).await;
+        }))
+    };
+
     // Wait for all servers
     let _ = http_handle.await;
     let _ = grpc_handle.await;
     if let Some(h) = public_handle {
         let _ = h.await;
     }
+    if let Some(h) = metrics_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = debug_handle {
+        let _ = h.await;
+    }
     if let Some(h) = heartbeat_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = metrics_push_handle {
         let _ = h.await;
     }
 
     info!("Volume server stopped.");
     Ok(())
+}
+
+async fn run_metrics_push_loop(
+    state: Arc<VolumeServerState>,
+    instance: String,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) {
+    loop {
+        let push_cfg = { state.metrics_runtime.read().unwrap().push_gateway.clone() };
+
+        if push_cfg.address.is_empty() || push_cfg.interval_seconds == 0 {
+            tokio::select! {
+                _ = state.metrics_notify.notified() => continue,
+                _ = shutdown_rx.recv() => return,
+            }
+        }
+
+        if let Err(e) = metrics::push_metrics_once(
+            &state.http_client,
+            &push_cfg.address,
+            "volumeServer",
+            &instance,
+        )
+        .await
+        {
+            info!("could not push metrics to {}: {}", push_cfg.address, e);
+        }
+
+        let interval = std::time::Duration::from_secs(push_cfg.interval_seconds.max(1) as u64);
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = state.metrics_notify.notified() => {}
+            _ = shutdown_rx.recv() => return,
+        }
+    }
 }
 
 /// Serve an axum Router over TLS using tokio-rustls.

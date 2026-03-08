@@ -10,7 +10,9 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // for `oneshot`
 
 use seaweed_volume::security::{Guard, SigningKey};
-use seaweed_volume::server::volume_server::{build_admin_router, VolumeServerState};
+use seaweed_volume::server::volume_server::{
+    build_admin_router, build_metrics_router, VolumeServerState,
+};
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::{DiskType, VolumeId};
@@ -68,6 +70,12 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
         master_url: String::new(),
         self_url: String::new(),
         http_client: reqwest::Client::new(),
+        metrics_runtime: std::sync::RwLock::new(
+            seaweed_volume::server::volume_server::RuntimeMetricsConfig::default(),
+        ),
+        metrics_notify: tokio::sync::Notify::new(),
+        has_slow_read: false,
+        read_buffer_size_bytes: 1024 * 1024,
     });
     (state, tmp)
 }
@@ -161,6 +169,41 @@ async fn status_returns_json_with_version_and_volumes() {
     let volumes = json["Volumes"].as_array().unwrap();
     assert_eq!(volumes.len(), 1, "expected 1 volume");
     assert_eq!(volumes[0]["Id"], 1);
+}
+
+#[tokio::test]
+async fn admin_router_does_not_expose_metrics() {
+    let (state, _tmp) = test_state();
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn metrics_router_serves_metrics() {
+    let app = build_metrics_router();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 // ============================================================================
