@@ -1035,7 +1035,7 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::ReadVolumeFileStatusResponse>, Status> {
         let vid = VolumeId(request.into_inner().volume_id);
         let store = self.state.store.read().unwrap();
-        let (_, vol) = store
+        let (loc_idx, vol) = store
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
@@ -1050,8 +1050,8 @@ impl VolumeServer for VolumeGrpcService {
                 file_count: vol.file_count() as u64,
                 compaction_revision: vol.super_block.compaction_revision as u32,
                 collection: vol.collection.clone(),
-                disk_type: String::new(),
-                volume_info: None,
+                disk_type: store.locations[loc_idx].disk_type.to_string(),
+                volume_info: Some(vol.volume_info.clone()),
                 version: vol.version().0 as u32,
             },
         ))
