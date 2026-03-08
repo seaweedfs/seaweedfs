@@ -19,10 +19,29 @@ pub struct EcVolume {
     pub version: Version,
     pub shards: Vec<Option<EcVolumeShard>>, // indexed by ShardId (0..14)
     pub dat_file_size: i64,
+    pub data_shards: u32,
+    pub parity_shards: u32,
     ecx_file: Option<File>,
     ecx_file_size: i64,
     ecj_file: Option<File>,
     pub disk_type: DiskType,
+}
+
+pub fn read_ec_shard_config(dir: &str, volume_id: VolumeId) -> (u32, u32) {
+    let mut data_shards = 10;
+    let mut parity_shards = 4;
+    let vif_path = format!("{}/{}.vif", dir, volume_id.0);
+    if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
+        if let Ok(vif_info) = serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content) {
+            if let Some(ec) = vif_info.ec_shard_config {
+                if ec.data_shards > 0 && ec.parity_shards > 0 {
+                    data_shards = ec.data_shards;
+                    parity_shards = ec.parity_shards;
+                }
+            }
+        }
+    }
+    (data_shards, parity_shards)
 }
 
 impl EcVolume {
@@ -33,8 +52,11 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        let mut shards = Vec::with_capacity(TOTAL_SHARDS_COUNT);
-        for _ in 0..TOTAL_SHARDS_COUNT {
+        let (data_shards, parity_shards) = read_ec_shard_config(dir, volume_id);
+
+        let total_shards = (data_shards + parity_shards) as usize;
+        let mut shards = Vec::with_capacity(total_shards);
+        for _ in 0..total_shards {
             shards.push(None);
         }
 
@@ -46,6 +68,8 @@ impl EcVolume {
             version: Version::current(),
             shards,
             dat_file_size: 0,
+            data_shards,
+            parity_shards,
             ecx_file: None,
             ecx_file_size: 0,
             ecj_file: None,
@@ -97,10 +121,11 @@ impl EcVolume {
     /// Add a shard to this volume.
     pub fn add_shard(&mut self, mut shard: EcVolumeShard) -> io::Result<()> {
         let id = shard.shard_id as usize;
-        if id >= TOTAL_SHARDS_COUNT {
+        let total_shards = (self.data_shards + self.parity_shards) as usize;
+        if id >= total_shards {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("invalid shard id: {}", id),
+                format!("invalid shard id: {} (max {})", id, total_shards - 1),
             ));
         }
         shard.open()?;
@@ -192,6 +217,7 @@ impl EcVolume {
             offset.to_actual_offset(),
             size,
             shard_size,
+            self.data_shards,
         );
 
         Ok(Some((offset, size, intervals)))

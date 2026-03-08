@@ -19,12 +19,13 @@ pub fn write_dat_file_from_shards(
     collection: &str,
     volume_id: VolumeId,
     dat_file_size: i64,
+    data_shards: usize,
 ) -> io::Result<()> {
     let base = volume_file_name(dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
 
     // Open data shards
-    let mut shards: Vec<EcVolumeShard> = (0..DATA_SHARDS_COUNT as u8)
+    let mut shards: Vec<EcVolumeShard> = (0..data_shards as u8)
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
 
@@ -36,13 +37,13 @@ pub fn write_dat_file_from_shards(
     let mut remaining = dat_file_size;
     let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
     let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
-    let large_row_size = (large_block_size * DATA_SHARDS_COUNT) as i64;
+    let large_row_size = (large_block_size * data_shards) as i64;
 
     let mut shard_offset: u64 = 0;
 
     // Read large blocks
     while remaining >= large_row_size {
-        for i in 0..DATA_SHARDS_COUNT {
+        for i in 0..data_shards {
             let mut buf = vec![0u8; large_block_size];
             shards[i].read_at(&mut buf, shard_offset)?;
             let to_write = large_block_size.min(remaining as usize);
@@ -57,7 +58,7 @@ pub fn write_dat_file_from_shards(
 
     // Read small blocks
     while remaining > 0 {
-        for i in 0..DATA_SHARDS_COUNT {
+        for i in 0..data_shards {
             let mut buf = vec![0u8; small_block_size];
             shards[i].read_at(&mut buf, shard_offset)?;
             let to_write = small_block_size.min(remaining as usize);
@@ -164,14 +165,16 @@ mod tests {
         let original_dat = std::fs::read(format!("{}/1.dat", dir)).unwrap();
 
         // Encode to EC
-        ec_encoder::write_ec_files(dir, "", VolumeId(1)).unwrap();
+        let data_shards = 10;
+        let parity_shards = 4;
+        ec_encoder::write_ec_files(dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
 
         // Delete original .dat and .idx
         std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64).unwrap();
+        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64, data_shards).unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
         // Verify reconstructed .dat matches original

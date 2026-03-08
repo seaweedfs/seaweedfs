@@ -18,10 +18,10 @@ pub struct Interval {
 }
 
 impl Interval {
-    /// Convert an interval to the specific shard ID and offset within that shard.
-    pub fn to_shard_id_and_offset(&self) -> (ShardId, i64) {
-        let shard_id = (self.block_index % DATA_SHARDS_COUNT) as ShardId;
-        let row_index = self.block_index / DATA_SHARDS_COUNT;
+    pub fn to_shard_id_and_offset(&self, data_shards: u32) -> (ShardId, i64) {
+        let data_shards_usize = data_shards as usize;
+        let shard_id = (self.block_index % data_shards_usize) as ShardId;
+        let row_index = self.block_index / data_shards_usize;
 
         let block_size = if self.is_large_block {
             ERASURE_CODING_LARGE_BLOCK_SIZE as i64
@@ -42,7 +42,7 @@ impl Interval {
 /// Locate the EC shard intervals needed to read data at the given offset and size.
 ///
 /// `shard_size` is the size of a single shard file.
-pub fn locate_data(offset: i64, size: Size, shard_size: i64) -> Vec<Interval> {
+pub fn locate_data(offset: i64, size: Size, shard_size: i64, data_shards: u32) -> Vec<Interval> {
     let mut intervals = Vec::new();
     let data_size = size.0 as i64;
 
@@ -52,8 +52,8 @@ pub fn locate_data(offset: i64, size: Size, shard_size: i64) -> Vec<Interval> {
 
     let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE as i64;
     let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE as i64;
-    let large_row_size = large_block_size * DATA_SHARDS_COUNT as i64;
-    let small_row_size = small_block_size * DATA_SHARDS_COUNT as i64;
+    let large_row_size = large_block_size * data_shards as i64;
+    let small_row_size = small_block_size * data_shards as i64;
 
     // Number of large block rows
     let n_large_block_rows = if shard_size > 0 {
@@ -138,6 +138,10 @@ mod tests {
 
     #[test]
     fn test_interval_to_shard_id() {
+        let data_shards = 10;
+        let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE as i64;
+        let _shard_size = 1024 * 1024; // Example shard size
+
         // Block index 0 → shard 0
         let interval = Interval {
             block_index: 0,
@@ -146,7 +150,7 @@ mod tests {
             is_large_block: true,
             large_block_rows_count: 1,
         };
-        let (shard_id, offset) = interval.to_shard_id_and_offset();
+        let (shard_id, offset) = interval.to_shard_id_and_offset(data_shards);
         assert_eq!(shard_id, 0);
         assert_eq!(offset, 100);
 
@@ -158,8 +162,20 @@ mod tests {
             is_large_block: true,
             large_block_rows_count: 1,
         };
-        let (shard_id, _offset) = interval.to_shard_id_and_offset();
+        let (shard_id, _offset) = interval.to_shard_id_and_offset(data_shards);
         assert_eq!(shard_id, 5);
+
+        // Block index 12 (data_shards=10) → row_index 1, shard_id 2
+        let interval = Interval {
+            block_index: 12,
+            inner_block_offset: 200,
+            size: 50,
+            is_large_block: true,
+            large_block_rows_count: 5,
+        };
+        let (shard_id, offset) = interval.to_shard_id_and_offset(data_shards);
+        assert_eq!(shard_id, 2); // 12 % 10 = 2
+        assert_eq!(offset, large_block_size + 200); // row 1 offset + inner_block_offset
 
         // Block index 10 → shard 0 (second row)
         let interval = Interval {
@@ -169,7 +185,7 @@ mod tests {
             is_large_block: true,
             large_block_rows_count: 2,
         };
-        let (shard_id, offset) = interval.to_shard_id_and_offset();
+        let (shard_id, offset) = interval.to_shard_id_and_offset(data_shards);
         assert_eq!(shard_id, 0);
         assert_eq!(offset, ERASURE_CODING_LARGE_BLOCK_SIZE as i64); // row 1 offset
     }
@@ -177,7 +193,7 @@ mod tests {
     #[test]
     fn test_locate_data_small_file() {
         // Small file: 100 bytes at offset 50, shard size = 1MB
-        let intervals = locate_data(50, Size(100), 1024 * 1024);
+        let intervals = locate_data(50, Size(100), 1024 * 1024, 10);
         assert!(!intervals.is_empty());
 
         // Should be a single small block interval (no large block rows for 1MB shard)
@@ -187,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_locate_data_empty() {
-        let intervals = locate_data(0, Size(0), 1024 * 1024);
+        let intervals = locate_data(0, Size(0), 1024 * 1024, 10);
         assert!(intervals.is_empty());
     }
 
@@ -200,7 +216,7 @@ mod tests {
             is_large_block: false,
             large_block_rows_count: 2,
         };
-        let (_shard_id, offset) = interval.to_shard_id_and_offset();
+        let (_shard_id, offset) = interval.to_shard_id_and_offset(10);
         // Should be after 2 large block rows
         assert_eq!(offset, 2 * ERASURE_CODING_LARGE_BLOCK_SIZE as i64);
     }

@@ -23,6 +23,8 @@ pub fn write_ec_files(
     dir: &str,
     collection: &str,
     volume_id: VolumeId,
+    data_shards: usize,
+    parity_shards: usize,
 ) -> io::Result<()> {
     let base = volume_file_name(dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
@@ -35,12 +37,13 @@ pub fn write_ec_files(
     let dat_file = File::open(&dat_path)?;
     let dat_size = dat_file.metadata()?.len() as i64;
 
-    let rs = ReedSolomon::new(DATA_SHARDS_COUNT, PARITY_SHARDS_COUNT).map_err(|e| {
+    let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
         io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e))
     })?;
 
     // Create shard files
-    let mut shards: Vec<EcVolumeShard> = (0..TOTAL_SHARDS_COUNT as u8)
+    let total_shards = data_shards + parity_shards;
+    let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
         .map(|i| EcVolumeShard::new(dir, collection, volume_id, i))
         .collect();
 
@@ -49,7 +52,7 @@ pub fn write_ec_files(
     }
 
     // Encode in large blocks, then small blocks
-    encode_dat_file(&dat_file, dat_size, &rs, &mut shards)?;
+    encode_dat_file(&dat_file, dat_size, &rs, &mut shards, data_shards, parity_shards)?;
 
     // Close all shards
     for shard in &mut shards {
@@ -99,9 +102,11 @@ fn encode_dat_file(
     dat_size: i64,
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
+    data_shards: usize,
+    parity_shards: usize,
 ) -> io::Result<()> {
     let block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
-    let row_size = block_size * DATA_SHARDS_COUNT;
+    let row_size = block_size * data_shards;
 
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
@@ -109,7 +114,7 @@ fn encode_dat_file(
     // Process all data in small blocks to avoid large memory allocations
     while remaining > 0 {
         let to_process = remaining.min(row_size as i64);
-        encode_one_batch(dat_file, offset, block_size, rs, shards)?;
+        encode_one_batch(dat_file, offset, block_size, rs, shards, data_shards, parity_shards)?;
         offset += to_process as u64;
         remaining -= to_process;
     }
@@ -124,10 +129,13 @@ fn encode_one_batch(
     block_size: usize,
     rs: &ReedSolomon,
     shards: &mut [EcVolumeShard],
+    data_shards: usize,
+    parity_shards: usize,
 ) -> io::Result<()> {
-    // Each batch allocates block_size * TOTAL_SHARDS_COUNT bytes.
+    let total_shards = data_shards + parity_shards;
+    // Each batch allocates block_size * total_shards bytes.
     // With large blocks (1 GiB) this is 14 GiB -- guard against OOM.
-    let total_alloc = block_size.checked_mul(TOTAL_SHARDS_COUNT).ok_or_else(|| {
+    let total_alloc = block_size.checked_mul(total_shards).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "block_size * shard count overflows usize")
     })?;
     const MAX_BATCH_ALLOC: usize = 1024 * 1024 * 1024; // 1 GiB safety limit
@@ -136,18 +144,18 @@ fn encode_one_batch(
             io::ErrorKind::InvalidInput,
             format!(
                 "batch allocation too large ({} bytes, limit {} bytes); block_size={} shards={}",
-                total_alloc, MAX_BATCH_ALLOC, block_size, TOTAL_SHARDS_COUNT,
+                total_alloc, MAX_BATCH_ALLOC, block_size, total_shards,
             ),
         ));
     }
 
     // Allocate buffers for all shards
-    let mut buffers: Vec<Vec<u8>> = (0..TOTAL_SHARDS_COUNT)
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
         .map(|_| vec![0u8; block_size])
         .collect();
 
     // Read data shards from .dat file
-    for i in 0..DATA_SHARDS_COUNT {
+    for i in 0..data_shards {
         let read_offset = offset + (i * block_size) as u64;
 
         #[cfg(unix)]
@@ -211,10 +219,13 @@ mod tests {
         v.close();
 
         // Encode to EC shards
-        write_ec_files(dir, "", VolumeId(1)).unwrap();
+        let data_shards = 10;
+        let parity_shards = 4;
+        let total_shards = data_shards + parity_shards;
+        write_ec_files(dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
 
         // Verify shard files exist
-        for i in 0..TOTAL_SHARDS_COUNT {
+        for i in 0..total_shards {
             let path = format!("{}/{}.ec{:02}", dir, 1, i);
             assert!(
                 std::path::Path::new(&path).exists(),
@@ -229,11 +240,14 @@ mod tests {
 
     #[test]
     fn test_reed_solomon_basic() {
-        let rs = ReedSolomon::new(DATA_SHARDS_COUNT, PARITY_SHARDS_COUNT).unwrap();
+        let data_shards = 10;
+        let parity_shards = 4;
+        let total_shards = data_shards + parity_shards;
+        let rs = ReedSolomon::new(data_shards, parity_shards).unwrap();
         let block_size = 1024;
-        let mut shards: Vec<Vec<u8>> = (0..TOTAL_SHARDS_COUNT)
+        let mut shards: Vec<Vec<u8>> = (0..total_shards)
             .map(|i| {
-                if i < DATA_SHARDS_COUNT {
+                if i < data_shards {
                     vec![(i as u8).wrapping_mul(7); block_size]
                 } else {
                     vec![0u8; block_size]
@@ -245,7 +259,7 @@ mod tests {
         rs.encode(&mut shards).unwrap();
 
         // Verify parity is non-zero (at least some)
-        let parity_nonzero: bool = shards[DATA_SHARDS_COUNT..].iter()
+        let parity_nonzero: bool = shards[data_shards..].iter()
             .any(|s| s.iter().any(|&b| b != 0));
         assert!(parity_nonzero);
 

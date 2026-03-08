@@ -126,40 +126,42 @@ pub struct ShardBits(pub u32);
 impl ShardBits {
     pub fn add_shard_id(&mut self, id: ShardId) {
         assert!(
-            (id as usize) < TOTAL_SHARDS_COUNT,
-            "shard id {} out of bounds (max {})",
+            (id as usize) < 32,
+            "shard id {} out of bounds (max 31)",
             id,
-            TOTAL_SHARDS_COUNT - 1,
         );
         self.0 |= 1 << id;
     }
 
     pub fn remove_shard_id(&mut self, id: ShardId) {
         assert!(
-            (id as usize) < TOTAL_SHARDS_COUNT,
-            "shard id {} out of bounds (max {})",
+            (id as usize) < 32,
+            "shard id {} out of bounds (max 31)",
             id,
-            TOTAL_SHARDS_COUNT - 1,
         );
         self.0 &= !(1 << id);
     }
 
     pub fn has_shard_id(&self, id: ShardId) -> bool {
-        if (id as usize) >= TOTAL_SHARDS_COUNT {
+        if (id as usize) >= 32 {
             return false;
         }
         self.0 & (1 << id) != 0
     }
 
-    pub fn shard_count(&self) -> u32 {
-        self.0.count_ones()
+    pub fn shard_id_count(&self) -> usize {
+        self.0.count_ones() as usize
     }
 
     /// Iterator over present shard IDs.
     pub fn shard_ids(&self) -> Vec<ShardId> {
-        (0..TOTAL_SHARDS_COUNT as u8)
-            .filter(|&id| self.has_shard_id(id))
-            .collect()
+        let mut ids = Vec::with_capacity(self.shard_id_count());
+        for i in 0..32 {
+            if self.has_shard_id(i) {
+                ids.push(i);
+            }
+        }
+        ids
     }
 
     pub fn minus(&self, other: ShardBits) -> ShardBits {
@@ -174,19 +176,19 @@ mod tests {
     #[test]
     fn test_shard_bits() {
         let mut bits = ShardBits::default();
-        assert_eq!(bits.shard_count(), 0);
+        assert_eq!(bits.shard_id_count(), 0);
 
         bits.add_shard_id(0);
         bits.add_shard_id(3);
         bits.add_shard_id(13);
-        assert_eq!(bits.shard_count(), 3);
+        assert_eq!(bits.shard_id_count(), 3);
         assert!(bits.has_shard_id(0));
         assert!(bits.has_shard_id(3));
         assert!(!bits.has_shard_id(1));
 
         bits.remove_shard_id(3);
         assert!(!bits.has_shard_id(3));
-        assert_eq!(bits.shard_count(), 2);
+        assert_eq!(bits.shard_id_count(), 2);
     }
 
     #[test]
