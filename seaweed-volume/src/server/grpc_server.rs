@@ -2288,7 +2288,7 @@ impl VolumeServer for VolumeGrpcService {
                 if let Some(ecv) = store.ec_volumes.get(vid) {
                     ecv.collection.clone()
                 } else {
-                    continue;
+                    return Err(Status::not_found(format!("EC volume id {} not found", vid.0)));
                 }
             };
 

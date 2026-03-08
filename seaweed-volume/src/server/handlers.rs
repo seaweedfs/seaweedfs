@@ -1511,7 +1511,16 @@ pub async fn post_handler(
         store.write_volume_needle(vid, &mut n)
     };
 
+    // Replicate to remote volume servers if this volume has replicas.
+    // Matches Go's GetWritableRemoteReplications: skip if copy_count == 1.
     if !is_replicate && write_result.is_ok() && !state.master_url.is_empty() {
+        let needs_replication = {
+            let store = state.store.read().unwrap();
+            store.find_volume(vid).map_or(false, |(_, v)| {
+                v.super_block.replica_placement.get_copy_count() > 1
+            })
+        };
+        if needs_replication {
         if let Err(e) = do_replicated_request(
             &state,
             vid.0,
@@ -1529,6 +1538,7 @@ pub async fn post_handler(
                 format!("replication failed: {}", e),
             )
                 .into_response();
+        }
         }
     }
 
@@ -1728,23 +1738,31 @@ pub async fn delete_handler(
 
     let is_replicate = request.uri().query().unwrap_or("").split('&').any(|p| p == "type=replicate");
     if !is_replicate && delete_result.is_ok() && !state.master_url.is_empty() {
-        if let Err(e) = do_replicated_request(
-            &state,
-            vid.0,
-            Method::DELETE,
-            &path,
-            request.uri().query().unwrap_or(""),
-            &headers,
-            None,
-        )
-        .await
-        {
-            tracing::error!("replicated delete failed: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("replication failed: {}", e),
+        let needs_replication = {
+            let store = state.store.read().unwrap();
+            store.find_volume(vid).map_or(false, |(_, v)| {
+                v.super_block.replica_placement.get_copy_count() > 1
+            })
+        };
+        if needs_replication {
+            if let Err(e) = do_replicated_request(
+                &state,
+                vid.0,
+                Method::DELETE,
+                &path,
+                request.uri().query().unwrap_or(""),
+                &headers,
+                None,
             )
-                .into_response();
+            .await
+            {
+                tracing::error!("replicated delete failed: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("replication failed: {}", e),
+                )
+                    .into_response();
+            }
         }
     }
 
