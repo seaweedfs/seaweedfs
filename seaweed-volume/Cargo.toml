@@ -109,3 +109,6 @@ tempfile = "3"
 
 [build-dependencies]
 tonic-build = "0.12"
+
+[patch.crates-io]
+reed-solomon-erasure = { path = "vendor/reed-solomon-erasure" }
