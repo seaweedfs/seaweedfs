@@ -89,7 +89,7 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duration, shouldRetry func(error) bool, operation func() error) error {
 	waitTime := time.Second
 	maxWaitTime := RetryWaitTime
-	retryStart := time.Now()
+	deadline := time.Now().Add(maxDuration)
 	for {
 		err := operation()
 		if err == nil {
@@ -98,13 +98,17 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		if !shouldRetry(err) {
 			return err
 		}
-		if time.Since(retryStart) >= maxDuration {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			glog.V(0).Infof("retry %s: giving up after %v: %v", name, maxDuration, err)
 			return err
 		}
 		sleepTime := waitTime
 		if sleepTime > maxWaitTime {
 			sleepTime = maxWaitTime
+		}
+		if sleepTime > remaining {
+			sleepTime = remaining
 		}
 		glog.V(0).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
 		select {
