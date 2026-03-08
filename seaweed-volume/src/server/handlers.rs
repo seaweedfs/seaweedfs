@@ -2161,8 +2161,8 @@ pub async fn healthz_handler(State(state): State<Arc<VolumeServerState>>) -> Res
     if is_stopping {
         return (StatusCode::SERVICE_UNAVAILABLE, "stopping").into_response();
     }
-    // If masters are configured but not heartbeating, return 503
-    if !state.is_heartbeating.load(Ordering::Relaxed) && state.has_master {
+    // If not heartbeating, return 503 (matches Go health check behavior)
+    if !state.is_heartbeating.load(Ordering::Relaxed) {
         return (StatusCode::SERVICE_UNAVAILABLE, "lost connection to master").into_response();
     }
     StatusCode::OK.into_response()
