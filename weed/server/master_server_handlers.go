@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,7 +60,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 			if remaining < time.Second {
 				remaining = time.Second
 			}
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
 			location.Error = "service warming up, please retry"
 		} else {
 			httpStatus = http.StatusNotFound
