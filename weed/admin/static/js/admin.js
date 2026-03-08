@@ -31,6 +31,9 @@ function initializeDashboard() {
 
     // Set up submenu behavior
     setupSubmenuBehavior();
+
+    // Set up mobile sidebar behavior
+    setupMobileSidebar();
 }
 
 // HTMX event listeners
@@ -192,6 +195,33 @@ function setupSubmenuBehavior() {
         });
     }
 
+}
+
+// Mobile sidebar toggle and backdrop behavior
+function setupMobileSidebar() {
+    const sidebar = document.getElementById('sidebarMenu');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar || !backdrop) return;
+
+    const hideSidebar = () => {
+        const bsCollapse = bootstrap.Collapse.getInstance(sidebar);
+        if (bsCollapse) {
+            bsCollapse.hide();
+        }
+    };
+
+    // Close sidebar when backdrop is clicked
+    backdrop.addEventListener('click', hideSidebar);
+
+    // Close sidebar when a nav link is clicked (on mobile)
+    const sidebarToggler = document.querySelector("button[data-bs-target='#sidebarMenu']");
+    sidebar.querySelectorAll('a.nav-link:not([data-bs-toggle="collapse"])').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (sidebarToggler && getComputedStyle(sidebarToggler).display !== 'none') {
+                hideSidebar();
+            }
+        });
+    });
 }
 
 // Loading indicator functions

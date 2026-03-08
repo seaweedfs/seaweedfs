@@ -1,5 +1,9 @@
 /* SeaweedFS Dashboard Custom Styles */
 
+:root {
+    --navbar-height: 56px;
+}
+
 /* Link colors - muted */
 a {
     color: #5b7c99;
@@ -12,7 +16,7 @@ a:hover {
 /* Sidebar Styles */
 .sidebar {
     position: fixed;
-    top: 56px;
+    top: var(--navbar-height);
     bottom: 0;
     left: 0;
     z-index: 100;
@@ -51,11 +55,30 @@ main {
 
 @media (max-width: 767.98px) {
     .sidebar {
-        top: 5rem;
+        top: var(--navbar-height);
+        padding-top: 0;
+        width: 240px;
+        background-color: #f8f9fa !important;
+        z-index: 1050;
+    }
+    .sidebar.show ~ .sidebar-backdrop {
+        display: block;
     }
     main {
         margin-left: 0;
     }
+}
+
+/* Sidebar backdrop for mobile overlay */
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    top: var(--navbar-height);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1040;
 }
 
 /* Custom card styles */
@@ -260,6 +283,11 @@ main {
 
 .shadow {
     box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
+}
+
+/* Navbar user icon color */
+.navbar-toggler .fa-user {
+    color: rgba(255, 255, 255, 0.75);
 }
 
 /* Collapsible menu styles */
