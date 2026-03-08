@@ -459,13 +459,14 @@ impl Store {
     where
         F: Fn(i64) -> bool,
     {
-        let loc_idx = self.find_volume(vid).map(|(i, _)| i).ok_or_else(|| {
-            format!("volume id {} is not found during compact", vid.0)
-        })?;
+        let loc_idx = self
+            .find_volume(vid)
+            .map(|(i, _)| i)
+            .ok_or_else(|| format!("volume id {} is not found during compact", vid.0))?;
 
         let dir = self.locations[loc_idx].directory.clone();
         let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
-        
+
         // Compute required space from current volume sizes
         let required_space = {
             let (_, v) = self.find_volume(vid).unwrap();

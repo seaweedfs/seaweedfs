@@ -2,12 +2,12 @@
 //!
 //! Works with AWS S3, MinIO, SeaweedFS S3, and all S3-compatible providers.
 
-use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client;
 
-use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 use super::{RemoteEntry, RemoteStorageClient, RemoteStorageError};
+use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
 
 /// S3-compatible remote storage client.
 pub struct S3RemoteStorageClient {
@@ -25,7 +25,11 @@ impl S3RemoteStorageClient {
         endpoint: &str,
         force_path_style: bool,
     ) -> Self {
-        let region = if region.is_empty() { "us-east-1" } else { region };
+        let region = if region.is_empty() {
+            "us-east-1"
+        } else {
+            region
+        };
 
         let credentials = Credentials::new(
             access_key,
@@ -61,9 +65,7 @@ impl RemoteStorageClient for S3RemoteStorageClient {
     ) -> Result<Vec<u8>, RemoteStorageError> {
         let key = loc.path.trim_start_matches('/');
 
-        let mut req = self.client.get_object()
-            .bucket(&loc.bucket)
-            .key(key);
+        let mut req = self.client.get_object().bucket(&loc.bucket).key(key);
 
         // Set byte range if specified
         if size > 0 {
@@ -82,7 +84,10 @@ impl RemoteStorageClient for S3RemoteStorageClient {
             }
         })?;
 
-        let data = resp.body.collect().await
+        let data = resp
+            .body
+            .collect()
+            .await
             .map_err(|e| RemoteStorageError::Other(format!("s3 read body: {}", e)))?;
 
         Ok(data.into_bytes().to_vec())
@@ -95,7 +100,9 @@ impl RemoteStorageClient for S3RemoteStorageClient {
     ) -> Result<RemoteEntry, RemoteStorageError> {
         let key = loc.path.trim_start_matches('/');
 
-        let resp = self.client.put_object()
+        let resp = self
+            .client
+            .put_object()
             .bucket(&loc.bucket)
             .key(key)
             .body(ByteStream::from(data.to_vec()))
@@ -120,7 +127,9 @@ impl RemoteStorageClient for S3RemoteStorageClient {
     ) -> Result<RemoteEntry, RemoteStorageError> {
         let key = loc.path.trim_start_matches('/');
 
-        let resp = self.client.head_object()
+        let resp = self
+            .client
+            .head_object()
             .bucket(&loc.bucket)
             .key(key)
             .send()
@@ -136,21 +145,17 @@ impl RemoteStorageClient for S3RemoteStorageClient {
 
         Ok(RemoteEntry {
             size: resp.content_length().unwrap_or(0),
-            last_modified_at: resp.last_modified()
-                .map(|t| t.secs())
-                .unwrap_or(0),
+            last_modified_at: resp.last_modified().map(|t| t.secs()).unwrap_or(0),
             e_tag: resp.e_tag().unwrap_or_default().to_string(),
             storage_name: loc.name.clone(),
         })
     }
 
-    async fn delete_file(
-        &self,
-        loc: &RemoteStorageLocation,
-    ) -> Result<(), RemoteStorageError> {
+    async fn delete_file(&self, loc: &RemoteStorageLocation) -> Result<(), RemoteStorageError> {
         let key = loc.path.trim_start_matches('/');
 
-        self.client.delete_object()
+        self.client
+            .delete_object()
             .bucket(&loc.bucket)
             .key(key)
             .send()
@@ -161,12 +166,15 @@ impl RemoteStorageClient for S3RemoteStorageClient {
     }
 
     async fn list_buckets(&self) -> Result<Vec<String>, RemoteStorageError> {
-        let resp = self.client.list_buckets()
+        let resp = self
+            .client
+            .list_buckets()
             .send()
             .await
             .map_err(|e| RemoteStorageError::Other(format!("s3 list buckets: {}", e)))?;
 
-        Ok(resp.buckets()
+        Ok(resp
+            .buckets()
             .iter()
             .filter_map(|b| b.name().map(String::from))
             .collect())

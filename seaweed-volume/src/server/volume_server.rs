@@ -194,8 +194,11 @@ fn public_options_response() -> Response {
 }
 
 /// Build the admin (private) HTTP router — supports all operations.
+/// UI route is only registered when no signing keys are configured,
+/// matching Go's `if signingKey == "" || enableUiAccess` check.
 pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
-    build_admin_router_with_ui(state.clone(), state.guard.signing_key.0.is_empty())
+    let ui_enabled = state.guard.signing_key.0.is_empty() && !state.guard.has_read_signing_key();
+    build_admin_router_with_ui(state, ui_enabled)
 }
 
 /// Build the admin router with an explicit UI exposure flag.

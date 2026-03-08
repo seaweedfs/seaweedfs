@@ -192,9 +192,9 @@ mod tests {
     fn test_rotate_180() {
         // Create a 2x2 image with distinct pixel colors
         let mut img = RgbaImage::new(2, 2);
-        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));   // red top-left
-        img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255]));   // green top-right
-        img.put_pixel(0, 1, image::Rgba([0, 0, 255, 255]));   // blue bottom-left
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255])); // red top-left
+        img.put_pixel(1, 0, image::Rgba([0, 255, 0, 255])); // green top-right
+        img.put_pixel(0, 1, image::Rgba([0, 0, 255, 255])); // blue bottom-left
         img.put_pixel(1, 1, image::Rgba([255, 255, 0, 255])); // yellow bottom-right
         let dynamic = DynamicImage::ImageRgba8(img);
 

@@ -42,8 +42,7 @@ impl NeedleId {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= NEEDLE_ID_SIZE);
         NeedleId(u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -64,11 +63,15 @@ impl fmt::Display for NeedleId {
 }
 
 impl From<u64> for NeedleId {
-    fn from(v: u64) -> Self { NeedleId(v) }
+    fn from(v: u64) -> Self {
+        NeedleId(v)
+    }
 }
 
 impl From<NeedleId> for u64 {
-    fn from(v: NeedleId) -> Self { v.0 }
+    fn from(v: NeedleId) -> Self {
+        v.0
+    }
 }
 
 // ============================================================================
@@ -103,7 +106,9 @@ impl fmt::Display for Cookie {
 }
 
 impl From<u32> for Cookie {
-    fn from(v: u32) -> Self { Cookie(v) }
+    fn from(v: u32) -> Self {
+        Cookie(v)
+    }
 }
 
 // ============================================================================
@@ -158,11 +163,15 @@ impl Size {
 }
 
 impl From<i32> for Size {
-    fn from(v: i32) -> Self { Size(v) }
+    fn from(v: i32) -> Self {
+        Size(v)
+    }
 }
 
 impl From<Size> for i32 {
-    fn from(v: Size) -> Self { v.0 }
+    fn from(v: Size) -> Self {
+        v.0
+    }
 }
 
 // ============================================================================
@@ -281,7 +290,9 @@ impl fmt::Display for DiskType {
 }
 
 impl Default for DiskType {
-    fn default() -> Self { DiskType::HardDrive }
+    fn default() -> Self {
+        DiskType::HardDrive
+    }
 }
 
 // ============================================================================
@@ -309,7 +320,9 @@ impl fmt::Display for VolumeId {
 }
 
 impl From<u32> for VolumeId {
-    fn from(v: u32) -> Self { VolumeId(v) }
+    fn from(v: u32) -> Self {
+        VolumeId(v)
+    }
 }
 
 // ============================================================================
@@ -325,7 +338,9 @@ pub const VERSION_2: Version = Version(2);
 pub const VERSION_3: Version = Version(3);
 
 impl Version {
-    pub fn current() -> Self { VERSION_3 }
+    pub fn current() -> Self {
+        VERSION_3
+    }
 
     pub fn is_supported(&self) -> bool {
         self.0 >= 1 && self.0 <= 3
@@ -333,11 +348,15 @@ impl Version {
 }
 
 impl Default for Version {
-    fn default() -> Self { VERSION_3 }
+    fn default() -> Self {
+        VERSION_3
+    }
 }
 
 impl From<u8> for Version {
-    fn from(v: u8) -> Self { Version(v) }
+    fn from(v: u8) -> Self {
+        Version(v)
+    }
 }
 
 // ============================================================================
@@ -349,7 +368,9 @@ pub fn idx_entry_from_bytes(bytes: &[u8]) -> (NeedleId, Offset, Size) {
     assert!(bytes.len() >= NEEDLE_MAP_ENTRY_SIZE);
     let key = NeedleId::from_bytes(&bytes[..NEEDLE_ID_SIZE]);
     let offset = Offset::from_bytes(&bytes[NEEDLE_ID_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE]);
-    let size = Size::from_bytes(&bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE]);
+    let size = Size::from_bytes(
+        &bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE],
+    );
     (key, offset, size)
 }
 
@@ -358,7 +379,9 @@ pub fn idx_entry_to_bytes(bytes: &mut [u8], key: NeedleId, offset: Offset, size:
     assert!(bytes.len() >= NEEDLE_MAP_ENTRY_SIZE);
     key.to_bytes(&mut bytes[..NEEDLE_ID_SIZE]);
     offset.to_bytes(&mut bytes[NEEDLE_ID_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE]);
-    size.to_bytes(&mut bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE]);
+    size.to_bytes(
+        &mut bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE],
+    );
 }
 
 // ============================================================================
@@ -505,7 +528,10 @@ mod tests {
         assert_eq!(DiskType::from_string(""), DiskType::HardDrive);
         assert_eq!(DiskType::from_string("hdd"), DiskType::Hdd);
         assert_eq!(DiskType::from_string("SSD"), DiskType::Ssd);
-        assert_eq!(DiskType::from_string("nvme"), DiskType::Custom("nvme".to_string()));
+        assert_eq!(
+            DiskType::from_string("nvme"),
+            DiskType::Custom("nvme".to_string())
+        );
         assert_eq!(DiskType::HardDrive.readable_string(), "hdd");
         assert_eq!(DiskType::Ssd.readable_string(), "ssd");
     }

@@ -55,10 +55,7 @@ pub trait RemoteStorageClient: Send + Sync {
     ) -> Result<RemoteEntry, RemoteStorageError>;
 
     /// Delete a file from remote storage.
-    async fn delete_file(
-        &self,
-        loc: &RemoteStorageLocation,
-    ) -> Result<(), RemoteStorageError>;
+    async fn delete_file(&self, loc: &RemoteStorageLocation) -> Result<(), RemoteStorageError>;
 
     /// List all buckets.
     async fn list_buckets(&self) -> Result<Vec<String>, RemoteStorageError>;
@@ -73,8 +70,8 @@ pub fn make_remote_storage_client(
 ) -> Result<Box<dyn RemoteStorageClient>, RemoteStorageError> {
     match conf.r#type.as_str() {
         // All S3-compatible backends use the same client with different credentials
-        "s3" | "wasabi" | "backblaze" | "aliyun" | "tencent" | "baidu"
-        | "filebase" | "storj" | "contabo" => {
+        "s3" | "wasabi" | "backblaze" | "aliyun" | "tencent" | "baidu" | "filebase" | "storj"
+        | "contabo" => {
             let (access_key, secret_key, endpoint, region) = extract_s3_credentials(conf);
             Ok(Box::new(s3::S3RemoteStorageClient::new(
                 conf.clone(),
@@ -96,7 +93,11 @@ fn extract_s3_credentials(conf: &RemoteConf) -> (String, String, String, String)
             conf.s3_access_key.clone(),
             conf.s3_secret_key.clone(),
             conf.s3_endpoint.clone(),
-            if conf.s3_region.is_empty() { "us-east-1".to_string() } else { conf.s3_region.clone() },
+            if conf.s3_region.is_empty() {
+                "us-east-1".to_string()
+            } else {
+                conf.s3_region.clone()
+            },
         ),
         "wasabi" => (
             conf.wasabi_access_key.clone(),

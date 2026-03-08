@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, Algorithm};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -81,10 +81,7 @@ pub fn gen_jwt(
 }
 
 /// Decode and validate a JWT token.
-pub fn decode_jwt(
-    signing_key: &SigningKey,
-    token: &str,
-) -> Result<FileIdClaims, JwtError> {
+pub fn decode_jwt(signing_key: &SigningKey, token: &str) -> Result<FileIdClaims, JwtError> {
     if signing_key.is_empty() {
         return Err(JwtError::NoSigningKey);
     }
@@ -284,13 +281,25 @@ fn ip_in_cidr(ip: &IpAddr, network: &IpAddr, prefix_len: u8) -> bool {
         (IpAddr::V4(ip), IpAddr::V4(net)) => {
             let ip_bits = u32::from(*ip);
             let net_bits = u32::from(*net);
-            let mask = if prefix_len == 0 { 0 } else if prefix_len >= 32 { u32::MAX } else { u32::MAX << (32 - prefix_len) };
+            let mask = if prefix_len == 0 {
+                0
+            } else if prefix_len >= 32 {
+                u32::MAX
+            } else {
+                u32::MAX << (32 - prefix_len)
+            };
             (ip_bits & mask) == (net_bits & mask)
         }
         (IpAddr::V6(ip), IpAddr::V6(net)) => {
             let ip_bits = u128::from(*ip);
             let net_bits = u128::from(*net);
-            let mask = if prefix_len == 0 { 0 } else if prefix_len >= 128 { u128::MAX } else { u128::MAX << (128 - prefix_len) };
+            let mask = if prefix_len == 0 {
+                0
+            } else if prefix_len >= 128 {
+                u128::MAX
+            } else {
+                u128::MAX << (128 - prefix_len)
+            };
             (ip_bits & mask) == (net_bits & mask)
         }
         _ => false, // V4/V6 mismatch
@@ -358,13 +367,7 @@ mod tests {
 
     #[test]
     fn test_guard_empty_whitelist() {
-        let guard = Guard::new(
-            &[],
-            SigningKey(vec![]),
-            0,
-            SigningKey(vec![]),
-            0,
-        );
+        let guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);
         assert!(guard.check_whitelist("192.168.1.1:8080"));
     }
 
@@ -433,7 +436,9 @@ mod tests {
         let token = gen_jwt(&key, 3600, "3,01637037d6").unwrap();
 
         // Correct file ID
-        assert!(guard.check_jwt_for_file(Some(&token), "3,01637037d6", true).is_ok());
+        assert!(guard
+            .check_jwt_for_file(Some(&token), "3,01637037d6", true)
+            .is_ok());
 
         // Wrong file ID
         let err = guard.check_jwt_for_file(Some(&token), "4,deadbeef", true);

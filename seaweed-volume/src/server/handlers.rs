@@ -332,9 +332,9 @@ async fn do_replicated_request(
     for loc in remote_locations {
         let url = format!("http://{}{}?{}", loc.url, path, new_query);
         let client = state.http_client.clone();
-        
+
         let mut req_builder = client.request(method.clone(), &url);
-        
+
         // Forward relevant headers
         if let Some(ct) = headers.get(axum::http::header::CONTENT_TYPE) {
             req_builder = req_builder.header(axum::http::header::CONTENT_TYPE, ct);
@@ -612,12 +612,9 @@ async fn get_or_head_handler_inner(
     let path = request.uri().path().to_string();
     let method = request.method().clone();
 
-    let (vid, needle_id, cookie) = match parse_url_path(&path) {
-        Some(parsed) => parsed,
-        None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
-    };
-
-    // JWT check for reads
+    // JWT check for reads — must happen BEFORE path parsing to match Go behavior.
+    // Go's GetOrHeadHandler calls maybeCheckJwtAuthorization before NewVolumeId,
+    // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state
@@ -626,6 +623,11 @@ async fn get_or_head_handler_inner(
     {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
+
+    let (vid, needle_id, cookie) = match parse_url_path(&path) {
+        Some(parsed) => parsed,
+        None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
+    };
 
     // Check if volume exists locally; if not, proxy/redirect based on read_mode.
     // This mirrors Go's hasVolume check in GetOrHeadHandler.
@@ -835,7 +837,7 @@ async fn get_or_head_handler_inner(
     // Check If-None-Match SECOND
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(inm) = if_none_match.to_str() {
-            if inm == etag || inm == "*" {
+            if inm == etag {
                 return StatusCode::NOT_MODIFIED.into_response();
             }
         }
@@ -1320,7 +1322,9 @@ pub async fn post_handler(
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
-        None => return json_error(StatusCode::BAD_REQUEST, "invalid URL path"),
+        None => {
+            return json_error_with_query(StatusCode::BAD_REQUEST, "invalid URL path", Some(&query))
+        }
     };
 
     // JWT check for writes
@@ -1330,7 +1334,11 @@ pub async fn post_handler(
         .guard
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
-        return json_error(StatusCode::UNAUTHORIZED, format!("JWT error: {}", e));
+        return json_error_with_query(
+            StatusCode::UNAUTHORIZED,
+            format!("JWT error: {}", e),
+            Some(&query),
+        );
     }
 
     // Upload throttling: check inflight bytes against limit
@@ -1360,7 +1368,11 @@ pub async fn post_handler(
                 .await
                 .is_err()
             {
-                return json_error(StatusCode::TOO_MANY_REQUESTS, "upload limit exceeded");
+                return json_error_with_query(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "upload limit exceeded",
+                    Some(&query),
+                );
             }
         }
         state
@@ -1386,9 +1398,10 @@ pub async fn post_handler(
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         if let Ok(ct_str) = ct.to_str() {
             if ct_str.starts_with("multipart/form-data") && !ct_str.contains("boundary=") {
-                return json_error(
+                return json_error_with_query(
                     StatusCode::BAD_REQUEST,
                     "no multipart boundary param in Content-Type",
+                    Some(&query),
                 );
             }
         }
@@ -1402,7 +1415,13 @@ pub async fn post_handler(
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
         Ok(b) => b,
-        Err(e) => return json_error(StatusCode::BAD_REQUEST, format!("read body: {}", e)),
+        Err(e) => {
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                format!("read body: {}", e),
+                Some(&query),
+            )
+        }
     };
 
     // H5: Multipart form-data parsing
@@ -1427,8 +1446,10 @@ pub async fn post_handler(
                 })
                 .unwrap_or_default();
 
-            let mut multipart =
-                multer::Multipart::new(futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }), boundary);
+            let mut multipart = multer::Multipart::new(
+                futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }),
+                boundary,
+            );
 
             let mut file_data: Option<Vec<u8>> = None;
             let mut file_name: Option<String> = None;
@@ -1440,11 +1461,7 @@ pub async fn post_handler(
                 let fname = field.file_name().map(|s| {
                     // Clean Windows backslashes
                     let cleaned = s.replace('\\', "/");
-                    cleaned
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&cleaned)
-                        .to_string()
+                    cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
                 });
                 let fct = field.content_type().map(|m| m.to_string());
 
@@ -1478,7 +1495,11 @@ pub async fn post_handler(
 
     // Check file size limit
     if state.file_size_limit_bytes > 0 && body_data_raw.len() as i64 > state.file_size_limit_bytes {
-        return json_error(StatusCode::BAD_REQUEST, "file size limit exceeded");
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            "file size limit exceeded",
+            Some(&query),
+        );
     }
 
     // Validate Content-MD5 if provided
@@ -1489,12 +1510,13 @@ pub async fn post_handler(
         hasher.update(&body_data_raw);
         let actual = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
         if actual != *expected_md5 {
-            return json_error(
+            return json_error_with_query(
                 StatusCode::BAD_REQUEST,
                 format!(
                     "Content-MD5 mismatch: expected {} got {}",
                     expected_md5, actual
                 ),
+                Some(&query),
             );
         }
     }
@@ -1578,6 +1600,15 @@ pub async fn post_handler(
 
     // H3: Capture original data size BEFORE auto-compression
     let original_data_size = body_data.len() as u32;
+
+    // H1: Compute Content-MD5 from uncompressed data BEFORE auto-compression
+    let original_content_md5 = {
+        use base64::Engine;
+        use md5::{Digest, Md5};
+        let mut hasher = Md5::new();
+        hasher.update(&body_data);
+        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+    };
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
@@ -1675,23 +1706,24 @@ pub async fn post_handler(
             })
         };
         if needs_replication {
-        if let Err(e) = do_replicated_request(
-            &state,
-            vid.0,
-            Method::POST,
-            &path,
-            &query,
-            &headers,
-            Some(body.clone()),
-        )
-        .await
-        {
-            tracing::error!("replicated write failed: {}", e);
-            return json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("replication failed: {}", e),
-            );
-        }
+            if let Err(e) = do_replicated_request(
+                &state,
+                vid.0,
+                Method::POST,
+                &path,
+                &query,
+                &headers,
+                Some(body.clone()),
+            )
+            .await
+            {
+                tracing::error!("replicated write failed: {}", e);
+                return json_error_with_query(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("replication failed: {}", e),
+                    Some(&query),
+                );
+            }
         }
     }
 
@@ -1701,14 +1733,8 @@ pub async fn post_handler(
                 let etag = format!("\"{}\"", n.etag());
                 (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
             } else {
-                // H2: Compute Content-MD5 as base64(md5(original_data))
-                let content_md5_value = {
-                    use base64::Engine;
-                    use md5::{Digest, Md5};
-                    let mut hasher = Md5::new();
-                    hasher.update(&n.data);
-                    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-                };
+                // H2: Use Content-MD5 computed from original uncompressed data
+                let content_md5_value = original_content_md5;
                 let result = UploadResult {
                     name: filename.clone(),
                     size: original_data_size, // H3: use original size, not compressed
@@ -1724,22 +1750,21 @@ pub async fn post_handler(
                     .with_label_values(&["write"])
                     .observe(start.elapsed().as_secs_f64());
                 let mut resp = (StatusCode::CREATED, axum::Json(result)).into_response();
-                resp.headers_mut().insert(
-                    "Content-MD5",
-                    content_md5_value.parse().unwrap(),
-                );
+                resp.headers_mut()
+                    .insert("Content-MD5", content_md5_value.parse().unwrap());
                 resp
             }
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
-            json_error(StatusCode::NOT_FOUND, "volume not found")
+            json_error_with_query(StatusCode::NOT_FOUND, "volume not found", Some(&query))
         }
         Err(crate::storage::volume::VolumeError::ReadOnly) => {
-            json_error(StatusCode::FORBIDDEN, "volume is read-only")
+            json_error_with_query(StatusCode::FORBIDDEN, "volume is read-only", Some(&query))
         }
-        Err(e) => json_error(
+        Err(e) => json_error_with_query(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("write error: {}", e),
+            Some(&query),
         ),
     };
 
@@ -1753,7 +1778,7 @@ pub async fn post_handler(
 
 #[derive(Serialize)]
 struct DeleteResult {
-    size: i32,
+    size: i64,
 }
 
 pub async fn delete_handler(
@@ -1766,11 +1791,18 @@ pub async fn delete_handler(
         .inc();
 
     let path = request.uri().path().to_string();
+    let del_query = request.uri().query().unwrap_or("").to_string();
     let headers = request.headers().clone();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
-        None => return json_error(StatusCode::BAD_REQUEST, "invalid URL path"),
+        None => {
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                "invalid URL path",
+                Some(&del_query),
+            )
+        }
     };
 
     // JWT check for writes (deletes use write key)
@@ -1780,11 +1812,14 @@ pub async fn delete_handler(
         .guard
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
-        return json_error(StatusCode::UNAUTHORIZED, format!("JWT error: {}", e));
+        return json_error_with_query(
+            StatusCode::UNAUTHORIZED,
+            format!("JWT error: {}", e),
+            Some(&del_query),
+        );
     }
 
     // H9: Parse custom timestamp from query param; default to now (not 0)
-    let del_query = request.uri().query().unwrap_or("");
     let del_ts_str = del_query
         .split('&')
         .find_map(|p| p.strip_prefix("ts="))
@@ -1822,9 +1857,10 @@ pub async fn delete_handler(
         }
     }
     if n.cookie != original_cookie {
-        return json_error(
+        return json_error_with_query(
             StatusCode::BAD_REQUEST,
             "File Random Cookie does not match.",
+            Some(&del_query),
         );
     }
 
@@ -1854,9 +1890,10 @@ pub async fn delete_handler(
                 let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
                     Some(p) => p,
                     None => {
-                        return json_error(
+                        return json_error_with_query(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             format!("invalid chunk fid: {}", chunk.fid),
+                            Some(&del_query),
                         );
                     }
                 };
@@ -1869,27 +1906,30 @@ pub async fn delete_handler(
                 {
                     let store = state.store.read().unwrap();
                     if let Err(e) = store.read_volume_needle(chunk_vid, &mut chunk_needle) {
-                        return json_error(
+                        return json_error_with_query(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             format!("read chunk {}: {}", chunk.fid, e),
+                            Some(&del_query),
                         );
                     }
                 }
                 // Delete the chunk
                 let mut store = state.store.write().unwrap();
                 if let Err(e) = store.delete_volume_needle(chunk_vid, &mut chunk_needle) {
-                    return json_error(
+                    return json_error_with_query(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         format!("delete chunk {}: {}", chunk.fid, e),
+                        Some(&del_query),
                     );
                 }
             }
             // Delete the manifest itself
             let mut store = state.store.write().unwrap();
             if let Err(e) = store.delete_volume_needle(vid, &mut n) {
-                return json_error(
+                return json_error_with_query(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("delete manifest: {}", e),
+                    Some(&del_query),
                 );
             }
             metrics::REQUEST_DURATION
@@ -1897,7 +1937,7 @@ pub async fn delete_handler(
                 .observe(start.elapsed().as_secs_f64());
             // Return the manifest's declared size (matches Go behavior)
             let result = DeleteResult {
-                size: manifest.size as i32,
+                size: manifest.size as i64,
             };
             return (StatusCode::ACCEPTED, axum::Json(result)).into_response();
         }
@@ -1908,7 +1948,7 @@ pub async fn delete_handler(
         store.delete_volume_needle(vid, &mut n)
     };
 
-    let is_replicate = request.uri().query().unwrap_or("").split('&').any(|p| p == "type=replicate");
+    let is_replicate = del_query.split('&').any(|p| p == "type=replicate");
     if !is_replicate && delete_result.is_ok() && !state.master_url.is_empty() {
         let needs_replication = {
             let store = state.store.read().unwrap();
@@ -1922,16 +1962,17 @@ pub async fn delete_handler(
                 vid.0,
                 Method::DELETE,
                 &path,
-                request.uri().query().unwrap_or(""),
+                &del_query,
                 &headers,
                 None,
             )
             .await
             {
                 tracing::error!("replicated delete failed: {}", e);
-                return json_error(
+                return json_error_with_query(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("replication failed: {}", e),
+                    Some(&del_query),
                 );
             }
         }
@@ -1939,23 +1980,22 @@ pub async fn delete_handler(
 
     match delete_result {
         Ok(size) => {
-            if size.0 == 0 {
-                let result = DeleteResult { size: 0 };
-                return (StatusCode::NOT_FOUND, axum::Json(result)).into_response();
-            }
             metrics::REQUEST_DURATION
                 .with_label_values(&["delete"])
                 .observe(start.elapsed().as_secs_f64());
-            let result = DeleteResult { size: size.0 };
+            let result = DeleteResult {
+                size: size.0 as i64,
+            };
             (StatusCode::ACCEPTED, axum::Json(result)).into_response()
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
             let result = DeleteResult { size: 0 };
             (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
         }
-        Err(e) => json_error(
+        Err(e) => json_error_with_query(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("delete error: {}", e),
+            Some(&del_query),
         ),
     }
 }
@@ -2320,10 +2360,47 @@ fn try_expand_chunk_manifest(
 // Helpers
 // ============================================================================
 
-/// Return a JSON error response: `{"error": "<msg>"}`.
-fn json_error(status: StatusCode, msg: impl Into<String>) -> Response {
+/// Return a JSON error response with optional query string for pretty/JSONP support.
+/// Supports `?pretty=y` for pretty-printed JSON and `?callback=fn` for JSONP,
+/// matching Go's writeJsonError behavior.
+fn json_error_with_query(
+    status: StatusCode,
+    msg: impl Into<String>,
+    query: Option<&str>,
+) -> Response {
     let body = serde_json::json!({"error": msg.into()});
-    (status, axum::Json(body)).into_response()
+
+    let (is_pretty, callback) = if let Some(q) = query {
+        let pretty = q.split('&').any(|p| p == "pretty=y");
+        let cb = q
+            .split('&')
+            .find_map(|p| p.strip_prefix("callback="))
+            .map(|s| s.to_string());
+        (pretty, cb)
+    } else {
+        (false, None)
+    };
+
+    let json_body = if is_pretty {
+        serde_json::to_string_pretty(&body).unwrap()
+    } else {
+        serde_json::to_string(&body).unwrap()
+    };
+
+    if let Some(cb) = callback {
+        let jsonp = format!("{}({});\n", cb, json_body);
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/javascript")
+            .body(Body::from(jsonp))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .unwrap()
+    }
 }
 
 /// Extract JWT token from query param, Authorization header, or Cookie.

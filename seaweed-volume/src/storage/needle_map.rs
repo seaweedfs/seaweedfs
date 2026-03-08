@@ -64,12 +64,14 @@ impl NeedleMapMetric {
         self.maybe_set_max_file_key(key);
         // Go: always LogFileCounter(newSize) which does FileCounter++ and FileByteCounter += newSize
         self.file_count.fetch_add(1, Ordering::Relaxed);
-        self.file_byte_count.fetch_add(new_size.0 as u64, Ordering::Relaxed);
+        self.file_byte_count
+            .fetch_add(new_size.0 as u64, Ordering::Relaxed);
         // Go: if oldSize > 0 && oldSize.IsValid() { LogDeletionCounter(oldSize) }
         if let Some(old_val) = old {
             if old_val.size.0 > 0 && old_val.size.is_valid() {
                 self.deletion_count.fetch_add(1, Ordering::Relaxed);
-                self.deletion_byte_count.fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
+                self.deletion_byte_count
+                    .fetch_add(old_val.size.0 as u64, Ordering::Relaxed);
             }
         }
     }
@@ -78,7 +80,8 @@ impl NeedleMapMetric {
     fn on_delete(&self, old: &NeedleValue) {
         if old.size.0 > 0 {
             self.deletion_count.fetch_add(1, Ordering::Relaxed);
-            self.deletion_byte_count.fetch_add(old.size.0 as u64, Ordering::Relaxed);
+            self.deletion_byte_count
+                .fetch_add(old.size.0 as u64, Ordering::Relaxed);
         }
     }
 
@@ -89,7 +92,11 @@ impl NeedleMapMetric {
             if key_val <= current {
                 break;
             }
-            if self.max_file_key.compare_exchange(current, key_val, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            if self
+                .max_file_key
+                .compare_exchange(current, key_val, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
                 break;
             }
         }
@@ -202,7 +209,13 @@ impl CompactNeedleMap {
                 self.metric.on_delete(&old);
                 let deleted_size = Size(-(old.size.0));
                 // Keep original offset so readDeleted can find original data (matching Go behavior)
-                self.map.insert(key, NeedleValue { offset: old.offset, size: deleted_size });
+                self.map.insert(
+                    key,
+                    NeedleValue {
+                        offset: old.offset,
+                        size: deleted_size,
+                    },
+                );
                 return Ok(Some(old.size));
             }
         }
@@ -276,7 +289,9 @@ impl CompactNeedleMap {
 
     /// Save the in-memory map to an index file, sorted by needle ID ascending.
     pub fn save_to_idx(&self, path: &str) -> io::Result<()> {
-        let mut entries: Vec<_> = self.map.iter()
+        let mut entries: Vec<_> = self
+            .map
+            .iter()
             .filter(|(_, nv)| nv.size.is_valid())
             .collect();
         entries.sort_by_key(|(id, _)| **id);
@@ -341,9 +356,8 @@ impl RedbNeedleMap {
                 io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
             })?;
         }
-        txn.commit().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
-        })?;
+        txn.commit()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
         Ok(RedbNeedleMap {
             db,
@@ -393,9 +407,8 @@ impl RedbNeedleMap {
                 }
             }
         }
-        txn.commit().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
-        })?;
+        txn.commit()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
         Ok(nm)
     }
@@ -430,13 +443,12 @@ impl RedbNeedleMap {
             let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
                 io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
             })?;
-            table.insert(key_u64, packed.as_slice()).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
-            })?;
+            table
+                .insert(key_u64, packed.as_slice())
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e)))?;
         }
-        txn.commit().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
-        })?;
+        txn.commit()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
         self.metric.on_put(key, old.as_ref(), size);
         Ok(())
@@ -450,12 +462,13 @@ impl RedbNeedleMap {
 
     /// Internal get that returns io::Result for error propagation.
     fn get_internal(&self, key_u64: u64) -> io::Result<Option<NeedleValue>> {
-        let txn = self.db.begin_read().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e))
-        })?;
-        let table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-        })?;
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
         match table.get(key_u64) {
             Ok(Some(guard)) => {
                 let bytes: &[u8] = guard.value();
@@ -468,7 +481,10 @@ impl RedbNeedleMap {
                 }
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("redb get: {}", e))),
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("redb get: {}", e),
+            )),
         }
     }
 
@@ -487,7 +503,10 @@ impl RedbNeedleMap {
                 self.metric.on_delete(&old);
                 let deleted_size = Size(-(old.size.0));
                 // Keep original offset so readDeleted can find original data (matching Go behavior)
-                let deleted_nv = NeedleValue { offset: old.offset, size: deleted_size };
+                let deleted_nv = NeedleValue {
+                    offset: old.offset,
+                    size: deleted_size,
+                };
                 let packed = pack_needle_value(&deleted_nv);
 
                 let txn = self.db.begin_write().map_err(|e| {
@@ -553,12 +572,13 @@ impl RedbNeedleMap {
 
     /// Save the redb contents to an index file, sorted by needle ID ascending.
     pub fn save_to_idx(&self, path: &str) -> io::Result<()> {
-        let txn = self.db.begin_read().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e))
-        })?;
-        let table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-        })?;
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
 
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -567,9 +587,9 @@ impl RedbNeedleMap {
             .open(path)?;
 
         // redb iterates in key order (u64 ascending)
-        let iter = table.iter().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e))
-        })?;
+        let iter = table
+            .iter()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e)))?;
 
         for entry in iter {
             let (key_guard, val_guard) = entry.map_err(|e| {
@@ -595,8 +615,13 @@ impl RedbNeedleMap {
     where
         F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
     {
-        let txn = self.db.begin_read().map_err(|e| format!("redb begin_read: {}", e))?;
-        let table = txn.open_table(NEEDLE_TABLE).map_err(|e| format!("redb open_table: {}", e))?;
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| format!("redb begin_read: {}", e))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| format!("redb open_table: {}", e))?;
         let iter = table.iter().map_err(|e| format!("redb iter: {}", e))?;
 
         for entry in iter {
@@ -792,8 +817,10 @@ mod tests {
     #[test]
     fn test_needle_map_put_get() {
         let mut nm = CompactNeedleMap::new();
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
 
         let v1 = nm.get(NeedleId(1)).unwrap();
         assert_eq!(v1.size, Size(100));
@@ -807,12 +834,15 @@ mod tests {
     #[test]
     fn test_needle_map_delete() {
         let mut nm = CompactNeedleMap::new();
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
 
         assert_eq!(nm.file_count(), 1);
         assert_eq!(nm.content_size(), 100);
 
-        let deleted = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let deleted = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(deleted, Some(Size(100)));
 
         // Additive-only: file_count stays at 1 after delete
@@ -824,21 +854,26 @@ mod tests {
     #[test]
     fn test_needle_map_metrics() {
         let mut nm = CompactNeedleMap::new();
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
-        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
+        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300))
+            .unwrap();
 
         assert_eq!(nm.file_count(), 3);
         assert_eq!(nm.content_size(), 600);
         assert_eq!(nm.max_file_key(), NeedleId(3));
 
         // Update existing — additive-only: file_count increments, content_size adds
-        nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250)).unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250))
+            .unwrap();
         assert_eq!(nm.file_count(), 4); // 3 + 1 (always increments)
         assert_eq!(nm.content_size(), 850); // 600 + 250 (always adds)
 
         // Delete — additive-only: file_count unchanged
-        nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        nm.delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(nm.file_count(), 4); // unchanged
         assert_eq!(nm.deleted_count(), 2); // 1 from overwrite + 1 from delete
     }
@@ -848,11 +883,35 @@ mod tests {
         // Build an idx file in memory
         // Note: offset 0 is reserved for the SuperBlock, so real needles start at offset >= 8
         let mut idx_data = Vec::new();
-        idx::write_index_entry(&mut idx_data, NeedleId(1), Offset::from_actual_offset(8), Size(100)).unwrap();
-        idx::write_index_entry(&mut idx_data, NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
-        idx::write_index_entry(&mut idx_data, NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(8),
+            Size(100),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::from_actual_offset(128),
+            Size(200),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(3),
+            Offset::from_actual_offset(384),
+            Size(300),
+        )
+        .unwrap();
         // Delete needle 2
-        idx::write_index_entry(&mut idx_data, NeedleId(2), Offset::default(), TOMBSTONE_FILE_SIZE).unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::default(),
+            TOMBSTONE_FILE_SIZE,
+        )
+        .unwrap();
 
         let mut cursor = Cursor::new(idx_data);
         let nm = CompactNeedleMap::load_from_idx(&mut cursor).unwrap();
@@ -867,13 +926,18 @@ mod tests {
     #[test]
     fn test_needle_map_double_delete() {
         let mut nm = CompactNeedleMap::new();
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
 
-        let r1 = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let r1 = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(r1, Some(Size(100)));
 
         // Second delete should return None (already deleted)
-        let r2 = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let r2 = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(r2, None);
         assert_eq!(nm.deleted_count(), 1); // not double counted
     }
@@ -886,8 +950,10 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
 
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
 
         let v1 = nm.get(NeedleId(1)).unwrap();
         assert_eq!(v1.size, Size(100));
@@ -904,11 +970,14 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
 
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
         assert_eq!(nm.file_count(), 1);
         assert_eq!(nm.content_size(), 100);
 
-        let deleted = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let deleted = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(deleted, Some(Size(100)));
 
         // Additive-only: file_count stays at 1 after delete
@@ -927,21 +996,26 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
 
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
-        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
+        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300))
+            .unwrap();
 
         assert_eq!(nm.file_count(), 3);
         assert_eq!(nm.content_size(), 600);
         assert_eq!(nm.max_file_key(), NeedleId(3));
 
         // Update existing — additive-only: file_count increments, content_size adds
-        nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250)).unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(700), Size(250))
+            .unwrap();
         assert_eq!(nm.file_count(), 4); // 3 + 1 (always increments)
         assert_eq!(nm.content_size(), 850); // 600 + 250 (always adds)
 
         // Delete — additive-only: file_count unchanged
-        nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        nm.delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(nm.file_count(), 4); // unchanged
         assert_eq!(nm.deleted_count(), 2); // 1 from overwrite + 1 from delete
     }
@@ -952,11 +1026,35 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
 
         let mut idx_data = Vec::new();
-        idx::write_index_entry(&mut idx_data, NeedleId(1), Offset::from_actual_offset(8), Size(100)).unwrap();
-        idx::write_index_entry(&mut idx_data, NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
-        idx::write_index_entry(&mut idx_data, NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(1),
+            Offset::from_actual_offset(8),
+            Size(100),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::from_actual_offset(128),
+            Size(200),
+        )
+        .unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(3),
+            Offset::from_actual_offset(384),
+            Size(300),
+        )
+        .unwrap();
         // Delete needle 2
-        idx::write_index_entry(&mut idx_data, NeedleId(2), Offset::default(), TOMBSTONE_FILE_SIZE).unwrap();
+        idx::write_index_entry(
+            &mut idx_data,
+            NeedleId(2),
+            Offset::default(),
+            TOMBSTONE_FILE_SIZE,
+        )
+        .unwrap();
 
         let mut cursor = Cursor::new(idx_data);
         let nm = RedbNeedleMap::load_from_idx(db_path.to_str().unwrap(), &mut cursor).unwrap();
@@ -973,13 +1071,18 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
 
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
 
-        let r1 = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let r1 = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(r1, Some(Size(100)));
 
         // Second delete should return None (already deleted)
-        let r2 = nm.delete(NeedleId(1), Offset::from_actual_offset(0)).unwrap();
+        let r2 = nm
+            .delete(NeedleId(1), Offset::from_actual_offset(0))
+            .unwrap();
         assert_eq!(r2, None);
         assert_eq!(nm.deleted_count(), 1); // not double counted
     }
@@ -990,15 +1093,19 @@ mod tests {
         let db_path = dir.path().join("test.rdb");
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
 
-        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
+        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300))
+            .unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
 
         let mut visited = Vec::new();
         nm.ascending_visit(|id, nv| {
             visited.push((id, nv.size));
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         assert_eq!(visited.len(), 3);
         assert_eq!(visited[0], (NeedleId(1), Size(100)));
@@ -1013,11 +1120,15 @@ mod tests {
         let idx_path = dir.path().join("test.idx");
 
         let mut nm = RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap();
-        nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100)).unwrap();
-        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200)).unwrap();
-        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(8), Size(100))
+            .unwrap();
+        nm.put(NeedleId(2), Offset::from_actual_offset(128), Size(200))
+            .unwrap();
+        nm.put(NeedleId(3), Offset::from_actual_offset(384), Size(300))
+            .unwrap();
         // Delete needle 2
-        nm.delete(NeedleId(2), Offset::from_actual_offset(128)).unwrap();
+        nm.delete(NeedleId(2), Offset::from_actual_offset(128))
+            .unwrap();
 
         nm.save_to_idx(idx_path.to_str().unwrap()).unwrap();
 
@@ -1038,7 +1149,10 @@ mod tests {
         };
         let packed = pack_needle_value(&nv);
         let unpacked = unpack_needle_value(&packed);
-        assert_eq!(nv.offset.to_actual_offset(), unpacked.offset.to_actual_offset());
+        assert_eq!(
+            nv.offset.to_actual_offset(),
+            unpacked.offset.to_actual_offset()
+        );
         assert_eq!(nv.size, unpacked.size);
     }
 
@@ -1050,7 +1164,10 @@ mod tests {
         };
         let packed = pack_needle_value(&nv);
         let unpacked = unpack_needle_value(&packed);
-        assert_eq!(nv.offset.to_actual_offset(), unpacked.offset.to_actual_offset());
+        assert_eq!(
+            nv.offset.to_actual_offset(),
+            unpacked.offset.to_actual_offset()
+        );
         assert_eq!(nv.size, unpacked.size);
     }
 
@@ -1059,7 +1176,8 @@ mod tests {
     #[test]
     fn test_needle_map_enum_inmemory() {
         let mut nm = NeedleMap::InMemory(CompactNeedleMap::new());
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
         assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }
@@ -1069,7 +1187,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.rdb");
         let mut nm = NeedleMap::Redb(RedbNeedleMap::new(db_path.to_str().unwrap()).unwrap());
-        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100)).unwrap();
+        nm.put(NeedleId(1), Offset::from_actual_offset(0), Size(100))
+            .unwrap();
         assert_eq!(nm.get(NeedleId(1)).unwrap().size, Size(100));
         assert_eq!(nm.file_count(), 1);
     }

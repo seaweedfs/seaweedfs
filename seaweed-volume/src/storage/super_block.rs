@@ -62,7 +62,8 @@ impl SuperBlock {
         let compaction_revision = u16::from_be_bytes([bytes[4], bytes[5]]);
         let extra_size = u16::from_be_bytes([bytes[6], bytes[7]]);
 
-        let extra_data = if extra_size > 0 && bytes.len() >= SUPER_BLOCK_SIZE + extra_size as usize {
+        let extra_data = if extra_size > 0 && bytes.len() >= SUPER_BLOCK_SIZE + extra_size as usize
+        {
             bytes[SUPER_BLOCK_SIZE..SUPER_BLOCK_SIZE + extra_size as usize].to_vec()
         } else {
             vec![]
@@ -127,9 +128,18 @@ impl ReplicaPlacement {
             return Err(SuperBlockError::InvalidReplicaPlacement(s.to_string()));
         }
         let chars: Vec<char> = s.chars().collect();
-        let dc = chars[0].to_digit(10).ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))? as u8;
-        let rack = chars[1].to_digit(10).ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))? as u8;
-        let same = chars[2].to_digit(10).ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))? as u8;
+        let dc = chars[0]
+            .to_digit(10)
+            .ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))?
+            as u8;
+        let rack = chars[1]
+            .to_digit(10)
+            .ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))?
+            as u8;
+        let same = chars[2]
+            .to_digit(10)
+            .ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))?
+            as u8;
         Ok(ReplicaPlacement {
             diff_data_center_count: dc,
             diff_rack_count: rack,
@@ -164,7 +174,11 @@ impl ReplicaPlacement {
 
 impl std::fmt::Display for ReplicaPlacement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}{}{}", self.diff_data_center_count, self.diff_rack_count, self.same_rack_count)
+        write!(
+            f,
+            "{}{}{}",
+            self.diff_data_center_count, self.diff_rack_count, self.same_rack_count
+        )
     }
 }
 

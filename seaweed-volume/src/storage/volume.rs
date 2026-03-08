@@ -185,7 +185,11 @@ pub struct VifVolumeInfo {
     pub expire_at_sec: u64,
     #[serde(default, rename = "readOnly")]
     pub read_only: bool,
-    #[serde(default, rename = "ecShardConfig", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "ecShardConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ec_shard_config: Option<VifEcShardConfig>,
 }
 
@@ -241,9 +245,11 @@ impl VifVolumeInfo {
             dat_file_size: self.dat_file_size,
             expire_at_sec: self.expire_at_sec,
             read_only: self.read_only,
-            ec_shard_config: self.ec_shard_config.as_ref().map(|c| crate::pb::volume_server_pb::EcShardConfig {
-                data_shards: c.data_shards,
-                parity_shards: c.parity_shards,
+            ec_shard_config: self.ec_shard_config.as_ref().map(|c| {
+                crate::pb::volume_server_pb::EcShardConfig {
+                    data_shards: c.data_shards,
+                    parity_shards: c.parity_shards,
+                }
             }),
         }
     }
@@ -1108,7 +1114,15 @@ impl Volume {
         // Write tombstone: append needle with empty data
         n.data = vec![];
         n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
-        let (offset, _, _) = self.append_needle(n)?;
+
+        let offset = if !self.has_remote_file {
+            // Normal volume: append tombstone to .dat file
+            let (offset, _, _) = self.append_needle(n)?;
+            offset
+        } else {
+            // Remote-tiered volume: skip .dat append, use offset 0
+            0
+        };
         self.last_append_at_ns = n.append_at_ns;
 
         // Update index
@@ -1594,7 +1608,10 @@ impl Volume {
         if MAX_POSSIBLE_VOLUME_SIZE < content_size + needle_blob.len() as u64 {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::Other,
-                format!("volume size limit {} exceeded! current size is {}", MAX_POSSIBLE_VOLUME_SIZE, content_size),
+                format!(
+                    "volume size limit {} exceeded! current size is {}",
+                    MAX_POSSIBLE_VOLUME_SIZE, content_size
+                ),
             )));
         }
 
@@ -1863,11 +1880,11 @@ impl Volume {
 
         let old_idx_path = self.file_name(".idx");
         let mut old_idx_file = File::open(&old_idx_path)?;
-        
+
         // Read new entries from .idx
         let mut incremented_entries = std::collections::HashMap::new();
         let offset = self.last_compact_index_offset;
-        
+
         old_idx_file.seek(SeekFrom::Start(offset))?;
         let entry_count = (old_idx_size - offset) / NEEDLE_MAP_ENTRY_SIZE as u64;
         for _ in 0..entry_count {
@@ -1883,9 +1900,12 @@ impl Volume {
 
         let cpd_path = self.file_name(".cpd");
         let cpx_path = self.file_name(".cpx");
-        
+
         let mut dst_dat = OpenOptions::new().read(true).write(true).open(&cpd_path)?;
-        let mut dst_idx = OpenOptions::new().write(true).append(true).open(&cpx_path)?;
+        let mut dst_idx = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&cpx_path)?;
 
         let mut dat_offset = dst_dat.seek(SeekFrom::End(0))?;
         let padding_rem = dat_offset % NEEDLE_PADDING_SIZE as u64;
@@ -1902,19 +1922,24 @@ impl Volume {
             if !needle_offset.is_zero() && !size.is_deleted() && size.0 > 0 {
                 let actual_size = crate::storage::needle::needle::get_actual_size(size, version);
                 let mut blob = vec![0u8; actual_size as usize];
-                
+
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::FileExt;
-                    old_dat_file.read_exact_at(&mut blob, needle_offset.to_actual_offset() as u64)?;
+                    old_dat_file
+                        .read_exact_at(&mut blob, needle_offset.to_actual_offset() as u64)?;
                 }
                 #[cfg(windows)]
                 {
-                    crate::storage::volume::read_exact_at(&old_dat_file, &mut blob, needle_offset.to_actual_offset() as u64)?;
+                    crate::storage::volume::read_exact_at(
+                        &old_dat_file,
+                        &mut blob,
+                        needle_offset.to_actual_offset() as u64,
+                    )?;
                 }
-                
+
                 dst_dat.write_all(&blob)?;
-                
+
                 let mut idx_entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
                 crate::storage::types::idx_entry_to_bytes(
                     &mut idx_entry_buf,
@@ -1923,18 +1948,21 @@ impl Volume {
                     size,
                 );
                 dst_idx.write_all(&idx_entry_buf)?;
-                
+
                 dat_offset += actual_size as u64;
             } else {
                 let mut fake_del_needle = Needle {
                     id: key,
                     cookie: Cookie(0x12345678),
-                    append_at_ns: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64,
+                    append_at_ns: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64,
                     ..Needle::default()
                 };
                 let bytes = fake_del_needle.write_bytes(version);
                 dst_dat.write_all(&bytes)?;
-                
+
                 let mut idx_entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
                 crate::storage::types::idx_entry_to_bytes(
                     &mut idx_entry_buf,
@@ -1943,20 +1971,20 @@ impl Volume {
                     Size(crate::storage::types::TOMBSTONE_FILE_SIZE.into()),
                 );
                 dst_idx.write_all(&idx_entry_buf)?;
-                
+
                 dat_offset += bytes.len() as u64;
             }
-            
+
             let padding = NEEDLE_PADDING_SIZE as u64 - (dat_offset % NEEDLE_PADDING_SIZE as u64);
             if padding != NEEDLE_PADDING_SIZE as u64 {
                 dat_offset += padding;
                 dst_dat.seek(SeekFrom::Start(dat_offset))?;
             }
         }
-        
+
         dst_dat.sync_all()?;
         dst_idx.sync_all()?;
-        
+
         Ok(())
     }
 

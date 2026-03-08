@@ -40,7 +40,8 @@ impl EcVolumeShard {
 
     /// Shard file name, e.g. "dir/collection_42.ec03"
     pub fn file_name(&self) -> String {
-        let base = crate::storage::volume::volume_file_name(&self.dir, &self.collection, self.volume_id);
+        let base =
+            crate::storage::volume::volume_file_name(&self.dir, &self.collection, self.volume_id);
         format!("{}.ec{:02}", base, self.shard_id)
     }
 
@@ -69,9 +70,10 @@ impl EcVolumeShard {
 
     /// Read data at a specific offset.
     pub fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        let file = self.ecd_file.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "shard file not open")
-        })?;
+        let file = self
+            .ecd_file
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?;
 
         #[cfg(unix)]
         {
@@ -92,9 +94,10 @@ impl EcVolumeShard {
 
     /// Write data to the shard file (appends).
     pub fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        let file = self.ecd_file.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "shard file not open")
-        })?;
+        let file = self
+            .ecd_file
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "shard file not open"))?;
         file.write_all(data)?;
         self.ecd_file_size += data.len() as i64;
         Ok(())
@@ -125,20 +128,12 @@ pub struct ShardBits(pub u32);
 
 impl ShardBits {
     pub fn add_shard_id(&mut self, id: ShardId) {
-        assert!(
-            (id as usize) < 32,
-            "shard id {} out of bounds (max 31)",
-            id,
-        );
+        assert!((id as usize) < 32, "shard id {} out of bounds (max 31)", id,);
         self.0 |= 1 << id;
     }
 
     pub fn remove_shard_id(&mut self, id: ShardId) {
-        assert!(
-            (id as usize) < 32,
-            "shard id {} out of bounds (max 31)",
-            id,
-        );
+        assert!((id as usize) < 32, "shard id {} out of bounds (max 31)", id,);
         self.0 &= !(1 << id);
     }
 

@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::Client;
 use tokio::io::AsyncReadExt;
 
 /// Configuration for an S3 tier backend.
@@ -89,8 +89,8 @@ impl S3TierBackend {
             .map_err(|e| format!("failed to stat file {}: {}", file_path, e))?;
         let file_size = metadata.len();
 
-        // Calculate part size: start at 64MB, scale up for very large files
-        let mut part_size: u64 = 64 * 1024 * 1024;
+        // Calculate part size: start at 8MB, scale up for very large files (matches Go)
+        let mut part_size: u64 = 8 * 1024 * 1024;
         while part_size * 1000 < file_size {
             part_size *= 4;
         }
@@ -214,8 +214,8 @@ impl S3TierBackend {
 
         let file_size = head_resp.content_length().unwrap_or(0) as u64;
 
-        // Download in chunks
-        let part_size: u64 = 64 * 1024 * 1024;
+        // Download in chunks (4MB to match Go)
+        let part_size: u64 = 4 * 1024 * 1024;
         let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create(true)

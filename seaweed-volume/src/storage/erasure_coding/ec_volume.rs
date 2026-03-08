@@ -32,7 +32,9 @@ pub fn read_ec_shard_config(dir: &str, volume_id: VolumeId) -> (u32, u32) {
     let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
     let vif_path = format!("{}/{}.vif", dir, volume_id.0);
     if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-        if let Ok(vif_info) = serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content) {
+        if let Ok(vif_info) =
+            serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
+        {
             if let Some(ec) = vif_info.ec_shard_config {
                 if ec.data_shards > 0 && ec.parity_shards > 0 {
                     data_shards = ec.data_shards;
@@ -161,9 +163,10 @@ impl EcVolume {
 
     /// Find a needle's offset and size in the sorted .ecx index via binary search.
     pub fn find_needle_from_ecx(&self, needle_id: NeedleId) -> io::Result<Option<(Offset, Size)>> {
-        let ecx_file = self.ecx_file.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "ecx file not open")
-        })?;
+        let ecx_file = self
+            .ecx_file
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecx file not open"))?;
 
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
         if entry_count == 0 {
@@ -237,15 +240,62 @@ impl EcVolume {
 
     /// Append a deleted needle ID to the .ecj journal.
     pub fn journal_delete(&mut self, needle_id: NeedleId) -> io::Result<()> {
-        let ecj_file = self.ecj_file.as_mut().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "ecj file not open")
-        })?;
+        let ecj_file = self
+            .ecj_file
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecj file not open"))?;
 
         let mut buf = [0u8; NEEDLE_ID_SIZE];
         needle_id.to_bytes(&mut buf);
         ecj_file.write_all(&buf)?;
         ecj_file.sync_all()?;
         Ok(())
+    }
+
+    /// Append a deleted needle ID to the .ecj journal, validating the cookie first.
+    /// Matches Go's DeleteEcShardNeedle which validates cookie before journaling.
+    /// A cookie of 0 means skip cookie check (e.g., orphan cleanup).
+    pub fn journal_delete_with_cookie(
+        &mut self,
+        needle_id: NeedleId,
+        cookie: crate::storage::types::Cookie,
+    ) -> io::Result<()> {
+        // cookie == 0 indicates SkipCookieCheck was requested
+        if cookie.0 != 0 {
+            // Try to read the needle's cookie from the EC shards to validate
+            // Look up the needle in ecx index to find its offset, then read header from shard
+            if let Ok(Some((offset, size))) = self.find_needle_from_ecx(needle_id) {
+                if !size.is_deleted() && !offset.is_zero() {
+                    let actual_offset = offset.to_actual_offset() as u64;
+                    // Determine which shard contains this offset and read the cookie
+                    let shard_size = self
+                        .shards
+                        .iter()
+                        .filter_map(|s| s.as_ref())
+                        .map(|s| s.file_size())
+                        .next()
+                        .unwrap_or(0) as u64;
+                    if shard_size > 0 {
+                        let shard_id = (actual_offset / shard_size) as usize;
+                        let shard_offset = actual_offset % shard_size;
+                        if let Some(Some(shard)) = self.shards.get(shard_id) {
+                            let mut header_buf = [0u8; 4]; // cookie is first 4 bytes of needle
+                            if shard.read_at(&mut header_buf, shard_offset).is_ok() {
+                                let needle_cookie =
+                                    crate::storage::types::Cookie(u32::from_be_bytes(header_buf));
+                                if needle_cookie != cookie {
+                                    return Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        format!("unexpected cookie {:x}", cookie.0),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.journal_delete(needle_id)
     }
 
     /// Read all deleted needle IDs from the .ecj journal.
@@ -299,7 +349,12 @@ mod tests {
     use crate::storage::idx;
     use tempfile::TempDir;
 
-    fn write_ecx_file(dir: &str, collection: &str, vid: VolumeId, entries: &[(NeedleId, Offset, Size)]) {
+    fn write_ecx_file(
+        dir: &str,
+        collection: &str,
+        vid: VolumeId,
+        entries: &[(NeedleId, Offset, Size)],
+    ) {
         let base = crate::storage::volume::volume_file_name(dir, collection, vid);
         let ecx_path = format!("{}.ecx", base);
         let mut file = File::create(&ecx_path).unwrap();
@@ -371,7 +426,8 @@ mod tests {
         shard.write_all(&[0u8; 100]).unwrap();
         shard.close();
 
-        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 3)).unwrap();
+        vol.add_shard(EcVolumeShard::new(dir, "", VolumeId(1), 3))
+            .unwrap();
         assert_eq!(vol.shard_count(), 1);
         assert!(vol.shard_bits().has_shard_id(3));
     }

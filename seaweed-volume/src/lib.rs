@@ -1,10 +1,10 @@
 pub mod config;
 pub mod images;
-pub mod storage;
-pub mod security;
-pub mod server;
 pub mod metrics;
 pub mod remote_storage;
+pub mod security;
+pub mod server;
+pub mod storage;
 
 /// Generated protobuf modules.
 pub mod pb {

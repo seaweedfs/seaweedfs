@@ -78,7 +78,9 @@ impl TTL {
             return Ok(TTL::EMPTY);
         }
         let (num_str, unit_char) = s.split_at(s.len() - 1);
-        let count: u32 = num_str.parse().map_err(|e| format!("invalid TTL count: {}", e))?;
+        let count: u32 = num_str
+            .parse()
+            .map_err(|e| format!("invalid TTL count: {}", e))?;
         let unit = match unit_char {
             "m" => TTL_UNIT_MINUTE,
             "h" => TTL_UNIT_HOUR,
@@ -113,33 +115,96 @@ fn unit_to_seconds(count: u64, unit: u8) -> u64 {
 /// Fit a count into a single byte, converting to larger unit if needed.
 fn fit_ttl_count(count: u32, unit: u8) -> TTL {
     if count <= 255 {
-        return TTL { count: count as u8, unit };
+        return TTL {
+            count: count as u8,
+            unit,
+        };
     }
     // Try next larger unit
     match unit {
         TTL_UNIT_MINUTE => {
-            if count / 60 <= 255 { return TTL { count: (count / 60) as u8, unit: TTL_UNIT_HOUR }; }
-            if count / (60 * 24) <= 255 { return TTL { count: (count / (60 * 24)) as u8, unit: TTL_UNIT_DAY }; }
-            TTL { count: 255, unit: TTL_UNIT_DAY }
+            if count / 60 <= 255 {
+                return TTL {
+                    count: (count / 60) as u8,
+                    unit: TTL_UNIT_HOUR,
+                };
+            }
+            if count / (60 * 24) <= 255 {
+                return TTL {
+                    count: (count / (60 * 24)) as u8,
+                    unit: TTL_UNIT_DAY,
+                };
+            }
+            TTL {
+                count: 255,
+                unit: TTL_UNIT_DAY,
+            }
         }
         TTL_UNIT_HOUR => {
-            if count / 24 <= 255 { return TTL { count: (count / 24) as u8, unit: TTL_UNIT_DAY }; }
-            TTL { count: 255, unit: TTL_UNIT_DAY }
+            if count / 24 <= 255 {
+                return TTL {
+                    count: (count / 24) as u8,
+                    unit: TTL_UNIT_DAY,
+                };
+            }
+            TTL {
+                count: 255,
+                unit: TTL_UNIT_DAY,
+            }
         }
         TTL_UNIT_DAY => {
-            if count / 7 <= 255 { return TTL { count: (count / 7) as u8, unit: TTL_UNIT_WEEK }; }
-            if count / 30 <= 255 { return TTL { count: (count / 30) as u8, unit: TTL_UNIT_MONTH }; }
-            if count / 365 <= 255 { return TTL { count: (count / 365) as u8, unit: TTL_UNIT_YEAR }; }
-            TTL { count: 255, unit: TTL_UNIT_YEAR }
+            if count / 7 <= 255 {
+                return TTL {
+                    count: (count / 7) as u8,
+                    unit: TTL_UNIT_WEEK,
+                };
+            }
+            if count / 30 <= 255 {
+                return TTL {
+                    count: (count / 30) as u8,
+                    unit: TTL_UNIT_MONTH,
+                };
+            }
+            if count / 365 <= 255 {
+                return TTL {
+                    count: (count / 365) as u8,
+                    unit: TTL_UNIT_YEAR,
+                };
+            }
+            TTL {
+                count: 255,
+                unit: TTL_UNIT_YEAR,
+            }
         }
         TTL_UNIT_WEEK => {
-            if count * 7 / 30 <= 255 { return TTL { count: (count * 7 / 30) as u8, unit: TTL_UNIT_MONTH }; }
-            if count * 7 / 365 <= 255 { return TTL { count: (count * 7 / 365) as u8, unit: TTL_UNIT_YEAR }; }
-            TTL { count: 255, unit: TTL_UNIT_YEAR }
+            if count * 7 / 30 <= 255 {
+                return TTL {
+                    count: (count * 7 / 30) as u8,
+                    unit: TTL_UNIT_MONTH,
+                };
+            }
+            if count * 7 / 365 <= 255 {
+                return TTL {
+                    count: (count * 7 / 365) as u8,
+                    unit: TTL_UNIT_YEAR,
+                };
+            }
+            TTL {
+                count: 255,
+                unit: TTL_UNIT_YEAR,
+            }
         }
         TTL_UNIT_MONTH => {
-            if count / 12 <= 255 { return TTL { count: (count / 12) as u8, unit: TTL_UNIT_YEAR }; }
-            TTL { count: 255, unit: TTL_UNIT_YEAR }
+            if count / 12 <= 255 {
+                return TTL {
+                    count: (count / 12) as u8,
+                    unit: TTL_UNIT_YEAR,
+                };
+            }
+            TTL {
+                count: 255,
+                unit: TTL_UNIT_YEAR,
+            }
         }
         _ => TTL { count: 255, unit },
     }
@@ -173,7 +238,13 @@ mod tests {
     #[test]
     fn test_ttl_parse() {
         let ttl = TTL::read("3m").unwrap();
-        assert_eq!(ttl, TTL { count: 3, unit: TTL_UNIT_MINUTE });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 3,
+                unit: TTL_UNIT_MINUTE
+            }
+        );
         assert_eq!(ttl.to_seconds(), 180);
     }
 
@@ -185,13 +256,19 @@ mod tests {
 
     #[test]
     fn test_ttl_display() {
-        let ttl = TTL { count: 5, unit: TTL_UNIT_DAY };
+        let ttl = TTL {
+            count: 5,
+            unit: TTL_UNIT_DAY,
+        };
         assert_eq!(ttl.to_string(), "5d");
     }
 
     #[test]
     fn test_ttl_bytes_round_trip() {
-        let ttl = TTL { count: 10, unit: TTL_UNIT_WEEK };
+        let ttl = TTL {
+            count: 10,
+            unit: TTL_UNIT_WEEK,
+        };
         let mut buf = [0u8; 2];
         ttl.to_bytes(&mut buf);
         let ttl2 = TTL::from_bytes(&buf);
@@ -200,7 +277,10 @@ mod tests {
 
     #[test]
     fn test_ttl_u32_round_trip() {
-        let ttl = TTL { count: 42, unit: TTL_UNIT_HOUR };
+        let ttl = TTL {
+            count: 42,
+            unit: TTL_UNIT_HOUR,
+        };
         let v = ttl.to_u32();
         let ttl2 = TTL::from_u32(v);
         assert_eq!(ttl, ttl2);
@@ -217,6 +297,12 @@ mod tests {
     fn test_ttl_overflow_fit() {
         // 300 minutes should fit into 5 hours
         let ttl = TTL::read("300m").unwrap();
-        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_HOUR });
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 5,
+                unit: TTL_UNIT_HOUR
+            }
+        );
     }
 }

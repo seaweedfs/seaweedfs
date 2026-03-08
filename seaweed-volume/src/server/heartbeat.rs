@@ -79,7 +79,9 @@ pub async fn run_heartbeat_with_state(
                 SleepDuplicate(Duration),
                 SleepPulse,
             }
-            let action = match do_heartbeat(&config, &state, &grpc_addr, pulse, &mut shutdown_rx).await {
+            let action = match do_heartbeat(&config, &state, &grpc_addr, pulse, &mut shutdown_rx)
+                .await
+            {
                 Ok(Some(leader)) => {
                     info!("Master leader changed to {}", leader);
                     PostAction::LeaderRedirect(leader)
@@ -97,9 +99,11 @@ pub async fn run_heartbeat_with_state(
 
                     if err_msg.contains("duplicate") && err_msg.contains("UUID") {
                         duplicate_retry_count += 1;
-                        if duplicate_retry_count > 3 {
+                        if duplicate_retry_count >= 3 {
                             error!("Shut down Volume Server due to persistent duplicate volume directories after 3 retries");
-                            error!("Please check if another volume server is using the same directory");
+                            error!(
+                                "Please check if another volume server is using the same directory"
+                            );
                             std::process::exit(1);
                         }
                         let retry_delay = Duration::from_secs(2u64.pow(duplicate_retry_count));
@@ -188,7 +192,11 @@ async fn do_heartbeat(
 
     // Keep track of what we sent, to generate delta updates
     let initial_hb = collect_heartbeat(config, state);
-    let mut last_volumes: HashMap<u32, master_pb::VolumeInformationMessage> = initial_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+    let mut last_volumes: HashMap<u32, master_pb::VolumeInformationMessage> = initial_hb
+        .volumes
+        .iter()
+        .map(|v| (v.id, v.clone()))
+        .collect();
 
     // Send initial heartbeats BEFORE calling send_heartbeat to avoid deadlock:
     // the server won't send response headers until it receives the first message,
@@ -256,10 +264,10 @@ async fn do_heartbeat(
             _ = state.volume_state_notify.notified() => {
                 let current_hb = collect_heartbeat(config, state);
                 let current_volumes: HashMap<u32, _> = current_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
-                
+
                 let mut new_vols = Vec::new();
                 let mut del_vols = Vec::new();
-                
+
                 for (id, vol) in &current_volumes {
                     if !last_volumes.contains_key(id) {
                         new_vols.push(master_pb::VolumeShortInformationMessage {
@@ -273,7 +281,7 @@ async fn do_heartbeat(
                         });
                     }
                 }
-                
+
                 for (id, vol) in &last_volumes {
                     if !current_volumes.contains_key(id) {
                         del_vols.push(master_pb::VolumeShortInformationMessage {
@@ -287,7 +295,7 @@ async fn do_heartbeat(
                         });
                     }
                 }
-                
+
                 if !new_vols.is_empty() || !del_vols.is_empty() {
                     let delta_hb = master_pb::Heartbeat {
                         ip: config.ip.clone(),

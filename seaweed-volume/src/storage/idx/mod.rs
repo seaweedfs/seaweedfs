@@ -37,7 +37,12 @@ where
 }
 
 /// Write a single index entry to a writer.
-pub fn write_index_entry<W: io::Write>(writer: &mut W, key: NeedleId, offset: Offset, size: Size) -> io::Result<()> {
+pub fn write_index_entry<W: io::Write>(
+    writer: &mut W,
+    key: NeedleId,
+    offset: Offset,
+    size: Size,
+) -> io::Result<()> {
     let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
     idx_entry_to_bytes(&mut buf, key, offset, size);
     writer.write_all(&buf)
@@ -68,7 +73,8 @@ mod tests {
         walk_index_file(&mut cursor, 0, |key, offset, size| {
             collected.push((key, offset.to_actual_offset(), size));
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
 
         assert_eq!(collected.len(), 3);
         assert_eq!(collected[0].0, NeedleId(1));
@@ -82,14 +88,24 @@ mod tests {
     fn test_walk_empty() {
         let mut cursor = Cursor::new(Vec::new());
         let mut count = 0;
-        walk_index_file(&mut cursor, 0, |_, _, _| { count += 1; Ok(()) }).unwrap();
+        walk_index_file(&mut cursor, 0, |_, _, _| {
+            count += 1;
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(count, 0);
     }
 
     #[test]
     fn test_write_index_entry() {
         let mut buf = Vec::new();
-        write_index_entry(&mut buf, NeedleId(42), Offset::from_actual_offset(8 * 10), Size(512)).unwrap();
+        write_index_entry(
+            &mut buf,
+            NeedleId(42),
+            Offset::from_actual_offset(8 * 10),
+            Size(512),
+        )
+        .unwrap();
         assert_eq!(buf.len(), NEEDLE_MAP_ENTRY_SIZE);
 
         let (key, offset, size) = idx_entry_from_bytes(&buf);

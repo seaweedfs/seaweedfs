@@ -39,11 +39,11 @@ pub struct Needle {
     pub data: Vec<u8>,
     pub flags: u8,
     pub name_size: u8,
-    pub name: Vec<u8>,   // max 255 bytes
+    pub name: Vec<u8>, // max 255 bytes
     pub mime_size: u8,
-    pub mime: Vec<u8>,   // max 255 bytes
+    pub mime: Vec<u8>, // max 255 bytes
     pub pairs_size: u16,
-    pub pairs: Vec<u8>,  // max 64KB, JSON
+    pub pairs: Vec<u8>,     // max 64KB, JSON
     pub last_modified: u64, // stored as 5 bytes on disk
     pub ttl: Option<TTL>,
 
@@ -56,26 +56,54 @@ pub struct Needle {
 impl Needle {
     // ---- Flag accessors (matching Go) ----
 
-    pub fn is_compressed(&self) -> bool { self.flags & FLAG_IS_COMPRESSED != 0 }
-    pub fn set_is_compressed(&mut self) { self.flags |= FLAG_IS_COMPRESSED; }
+    pub fn is_compressed(&self) -> bool {
+        self.flags & FLAG_IS_COMPRESSED != 0
+    }
+    pub fn set_is_compressed(&mut self) {
+        self.flags |= FLAG_IS_COMPRESSED;
+    }
 
-    pub fn has_name(&self) -> bool { self.flags & FLAG_HAS_NAME != 0 }
-    pub fn set_has_name(&mut self) { self.flags |= FLAG_HAS_NAME; }
+    pub fn has_name(&self) -> bool {
+        self.flags & FLAG_HAS_NAME != 0
+    }
+    pub fn set_has_name(&mut self) {
+        self.flags |= FLAG_HAS_NAME;
+    }
 
-    pub fn has_mime(&self) -> bool { self.flags & FLAG_HAS_MIME != 0 }
-    pub fn set_has_mime(&mut self) { self.flags |= FLAG_HAS_MIME; }
+    pub fn has_mime(&self) -> bool {
+        self.flags & FLAG_HAS_MIME != 0
+    }
+    pub fn set_has_mime(&mut self) {
+        self.flags |= FLAG_HAS_MIME;
+    }
 
-    pub fn has_last_modified_date(&self) -> bool { self.flags & FLAG_HAS_LAST_MODIFIED_DATE != 0 }
-    pub fn set_has_last_modified_date(&mut self) { self.flags |= FLAG_HAS_LAST_MODIFIED_DATE; }
+    pub fn has_last_modified_date(&self) -> bool {
+        self.flags & FLAG_HAS_LAST_MODIFIED_DATE != 0
+    }
+    pub fn set_has_last_modified_date(&mut self) {
+        self.flags |= FLAG_HAS_LAST_MODIFIED_DATE;
+    }
 
-    pub fn has_ttl(&self) -> bool { self.flags & FLAG_HAS_TTL != 0 }
-    pub fn set_has_ttl(&mut self) { self.flags |= FLAG_HAS_TTL; }
+    pub fn has_ttl(&self) -> bool {
+        self.flags & FLAG_HAS_TTL != 0
+    }
+    pub fn set_has_ttl(&mut self) {
+        self.flags |= FLAG_HAS_TTL;
+    }
 
-    pub fn has_pairs(&self) -> bool { self.flags & FLAG_HAS_PAIRS != 0 }
-    pub fn set_has_pairs(&mut self) { self.flags |= FLAG_HAS_PAIRS; }
+    pub fn has_pairs(&self) -> bool {
+        self.flags & FLAG_HAS_PAIRS != 0
+    }
+    pub fn set_has_pairs(&mut self) {
+        self.flags |= FLAG_HAS_PAIRS;
+    }
 
-    pub fn is_chunk_manifest(&self) -> bool { self.flags & FLAG_IS_CHUNK_MANIFEST != 0 }
-    pub fn set_is_chunk_manifest(&mut self) { self.flags |= FLAG_IS_CHUNK_MANIFEST; }
+    pub fn is_chunk_manifest(&self) -> bool {
+        self.flags & FLAG_IS_CHUNK_MANIFEST != 0
+    }
+    pub fn set_is_chunk_manifest(&mut self) {
+        self.flags |= FLAG_IS_CHUNK_MANIFEST;
+    }
 
     // ---- Header parsing ----
 
@@ -108,7 +136,12 @@ impl Needle {
         if index + 4 > len_bytes {
             return Err(NeedleError::IndexOutOfRange(1));
         }
-        self.data_size = u32::from_be_bytes([bytes[index], bytes[index + 1], bytes[index + 2], bytes[index + 3]]);
+        self.data_size = u32::from_be_bytes([
+            bytes[index],
+            bytes[index + 1],
+            bytes[index + 2],
+            bytes[index + 3],
+        ]);
         index += 4;
 
         // Skip data bytes (do NOT copy them)
@@ -124,7 +157,13 @@ impl Needle {
 
     /// Read full needle from bytes but skip copying the data payload.
     /// Sets all metadata fields, checksum, etc. but leaves `data` empty.
-    pub fn read_bytes_meta_only(&mut self, bytes: &[u8], offset: i64, expected_size: Size, version: Version) -> Result<(), NeedleError> {
+    pub fn read_bytes_meta_only(
+        &mut self,
+        bytes: &[u8],
+        offset: i64,
+        expected_size: Size,
+        version: Version,
+    ) -> Result<(), NeedleError> {
         self.read_header(bytes);
 
         if self.size != expected_size {
@@ -152,13 +191,20 @@ impl Needle {
     }
 
     /// Read tail without CRC validation (used when data was not read).
-    fn read_tail_meta_only(&mut self, tail_bytes: &[u8], version: Version) -> Result<(), NeedleError> {
+    fn read_tail_meta_only(
+        &mut self,
+        tail_bytes: &[u8],
+        version: Version,
+    ) -> Result<(), NeedleError> {
         if tail_bytes.len() < NEEDLE_CHECKSUM_SIZE {
             return Err(NeedleError::TailTooShort);
         }
 
         self.checksum = CRC(u32::from_be_bytes([
-            tail_bytes[0], tail_bytes[1], tail_bytes[2], tail_bytes[3],
+            tail_bytes[0],
+            tail_bytes[1],
+            tail_bytes[2],
+            tail_bytes[3],
         ]));
 
         if version == VERSION_3 {
@@ -190,7 +236,12 @@ impl Needle {
         if index + 4 > len_bytes {
             return Err(NeedleError::IndexOutOfRange(1));
         }
-        self.data_size = u32::from_be_bytes([bytes[index], bytes[index + 1], bytes[index + 2], bytes[index + 3]]);
+        self.data_size = u32::from_be_bytes([
+            bytes[index],
+            bytes[index + 1],
+            bytes[index + 2],
+            bytes[index + 3],
+        ]);
         index += 4;
 
         // Data
@@ -282,7 +333,10 @@ impl Needle {
         }
 
         let expected_checksum = CRC(u32::from_be_bytes([
-            tail_bytes[0], tail_bytes[1], tail_bytes[2], tail_bytes[3],
+            tail_bytes[0],
+            tail_bytes[1],
+            tail_bytes[2],
+            tail_bytes[3],
         ]));
 
         if !self.data.is_empty() {
@@ -322,7 +376,13 @@ impl Needle {
     // ---- Full read from bytes ----
 
     /// Read a complete needle from its raw bytes (header + body + tail).
-    pub fn read_bytes(&mut self, bytes: &[u8], offset: i64, expected_size: Size, version: Version) -> Result<(), NeedleError> {
+    pub fn read_bytes(
+        &mut self,
+        bytes: &[u8],
+        offset: i64,
+        expected_size: Size,
+        version: Version,
+    ) -> Result<(), NeedleError> {
         self.read_header(bytes);
 
         if self.size != expected_size {
@@ -354,19 +414,33 @@ impl Needle {
         let mut buf = Vec::with_capacity(256);
 
         // Compute sizes and flags
-        if self.name_size >= 255 { self.name_size = 255; }
-        if self.name.len() < self.name_size as usize { self.name_size = self.name.len() as u8; }
+        if self.name_size >= 255 {
+            self.name_size = 255;
+        }
+        if self.name.len() < self.name_size as usize {
+            self.name_size = self.name.len() as u8;
+        }
         self.data_size = self.data.len() as u32;
         self.mime_size = self.mime.len() as u8;
 
         // Compute n.Size (body size, excluding header)
         if self.data_size > 0 {
             let mut s: i32 = 4 + self.data_size as i32 + 1; // DataSize + Data + Flags
-            if self.has_name() { s += 1 + self.name_size as i32; }
-            if self.has_mime() { s += 1 + self.mime_size as i32; }
-            if self.has_last_modified_date() { s += LAST_MODIFIED_BYTES_LENGTH as i32; }
-            if self.has_ttl() { s += TTL_BYTES_LENGTH as i32; }
-            if self.has_pairs() { s += 2 + self.pairs_size as i32; }
+            if self.has_name() {
+                s += 1 + self.name_size as i32;
+            }
+            if self.has_mime() {
+                s += 1 + self.mime_size as i32;
+            }
+            if self.has_last_modified_date() {
+                s += LAST_MODIFIED_BYTES_LENGTH as i32;
+            }
+            if self.has_ttl() {
+                s += TTL_BYTES_LENGTH as i32;
+            }
+            if self.has_pairs() {
+                s += 2 + self.pairs_size as i32;
+            }
             self.size = Size(s);
         } else {
             self.size = Size(0);
@@ -375,8 +449,10 @@ impl Needle {
         // Header: Cookie(4) + NeedleId(8) + Size(4) = 16 bytes
         let mut header = [0u8; NEEDLE_HEADER_SIZE];
         self.cookie.to_bytes(&mut header[0..COOKIE_SIZE]);
-        self.id.to_bytes(&mut header[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
-        self.size.to_bytes(&mut header[COOKIE_SIZE + NEEDLE_ID_SIZE..NEEDLE_HEADER_SIZE]);
+        self.id
+            .to_bytes(&mut header[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
+        self.size
+            .to_bytes(&mut header[COOKIE_SIZE + NEEDLE_ID_SIZE..NEEDLE_HEADER_SIZE]);
         buf.extend_from_slice(&header);
 
         // Body
@@ -446,18 +522,34 @@ impl Needle {
 /// Compute padding to align needle to NEEDLE_PADDING_SIZE (8 bytes).
 pub fn padding_length(needle_size: Size, version: Version) -> Size {
     if version == VERSION_3 {
-        Size(NEEDLE_PADDING_SIZE as i32 - ((NEEDLE_HEADER_SIZE as i32 + needle_size.0 + NEEDLE_CHECKSUM_SIZE as i32 + TIMESTAMP_SIZE as i32) % NEEDLE_PADDING_SIZE as i32))
+        Size(
+            NEEDLE_PADDING_SIZE as i32
+                - ((NEEDLE_HEADER_SIZE as i32
+                    + needle_size.0
+                    + NEEDLE_CHECKSUM_SIZE as i32
+                    + TIMESTAMP_SIZE as i32)
+                    % NEEDLE_PADDING_SIZE as i32),
+        )
     } else {
-        Size(NEEDLE_PADDING_SIZE as i32 - ((NEEDLE_HEADER_SIZE as i32 + needle_size.0 + NEEDLE_CHECKSUM_SIZE as i32) % NEEDLE_PADDING_SIZE as i32))
+        Size(
+            NEEDLE_PADDING_SIZE as i32
+                - ((NEEDLE_HEADER_SIZE as i32 + needle_size.0 + NEEDLE_CHECKSUM_SIZE as i32)
+                    % NEEDLE_PADDING_SIZE as i32),
+        )
     }
 }
 
 /// Body length = Size + Checksum + [Timestamp] + Padding.
 pub fn needle_body_length(needle_size: Size, version: Version) -> i64 {
     if version == VERSION_3 {
-        needle_size.0 as i64 + NEEDLE_CHECKSUM_SIZE as i64 + TIMESTAMP_SIZE as i64 + padding_length(needle_size, version).0 as i64
+        needle_size.0 as i64
+            + NEEDLE_CHECKSUM_SIZE as i64
+            + TIMESTAMP_SIZE as i64
+            + padding_length(needle_size, version).0 as i64
     } else {
-        needle_size.0 as i64 + NEEDLE_CHECKSUM_SIZE as i64 + padding_length(needle_size, version).0 as i64
+        needle_size.0 as i64
+            + NEEDLE_CHECKSUM_SIZE as i64
+            + padding_length(needle_size, version).0 as i64
     }
 }
 
@@ -480,7 +572,10 @@ fn bytes_to_u64_5(bytes: &[u8]) -> u64 {
 /// ETag formatted as Go: hex of big-endian u32 bytes.
 pub fn etag_from_checksum(checksum: u32) -> String {
     let bits = checksum.to_be_bytes();
-    format!("{:02x}{:02x}{:02x}{:02x}", bits[0], bits[1], bits[2], bits[3])
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        bits[0], bits[1], bits[2], bits[3]
+    )
 }
 
 // ============================================================================
@@ -498,7 +593,11 @@ pub struct FileId {
 
 impl FileId {
     pub fn new(volume_id: VolumeId, key: NeedleId, cookie: Cookie) -> Self {
-        FileId { volume_id, key, cookie }
+        FileId {
+            volume_id,
+            key,
+            cookie,
+        }
     }
 
     /// Parse "volume_id,needle_id_cookie" or "volume_id/needle_id_cookie".
@@ -511,9 +610,14 @@ impl FileId {
             return Err(format!("invalid file id: {}", s));
         };
 
-        let volume_id = VolumeId::parse(vid_str).map_err(|e| format!("invalid volume id: {}", e))?;
+        let volume_id =
+            VolumeId::parse(vid_str).map_err(|e| format!("invalid volume id: {}", e))?;
         let (key, cookie) = parse_needle_id_cookie(rest)?;
-        Ok(FileId { volume_id, key, cookie })
+        Ok(FileId {
+            volume_id,
+            key,
+            cookie,
+        })
     }
 
     /// Format the needle_id + cookie part as a hex string (stripping leading zeros).
@@ -536,7 +640,10 @@ fn format_needle_id_cookie(key: NeedleId, cookie: Cookie) -> String {
     cookie.to_bytes(&mut bytes[8..12]);
 
     // Strip leading zero bytes
-    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+    let first_nonzero = bytes
+        .iter()
+        .position(|&b| b != 0)
+        .unwrap_or(bytes.len() - 1);
     hex::encode(&bytes[first_nonzero..])
 }
 
@@ -564,10 +671,19 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
 #[derive(Debug, thiserror::Error)]
 pub enum NeedleError {
     #[error("size mismatch at offset {offset}: found id={id} size={found:?}, expected size={expected:?}")]
-    SizeMismatch { offset: i64, id: NeedleId, found: Size, expected: Size },
+    SizeMismatch {
+        offset: i64,
+        id: NeedleId,
+        found: Size,
+        expected: Size,
+    },
 
     #[error("CRC mismatch for needle {needle_id}: got {got:08x}, want {want:08x}")]
-    CrcMismatch { needle_id: NeedleId, got: u32, want: u32 },
+    CrcMismatch {
+        needle_id: NeedleId,
+        got: u32,
+        want: u32,
+    },
 
     #[error("index out of range ({0})")]
     IndexOutOfRange(u32),
@@ -622,7 +738,10 @@ mod tests {
         n.set_has_last_modified_date();
         n.last_modified = 1234567890;
         n.set_has_ttl();
-        n.ttl = Some(TTL { count: 5, unit: super::super::ttl::TTL_UNIT_DAY });
+        n.ttl = Some(TTL {
+            count: 5,
+            unit: super::super::ttl::TTL_UNIT_DAY,
+        });
         n.append_at_ns = 999999999;
 
         let bytes = n.write_bytes(VERSION_3);

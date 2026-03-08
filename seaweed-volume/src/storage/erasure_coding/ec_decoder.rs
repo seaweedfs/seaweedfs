@@ -16,11 +16,7 @@ use crate::storage::volume::volume_file_name;
 /// Calculate .dat file size from the max offset entry in .ecx.
 /// Reads the volume version from the first EC shard (.ec00) superblock,
 /// then scans .ecx entries to find the largest (offset + needle_actual_size).
-pub fn find_dat_file_size(
-    dir: &str,
-    collection: &str,
-    volume_id: VolumeId,
-) -> io::Result<i64> {
+pub fn find_dat_file_size(dir: &str, collection: &str, volume_id: VolumeId) -> io::Result<i64> {
     let base = volume_file_name(dir, collection, volume_id);
 
     // Read volume version from .ec00 superblock
@@ -40,7 +36,8 @@ pub fn find_dat_file_size(
 
     for i in 0..entry_count {
         let start = i * NEEDLE_MAP_ENTRY_SIZE;
-        let (_, offset, size) = idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
+        let (_, offset, size) =
+            idx_entry_from_bytes(&ecx_data[start..start + NEEDLE_MAP_ENTRY_SIZE]);
         if size.is_deleted() {
             continue;
         }
@@ -180,14 +177,24 @@ mod tests {
 
         // Create volume with data
         let mut v = Volume::new(
-            dir, dir, "", VolumeId(1),
-            NeedleMapKind::InMemory, None, None, 0, Version::current(),
-        ).unwrap();
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
 
-        let test_data: Vec<(NeedleId, Vec<u8>)> = (1..=3).map(|i| {
-            let data = format!("EC round trip data for needle {}", i);
-            (NeedleId(i), data.into_bytes())
-        }).collect();
+        let test_data: Vec<(NeedleId, Vec<u8>)> = (1..=3)
+            .map(|i| {
+                let data = format!("EC round trip data for needle {}", i);
+                (NeedleId(i), data.into_bytes())
+            })
+            .collect();
 
         for (id, data) in &test_data {
             let mut n = Needle {
@@ -216,7 +223,8 @@ mod tests {
         std::fs::remove_file(format!("{}/1.idx", dir)).unwrap();
 
         // Reconstruct from EC shards
-        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64, data_shards).unwrap();
+        write_dat_file_from_shards(dir, "", VolumeId(1), original_dat_size as i64, data_shards)
+            .unwrap();
         write_idx_file_from_ec_index(dir, "", VolumeId(1)).unwrap();
 
         // Verify reconstructed .dat matches original
@@ -229,12 +237,23 @@ mod tests {
 
         // Verify we can load and read from reconstructed volume
         let v2 = Volume::new(
-            dir, dir, "", VolumeId(1),
-            NeedleMapKind::InMemory, None, None, 0, Version::current(),
-        ).unwrap();
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
 
         for (id, expected_data) in &test_data {
-            let mut n = Needle { id: *id, ..Needle::default() };
+            let mut n = Needle {
+                id: *id,
+                ..Needle::default()
+            };
             v2.read_needle(&mut n).unwrap();
             assert_eq!(&n.data, expected_data, "needle {} data should match", id);
         }

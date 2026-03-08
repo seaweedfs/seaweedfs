@@ -37,9 +37,8 @@ pub fn write_ec_files(
     let dat_file = File::open(&dat_path)?;
     let dat_size = dat_file.metadata()?.len() as i64;
 
-    let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e))
-    })?;
+    let rs = ReedSolomon::new(data_shards, parity_shards)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
 
     // Create shard files
     let total_shards = data_shards + parity_shards;
@@ -52,7 +51,14 @@ pub fn write_ec_files(
     }
 
     // Encode in large blocks, then small blocks
-    encode_dat_file(&dat_file, dat_size, &rs, &mut shards, data_shards, parity_shards)?;
+    encode_dat_file(
+        &dat_file,
+        dat_size,
+        &rs,
+        &mut shards,
+        data_shards,
+        parity_shards,
+    )?;
 
     // Close all shards
     for shard in &mut shards {
@@ -77,9 +83,8 @@ pub fn rebuild_ec_files(
         return Ok(());
     }
 
-    let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e))
-    })?;
+    let rs = ReedSolomon::new(data_shards, parity_shards)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
     let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
@@ -140,7 +145,10 @@ pub fn rebuild_ec_files(
 
         // Reconstruct missing shards
         rs.reconstruct(&mut buffers).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("reed-solomon reconstruct: {:?}", e))
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("reed-solomon reconstruct: {:?}", e),
+            )
         })?;
 
         // Write recovered data into the missing shards
@@ -171,9 +179,8 @@ pub fn verify_ec_shards(
     data_shards: usize,
     parity_shards: usize,
 ) -> io::Result<(Vec<u32>, Vec<String>)> {
-    let rs = ReedSolomon::new(data_shards, parity_shards).map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e))
-    })?;
+    let rs = ReedSolomon::new(data_shards, parity_shards)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("reed-solomon init: {:?}", e)))?;
 
     let total_shards = data_shards + parity_shards;
     let mut shards: Vec<EcVolumeShard> = (0..total_shards as u8)
@@ -232,7 +239,7 @@ pub fn verify_ec_shards(
                     // is corrupted without recalculating parities or syndromes, so we just
                     // log that this batch has corruption. Wait, we can test each parity shard!
                     // Let's re-encode from the first `data_shards` and compare to the actual `parity_shards`.
-                    
+
                     let mut verify_buffers = buffers.clone();
                     // Clear the parity parts
                     for i in data_shards..total_shards {
@@ -242,7 +249,10 @@ pub fn verify_ec_shards(
                         for i in 0..total_shards {
                             if buffers[i] != verify_buffers[i] {
                                 broken_shards.insert(i as u32);
-                                details.push(format!("parity mismatch on shard {} at offset {}", i, offset));
+                                details.push(format!(
+                                    "parity mismatch on shard {} at offset {}",
+                                    i, offset
+                                ));
                             }
                         }
                     }
@@ -261,14 +271,17 @@ pub fn verify_ec_shards(
 
     let mut broken_vec: Vec<u32> = broken_shards.into_iter().collect();
     broken_vec.sort_unstable();
-    
+
     Ok((broken_vec, details))
 }
 
 /// Write sorted .ecx index from .idx file.
 fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
     if !std::path::Path::new(idx_path).exists() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "idx file not found"));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "idx file not found",
+        ));
     }
 
     // Read all idx entries
@@ -317,7 +330,15 @@ fn encode_dat_file(
     // Process all data in small blocks to avoid large memory allocations
     while remaining > 0 {
         let to_process = remaining.min(row_size as i64);
-        encode_one_batch(dat_file, offset, block_size, rs, shards, data_shards, parity_shards)?;
+        encode_one_batch(
+            dat_file,
+            offset,
+            block_size,
+            rs,
+            shards,
+            data_shards,
+            parity_shards,
+        )?;
         offset += to_process as u64;
         remaining -= to_process;
     }
@@ -339,7 +360,10 @@ fn encode_one_batch(
     // Each batch allocates block_size * total_shards bytes.
     // With large blocks (1 GiB) this is 14 GiB -- guard against OOM.
     let total_alloc = block_size.checked_mul(total_shards).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "block_size * shard count overflows usize")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "block_size * shard count overflows usize",
+        )
     })?;
     const MAX_BATCH_ALLOC: usize = 1024 * 1024 * 1024; // 1 GiB safety limit
     if total_alloc > MAX_BATCH_ALLOC {
@@ -353,9 +377,7 @@ fn encode_one_batch(
     }
 
     // Allocate buffers for all shards
-    let mut buffers: Vec<Vec<u8>> = (0..total_shards)
-        .map(|_| vec![0u8; block_size])
-        .collect();
+    let mut buffers: Vec<Vec<u8>> = (0..total_shards).map(|_| vec![0u8; block_size]).collect();
 
     // Read data shards from .dat file
     for i in 0..data_shards {
@@ -377,7 +399,10 @@ fn encode_one_batch(
 
     // Encode parity shards
     rs.encode(&mut buffers).map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("reed-solomon encode: {:?}", e))
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("reed-solomon encode: {:?}", e),
+        )
     })?;
 
     // Write all shard buffers to files
@@ -403,9 +428,17 @@ mod tests {
 
         // Create a volume with some data
         let mut v = Volume::new(
-            dir, dir, "", VolumeId(1),
-            NeedleMapKind::InMemory, None, None, 0, Version::current(),
-        ).unwrap();
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
 
         for i in 1..=5 {
             let data = format!("test data for needle {}", i);
@@ -432,7 +465,8 @@ mod tests {
             let path = format!("{}/{}.ec{:02}", dir, 1, i);
             assert!(
                 std::path::Path::new(&path).exists(),
-                "shard file {} should exist", path
+                "shard file {} should exist",
+                path
             );
         }
 
@@ -462,7 +496,8 @@ mod tests {
         rs.encode(&mut shards).unwrap();
 
         // Verify parity is non-zero (at least some)
-        let parity_nonzero: bool = shards[data_shards..].iter()
+        let parity_nonzero: bool = shards[data_shards..]
+            .iter()
             .any(|s| s.iter().any(|&b| b != 0));
         assert!(parity_nonzero);
 

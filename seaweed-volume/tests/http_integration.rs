@@ -515,5 +515,7 @@ async fn admin_router_can_expose_ui_with_explicit_override() {
         .await
         .unwrap();
 
+    // UI handler does JWT check inside but read_signing_key is empty in this test,
+    // so it returns 200 (auth is only enforced when read key is set)
     assert_eq!(response.status(), StatusCode::OK);
 }
