@@ -110,11 +110,15 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		if sleepTime > remaining {
 			sleepTime = remaining
 		}
-		glog.V(0).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
+		glog.V(1).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
+		timer := time.NewTimer(sleepTime)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
 			return ctx.Err()
-		case <-time.After(sleepTime):
+		case <-timer.C:
 		}
 		waitTime += waitTime / 2
 		if waitTime > maxWaitTime {
