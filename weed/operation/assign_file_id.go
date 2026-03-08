@@ -155,7 +155,11 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 
 	// Compute a single deadline so all request entries (primary + fallback)
 	// share one 30s retry budget instead of each getting its own.
+	// Use a deadline-aware context so both RetryWithBackoff and per-attempt
+	// timeouts are bounded by the shared budget.
 	deadline := time.Now().Add(30 * time.Second)
+	deadlineCtx, deadlineCancel := context.WithDeadline(ctx, deadline)
+	defer deadlineCancel()
 
 	for i, request := range requests {
 		if request == nil {
@@ -167,14 +171,14 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 			break
 		}
 
-		lastError = util.RetryWithBackoff(ctx, "assign", remaining,
+		lastError = util.RetryWithBackoff(deadlineCtx, "assign", remaining,
 			func(err error) bool {
 				st, ok := status.FromError(err)
 				return ok && st.Code() == codes.Unavailable
 			},
 			func() error {
 				// Per-attempt timeout to prevent a single slow RPC from consuming the entire retry budget
-				attemptCtx, attemptCancel := context.WithTimeout(ctx, 10*time.Second)
+				attemptCtx, attemptCancel := context.WithTimeout(deadlineCtx, 10*time.Second)
 				defer attemptCancel()
 				return WithMasterServerClient(false, masterFn(attemptCtx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 					req := &master_pb.AssignRequest{
