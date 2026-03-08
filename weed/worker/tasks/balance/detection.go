@@ -193,7 +193,7 @@ func findServerIDByAddress(diskMetrics []*types.VolumeHealthMetrics, address str
 // createBalanceTask creates a single balance task for the selected volume.
 // Returns nil if destination planning fails.
 func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo) *types.TaskDetectionResult {
-	taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().Unix())
+	taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().UnixNano())
 
 	task := &types.TaskDetectionResult{
 		TaskID:     taskID,
@@ -374,7 +374,9 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 	}, nil
 }
 
-// calculateBalanceScore calculates placement score for balance operations
+// calculateBalanceScore calculates placement score for balance operations.
+// LoadCount reflects pending+assigned tasks on the disk, so we factor it into
+// the utilization estimate to avoid stacking multiple moves onto the same target.
 func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string, volumeSize uint64) float64 {
 	if disk.DiskInfo == nil {
 		return 0.0
@@ -382,9 +384,10 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 
 	score := 0.0
 
-	// Prefer disks with lower current volume count (better for balance)
+	// Prefer disks with lower effective volume count (current + pending moves)
 	if disk.DiskInfo.MaxVolumeCount > 0 {
-		utilization := float64(disk.DiskInfo.VolumeCount) / float64(disk.DiskInfo.MaxVolumeCount)
+		effectiveVolumeCount := float64(disk.DiskInfo.VolumeCount) + float64(disk.LoadCount)
+		utilization := effectiveVolumeCount / float64(disk.DiskInfo.MaxVolumeCount)
 		score += (1.0 - utilization) * 40.0 // Up to 40 points for low utilization
 	}
 
