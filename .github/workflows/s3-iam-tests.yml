@@ -5,6 +5,7 @@ on:
     paths:
       - 'weed/iam/**'
       - 'weed/s3api/**'
+      - 'weed/credential/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'weed/iam/**'
       - 'weed/s3api/**'
+      - 'weed/credential/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   
@@ -80,7 +82,7 @@ jobs:
     timeout-minutes: 25
     strategy:
       matrix:
-        test-type: ["basic", "advanced", "policy-enforcement"]
+        test-type: ["basic", "advanced", "policy-enforcement", "group"]
         
     steps:
       - name: Check out code
@@ -128,6 +130,11 @@ jobs:
               echo "Running policy enforcement tests..."
               make clean setup start-services wait-for-services
               go test -v -timeout 15m -run "TestS3IAMPolicyEnforcement|TestS3IAMBucketPolicy|TestS3IAMContextual" ./...
+              ;;
+            "group")
+              echo "Running IAM group management tests..."
+              make clean setup start-services wait-for-services
+              go test -v -timeout 15m -run "TestIAMGroup" ./...
               ;;
             *)
               echo "Unknown test type: ${{ matrix.test-type }}"
