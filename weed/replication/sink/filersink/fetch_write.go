@@ -334,6 +334,9 @@ func nextEofBackoff(current time.Duration) time.Duration {
 }
 
 func isEofError(err error) bool {
+	if err == nil {
+		return false
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "unexpected EOF") || strings.Contains(msg, "read input")
 }
