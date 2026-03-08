@@ -153,12 +153,21 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 	var lastError error
 	ret := &AssignResult{}
 
+	// Compute a single deadline so all request entries (primary + fallback)
+	// share one 30s retry budget instead of each getting its own.
+	deadline := time.Now().Add(30 * time.Second)
+
 	for i, request := range requests {
 		if request == nil {
 			continue
 		}
 
-		lastError = util.RetryWithBackoff(ctx, "assign", 30*time.Second,
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+
+		lastError = util.RetryWithBackoff(ctx, "assign", remaining,
 			func(err error) bool {
 				st, ok := status.FromError(err)
 				return ok && st.Code() == codes.Unavailable
