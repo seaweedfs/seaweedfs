@@ -93,9 +93,6 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 	var lastErr error
 	for {
 		if ctx.Err() != nil {
-			if lastErr != nil {
-				return lastErr
-			}
 			return ctx.Err()
 		}
 		if time.Until(deadline) <= 0 {
