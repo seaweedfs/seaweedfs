@@ -20,6 +20,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "erasure_coding",
+		Category: CategoryHeavy,
+		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
+		},
+	})
+}
+
 type erasureCodingWorkerConfig struct {
 	TaskConfig         *erasurecodingtask.Config
 	MinIntervalSeconds int

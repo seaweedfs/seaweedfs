@@ -21,6 +21,17 @@ const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 )
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "volume_balance",
+		Category: CategoryDefault,
+		Aliases:  []string{"balance", "volume.balance", "volume-balance"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewVolumeBalanceHandler(opts.GrpcDialOption), nil
+		},
+	})
+}
+
 type volumeBalanceWorkerConfig struct {
 	TaskConfig         *balancetask.Config
 	MinIntervalSeconds int

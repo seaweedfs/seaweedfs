@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
-	icebergworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker/iceberg"
+	_ "github.com/seaweedfs/seaweedfs/weed/plugin/worker/handlers" // register all handler subpackages
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -24,7 +24,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding,admin_script,iceberg_maintenance"
+const defaultPluginWorkerJobTypes = "all"
 
 type pluginWorkerRunOptions struct {
 	AdminServer string
@@ -138,100 +138,35 @@ func resolvePluginWorkerID(explicitID string, workingDir string) (string, error)
 	return worker.GenerateOrLoadWorkerID(workingDir)
 }
 
-// buildPluginWorkerHandler constructs the JobHandler for the given job type.
-// maxExecute is forwarded to handlers that use it to report their own
-// MaxExecutionConcurrency in Capability for consistency and future-proofing.
-// The scheduler's effective per-worker MaxExecutionConcurrency is derived from
-// the worker-level configuration (e.g. WorkerOptions.MaxExecutionConcurrency),
-// not directly from the handler's Capability.
-func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption, maxExecute int, workingDir string) (pluginworker.JobHandler, error) {
-	canonicalJobType, err := canonicalPluginWorkerJobType(jobType)
-	if err != nil {
-		return nil, err
-	}
-
-	switch canonicalJobType {
-	case "vacuum":
-		return pluginworker.NewVacuumHandler(dialOption, int32(maxExecute)), nil
-	case "volume_balance":
-		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
-	case "erasure_coding":
-		return pluginworker.NewErasureCodingHandler(dialOption, workingDir), nil
-	case "admin_script":
-		return pluginworker.NewAdminScriptHandler(dialOption), nil
-	case "iceberg_maintenance":
-		return icebergworker.NewHandler(dialOption), nil
-	default:
-		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
-	}
-}
-
-// buildPluginWorkerHandlers constructs a deduplicated slice of JobHandlers for
-// the comma-separated jobTypes string, forwarding maxExecute to each handler.
+// buildPluginWorkerHandlers resolves the comma-separated jobTypes string
+// (which may contain category names like "all", "default", "heavy" and/or
+// explicit job type names/aliases) into a deduplicated slice of JobHandlers.
 func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int, workingDir string) ([]pluginworker.JobHandler, error) {
-	parsedJobTypes, err := parsePluginWorkerJobTypes(jobTypes)
+	jobTypes = strings.TrimSpace(jobTypes)
+	if jobTypes == "" {
+		jobTypes = defaultPluginWorkerJobTypes
+	}
+
+	factories, err := pluginworker.ResolveHandlerFactories(jobTypes)
 	if err != nil {
 		return nil, err
 	}
 
-	handlers := make([]pluginworker.JobHandler, 0, len(parsedJobTypes))
-	for _, jobType := range parsedJobTypes {
-		handler, buildErr := buildPluginWorkerHandler(jobType, dialOption, maxExecute, workingDir)
+	opts := pluginworker.HandlerBuildOptions{
+		GrpcDialOption: dialOption,
+		MaxExecute:     maxExecute,
+		WorkingDir:     workingDir,
+	}
+
+	handlers := make([]pluginworker.JobHandler, 0, len(factories))
+	for _, f := range factories {
+		handler, buildErr := f.Build(opts)
 		if buildErr != nil {
-			return nil, buildErr
+			return nil, fmt.Errorf("building handler for %q: %w", f.JobType, buildErr)
 		}
 		handlers = append(handlers, handler)
 	}
 	return handlers, nil
-}
-
-func parsePluginWorkerJobTypes(jobTypes string) ([]string, error) {
-	jobTypes = strings.TrimSpace(jobTypes)
-	if jobTypes == "" {
-		return []string{"vacuum"}, nil
-	}
-
-	parts := strings.Split(jobTypes, ",")
-	parsed := make([]string, 0, len(parts))
-	seen := make(map[string]struct{}, len(parts))
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		canonical, err := canonicalPluginWorkerJobType(part)
-		if err != nil {
-			return nil, err
-		}
-		if _, found := seen[canonical]; found {
-			continue
-		}
-		seen[canonical] = struct{}{}
-		parsed = append(parsed, canonical)
-	}
-
-	if len(parsed) == 0 {
-		return []string{"vacuum"}, nil
-	}
-	return parsed, nil
-}
-
-func canonicalPluginWorkerJobType(jobType string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(jobType)) {
-	case "", "vacuum":
-		return "vacuum", nil
-	case "volume_balance", "balance", "volume.balance", "volume-balance":
-		return "volume_balance", nil
-	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
-		return "erasure_coding", nil
-	case "admin_script", "admin-script", "admin.script", "script", "admin":
-		return "admin_script", nil
-	case "iceberg_maintenance", "iceberg-maintenance", "iceberg.maintenance", "iceberg":
-		return "iceberg_maintenance", nil
-	default:
-		return "", fmt.Errorf("unsupported plugin job type %q", jobType)
-	}
 }
 
 func resolvePluginWorkerAdminServer(adminServer string) string {

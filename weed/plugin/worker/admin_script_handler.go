@@ -33,6 +33,17 @@ s3.clean.uploads -timeAgo=24h`
 
 var adminScriptTokenRegex = regexp.MustCompile(`'.*?'|".*?"|\S+`)
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "admin_script",
+		Category: CategoryDefault,
+		Aliases:  []string{"admin-script", "admin.script", "script", "admin"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewAdminScriptHandler(opts.GrpcDialOption), nil
+		},
+	})
+}
+
 type AdminScriptHandler struct {
 	grpcDialOption grpc.DialOption
 }

@@ -23,6 +23,17 @@ const (
 	DefaultMaxExecutionConcurrency = int32(2)
 )
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "vacuum",
+		Category: CategoryDefault,
+		Aliases:  []string{"vol.vacuum", "volume.vacuum"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewVacuumHandler(opts.GrpcDialOption, int32(opts.MaxExecute)), nil
+		},
+	})
+}
+
 // VacuumHandler is the plugin job handler for vacuum job type.
 type VacuumHandler struct {
 	grpcDialOption          grpc.DialOption
