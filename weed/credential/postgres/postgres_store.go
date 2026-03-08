@@ -178,6 +178,12 @@ func (store *PostgresStore) createTables() error {
 		return fmt.Errorf("failed to create groups table: %w", err)
 	}
 
+	// Create index on groups disabled column for filtering
+	groupsDisabledIndex := `CREATE INDEX IF NOT EXISTS idx_groups_disabled ON groups (disabled);`
+	if _, err := store.db.Exec(groupsDisabledIndex); err != nil {
+		return fmt.Errorf("failed to create groups disabled index: %w", err)
+	}
+
 	return nil
 }
 

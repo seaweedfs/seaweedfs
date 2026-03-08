@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -24,7 +26,10 @@ func (store *PostgresStore) CreateGroup(ctx context.Context, group *iam_pb.Group
 		`INSERT INTO groups (name, members, policy_names, disabled) VALUES ($1, $2, $3, $4)`,
 		group.Name, membersJSON, policyNamesJSON, group.Disabled)
 	if err != nil {
-		// Check for unique constraint violation
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return credential.ErrGroupAlreadyExists
+		}
 		return fmt.Errorf("failed to create group: %w", err)
 	}
 	return nil
