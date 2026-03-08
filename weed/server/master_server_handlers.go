@@ -60,6 +60,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 				remaining = time.Second
 			}
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+			location.Error = "service warming up, please retry"
 		} else {
 			httpStatus = http.StatusNotFound
 		}
