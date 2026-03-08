@@ -2,6 +2,7 @@ package wdclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -104,8 +105,13 @@ func TestLookupVolumeIdsStopsOnContextCancel(t *testing.T) {
 	_, err := provider.LookupVolumeIds(ctx, []string{"1"})
 	elapsed := time.Since(start)
 
-	if err == nil {
-		t.Fatal("expected error from context cancellation")
+	// Verify the error is from context deadline
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got: %v", err)
+	}
+	// Verify the loop actually retried (not just an immediate failure)
+	if calls := srv.callCount.Load(); calls <= 1 {
+		t.Errorf("expected multiple retry attempts, got %d calls", calls)
 	}
 	if elapsed > 5*time.Second {
 		t.Errorf("took %v, expected to stop near context deadline of 2s", elapsed)
