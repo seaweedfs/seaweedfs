@@ -149,7 +149,14 @@ func (store *FilerEtcStore) migrateToMultiFile(ctx context.Context, s3cfg *iam_p
 		}
 	}
 
-	// 3. Rename legacy file
+	// 3. Save all groups
+	for _, g := range s3cfg.Groups {
+		if err := store.saveGroup(ctx, g); err != nil {
+			return err
+		}
+	}
+
+	// 4. Rename legacy file
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
 			OldDirectory: filer.IamConfigDirectory,

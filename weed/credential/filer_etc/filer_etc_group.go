@@ -93,6 +93,9 @@ func (store *FilerEtcStore) deleteGroupFile(ctx context.Context, groupName strin
 }
 
 func (store *FilerEtcStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	existing, err := store.GetGroup(ctx, group.Name)
 	if err != nil {
 		if !errors.Is(err, credential.ErrGroupNotFound) {
@@ -151,6 +154,9 @@ func (store *FilerEtcStore) ListGroups(ctx context.Context) ([]string, error) {
 }
 
 func (store *FilerEtcStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	if _, err := store.GetGroup(ctx, group.Name); err != nil {
 		return err
 	}
