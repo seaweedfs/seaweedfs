@@ -751,3 +751,72 @@ func TestDetection_ConvergenceVerification(t *testing.T) {
 		})
 	}
 }
+
+// TestDetection_ExhaustedServerFallsThrough verifies that when the most
+// overloaded server has all its volumes blocked by pre-existing tasks,
+// the algorithm falls through to the next overloaded server instead of stopping.
+func TestDetection_ExhaustedServerFallsThrough(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	// node-a: 50 volumes, node-b: 40 volumes, node-c: 10 volumes
+	// avg = 33.3, imbalance = (50-10)/33.3 = 1.2 > 0.2
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 40)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 10)...)
+
+	at := buildTopology(servers, metrics)
+
+	// Block ALL of node-a's volumes with pre-existing tasks
+	for i := 0; i < 50; i++ {
+		volID := uint32(1 + i)
+		err := at.AddPendingTask(topology.TaskSpec{
+			TaskID:       fmt.Sprintf("existing-%d", volID),
+			TaskType:     topology.TaskTypeBalance,
+			VolumeID:     volID,
+			VolumeSize:   1024,
+			Sources:      []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
+			Destinations: []topology.TaskDestinationSpec{{ServerID: "node-c", DiskID: 3}},
+		})
+		if err != nil {
+			t.Fatalf("AddPendingTask failed: %v", err)
+		}
+	}
+
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// node-a is exhausted, but node-b (40 vols) vs node-c (10 vols) is still
+	// imbalanced. The algorithm should fall through and move from node-b.
+	if len(tasks) == 0 {
+		t.Fatal("Expected tasks from node-b after node-a was exhausted, got 0")
+	}
+
+	for i, task := range tasks {
+		if task.Server == "node-a" {
+			t.Errorf("Task %d: should not move FROM node-a (all volumes blocked)", i)
+		}
+	}
+
+	// Verify node-b is the source
+	hasNodeBSource := false
+	for _, task := range tasks {
+		if task.Server == "node-b" {
+			hasNodeBSource = true
+			break
+		}
+	}
+	if !hasNodeBSource {
+		t.Error("Expected node-b to be a source after node-a was exhausted")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+	t.Logf("Created %d tasks from node-b after node-a exhausted", len(tasks))
+}

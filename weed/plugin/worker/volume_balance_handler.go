@@ -236,7 +236,7 @@ func (h *VolumeBalanceHandler) Detect(
 		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
-	hasMore := false
+	hasMore := len(results) >= maxResults
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {
