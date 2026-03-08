@@ -3,7 +3,6 @@ package operation
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type VolumeAssignRequest struct {
@@ -201,7 +202,7 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 			})
 
 			// Retry on Unavailable (master warming up) with backoff, until ctx is done
-			if lastError != nil && strings.Contains(lastError.Error(), "Unavailable") {
+			if st, ok := status.FromError(lastError); ok && st.Code() == codes.Unavailable {
 				sleepTime := waitTime
 				if sleepTime > maxWaitTime {
 					sleepTime = maxWaitTime
