@@ -165,7 +165,8 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
-	hasNotFoundError := false
+	notFoundCount := 0
+	hasSuccessfulLookup := false
 	for _, volumeOrFileId := range req.VolumeOrFileIds {
 		vid := volumeOrFileId
 		commaSep := strings.Index(vid, ",")
@@ -187,7 +188,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 			}
 			if result.NotFound {
-				hasNotFoundError = true
+				notFoundCount++
+			} else if len(locations) > 0 {
+				hasSuccessfulLookup = true
 			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 				VolumeOrFileId: result.VolumeOrFileId,
@@ -198,8 +201,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		}
 	}
 
-	if hasNotFoundError && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
-		glog.V(0).Infof("lookup volume warming up: topology is still loading")
+	// Only return Unavailable during warmup when ALL lookups failed (no partial results)
+	if notFoundCount > 0 && !hasSuccessfulLookup && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
 		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
