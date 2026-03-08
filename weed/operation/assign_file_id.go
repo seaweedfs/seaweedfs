@@ -110,10 +110,12 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 			WritableVolumeCount: request.WritableVolumeCount,
 		}
 		if err = ap.assignClient.Send(req); err != nil {
+			ap.assignClient = nil
 			return nil, fmt.Errorf("StreamAssignSend: %w", err)
 		}
 		resp, grpcErr := ap.assignClient.Recv()
 		if grpcErr != nil {
+			ap.assignClient = nil
 			return nil, grpcErr
 		}
 		if resp.Error != "" {
