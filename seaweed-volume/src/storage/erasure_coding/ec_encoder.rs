@@ -313,6 +313,10 @@ fn write_sorted_ecx_from_idx(idx_path: &str, ecx_path: &str) -> io::Result<()> {
 }
 
 /// Encode the .dat file data into shard files.
+///
+/// Uses a two-phase approach matching Go's ec_encoder.go:
+/// 1. Process as many large blocks (1GB) as possible
+/// 2. Process remaining data with small blocks (1MB)
 fn encode_dat_file(
     dat_file: &File,
     dat_size: i64,
@@ -321,19 +325,37 @@ fn encode_dat_file(
     data_shards: usize,
     parity_shards: usize,
 ) -> io::Result<()> {
-    let block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
-    let row_size = block_size * data_shards;
-
     let mut remaining = dat_size;
     let mut offset: u64 = 0;
 
-    // Process all data in small blocks to avoid large memory allocations
-    while remaining > 0 {
-        let to_process = remaining.min(row_size as i64);
+    // Phase 1: Process large blocks (1GB each) while enough data remains
+    let large_block_size = ERASURE_CODING_LARGE_BLOCK_SIZE;
+    let large_row_size = large_block_size * data_shards;
+
+    while remaining >= large_row_size as i64 {
         encode_one_batch(
             dat_file,
             offset,
-            block_size,
+            large_block_size,
+            rs,
+            shards,
+            data_shards,
+            parity_shards,
+        )?;
+        offset += large_row_size as u64;
+        remaining -= large_row_size as i64;
+    }
+
+    // Phase 2: Process remaining data with small blocks (1MB each)
+    let small_block_size = ERASURE_CODING_SMALL_BLOCK_SIZE;
+    let small_row_size = small_block_size * data_shards;
+
+    while remaining > 0 {
+        let to_process = remaining.min(small_row_size as i64);
+        encode_one_batch(
+            dat_file,
+            offset,
+            small_block_size,
             rs,
             shards,
             data_shards,
@@ -365,7 +387,8 @@ fn encode_one_batch(
             "block_size * shard count overflows usize",
         )
     })?;
-    const MAX_BATCH_ALLOC: usize = 1024 * 1024 * 1024; // 1 GiB safety limit
+    // Large-block encoding uses 1 GiB * 14 shards = 14 GiB; allow up to 16 GiB.
+    const MAX_BATCH_ALLOC: usize = 16 * 1024 * 1024 * 1024; // 16 GiB safety limit
     if total_alloc > MAX_BATCH_ALLOC {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,

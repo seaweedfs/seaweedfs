@@ -795,15 +795,8 @@ async fn get_or_head_handler_inner(
         n = n_full;
     }
 
-    // Chunk manifest expansion (needs full data)
-    if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method) {
-            return resp;
-        }
-        // If manifest expansion fails (invalid JSON etc.), fall through to raw data
-    }
-
-    // Build ETag
+    // Build ETag and Last-Modified BEFORE conditional checks and chunk manifest expansion
+    // (matches Go order: conditional checks first, then chunk manifest)
     let etag = format!("\"{}\"", n.etag());
 
     // Build Last-Modified header (RFC 1123 format) — must be done before conditional checks
@@ -827,7 +820,13 @@ async fn get_or_head_handler_inner(
                     chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
                 {
                     if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
-                        return StatusCode::NOT_MODIFIED.into_response();
+                        let mut not_modified_headers = HeaderMap::new();
+                        not_modified_headers.insert(header::ETAG, etag.parse().unwrap());
+                        if let Some(ref lm) = last_modified_str {
+                            not_modified_headers
+                                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+                        }
+                        return (StatusCode::NOT_MODIFIED, not_modified_headers).into_response();
                     }
                 }
             }
@@ -838,9 +837,22 @@ async fn get_or_head_handler_inner(
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(inm) = if_none_match.to_str() {
             if inm == etag {
-                return StatusCode::NOT_MODIFIED.into_response();
+                let mut not_modified_headers = HeaderMap::new();
+                not_modified_headers.insert(header::ETAG, etag.parse().unwrap());
+                if let Some(ref lm) = last_modified_str {
+                    not_modified_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
+                }
+                return (StatusCode::NOT_MODIFIED, not_modified_headers).into_response();
             }
         }
+    }
+
+    // Chunk manifest expansion (needs full data) — after conditional checks, before response
+    if n.is_chunk_manifest() && !bypass_cm {
+        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method) {
+            return resp;
+        }
+        // If manifest expansion fails (invalid JSON etc.), fall through to raw data
     }
 
     let mut response_headers = HeaderMap::new();
@@ -875,8 +887,16 @@ async fn get_or_head_handler_inner(
     }
 
     // H6: Determine Content-Type: filter application/octet-stream, use mime_guess
+    // For chunk manifests, skip extension-based MIME override — use stored MIME as-is (Go parity)
     let content_type = if let Some(ref ct) = query.response_content_type {
         Some(ct.clone())
+    } else if n.is_chunk_manifest() {
+        // Chunk manifests: use the stored MIME directly without filtering or extension detection
+        if !n.mime.is_empty() {
+            Some(String::from_utf8_lossy(&n.mime).to_string())
+        } else {
+            None
+        }
     } else {
         // Get MIME from needle, but filter out application/octet-stream
         let needle_mime = if !n.mime.is_empty() {
@@ -1172,8 +1192,13 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
             .to_string();
 
         let mut body = Vec::new();
-        for &(start, end) in &ranges {
-            body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
+        for (i, &(start, end)) in ranges.iter().enumerate() {
+            // First boundary has no leading CRLF per RFC 2046
+            if i == 0 {
+                body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            } else {
+                body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
+            }
             body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
             body.extend_from_slice(
                 format!("Content-Range: bytes {}-{}/{}\r\n\r\n", start, end, total).as_bytes(),

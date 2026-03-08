@@ -484,7 +484,7 @@ mod tests {
     use crate::remote_storage::s3_tier::S3TierRegistry;
     use crate::security::{Guard, SigningKey};
     use crate::storage::needle_map::NeedleMapKind;
-    use crate::storage::types::{DiskType, VolumeId};
+    use crate::storage::types::{DiskType, Version, VolumeId};
     use std::sync::RwLock;
 
     fn test_config() -> HeartbeatConfig {
@@ -553,7 +553,7 @@ mod tests {
             )
             .unwrap();
         store
-            .add_volume(VolumeId(7), "pics", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(7), "pics", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
 
         let heartbeat = build_heartbeat(&test_config(), &store);

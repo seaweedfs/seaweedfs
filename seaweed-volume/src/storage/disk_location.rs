@@ -152,6 +152,7 @@ impl DiskLocation {
         replica_placement: Option<ReplicaPlacement>,
         ttl: Option<crate::storage::needle::ttl::TTL>,
         preallocate: u64,
+        version: Version,
     ) -> Result<(), VolumeError> {
         let v = Volume::new(
             &self.directory,
@@ -162,7 +163,7 @@ impl DiskLocation {
             replica_placement,
             ttl,
             preallocate,
-            Version::current(),
+            version,
         )?;
         self.volumes.insert(vid, v);
         Ok(())
@@ -348,7 +349,7 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
 
         assert_eq!(loc.volumes_len(), 1);
@@ -373,9 +374,9 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-            loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+            loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
                 .unwrap();
-            loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0)
+            loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0, Version::current())
                 .unwrap();
             loc.close();
         }
@@ -412,9 +413,9 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
-        loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
@@ -437,11 +438,11 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
-        loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
-        loc.create_volume(VolumeId(3), "docs", NeedleMapKind::InMemory, None, None, 0)
+        loc.create_volume(VolumeId(3), "docs", NeedleMapKind::InMemory, None, None, 0, Version::current())
             .unwrap();
         assert_eq!(loc.volumes_len(), 3);
 

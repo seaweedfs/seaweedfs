@@ -1305,9 +1305,18 @@ impl Volume {
     }
 
     /// Mark this volume as read-only (no writes or deletes).
+    /// If `persist` is true, the readonly state is saved to the .vif file.
     pub fn set_read_only(&mut self) {
         self.no_write_or_delete = true;
         self.save_vif();
+    }
+
+    /// Mark this volume as read-only, optionally persisting to .vif.
+    pub fn set_read_only_persist(&mut self, persist: bool) {
+        self.no_write_or_delete = true;
+        if persist {
+            self.save_vif();
+        }
     }
 
     /// Mark this volume as writable (allow writes and deletes).
@@ -1756,15 +1765,13 @@ impl Volume {
             };
             self.read_needle_data_at(&mut n, offset.to_actual_offset(), size)?;
 
-            // Skip TTL-expired needles
+            // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
             if n.has_ttl() {
-                if let Some(ref ttl) = n.ttl {
-                    let ttl_minutes = ttl.minutes();
-                    if ttl_minutes > 0 && n.last_modified > 0 {
-                        let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
-                        if now >= expire_at {
-                            continue;
-                        }
+                let ttl_minutes = self.super_block.ttl.minutes();
+                if ttl_minutes > 0 && n.last_modified > 0 {
+                    let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
+                    if now >= expire_at {
+                        continue;
                     }
                 }
             }

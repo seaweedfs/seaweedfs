@@ -353,6 +353,12 @@ impl VolumeServer for VolumeGrpcService {
         };
         let disk_type = DiskType::from_string(&req.disk_type);
 
+        let version = if req.version > 0 {
+            crate::storage::types::Version(req.version as u8)
+        } else {
+            crate::storage::types::Version::current()
+        };
+
         let mut store = self.state.store.write().unwrap();
         store
             .add_volume(
@@ -362,6 +368,7 @@ impl VolumeServer for VolumeGrpcService {
                 ttl,
                 req.preallocate as u64,
                 disk_type,
+                version,
             )
             .map_err(|e| Status::internal(e.to_string()))?;
 
@@ -541,7 +548,7 @@ impl VolumeServer for VolumeGrpcService {
         let (_, vol) = store
             .find_volume_mut(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
-        vol.set_read_only();
+        vol.set_read_only_persist(req.persist);
         drop(store);
         self.state.volume_state_notify.notify_one();
         Ok(Response::new(
@@ -582,29 +589,39 @@ impl VolumeServer for VolumeGrpcService {
             Ok(rp) => rp,
             Err(e) => {
                 return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
-                    error: format!("invalid replica placement: {}", e),
+                    error: format!("volume configure replication {}: {}", req.replication, e),
                 }));
             }
         };
 
         let mut store = self.state.store.write().unwrap();
-        let (_, vol) = match store.find_volume_mut(vid) {
-            Some(v) => v,
-            None => {
-                return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
-                    error: format!("volume {} not found on disk, failed to restore mount", vid),
-                }));
-            }
-        };
 
-        match vol.set_replica_placement(rp) {
-            Ok(()) => Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
-                error: String::new(),
-            })),
-            Err(e) => Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
-                error: e.to_string(),
-            })),
+        // Unmount the volume (Go returns nil for non-existent volumes, so we don't
+        // treat a missing volume as an error here — configure_volume will catch it)
+        store.unmount_volume(vid);
+
+        // Modify the super block on disk (replica_placement byte)
+        if let Err(e) = store.configure_volume(vid, rp) {
+            let mut error = format!("volume configure {}: {}", vid, e);
+            // Error recovery: try to re-mount anyway
+            if let Err(mount_err) = store.mount_volume(vid, "", DiskType::HardDrive) {
+                error += &format!(". Also failed to restore mount: {}", mount_err);
+            }
+            return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error,
+            }));
         }
+
+        // Re-mount the volume
+        if let Err(e) = store.mount_volume(vid, "", DiskType::HardDrive) {
+            return Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+                error: format!("volume configure mount {}: {}", vid, e),
+            }));
+        }
+
+        Ok(Response::new(volume_server_pb::VolumeConfigureResponse {
+            error: String::new(),
+        }))
     }
 
     async fn volume_status(

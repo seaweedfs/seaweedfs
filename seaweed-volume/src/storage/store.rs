@@ -149,6 +149,7 @@ impl Store {
         ttl: Option<crate::storage::needle::ttl::TTL>,
         preallocate: u64,
         disk_type: DiskType,
+        version: Version,
     ) -> Result<(), VolumeError> {
         if self.find_volume(vid).is_some() {
             return Err(VolumeError::AlreadyExists);
@@ -167,6 +168,7 @@ impl Store {
             replica_placement,
             ttl,
             preallocate,
+            version,
         )
     }
 
@@ -208,7 +210,71 @@ impl Store {
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
             let dat_path = format!("{}.dat", base);
             if std::path::Path::new(&dat_path).exists() {
-                return loc.create_volume(vid, collection, self.needle_map_kind, None, None, 0);
+                return loc.create_volume(vid, collection, self.needle_map_kind, None, None, 0, Version::current());
+            }
+        }
+        Err(VolumeError::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("volume {} not found on disk", vid),
+        )))
+    }
+
+    /// Configure a volume's replica placement on disk.
+    /// The volume must already be unmounted. This opens the .dat file directly,
+    /// modifies the replica_placement byte (offset 1), and writes it back.
+    pub fn configure_volume(
+        &self,
+        vid: VolumeId,
+        rp: ReplicaPlacement,
+    ) -> Result<(), VolumeError> {
+        use std::io::{Read, Seek, SeekFrom, Write};
+        // Find the .dat file across all locations
+        for loc in &self.locations {
+            // Try both empty and all known collection prefixes
+            // We scan the directory for matching .dat files
+            let dir = &loc.directory;
+            let patterns = [
+                format!("{}/{}.dat", dir, vid.0),
+            ];
+            for dat_path in &patterns {
+                if std::path::Path::new(dat_path).exists() {
+                    let mut file = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(dat_path)
+                        .map_err(VolumeError::Io)?;
+                    // Read the super block header (at least 8 bytes)
+                    let mut header = [0u8; 8];
+                    file.read_exact(&mut header).map_err(VolumeError::Io)?;
+                    // Byte 1 is the replica_placement
+                    header[1] = rp.to_byte();
+                    file.seek(SeekFrom::Start(0)).map_err(VolumeError::Io)?;
+                    file.write_all(&header).map_err(VolumeError::Io)?;
+                    file.sync_all().map_err(VolumeError::Io)?;
+                    return Ok(());
+                }
+            }
+            // Also check collection-prefixed files
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if name.ends_with(&format!("_{}.dat", vid.0)) {
+                        let dat_path = entry.path();
+                        let mut file = std::fs::OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .open(&dat_path)
+                            .map_err(VolumeError::Io)?;
+                        let mut header = [0u8; 8];
+                        file.read_exact(&mut header).map_err(VolumeError::Io)?;
+                        header[1] = rp.to_byte();
+                        file.seek(SeekFrom::Start(0)).map_err(VolumeError::Io)?;
+                        file.write_all(&header).map_err(VolumeError::Io)?;
+                        file.sync_all().map_err(VolumeError::Io)?;
+                        return Ok(());
+                    }
+                }
             }
         }
         Err(VolumeError::Io(io::Error::new(
@@ -582,7 +648,7 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
@@ -595,7 +661,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
 
         // Write
@@ -661,10 +727,10 @@ mod tests {
 
         // Add volumes — should go to location with fewest volumes
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
         store
-            .add_volume(VolumeId(2), "", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(2), "", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
 
         assert_eq!(store.total_volume_count(), 2);
@@ -680,13 +746,13 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(VolumeId(1), "pics", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(1), "pics", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
         store
-            .add_volume(VolumeId(2), "pics", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(2), "pics", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
         store
-            .add_volume(VolumeId(3), "docs", None, None, 0, DiskType::HardDrive)
+            .add_volume(VolumeId(3), "docs", None, None, 0, DiskType::HardDrive, Version::current())
             .unwrap();
         assert_eq!(store.total_volume_count(), 3);
 

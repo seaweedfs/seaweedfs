@@ -16,7 +16,7 @@ use seaweed_volume::server::volume_server::{
 };
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
-use seaweed_volume::storage::types::{DiskType, VolumeId};
+use seaweed_volume::storage::types::{DiskType, Version, VolumeId};
 
 use tempfile::TempDir;
 
@@ -42,7 +42,7 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         )
         .expect("failed to add location");
     store
-        .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
+        .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
         .expect("failed to create volume");
 
     let guard = Guard::new(&[], SigningKey(signing_key), 0, SigningKey(vec![]), 0);
