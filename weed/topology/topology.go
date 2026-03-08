@@ -151,11 +151,10 @@ func (t *Topology) WarmupDuration() time.Duration {
 
 // RemainingWarmupDuration returns how much warmup time is left, or 0 if not warming up.
 func (t *Topology) RemainingWarmupDuration() time.Duration {
-	lastChange := t.GetLastLeaderChangeTime()
-	if lastChange.IsZero() {
+	if !t.IsWarmingUp() {
 		return 0
 	}
-	remaining := t.WarmupDuration() - time.Since(lastChange)
+	remaining := t.WarmupDuration() - time.Since(t.GetLastLeaderChangeTime())
 	if remaining < 0 {
 		return 0
 	}
