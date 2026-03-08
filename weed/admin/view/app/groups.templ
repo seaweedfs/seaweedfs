@@ -1,0 +1,396 @@
+package app
+
+import (
+    "fmt"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ Groups(data dash.GroupsPageData) {
+    <div class="container-fluid">
+        <!-- Page Header -->
+        <div class="d-sm-flex align-items-center justify-content-between mb-4">
+            <div>
+                <h1 class="h3 mb-0 text-gray-800">
+                    <i class="fas fa-users-cog me-2"></i>Groups
+                </h1>
+                <p class="mb-0 text-muted">Manage IAM groups for organizing users and policies</p>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-primary"
+                        data-bs-toggle="modal"
+                        data-bs-target="#createGroupModal">
+                    <i class="fas fa-plus me-1"></i>Create Group
+                </button>
+            </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="row mb-4">
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-primary shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                                    Total Groups
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.TotalGroups)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-users-cog fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-xl-3 col-md-6 mb-4">
+                <div class="card border-left-success shadow h-100 py-2">
+                    <div class="card-body">
+                        <div class="row no-gutters align-items-center">
+                            <div class="col mr-2">
+                                <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                                    Active Groups
+                                </div>
+                                <div class="h5 mb-0 font-weight-bold text-gray-800">
+                                    {fmt.Sprintf("%d", data.ActiveGroups)}
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <i class="fas fa-check-circle fa-2x text-gray-300"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Groups Table -->
+        <div class="card shadow mb-4">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">Groups</h6>
+            </div>
+            <div class="card-body">
+                if len(data.Groups) == 0 {
+                    <div class="text-center py-5 text-muted">
+                        <i class="fas fa-users-cog fa-3x mb-3"></i>
+                        <p>No groups found. Create a group to get started.</p>
+                    </div>
+                } else {
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover" id="groupsTable" width="100%" cellspacing="0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Members</th>
+                                    <th>Policies</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                for _, group := range data.Groups {
+                                    <tr>
+                                        <td>
+                                            <strong>{group.Name}</strong>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-info">{fmt.Sprintf("%d", group.MemberCount)}</span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">{fmt.Sprintf("%d", group.PolicyCount)}</span>
+                                        </td>
+                                        <td>
+                                            if group.Status == "enabled" {
+                                                <span class="badge bg-success">Enabled</span>
+                                            } else {
+                                                <span class="badge bg-danger">Disabled</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-primary me-1"
+                                                    onclick={ templ.ComponentScript{Call: fmt.Sprintf("viewGroup('%s')", group.Name)} }>
+                                                <i class="fas fa-eye"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    onclick={ templ.ComponentScript{Call: fmt.Sprintf("deleteGroup('%s')", group.Name)} }>
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Create Group Modal -->
+        <div class="modal fade" id="createGroupModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Create Group</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="createGroupForm">
+                            <div class="mb-3">
+                                <label for="groupName" class="form-label">Group Name</label>
+                                <input type="text" class="form-control" id="groupName" name="name" required
+                                       placeholder="Enter group name"/>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="createGroup()">Create</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- View Group Modal -->
+        <div class="modal fade" id="viewGroupModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="viewGroupTitle">Group Details</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <ul class="nav nav-tabs" id="groupTabs" role="tablist">
+                            <li class="nav-item">
+                                <a class="nav-link active" id="members-tab" data-bs-toggle="tab" href="#membersPane" role="tab">Members</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" id="policies-tab" data-bs-toggle="tab" href="#policiesPane" role="tab">Policies</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" id="settings-tab" data-bs-toggle="tab" href="#settingsPane" role="tab">Settings</a>
+                            </li>
+                        </ul>
+                        <div class="tab-content mt-3" id="groupTabContent">
+                            <!-- Members Tab -->
+                            <div class="tab-pane fade show active" id="membersPane" role="tabpanel">
+                                <div class="mb-3">
+                                    <div class="input-group">
+                                        <select class="form-select" id="addMemberSelect">
+                                            <option value="">Select user to add...</option>
+                                            for _, user := range data.AvailableUsers {
+                                                <option value={user}>{user}</option>
+                                            }
+                                        </select>
+                                        <button class="btn btn-outline-primary" type="button" onclick="addMemberToGroup()">
+                                            <i class="fas fa-plus"></i> Add
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="membersList"></div>
+                            </div>
+                            <!-- Policies Tab -->
+                            <div class="tab-pane fade" id="policiesPane" role="tabpanel">
+                                <div class="mb-3">
+                                    <div class="input-group">
+                                        <select class="form-select" id="attachPolicySelect">
+                                            <option value="">Select policy to attach...</option>
+                                            for _, policy := range data.AvailablePolicies {
+                                                <option value={policy}>{policy}</option>
+                                            }
+                                        </select>
+                                        <button class="btn btn-outline-primary" type="button" onclick="attachPolicyToGroup()">
+                                            <i class="fas fa-plus"></i> Attach
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="policiesList"></div>
+                            </div>
+                            <!-- Settings Tab -->
+                            <div class="tab-pane fade" id="settingsPane" role="tabpanel">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="groupEnabledSwitch" checked
+                                           onchange="toggleGroupStatus()"/>
+                                    <label class="form-check-label" for="groupEnabledSwitch">Group Enabled</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/iam-utils.js"></script>
+    <script>
+        // Groups page JavaScript
+        let currentGroupName = '';
+
+        async function createGroup() {
+            const name = document.getElementById('groupName').value.trim();
+            if (!name) {
+                showAlert('Group name is required', 'error');
+                return;
+            }
+            try {
+                const response = await fetch('/api/groups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+                if (response.ok) {
+                    showAlert('Group created successfully', 'success');
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to create group: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to create group: ' + error.message, 'error');
+            }
+        }
+
+        async function viewGroup(name) {
+            currentGroupName = name;
+            document.getElementById('viewGroupTitle').textContent = 'Group: ' + name;
+            await refreshGroupDetails();
+            new bootstrap.Modal(document.getElementById('viewGroupModal')).show();
+        }
+
+        async function refreshGroupDetails() {
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName));
+                if (!response.ok) throw new Error('Failed to fetch group');
+                const group = await response.json();
+
+                // Render members
+                let membersHtml = '<table class="table table-sm"><tbody>';
+                if (group.members && group.members.length > 0) {
+                    for (const member of group.members) {
+                        membersHtml += '<tr><td>' + member + '</td><td><button class="btn btn-sm btn-outline-danger" onclick="removeMember(\'' + member + '\')"><i class="fas fa-times"></i></button></td></tr>';
+                    }
+                } else {
+                    membersHtml += '<tr><td class="text-muted">No members</td></tr>';
+                }
+                membersHtml += '</tbody></table>';
+                document.getElementById('membersList').innerHTML = membersHtml;
+
+                // Render policies
+                let policiesHtml = '<table class="table table-sm"><tbody>';
+                if (group.policy_names && group.policy_names.length > 0) {
+                    for (const policy of group.policy_names) {
+                        policiesHtml += '<tr><td>' + policy + '</td><td><button class="btn btn-sm btn-outline-danger" onclick="detachPolicy(\'' + policy + '\')"><i class="fas fa-times"></i></button></td></tr>';
+                    }
+                } else {
+                    policiesHtml += '<tr><td class="text-muted">No policies attached</td></tr>';
+                }
+                policiesHtml += '</tbody></table>';
+                document.getElementById('policiesList').innerHTML = policiesHtml;
+
+                // Update status toggle
+                document.getElementById('groupEnabledSwitch').checked = (group.status === 'enabled');
+            } catch (error) {
+                console.error('Error fetching group details:', error);
+            }
+        }
+
+        async function addMemberToGroup() {
+            const username = document.getElementById('addMemberSelect').value;
+            if (!username) return;
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/members', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username })
+                });
+                if (response.ok) {
+                    await refreshGroupDetails();
+                    showAlert('Member added', 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to add member: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to add member: ' + error.message, 'error');
+            }
+        }
+
+        async function removeMember(username) {
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/members/' + encodeURIComponent(username), {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    await refreshGroupDetails();
+                    showAlert('Member removed', 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to remove member: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to remove member: ' + error.message, 'error');
+            }
+        }
+
+        async function attachPolicyToGroup() {
+            const policyName = document.getElementById('attachPolicySelect').value;
+            if (!policyName) return;
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ policy_name: policyName })
+                });
+                if (response.ok) {
+                    await refreshGroupDetails();
+                    showAlert('Policy attached', 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to attach policy: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to attach policy: ' + error.message, 'error');
+            }
+        }
+
+        async function detachPolicy(policyName) {
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies/' + encodeURIComponent(policyName), {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    await refreshGroupDetails();
+                    showAlert('Policy detached', 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to detach policy: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to detach policy: ' + error.message, 'error');
+            }
+        }
+
+        async function toggleGroupStatus() {
+            const enabled = document.getElementById('groupEnabledSwitch').checked;
+            try {
+                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/status', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                if (response.ok) {
+                    showAlert('Group status updated', 'success');
+                } else {
+                    const error = await response.json().catch(() => ({}));
+                    showAlert('Failed to update status: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to update status: ' + error.message, 'error');
+            }
+        }
+    </script>
+}
