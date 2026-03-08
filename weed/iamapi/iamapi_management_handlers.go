@@ -219,6 +219,8 @@ func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName 
 				}
 			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			// Remove user from all groups
+			removeUserFromAllGroups(s3cfg, userName)
 			return resp, nil
 		}
 	}
@@ -258,6 +260,8 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 						}
 					}
 				}
+				// Update group membership references
+				updateUserInGroups(s3cfg, userName, newUserName)
 				return resp, nil
 			}
 		}

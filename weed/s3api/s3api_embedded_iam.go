@@ -315,6 +315,15 @@ func (e *EmbeddedIamApi) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName s
 				}
 			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			// Remove user from all groups
+			for _, g := range s3cfg.Groups {
+				for j, m := range g.Members {
+					if m == userName {
+						g.Members = append(g.Members[:j], g.Members[j+1:]...)
+						break
+					}
+				}
+			}
 			return resp, nil
 		}
 	}
@@ -342,6 +351,15 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 		for _, ident := range s3cfg.Identities {
 			if userName == ident.Name {
 				ident.Name = newUserName
+				// Update group membership references
+				for _, g := range s3cfg.Groups {
+					for j, m := range g.Members {
+						if m == userName {
+							g.Members[j] = newUserName
+							break
+						}
+					}
+				}
 				return resp, nil
 			}
 		}
