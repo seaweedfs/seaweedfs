@@ -1,5 +1,9 @@
 /* SeaweedFS Dashboard Custom Styles */
 
+:root {
+    --navbar-height: 56px;
+}
+
 /* Link colors - muted */
 a {
     color: #5b7c99;
@@ -12,7 +16,7 @@ a:hover {
 /* Sidebar Styles */
 .sidebar {
     position: fixed;
-    top: 56px;
+    top: var(--navbar-height);
     bottom: 0;
     left: 0;
     z-index: 100;
@@ -51,7 +55,7 @@ main {
 
 @media (max-width: 767.98px) {
     .sidebar {
-        top: 56px;
+        top: var(--navbar-height);
         padding-top: 0;
         width: 240px;
         background-color: #f8f9fa !important;
@@ -69,7 +73,7 @@ main {
 .sidebar-backdrop {
     display: none;
     position: fixed;
-    top: 56px;
+    top: var(--navbar-height);
     left: 0;
     right: 0;
     bottom: 0;
