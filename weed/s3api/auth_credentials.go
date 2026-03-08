@@ -1996,11 +1996,25 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		}
 	}
 
-	// Create IAMIdentity for authorization
+	// Create IAMIdentity for authorization — copy PolicyNames to avoid mutating shared identity
+	policyNames := make([]string, len(identity.PolicyNames))
+	copy(policyNames, identity.PolicyNames)
+
+	// Include policies inherited from user's groups
+	iam.m.RLock()
+	if groupNames, ok := iam.userGroups[identity.Name]; ok {
+		for _, gn := range groupNames {
+			if g, exists := iam.groups[gn]; exists && !g.Disabled {
+				policyNames = append(policyNames, g.PolicyNames...)
+			}
+		}
+	}
+	iam.m.RUnlock()
+
 	iamIdentity := &IAMIdentity{
 		Name:        identity.Name,
 		Account:     identity.Account,
-		PolicyNames: identity.PolicyNames,
+		PolicyNames: policyNames,
 		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
