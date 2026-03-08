@@ -105,7 +105,7 @@ func (h *GroupHandlers) GetGroupMembers(w http.ResponseWriter, r *http.Request) 
 	name := mux.Vars(r)["name"]
 	group, err := h.adminServer.GetGroupDetails(r.Context(), name)
 	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "Group not found")
+		writeJSONError(w, groupErrorToHTTPStatus(err), "Failed to get group: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"members": group.Members})
@@ -145,7 +145,7 @@ func (h *GroupHandlers) GetGroupPolicies(w http.ResponseWriter, r *http.Request)
 	name := mux.Vars(r)["name"]
 	group, err := h.adminServer.GetGroupDetails(r.Context(), name)
 	if err != nil {
-		writeJSONError(w, http.StatusNotFound, "Group not found")
+		writeJSONError(w, groupErrorToHTTPStatus(err), "Failed to get group: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": group.PolicyNames})
