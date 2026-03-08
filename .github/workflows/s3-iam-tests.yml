@@ -6,6 +6,7 @@ on:
       - 'weed/iam/**'
       - 'weed/s3api/**'
       - 'weed/credential/**'
+      - 'weed/pb/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   push:
@@ -14,6 +15,7 @@ on:
       - 'weed/iam/**'
       - 'weed/s3api/**'
       - 'weed/credential/**'
+      - 'weed/pb/**'
       - 'test/s3/iam/**'
       - '.github/workflows/s3-iam-tests.yml'
   
