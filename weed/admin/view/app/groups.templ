@@ -267,29 +267,59 @@ templ Groups(data dash.GroupsPageData) {
                 if (!response.ok) throw new Error('Failed to fetch group');
                 const group = await response.json();
 
-                // Render members
-                let membersHtml = '<table class="table table-sm"><tbody>';
+                // Render members using DOM APIs to prevent XSS
+                const membersList = document.getElementById('membersList');
+                membersList.innerHTML = '';
+                const membersTable = document.createElement('table');
+                membersTable.className = 'table table-sm';
+                const membersTbody = document.createElement('tbody');
                 if (group.members && group.members.length > 0) {
                     for (const member of group.members) {
-                        membersHtml += '<tr><td>' + member + '</td><td><button class="btn btn-sm btn-outline-danger" onclick="removeMember(\'' + member + '\')"><i class="fas fa-times"></i></button></td></tr>';
+                        const tr = membersTbody.insertRow();
+                        const td1 = tr.insertCell();
+                        td1.textContent = member;
+                        const td2 = tr.insertCell();
+                        const btn = document.createElement('button');
+                        btn.className = 'btn btn-sm btn-outline-danger';
+                        btn.onclick = () => removeMember(member);
+                        btn.innerHTML = '<i class="fas fa-times"></i>';
+                        td2.appendChild(btn);
                     }
                 } else {
-                    membersHtml += '<tr><td class="text-muted">No members</td></tr>';
+                    const tr = membersTbody.insertRow();
+                    const td = tr.insertCell();
+                    td.className = 'text-muted';
+                    td.textContent = 'No members';
                 }
-                membersHtml += '</tbody></table>';
-                document.getElementById('membersList').innerHTML = membersHtml;
+                membersTable.appendChild(membersTbody);
+                membersList.appendChild(membersTable);
 
-                // Render policies
-                let policiesHtml = '<table class="table table-sm"><tbody>';
+                // Render policies using DOM APIs to prevent XSS
+                const policiesList = document.getElementById('policiesList');
+                policiesList.innerHTML = '';
+                const policiesTable = document.createElement('table');
+                policiesTable.className = 'table table-sm';
+                const policiesTbody = document.createElement('tbody');
                 if (group.policy_names && group.policy_names.length > 0) {
                     for (const policy of group.policy_names) {
-                        policiesHtml += '<tr><td>' + policy + '</td><td><button class="btn btn-sm btn-outline-danger" onclick="detachPolicy(\'' + policy + '\')"><i class="fas fa-times"></i></button></td></tr>';
+                        const tr = policiesTbody.insertRow();
+                        const td1 = tr.insertCell();
+                        td1.textContent = policy;
+                        const td2 = tr.insertCell();
+                        const btn = document.createElement('button');
+                        btn.className = 'btn btn-sm btn-outline-danger';
+                        btn.onclick = () => detachPolicy(policy);
+                        btn.innerHTML = '<i class="fas fa-times"></i>';
+                        td2.appendChild(btn);
                     }
                 } else {
-                    policiesHtml += '<tr><td class="text-muted">No policies attached</td></tr>';
+                    const tr = policiesTbody.insertRow();
+                    const td = tr.insertCell();
+                    td.className = 'text-muted';
+                    td.textContent = 'No policies attached';
                 }
-                policiesHtml += '</tbody></table>';
-                document.getElementById('policiesList').innerHTML = policiesHtml;
+                policiesTable.appendChild(policiesTbody);
+                policiesList.appendChild(policiesTable);
 
                 // Update status toggle
                 document.getElementById('groupEnabledSwitch').checked = (group.status === 'enabled');

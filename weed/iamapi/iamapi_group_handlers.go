@@ -228,21 +228,32 @@ func (iama *IamApiServer) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, va
 	if !userFound {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s does not exist", userName)}
 	}
-	for _, g := range s3cfg.Groups {
-		for _, m := range g.Members {
-			if m == userName {
-				name := g.Name
-				resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
-				break
-			}
-		}
+	// Build reverse index for efficient lookup
+	userGroupsIndex := buildUserGroupsIndex(s3cfg)
+	for _, gName := range userGroupsIndex[userName] {
+		name := gName
+		resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
 	}
 	return resp, nil
 }
 
 // removeUserFromAllGroups removes a user from all groups they belong to.
+// Uses a reverse index for efficient lookup of which groups to modify.
 func removeUserFromAllGroups(s3cfg *iam_pb.S3ApiConfiguration, userName string) {
+	userGroupsIndex := buildUserGroupsIndex(s3cfg)
+	groupNames, found := userGroupsIndex[userName]
+	if !found {
+		return
+	}
+	// Build a set for fast group name lookup
+	targetGroups := make(map[string]bool, len(groupNames))
+	for _, gn := range groupNames {
+		targetGroups[gn] = true
+	}
 	for _, g := range s3cfg.Groups {
+		if !targetGroups[g.Name] {
+			continue
+		}
 		for i, m := range g.Members {
 			if m == userName {
 				g.Members = append(g.Members[:i], g.Members[i+1:]...)
@@ -274,6 +285,17 @@ func isPolicyAttachedToAnyGroup(s3cfg *iam_pb.S3ApiConfiguration, policyName str
 		}
 	}
 	return "", false
+}
+
+// buildUserGroupsIndex builds a reverse index mapping usernames to group names.
+func buildUserGroupsIndex(s3cfg *iam_pb.S3ApiConfiguration) map[string][]string {
+	index := make(map[string][]string)
+	for _, g := range s3cfg.Groups {
+		for _, m := range g.Members {
+			index[m] = append(index[m], g.Name)
+		}
+	}
+	return index
 }
 
 // policyNameFromArn extracts policy name from ARN for standalone handlers.

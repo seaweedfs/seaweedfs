@@ -7,6 +7,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
+// NOTE: The gRPC store uses a load-modify-save pattern for all operations,
+// which is inherently subject to race conditions under concurrent access.
+// This matches the existing pattern used for identities and policies.
+// A future improvement would add dedicated gRPC RPCs for atomic group operations.
+
 func (store *IamGrpcStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {

@@ -1657,14 +1657,13 @@ func (e *EmbeddedIamApi) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, val
 	if !userFound {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s does not exist", userName)}
 	}
-	for _, g := range s3cfg.Groups {
-		for _, m := range g.Members {
-			if m == userName {
-				name := g.Name
-				resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
-				break
-			}
-		}
+	// Use the in-memory reverse index for O(1) lookup
+	e.iam.m.RLock()
+	groupNames := e.iam.userGroups[userName]
+	e.iam.m.RUnlock()
+	for _, gName := range groupNames {
+		name := gName
+		resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
 	}
 	return resp, nil
 }
