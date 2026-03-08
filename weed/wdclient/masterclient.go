@@ -64,6 +64,12 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 
 			// Resolve master first so GetMaster() blocking doesn't consume the RPC timeout
 			master := p.masterClient.GetMaster(ctx)
+			if master == "" {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return status.Errorf(codes.Unavailable, "no master available")
+			}
 
 			// Use a timeout for the master lookup to prevent indefinite blocking
 			timeoutCtx, cancel := context.WithTimeout(ctx, p.masterClient.grpcTimeout)
