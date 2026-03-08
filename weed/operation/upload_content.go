@@ -38,6 +38,7 @@ type UploadOption struct {
 	RetryForever      bool
 	Md5               string
 	BytesBuffer       *bytes.Buffer
+	SourceUrl         string // optional: for logging when reading from a remote source
 }
 
 type UploadResult struct {
@@ -135,11 +136,11 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	} else {
 		data, err = io.ReadAll(reader)
 		if err != nil {
-			glog.V(0).Infof("upload read input %s: %v", uploadOption.UploadUrl, err)
+			glog.V(0).Infof("upload read input %s: %v", uploadOption.SourceUrl, err)
 			err = fmt.Errorf("read input: %w", err)
 			return
 		}
-		glog.V(4).Infof("upload read %d bytes for %s", len(data), uploadOption.UploadUrl)
+		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
 	}
 
 	doUploadFunc := func() error {

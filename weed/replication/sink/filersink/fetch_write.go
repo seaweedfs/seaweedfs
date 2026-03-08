@@ -255,6 +255,11 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 		defer util_http.CloseResponse(resp)
 
+		sourceUrl := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			sourceUrl = resp.Request.URL.String()
+		}
+
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
 			&filer_pb.AssignVolumeRequest{
@@ -273,6 +278,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 				MimeType:          header.Get("Content-Type"),
 				PairMap:           nil,
 				RetryForever:      false,
+				SourceUrl:         sourceUrl,
 			},
 			func(host, fileId string) string {
 				fileUrl := fs.buildUploadUrl(host, fileId)
