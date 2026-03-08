@@ -225,21 +225,23 @@ func (h *VolumeBalanceHandler) Detect(
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
 	maxResults := int(request.MaxResults)
-	if maxResults <= 0 {
-		maxResults = 1
+	detectionLimit := maxResults
+	if maxResults > 0 {
+		detectionLimit = maxResults + 1 // over-fetch by 1 to detect truncation
 	}
-	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults+1)
+	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, detectionLimit)
 	if err != nil {
 		return err
-	}
-	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
-		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
 	hasMore := false
 	if maxResults > 0 && len(results) > maxResults {
 		hasMore = true
 		results = results[:maxResults]
+	}
+
+	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))

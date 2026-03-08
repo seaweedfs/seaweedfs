@@ -15,6 +15,7 @@ import (
 
 // Detection implements the detection logic for balance tasks.
 // maxResults limits how many balance operations are returned per invocation.
+// A non-positive maxResults means no explicit limit (uses a large default).
 func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, error) {
 	if !config.IsEnabled() {
 		return nil, nil
@@ -23,7 +24,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	balanceConfig := config.(*Config)
 
 	if maxResults <= 0 {
-		maxResults = 1
+		maxResults = math.MaxInt32
 	}
 
 	// Group volumes by disk type to ensure we compare apples to apples
@@ -57,8 +58,26 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		return nil
 	}
 
-	// Analyze volume distribution across servers
+	// Analyze volume distribution across servers.
+	// Seed from ActiveTopology so servers with matching disk type but zero
+	// volumes are included in the count and imbalance calculation.
 	serverVolumeCounts := make(map[string]int)
+	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
+		if topologyInfo != nil {
+			for _, dc := range topologyInfo.DataCenterInfos {
+				for _, rack := range dc.RackInfos {
+					for _, node := range rack.DataNodeInfos {
+						for diskTypeName := range node.DiskInfos {
+							if diskTypeName == diskType {
+								serverVolumeCounts[node.Id] = 0
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	for _, metric := range diskMetrics {
 		serverVolumeCounts[metric.Server]++
 	}
