@@ -247,7 +247,7 @@ func newTestBlockService(t *testing.T) *BlockService {
 	t.Helper()
 	dir := t.TempDir()
 	createTestBlockVolFile(t, dir, "hb-test.blk")
-	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.", "127.0.0.1:3260,1")
+	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.", "127.0.0.1:3260,1", NVMeConfig{})
 	if bs == nil {
 		t.Fatal("expected non-nil BlockService")
 	}

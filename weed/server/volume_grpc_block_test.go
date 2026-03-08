@@ -12,7 +12,7 @@ func newTestBlockServiceWithDir(t *testing.T) (*BlockService, string) {
 	dir := t.TempDir()
 	blockDir := filepath.Join(dir, "blocks")
 	os.MkdirAll(blockDir, 0755)
-	bs := StartBlockService("127.0.0.1:0", blockDir, "iqn.2024.test:", "127.0.0.1:3260,1")
+	bs := StartBlockService("127.0.0.1:0", blockDir, "iqn.2024.test:", "127.0.0.1:3260,1", NVMeConfig{})
 	if bs == nil {
 		t.Fatal("StartBlockService returned nil")
 	}

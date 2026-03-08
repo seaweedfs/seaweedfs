@@ -79,6 +79,12 @@ type VolumeServerOptions struct {
 	blockDir       *string
 	blockIQNPrefix *string
 	blockPortal    *string
+	// Block volume (NVMe/TCP) options
+	blockNvmeEnable      *bool
+	blockNvmeListen      *string
+	blockNvmePortal      *string
+	blockNvmeNQNPrefix   *string
+	blockNvmeMaxIOQueues *int
 }
 
 func init() {
@@ -123,6 +129,11 @@ func init() {
 	v.blockDir = cmdVolume.Flag.String("block.dir", "", "directory containing .blk block volume files. Empty disables iSCSI block service.")
 	v.blockIQNPrefix = cmdVolume.Flag.String("block.iqn.prefix", "iqn.2024-01.com.seaweedfs:vol.", "IQN prefix for block volume iSCSI targets")
 	v.blockPortal = cmdVolume.Flag.String("block.portal", "", "public iSCSI portal address for SendTargets discovery (e.g. 192.168.1.100:3260,1). Required for Windows clients and Docker deployments.")
+	v.blockNvmeEnable = cmdVolume.Flag.Bool("block.nvme.enable", false, "enable NVMe/TCP target for block volumes (default off)")
+	v.blockNvmeListen = cmdVolume.Flag.String("block.nvme.listen", "0.0.0.0:4420", "NVMe/TCP target listen address")
+	v.blockNvmePortal = cmdVolume.Flag.String("block.nvme.portal", "", "public NVMe/TCP portal address (e.g. 192.168.1.100:4420)")
+	v.blockNvmeNQNPrefix = cmdVolume.Flag.String("block.nvme.nqnPrefix", "nqn.2024-01.com.seaweedfs:vol.", "NQN prefix for NVMe subsystems")
+	v.blockNvmeMaxIOQueues = cmdVolume.Flag.Int("block.nvme.maxIOQueues", 4, "maximum NVMe I/O queues per controller (1-128)")
 }
 
 var cmdVolume = &Command{
@@ -323,7 +334,14 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		blockPortal = fmt.Sprintf("%s:%s,1", *v.ip, port)
 		glog.V(0).Infof("block service: auto-derived portal address %s from -ip flag", blockPortal)
 	}
-	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix, blockPortal)
+	nvmeCfg := weed_server.NVMeConfig{
+		Enabled:      *v.blockNvmeEnable,
+		ListenAddr:   *v.blockNvmeListen,
+		Portal:       *v.blockNvmePortal,
+		NQNPrefix:    *v.blockNvmeNQNPrefix,
+		MaxIOQueues:  *v.blockNvmeMaxIOQueues,
+	}
+	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix, blockPortal, nvmeCfg)
 	if blockService != nil {
 		volumeServer.SetBlockService(blockService)
 	}

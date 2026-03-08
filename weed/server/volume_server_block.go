@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/nvme"
 )
 
 // volReplState tracks active replication addresses per volume.
@@ -21,11 +22,22 @@ type volReplState struct {
 	replicaCtrlAddr string
 }
 
-// BlockService manages block volumes and the iSCSI target server.
+// NVMeConfig holds NVMe/TCP target configuration passed from CLI flags.
+type NVMeConfig struct {
+	Enabled     bool
+	ListenAddr  string
+	Portal      string // reserved for heartbeat/CSI integration (CP10-2)
+	NQNPrefix   string
+	MaxIOQueues int
+}
+
+// BlockService manages block volumes and the iSCSI/NVMe target servers.
 type BlockService struct {
 	blockStore   *storage.BlockVolumeStore
 	targetServer *iscsi.TargetServer
+	nvmeServer   *nvme.Server
 	iqnPrefix    string
+	nqnPrefix    string
 	blockDir     string
 	listenAddr   string
 
@@ -35,9 +47,9 @@ type BlockService struct {
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
-// registers them with an iSCSI target server, and starts listening.
+// registers them with iSCSI and optionally NVMe target servers, and starts listening.
 // Returns nil if blockDir is empty (feature disabled).
-func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *BlockService {
+func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeCfg NVMeConfig) *BlockService {
 	if blockDir == "" {
 		return nil
 	}
@@ -45,14 +57,20 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *Bloc
 	if iqnPrefix == "" {
 		iqnPrefix = "iqn.2024-01.com.seaweedfs:vol."
 	}
+	nqnPrefix := nvmeCfg.NQNPrefix
+	if nqnPrefix == "" {
+		nqnPrefix = "nqn.2024-01.com.seaweedfs:vol."
+	}
 
 	bs := &BlockService{
 		blockStore: storage.NewBlockVolumeStore(),
 		iqnPrefix:  iqnPrefix,
+		nqnPrefix:  nqnPrefix,
 		blockDir:   blockDir,
 		listenAddr: listenAddr,
 	}
 
+	// iSCSI target setup.
 	logger := log.New(os.Stderr, "iscsi: ", log.LstdFlags)
 
 	config := iscsi.DefaultTargetConfig()
@@ -61,6 +79,20 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *Bloc
 	bs.targetServer = iscsi.NewTargetServer(listenAddr, config, logger)
 	if portalAddr != "" {
 		bs.targetServer.SetPortalAddr(portalAddr)
+	}
+
+	// NVMe/TCP target setup (optional).
+	if nvmeCfg.Enabled {
+		maxQ := uint16(4)
+		if nvmeCfg.MaxIOQueues >= 1 && nvmeCfg.MaxIOQueues <= 128 {
+			maxQ = uint16(nvmeCfg.MaxIOQueues)
+		}
+		bs.nvmeServer = nvme.NewServer(nvme.Config{
+			ListenAddr:  nvmeCfg.ListenAddr,
+			NQNPrefix:   nqnPrefix,
+			MaxIOQueues: maxQ,
+			Enabled:     true,
+		})
 	}
 
 	// Scan blockDir for .blk files.
@@ -101,12 +133,8 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *Bloc
 			}
 		}
 
-		// Derive IQN from filename: vol1.blk -> iqn.2024-01.com.seaweedfs:vol.vol1
 		name := strings.TrimSuffix(entry.Name(), ".blk")
-		iqn := iqnPrefix + blockvol.SanitizeIQN(name)
-		adapter := blockvol.NewBlockVolAdapter(vol)
-		bs.targetServer.AddVolume(iqn, adapter)
-		glog.V(0).Infof("block service: registered %s as %s", path, iqn)
+		bs.registerVolume(vol, name)
 	}
 
 	// Start iSCSI target in background.
@@ -115,9 +143,34 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *Bloc
 			glog.Warningf("block service: iSCSI target stopped: %v", err)
 		}
 	}()
-
 	glog.V(0).Infof("block service: iSCSI target started on %s", listenAddr)
+
+	// Start NVMe/TCP target in background (if enabled).
+	if bs.nvmeServer != nil {
+		if err := bs.nvmeServer.ListenAndServe(); err != nil {
+			glog.Warningf("block service: NVMe/TCP target failed to start: %v (iSCSI continues)", err)
+			bs.nvmeServer = nil // disable NVMe, iSCSI continues
+		} else {
+			glog.V(0).Infof("block service: NVMe/TCP target started on %s", nvmeCfg.ListenAddr)
+		}
+	}
+
 	return bs
+}
+
+// registerVolume adds a volume to both iSCSI and NVMe targets.
+func (bs *BlockService) registerVolume(vol *blockvol.BlockVol, name string) {
+	iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
+	adapter := blockvol.NewBlockVolAdapter(vol)
+	bs.targetServer.AddVolume(iqn, adapter)
+
+	if bs.nvmeServer != nil {
+		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		nvmeAdapter := nvme.NewNVMeAdapter(vol)
+		bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
+	}
+
+	glog.V(0).Infof("block service: registered %s", name)
 }
 
 // Store returns the underlying BlockVolumeStore.
@@ -151,10 +204,15 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 			return "", "", "", fmt.Errorf("block volume %q exists with size %d (requested %d)",
 				name, info.VolumeSize, sizeBytes)
 		}
-		// Re-add to TargetServer in case it was cleared (crash recovery).
+		// Re-add to targets in case they were cleared (crash recovery).
 		// AddVolume is idempotent — no-op if already registered.
 		adapter := blockvol.NewBlockVolAdapter(vol)
 		bs.targetServer.AddVolume(iqn, adapter)
+		if bs.nvmeServer != nil {
+			nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+			nvmeAdapter := nvme.NewNVMeAdapter(vol)
+			bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
+		}
 		return path, iqn, iscsiAddr, nil
 	}
 
@@ -190,6 +248,13 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 
 	adapter := blockvol.NewBlockVolAdapter(vol)
 	bs.targetServer.AddVolume(iqn, adapter)
+
+	if bs.nvmeServer != nil {
+		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		nvmeAdapter := nvme.NewNVMeAdapter(vol)
+		bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
+	}
+
 	glog.V(0).Infof("block service: created %s as %s (%d bytes)", path, iqn, sizeBytes)
 	return path, iqn, iscsiAddr, nil
 }
@@ -204,6 +269,12 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 	// Disconnect active iSCSI sessions and remove target entry.
 	if bs.targetServer != nil {
 		bs.targetServer.DisconnectVolume(iqn)
+	}
+
+	// Remove from NVMe target.
+	if bs.nvmeServer != nil {
+		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		bs.nvmeServer.RemoveVolume(nqn)
 	}
 
 	// Close and unregister.
@@ -482,12 +553,15 @@ func (bs *BlockService) ReplicationPorts(volPath string) (dataPort, ctrlPort, re
 	return
 }
 
-// Shutdown gracefully stops the iSCSI target and closes all block volumes.
+// Shutdown gracefully stops the iSCSI and NVMe targets and closes all block volumes.
 func (bs *BlockService) Shutdown() {
 	if bs == nil {
 		return
 	}
 	glog.V(0).Infof("block service: shutting down...")
+	if bs.nvmeServer != nil {
+		bs.nvmeServer.Close()
+	}
 	if bs.targetServer != nil {
 		bs.targetServer.Close()
 	}
