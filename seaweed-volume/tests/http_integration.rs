@@ -10,7 +10,7 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // for `oneshot`
 
 use seaweed_volume::security::{Guard, SigningKey};
-use seaweed_volume::server::volume_server::{VolumeServerState, build_admin_router};
+use seaweed_volume::server::volume_server::{build_admin_router, VolumeServerState};
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::{DiskType, VolumeId};
@@ -25,7 +25,14 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
 
     let mut store = Store::new(NeedleMapKind::InMemory);
     store
-        .add_location(dir, dir, 10, DiskType::HardDrive, seaweed_volume::config::MinFreeSpace::Percent(1.0))
+        .add_location(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            seaweed_volume::config::MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
         .expect("failed to add location");
     store
         .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
@@ -145,16 +152,10 @@ async fn status_returns_json_with_version_and_volumes() {
         serde_json::from_slice(&body).expect("response is not valid JSON");
 
     assert!(json.get("Version").is_some(), "missing 'Version' field");
-    assert!(
-        json["Version"].is_string(),
-        "'Version' should be a string"
-    );
+    assert!(json["Version"].is_string(), "'Version' should be a string");
 
     assert!(json.get("Volumes").is_some(), "missing 'Volumes' field");
-    assert!(
-        json["Volumes"].is_array(),
-        "'Volumes' should be an array"
-    );
+    assert!(json["Volumes"].is_array(), "'Volumes' should be an array");
 
     // We created one volume in test_state, so the array should have one entry
     let volumes = json["Volumes"].as_array().unwrap();
@@ -201,12 +202,7 @@ async fn write_then_read_needle() {
     // --- GET (read back) ---
     let app = build_admin_router(state.clone());
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
 
@@ -261,12 +257,7 @@ async fn delete_then_get_returns_404() {
     // GET should now return 404
     let app = build_admin_router(state.clone());
     let response = app
-        .oneshot(
-            Request::builder()
-                .uri(uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(
@@ -325,7 +316,11 @@ async fn head_returns_headers_without_body() {
         .unwrap()
         .parse()
         .expect("Content-Length should be a number");
-    assert_eq!(len, payload.len(), "Content-Length should match payload size");
+    assert_eq!(
+        len,
+        payload.len(),
+        "Content-Length should match payload size"
+    );
 
     // Body should be empty for HEAD
     let body = body_bytes(response).await;

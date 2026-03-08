@@ -19,7 +19,9 @@ use crate::storage::volume::{Volume, VolumeError};
 pub struct DiskLocation {
     pub directory: String,
     pub idx_directory: String,
+    pub directory_uuid: String,
     pub disk_type: DiskType,
+    pub tags: Vec<String>,
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
     volumes: HashMap<VolumeId, Volume>,
@@ -29,30 +31,53 @@ pub struct DiskLocation {
 }
 
 impl DiskLocation {
+    const UUID_FILE_NAME: &'static str = "vol_dir.uuid";
+
     pub fn new(
         directory: &str,
         idx_directory: &str,
         max_volume_count: i32,
         disk_type: DiskType,
         min_free_space: MinFreeSpace,
-    ) -> Self {
+        tags: Vec<String>,
+    ) -> io::Result<Self> {
+        fs::create_dir_all(directory)?;
+
         let idx_dir = if idx_directory.is_empty() {
             directory.to_string()
         } else {
+            fs::create_dir_all(idx_directory)?;
             idx_directory.to_string()
         };
+        let directory_uuid = Self::generate_directory_uuid(directory)?;
 
-        DiskLocation {
+        Ok(DiskLocation {
             directory: directory.to_string(),
             idx_directory: idx_dir,
+            directory_uuid,
             disk_type,
+            tags,
             max_volume_count: AtomicI32::new(max_volume_count),
             original_max_volume_count: max_volume_count,
             volumes: HashMap::new(),
             is_disk_space_low: AtomicBool::new(false),
             available_space: AtomicU64::new(0),
             min_free_space,
+        })
+    }
+
+    fn generate_directory_uuid(directory: &str) -> io::Result<String> {
+        let path = std::path::Path::new(directory).join(Self::UUID_FILE_NAME);
+        if path.exists() {
+            let existing = fs::read_to_string(&path)?;
+            if !existing.trim().is_empty() {
+                return Ok(existing);
+            }
         }
+
+        let dir_uuid = uuid::Uuid::new_v4().to_string();
+        fs::write(path, &dir_uuid)?;
+        Ok(dir_uuid)
     }
 
     // ---- Volume management ----
@@ -313,12 +338,18 @@ mod tests {
     fn test_disk_location_create_volume() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
 
-        loc.create_volume(
-            VolumeId(1), "", NeedleMapKind::InMemory,
-            None, None, 0,
-        ).unwrap();
+        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
 
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_some());
@@ -333,14 +364,32 @@ mod tests {
 
         // Create volumes
         {
-            let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
-            loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
-            loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0).unwrap();
+            let mut loc = DiskLocation::new(
+                dir,
+                dir,
+                10,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+            loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+                .unwrap();
+            loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0)
+                .unwrap();
             loc.close();
         }
 
         // Reload
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
         loc.load_existing_volumes(NeedleMapKind::InMemory).unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
@@ -353,10 +402,20 @@ mod tests {
     fn test_disk_location_delete_volume() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
 
-        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
-        loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0).unwrap();
+        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
+        loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
         loc.delete_volume(VolumeId(1)).unwrap();
@@ -368,15 +427,56 @@ mod tests {
     fn test_disk_location_delete_collection() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
-        let mut loc = DiskLocation::new(dir, dir, 10, DiskType::HardDrive, MinFreeSpace::Percent(1.0));
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
 
-        loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0).unwrap();
-        loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0).unwrap();
-        loc.create_volume(VolumeId(3), "docs", NeedleMapKind::InMemory, None, None, 0).unwrap();
+        loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
+        loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
+        loc.create_volume(VolumeId(3), "docs", NeedleMapKind::InMemory, None, None, 0)
+            .unwrap();
         assert_eq!(loc.volumes_len(), 3);
 
         loc.delete_collection("pics");
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(3)).is_some());
+    }
+
+    #[test]
+    fn test_disk_location_persists_directory_uuid_and_tags() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            vec!["fast".to_string(), "ssd".to_string()],
+        )
+        .unwrap();
+        let directory_uuid = loc.directory_uuid.clone();
+        assert_eq!(loc.tags, vec!["fast".to_string(), "ssd".to_string()]);
+        drop(loc);
+
+        let reloaded = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(reloaded.directory_uuid, directory_uuid);
     }
 }

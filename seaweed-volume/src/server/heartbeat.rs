@@ -4,18 +4,19 @@
 //! matching Go's `server/volume_grpc_client_to_master.go`.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
 use tonic::transport::Channel;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
+use super::volume_server::VolumeServerState;
 use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
+use crate::storage::store::Store;
 use crate::storage::types::NeedleId;
-use super::volume_server::VolumeServerState;
 
 /// Configuration for the heartbeat client.
 pub struct HeartbeatConfig {
@@ -35,7 +36,10 @@ pub async fn run_heartbeat_with_state(
     state: Arc<VolumeServerState>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
-    info!("Starting heartbeat to master nodes: {:?}", config.master_addresses);
+    info!(
+        "Starting heartbeat to master nodes: {:?}",
+        config.master_addresses
+    );
 
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
 
@@ -164,17 +168,24 @@ async fn do_heartbeat(
 
             _ = shutdown_rx.recv() => {
                 state.is_heartbeating.store(false, Ordering::Relaxed);
-                let empty = master_pb::Heartbeat {
-                    ip: config.ip.clone(),
-                    port: config.port as u32,
-                    public_url: config.public_url.clone(),
-                    max_file_key: 0,
-                    data_center: config.data_center.clone(),
-                    rack: config.rack.clone(),
-                    has_no_volumes: true,
-                    has_no_ec_shards: true,
-                    grpc_port: config.grpc_port as u32,
-                    ..Default::default()
+                let empty = {
+                    let store = state.store.read().unwrap();
+                    let (location_uuids, disk_tags) = collect_location_metadata(&store);
+                    master_pb::Heartbeat {
+                        id: store.id.clone(),
+                        ip: config.ip.clone(),
+                        port: config.port as u32,
+                        public_url: config.public_url.clone(),
+                        max_file_key: 0,
+                        data_center: config.data_center.clone(),
+                        rack: config.rack.clone(),
+                        has_no_volumes: true,
+                        has_no_ec_shards: true,
+                        grpc_port: config.grpc_port as u32,
+                        location_uuids,
+                        disk_tags,
+                        ..Default::default()
+                    }
                 };
                 let _ = tx.send(empty).await;
                 tokio::time::sleep(Duration::from_millis(200)).await;
@@ -186,16 +197,42 @@ async fn do_heartbeat(
 }
 
 /// Collect volume information into a Heartbeat message.
-fn collect_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -> master_pb::Heartbeat {
+fn collect_heartbeat(
+    config: &HeartbeatConfig,
+    state: &Arc<VolumeServerState>,
+) -> master_pb::Heartbeat {
     let store = state.store.read().unwrap();
+    build_heartbeat(config, &store)
+}
 
+fn collect_location_metadata(store: &Store) -> (Vec<String>, Vec<master_pb::DiskTag>) {
+    let location_uuids = store
+        .locations
+        .iter()
+        .map(|loc| loc.directory_uuid.clone())
+        .collect();
+    let disk_tags = store
+        .locations
+        .iter()
+        .enumerate()
+        .map(|(disk_id, loc)| master_pb::DiskTag {
+            disk_id: disk_id as u32,
+            tags: loc.tags.clone(),
+        })
+        .collect();
+    (location_uuids, disk_tags)
+}
+
+fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartbeat {
     let mut volumes = Vec::new();
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
 
     for loc in &store.locations {
         let disk_type_str = loc.disk_type.to_string();
-        let max_count = loc.max_volume_count.load(std::sync::atomic::Ordering::Relaxed);
+        let max_count = loc
+            .max_volume_count
+            .load(std::sync::atomic::Ordering::Relaxed);
         *max_volume_counts.entry(disk_type_str).or_insert(0) += max_count as u32;
 
         for (_, vol) in loc.iter_volumes() {
@@ -222,8 +259,11 @@ fn collect_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -
             });
         }
     }
+    let has_no_volumes = volumes.is_empty();
+    let (location_uuids, disk_tags) = collect_location_metadata(store);
 
     master_pb::Heartbeat {
+        id: store.id.clone(),
         ip: config.ip.clone(),
         port: config.port as u32,
         public_url: config.public_url.clone(),
@@ -232,9 +272,11 @@ fn collect_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -
         rack: config.rack.clone(),
         admin_port: config.port as u32,
         volumes,
-        has_no_volumes: false,
+        has_no_volumes,
         max_volume_counts,
         grpc_port: config.grpc_port as u32,
+        location_uuids,
+        disk_tags,
         ..Default::default()
     }
 }
@@ -266,5 +308,88 @@ fn collect_ec_heartbeat(state: &Arc<VolumeServerState>) -> master_pb::Heartbeat 
         ec_shards,
         has_no_ec_shards: has_no,
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::MinFreeSpace;
+    use crate::storage::needle_map::NeedleMapKind;
+    use crate::storage::types::{DiskType, VolumeId};
+
+    fn test_config() -> HeartbeatConfig {
+        HeartbeatConfig {
+            ip: "127.0.0.1".to_string(),
+            port: 8080,
+            grpc_port: 18080,
+            public_url: "127.0.0.1:8080".to_string(),
+            data_center: "dc1".to_string(),
+            rack: "rack1".to_string(),
+            master_addresses: Vec::new(),
+            pulse_seconds: 5,
+        }
+    }
+
+    #[test]
+    fn test_build_heartbeat_includes_store_identity_and_disk_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.id = "volume-node-a".to_string();
+        store
+            .add_location(
+                dir,
+                dir,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                vec!["fast".to_string(), "ssd".to_string()],
+            )
+            .unwrap();
+        store
+            .add_volume(VolumeId(7), "pics", None, None, 0, DiskType::HardDrive)
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &store);
+
+        assert_eq!(heartbeat.id, "volume-node-a");
+        assert_eq!(heartbeat.volumes.len(), 1);
+        assert!(!heartbeat.has_no_volumes);
+        assert_eq!(
+            heartbeat.location_uuids,
+            vec![store.locations[0].directory_uuid.clone()]
+        );
+        assert_eq!(heartbeat.disk_tags.len(), 1);
+        assert_eq!(heartbeat.disk_tags[0].disk_id, 0);
+        assert_eq!(
+            heartbeat.disk_tags[0].tags,
+            vec!["fast".to_string(), "ssd".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_build_heartbeat_marks_empty_store_as_has_no_volumes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store.id = "volume-node-b".to_string();
+        store
+            .add_location(
+                dir,
+                dir,
+                2,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let heartbeat = build_heartbeat(&test_config(), &store);
+
+        assert!(heartbeat.volumes.is_empty());
+        assert!(heartbeat.has_no_volumes);
     }
 }
