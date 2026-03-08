@@ -213,7 +213,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
-				ms.Topo.LastLeaderChangeTime = time.Now()
+				ms.Topo.SetLastLeaderChangeTime(time.Now())
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
 					go ms.ensureTopologyId()
 				}
@@ -223,11 +223,14 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
-		ms.Topo.LastLeaderChangeTime = time.Now()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
 	if ms.Topo.IsLeader() {
+		// Seed the warmup timestamp so IsWarmingUp() is active even if the
+		// leader change event hasn't fired yet (e.g. node is already leader
+		// on startup). Followers don't need warmup state.
+		ms.Topo.SetLastLeaderChangeTime(time.Now())
 		glog.V(0).Infof("%s I am the leader!", raftServerName)
 		go ms.ensureTopologyId()
 	} else {

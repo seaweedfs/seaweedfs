@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -163,6 +165,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
+	notFoundCount := 0
 	for _, volumeOrFileId := range req.VolumeOrFileIds {
 		vid := volumeOrFileId
 		commaSep := strings.Index(vid, ",")
@@ -183,6 +186,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			if commaSep > 0 { // this is a file id
 				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 			}
+			if result.NotFound {
+				notFoundCount++
+			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 				VolumeOrFileId: result.VolumeOrFileId,
 				Locations:      locations,
@@ -190,6 +196,12 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 				Auth:           auth,
 			})
 		}
+	}
+
+	// Only return Unavailable during warmup when every requested ID was a transient not-found
+	if len(req.VolumeOrFileIds) > 0 && notFoundCount == len(req.VolumeOrFileIds) && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
 	return resp, nil
