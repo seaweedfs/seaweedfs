@@ -189,6 +189,7 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 				ret.GrpcPort = int(resp.Location.GrpcPort)
 				ret.Error = resp.Error
 				ret.Auth = security.EncodedJwt(resp.Auth)
+				ret.Replicas = nil
 				for _, r := range resp.Replicas {
 					ret.Replicas = append(ret.Replicas, Location{
 						Url:        r.Url,
