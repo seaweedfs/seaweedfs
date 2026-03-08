@@ -113,6 +113,9 @@ func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duratio
 		case <-time.After(sleepTime):
 		}
 		waitTime += waitTime / 2
+		if waitTime > maxWaitTime {
+			waitTime = maxWaitTime
+		}
 	}
 }
 
