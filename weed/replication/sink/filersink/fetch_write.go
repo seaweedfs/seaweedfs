@@ -223,12 +223,8 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceFileId, path, uploadErr)
 			return false
 		}
-		if strings.Contains(uploadErr.Error(), "unexpected EOF") || strings.Contains(uploadErr.Error(), "read input") {
-			if eofBackoff < 10*time.Second {
-				eofBackoff = 10 * time.Second
-			} else if eofBackoff < 2*time.Minute {
-				eofBackoff = eofBackoff * 2
-			}
+		if isEofError(uploadErr) {
+			eofBackoff = nextEofBackoff(eofBackoff)
 			glog.V(0).Infof("source connection interrupted replicate manifest %s for %s, backing off %v: %v", sourceFileId, path, eofBackoff, uploadErr)
 			time.Sleep(eofBackoff)
 		} else {
@@ -300,12 +296,8 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
 			return false
 		}
-		if strings.Contains(uploadErr.Error(), "unexpected EOF") || strings.Contains(uploadErr.Error(), "read input") {
-			if eofBackoff < 10*time.Second {
-				eofBackoff = 10 * time.Second
-			} else if eofBackoff < 2*time.Minute {
-				eofBackoff = eofBackoff * 2
-			}
+		if isEofError(uploadErr) {
+			eofBackoff = nextEofBackoff(eofBackoff)
 			glog.V(0).Infof("source connection interrupted replicate %s for %s, backing off %v: %v", sourceChunk.GetFileIdString(), path, eofBackoff, uploadErr)
 			time.Sleep(eofBackoff)
 		} else {
@@ -318,6 +310,26 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	}
 
 	return fileId, nil
+}
+
+const maxEofBackoff = 2 * time.Minute
+
+// nextEofBackoff returns the next backoff duration for unexpected EOF errors.
+// It starts at 10s, doubles each time, and caps at 2 minutes.
+func nextEofBackoff(current time.Duration) time.Duration {
+	if current < 10*time.Second {
+		return 10 * time.Second
+	}
+	current *= 2
+	if current > maxEofBackoff {
+		current = maxEofBackoff
+	}
+	return current
+}
+
+func isEofError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "unexpected EOF") || strings.Contains(msg, "read input")
 }
 
 func (fs *FilerSink) buildUploadUrl(host, fileId string) string {
