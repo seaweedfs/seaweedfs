@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -119,6 +120,12 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 			return nil, grpcErr
 		}
 		if resp.Error != "" {
+			// StreamAssign returns transient warmup errors as in-band responses.
+			// Wrap them as codes.Unavailable so the caller's retry logic can
+			// classify them as retriable.
+			if strings.Contains(resp.Error, "warming up") {
+				return nil, status.Errorf(codes.Unavailable, "StreamAssignRecv: %s", resp.Error)
+			}
 			return nil, fmt.Errorf("StreamAssignRecv: %v", resp.Error)
 		}
 
