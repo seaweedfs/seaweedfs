@@ -160,6 +160,8 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 
 		waitTime := time.Second
 		maxWaitTime := 6 * time.Second
+		maxRetryDuration := 30 * time.Second
+		retryStart := time.Now()
 		for {
 			lastError = WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
 				req := &master_pb.AssignRequest{
@@ -202,8 +204,12 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 
 			})
 
-			// Retry on Unavailable (master warming up) with backoff, until ctx is done
+			// Retry on Unavailable (master warming up) with backoff, until ctx or max duration
 			if st, ok := status.FromError(lastError); ok && st.Code() == codes.Unavailable {
+				if time.Since(retryStart) >= maxRetryDuration {
+					glog.V(0).Infof("master unavailable for assign, giving up after %v: %v", maxRetryDuration, lastError)
+					break
+				}
 				sleepTime := waitTime
 				if sleepTime > maxWaitTime {
 					sleepTime = maxWaitTime
