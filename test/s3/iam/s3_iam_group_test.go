@@ -346,9 +346,9 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 			Bucket: aws.String(bucketName),
 		})
 		require.NoError(t, err, "User with group policy should be allowed")
-		defer func() {
+		t.Cleanup(func() {
 			userS3Client.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
-		}()
+		})
 
 		// Should also be able to put/get objects
 		_, err = userS3Client.PutObject(&s3.PutObjectInput{
