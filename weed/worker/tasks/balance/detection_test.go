@@ -124,22 +124,25 @@ func assertNoDuplicateVolumes(t *testing.T, tasks []*types.TaskDetectionResult) 
 }
 
 // computeEffectiveCounts returns per-server volume counts after applying all planned moves.
-func computeEffectiveCounts(metrics []*types.VolumeHealthMetrics, tasks []*types.TaskDetectionResult) map[string]int {
-	counts := make(map[string]int)
+// servers seeds the map so that empty destination servers (no volumes in metrics) are tracked.
+func computeEffectiveCounts(servers []serverSpec, metrics []*types.VolumeHealthMetrics, tasks []*types.TaskDetectionResult) map[string]int {
+	// Build address → server ID mapping from the topology spec
+	addrToServer := make(map[string]string, len(servers))
+	counts := make(map[string]int, len(servers))
+	for _, s := range servers {
+		counts[s.id] = 0
+		addrToServer[s.id+":8080"] = s.id
+		addrToServer[s.id] = s.id
+	}
 	for _, m := range metrics {
 		counts[m.Server]++
 	}
 	for _, task := range tasks {
 		counts[task.Server]-- // source loses one
 		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
-			// find the target server ID (strip :8080 from address)
 			addr := task.TypedParams.Targets[0].Node
-			// resolve from metrics
-			for _, m := range metrics {
-				if m.ServerAddress == addr {
-					counts[m.Server]++
-					break
-				}
+			if serverID, ok := addrToServer[addr]; ok {
+				counts[serverID]++
 			}
 		}
 	}
@@ -484,7 +487,7 @@ func TestDetection_ThreeServers_ConvergesToBalance(t *testing.T) {
 	assertNoDuplicateVolumes(t, tasks)
 
 	// Verify convergence: effective counts should be within 20% imbalance.
-	effective := computeEffectiveCounts(metrics, tasks)
+	effective := computeEffectiveCounts(servers, metrics, tasks)
 	total := 0
 	maxC, minC := 0, 100
 	for _, c := range effective {
@@ -579,6 +582,10 @@ func TestDetection_NoDuplicateVolumesAcrossIterations(t *testing.T) {
 	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 200)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) <= 1 {
+		t.Fatalf("Expected multiple tasks to verify no-duplicate invariant across iterations, got %d", len(tasks))
 	}
 
 	assertNoDuplicateVolumes(t, tasks)
@@ -728,7 +735,7 @@ func TestDetection_ConvergenceVerification(t *testing.T) {
 			assertNoDuplicateVolumes(t, tasks)
 
 			// Verify convergence
-			effective := computeEffectiveCounts(metrics, tasks)
+			effective := computeEffectiveCounts(servers, metrics, tasks)
 			total := 0
 			maxC, minC := 0, len(metrics)
 			for _, c := range effective {
