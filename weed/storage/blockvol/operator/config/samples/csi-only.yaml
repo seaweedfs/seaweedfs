@@ -1,0 +1,18 @@
+apiVersion: block.seaweedfs.com/v1alpha1
+kind: SeaweedBlockCluster
+metadata:
+  name: my-block-csi
+spec:
+  csiImage: sw-block-csi:local
+
+  # CSI-only mode: connect to an existing SeaweedFS cluster
+  masterRef:
+    address: "seaweedfs-master.default:9333"
+
+  csi:
+    controllerReplicas: 1
+    provisionerImage: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+    registrarImage: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+
+  storageClassName: sw-block
+  csiNamespace: kube-system

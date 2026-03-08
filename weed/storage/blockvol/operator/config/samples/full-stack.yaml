@@ -1,0 +1,32 @@
+apiVersion: block.seaweedfs.com/v1alpha1
+kind: SeaweedBlockCluster
+metadata:
+  name: my-block
+spec:
+  image: chrislusf/seaweedfs:latest
+  csiImage: sw-block-csi:local
+
+  # Full-stack mode: operator deploys master + volume + CSI
+  master:
+    replicas: 1
+    port: 9333
+    grpcPort: 19333
+    storage:
+      size: "5Gi"
+
+  volume:
+    replicas: 1
+    port: 8080
+    grpcPort: 18080
+    blockDir: /data1/block
+    blockListenPort: 3260
+    storage:
+      size: "50Gi"
+
+  csi:
+    controllerReplicas: 1
+    provisionerImage: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+    registrarImage: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+
+  storageClassName: sw-block
+  csiNamespace: kube-system

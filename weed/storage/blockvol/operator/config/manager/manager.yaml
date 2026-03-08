@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sw-block-operator
+  namespace: sw-block-system
+  labels:
+    app.kubernetes.io/name: sw-block-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sw-block-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sw-block-operator
+    spec:
+      serviceAccountName: sw-block-operator
+      containers:
+        - name: operator
+          image: sw-block-operator:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:8080
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
