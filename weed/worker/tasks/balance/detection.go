@@ -370,11 +370,13 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 
 	score := 0.0
 
-	// Prefer disks with lower effective volume count (current + pending moves)
+	// Prefer disks with lower effective volume count (current + pending moves).
+	// LoadCount is included so that disks already targeted by planned moves
+	// appear more utilized, naturally spreading work across targets.
 	if disk.DiskInfo.MaxVolumeCount > 0 {
 		effectiveVolumeCount := float64(disk.DiskInfo.VolumeCount) + float64(disk.LoadCount)
 		utilization := effectiveVolumeCount / float64(disk.DiskInfo.MaxVolumeCount)
-		score += (1.0 - utilization) * 40.0 // Up to 40 points for low utilization
+		score += (1.0 - utilization) * 50.0 // Up to 50 points for low utilization
 	}
 
 	// Prefer different racks for better distribution
@@ -386,9 +388,6 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 	if disk.DataCenter != sourceDC {
 		score += 20.0
 	}
-
-	// Prefer disks with lower current load
-	score += (10.0 - float64(disk.LoadCount)) // Up to 10 points for low load
 
 	return score
 }
