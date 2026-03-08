@@ -31,6 +31,9 @@ function initializeDashboard() {
 
     // Set up submenu behavior
     setupSubmenuBehavior();
+
+    // Set up mobile sidebar behavior
+    setupMobileSidebar();
 }
 
 // HTMX event listeners
@@ -192,6 +195,41 @@ function setupSubmenuBehavior() {
         });
     }
 
+}
+
+// Mobile sidebar toggle and backdrop behavior
+function setupMobileSidebar() {
+    var sidebar = document.getElementById('sidebarMenu');
+    var backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar || !backdrop) return;
+
+    // Show/hide backdrop when sidebar is toggled
+    sidebar.addEventListener('show.bs.collapse', function () {
+        backdrop.style.display = 'block';
+    });
+    sidebar.addEventListener('hide.bs.collapse', function () {
+        backdrop.style.display = 'none';
+    });
+
+    // Close sidebar when backdrop is clicked
+    backdrop.addEventListener('click', function () {
+        var bsCollapse = bootstrap.Collapse.getInstance(sidebar);
+        if (bsCollapse) {
+            bsCollapse.hide();
+        }
+    });
+
+    // Close sidebar when a nav link is clicked (on mobile)
+    sidebar.querySelectorAll('a.nav-link:not([data-bs-toggle="collapse"])').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (window.innerWidth < 768) {
+                var bsCollapse = bootstrap.Collapse.getInstance(sidebar);
+                if (bsCollapse) {
+                    bsCollapse.hide();
+                }
+            }
+        });
+    });
 }
 
 // Loading indicator functions
