@@ -53,8 +53,7 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		if location.Locations == nil && strings.Contains(location.Error, "not found") &&
-			ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		if location.NotFound && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
 			httpStatus = http.StatusServiceUnavailable
 			remaining := ms.Topo.RemainingWarmupDuration()
 			if remaining < time.Second {
@@ -104,12 +103,15 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		}
 		err = getVidLocationsErr
 	}
+	notFound := false
 	if len(locations) == 0 && err == nil {
 		err = fmt.Errorf("volume id %s not found", vid)
+		notFound = true
 	}
 	ret := operation.LookupResult{
 		VolumeOrFileId: vid,
 		Locations:      locations,
+		NotFound:       notFound,
 	}
 	if err != nil {
 		ret.Error = err.Error()

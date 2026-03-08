@@ -186,7 +186,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			if commaSep > 0 { // this is a file id
 				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 			}
-			if result.Error != "" && strings.Contains(result.Error, "not found") {
+			if result.NotFound {
 				hasNotFoundError = true
 			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
