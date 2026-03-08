@@ -224,7 +224,11 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
+	maxResults := int(request.MaxResults)
+	if maxResults <= 0 {
+		maxResults = 1
+	}
+	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
@@ -232,12 +236,7 @@ func (h *VolumeBalanceHandler) Detect(
 		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
-	maxResults := int(request.MaxResults)
 	hasMore := false
-	if maxResults > 0 && len(results) > maxResults {
-		hasMore = true
-		results = results[:maxResults]
-	}
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
 	for _, result := range results {

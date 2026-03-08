@@ -171,7 +171,7 @@ func TestDetection_MixedDiskTypes(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf)
+	tasks, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -231,25 +231,86 @@ func TestDetection_ImbalancedDiskType(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf)
+	tasks, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
 
 	if len(tasks) == 0 {
 		t.Error("Expected tasks for imbalanced SSD cluster, got 0")
-	} else {
-		// Verify task details
-		task := tasks[0]
+	}
+
+	// With 100 volumes on server-1 and 10 on server-2, avg=55, detection should
+	// propose multiple moves until imbalance drops below 20% threshold.
+	// All tasks should move volumes from ssd-server-1 to ssd-server-2.
+	if len(tasks) < 2 {
+		t.Errorf("Expected multiple balance tasks, got %d", len(tasks))
+	}
+
+	for i, task := range tasks {
 		if task.VolumeID == 0 {
-			t.Error("Task has invalid VolumeID")
+			t.Errorf("Task %d has invalid VolumeID", i)
 		}
-		// Expect volume to be moving from ssd-server-1 to ssd-server-2
 		if task.TypedParams.Sources[0].Node != "ssd-server-1:8080" {
-			t.Errorf("Expected source ssd-server-1:8080, got %s", task.TypedParams.Sources[0].Node)
+			t.Errorf("Task %d: expected source ssd-server-1:8080, got %s", i, task.TypedParams.Sources[0].Node)
 		}
 		if task.TypedParams.Targets[0].Node != "ssd-server-2:8080" {
-			t.Errorf("Expected target ssd-server-2:8080, got %s", task.TypedParams.Targets[0].Node)
+			t.Errorf("Task %d: expected target ssd-server-2:8080, got %s", i, task.TypedParams.Targets[0].Node)
 		}
+	}
+}
+
+func TestDetection_RespectsMaxResults(t *testing.T) {
+	// Setup: 2 SSD servers with big imbalance (100 vs 10)
+	metrics := []*types.VolumeHealthMetrics{}
+
+	for i := 0; i < 100; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(i + 1),
+			Server:        "ssd-server-1",
+			ServerAddress: "ssd-server-1:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+		})
+	}
+	for i := 0; i < 10; i++ {
+		metrics = append(metrics, &types.VolumeHealthMetrics{
+			VolumeID:      uint32(100 + i + 1),
+			Server:        "ssd-server-2",
+			ServerAddress: "ssd-server-2:8080",
+			DiskType:      "ssd",
+			Collection:    "c1",
+			Size:          1024,
+			DataCenter:    "dc1",
+			Rack:          "rack1",
+		})
+	}
+
+	conf := &Config{
+		BaseConfig: base.BaseConfig{
+			Enabled:             true,
+			ScanIntervalSeconds: 30,
+			MaxConcurrent:       1,
+		},
+		MinServerCount:     2,
+		ImbalanceThreshold: 0.2,
+	}
+
+	at := createMockTopology(metrics...)
+	clusterInfo := &types.ClusterInfo{
+		ActiveTopology: at,
+	}
+
+	// Request only 3 results
+	tasks, err := Detection(metrics, clusterInfo, conf, 3)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) != 3 {
+		t.Errorf("Expected exactly 3 tasks (maxResults=3), got %d", len(tasks))
 	}
 }

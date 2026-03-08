@@ -37,17 +37,20 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 		MasterGrpcAddresses: []string{master.Address()},
 	}, 10)
 	require.NoError(t, err)
-	require.Len(t, proposals, 1)
+	// With 10 volumes on one server and 1 on the other (avg=5.5),
+	// multiple balance moves should be detected until imbalance is within threshold.
+	require.Greater(t, len(proposals), 1, "expected multiple balance proposals")
 
-	proposal := proposals[0]
-	require.Equal(t, "volume_balance", proposal.JobType)
-	paramsValue := proposal.Parameters["task_params_pb"]
-	require.NotNil(t, paramsValue)
+	for _, proposal := range proposals {
+		require.Equal(t, "volume_balance", proposal.JobType)
+		paramsValue := proposal.Parameters["task_params_pb"]
+		require.NotNil(t, paramsValue)
 
-	params := &worker_pb.TaskParams{}
-	require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
-	require.NotEmpty(t, params.Sources)
-	require.NotEmpty(t, params.Targets)
+		params := &worker_pb.TaskParams{}
+		require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
+		require.NotEmpty(t, params.Sources)
+		require.NotEmpty(t, params.Targets)
+	}
 }
 
 func buildBalanceVolumeListResponse(t *testing.T) *master_pb.VolumeListResponse {
