@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -78,6 +79,40 @@ func RetryUntil(name string, job func() error, onErrFn func(err error) (shouldCo
 		} else {
 			return err
 		}
+	}
+}
+
+// RetryWithBackoff retries an operation on codes.Unavailable errors with exponential
+// backoff, respecting context cancellation and a maximum retry duration.
+// Returns nil on success, ctx.Err() on context cancellation, or the last error
+// when maxDuration is exceeded or a non-retriable error occurs.
+func RetryWithBackoff(ctx context.Context, name string, maxDuration time.Duration, shouldRetry func(error) bool, operation func() error) error {
+	waitTime := time.Second
+	maxWaitTime := RetryWaitTime
+	retryStart := time.Now()
+	for {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		if !shouldRetry(err) {
+			return err
+		}
+		if time.Since(retryStart) >= maxDuration {
+			glog.V(0).Infof("retry %s: giving up after %v: %v", name, maxDuration, err)
+			return err
+		}
+		sleepTime := waitTime
+		if sleepTime > maxWaitTime {
+			sleepTime = maxWaitTime
+		}
+		glog.V(0).Infof("retry %s: retrying in %v: %v", name, sleepTime, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleepTime):
+		}
+		waitTime += waitTime / 2
 	}
 }
 

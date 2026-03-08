@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -158,73 +158,52 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 			continue
 		}
 
-		waitTime := time.Second
-		maxWaitTime := 6 * time.Second
-		maxRetryDuration := 30 * time.Second
-		retryStart := time.Now()
-		for {
-			lastError = WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-				req := &master_pb.AssignRequest{
-					Count:               request.Count,
-					Replication:         request.Replication,
-					Collection:          request.Collection,
-					Ttl:                 request.Ttl,
-					DiskType:            request.DiskType,
-					DataCenter:          request.DataCenter,
-					Rack:                request.Rack,
-					DataNode:            request.DataNode,
-					WritableVolumeCount: request.WritableVolumeCount,
-				}
-				resp, grpcErr := masterClient.Assign(ctx, req)
-				if grpcErr != nil {
-					return grpcErr
-				}
+		lastError = util.RetryWithBackoff(ctx, "assign", 30*time.Second,
+			func(err error) bool {
+				st, ok := status.FromError(err)
+				return ok && st.Code() == codes.Unavailable
+			},
+			func() error {
+				return WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+					req := &master_pb.AssignRequest{
+						Count:               request.Count,
+						Replication:         request.Replication,
+						Collection:          request.Collection,
+						Ttl:                 request.Ttl,
+						DiskType:            request.DiskType,
+						DataCenter:          request.DataCenter,
+						Rack:                request.Rack,
+						DataNode:            request.DataNode,
+						WritableVolumeCount: request.WritableVolumeCount,
+					}
+					resp, grpcErr := masterClient.Assign(ctx, req)
+					if grpcErr != nil {
+						return grpcErr
+					}
 
-				if resp.Error != "" {
-					return fmt.Errorf("assignRequest: %v", resp.Error)
-				}
+					if resp.Error != "" {
+						return fmt.Errorf("assignRequest: %v", resp.Error)
+					}
 
-				ret.Count = resp.Count
-				ret.Fid = resp.Fid
-				ret.Url = resp.Location.Url
-				ret.PublicUrl = resp.Location.PublicUrl
-				ret.GrpcPort = int(resp.Location.GrpcPort)
-				ret.Error = resp.Error
-				ret.Auth = security.EncodedJwt(resp.Auth)
-				ret.Replicas = nil
-				for _, r := range resp.Replicas {
-					ret.Replicas = append(ret.Replicas, Location{
-						Url:        r.Url,
-						PublicUrl:  r.PublicUrl,
-						DataCenter: r.DataCenter,
-					})
-				}
+					ret.Count = resp.Count
+					ret.Fid = resp.Fid
+					ret.Url = resp.Location.Url
+					ret.PublicUrl = resp.Location.PublicUrl
+					ret.GrpcPort = int(resp.Location.GrpcPort)
+					ret.Error = resp.Error
+					ret.Auth = security.EncodedJwt(resp.Auth)
+					ret.Replicas = nil
+					for _, r := range resp.Replicas {
+						ret.Replicas = append(ret.Replicas, Location{
+							Url:        r.Url,
+							PublicUrl:  r.PublicUrl,
+							DataCenter: r.DataCenter,
+						})
+					}
 
-				return nil
-
+					return nil
+				})
 			})
-
-			// Retry on Unavailable (master warming up) with backoff, until ctx or max duration
-			if st, ok := status.FromError(lastError); ok && st.Code() == codes.Unavailable {
-				if time.Since(retryStart) >= maxRetryDuration {
-					glog.V(0).Infof("master unavailable for assign, giving up after %v: %v", maxRetryDuration, lastError)
-					break
-				}
-				sleepTime := waitTime
-				if sleepTime > maxWaitTime {
-					sleepTime = maxWaitTime
-				}
-				glog.V(0).Infof("master unavailable for assign, retrying in %v: %v", sleepTime, lastError)
-				select {
-				case <-ctx.Done():
-					return ret, ctx.Err()
-				case <-time.After(sleepTime):
-				}
-				waitTime += waitTime / 2
-				continue
-			}
-			break
-		}
 
 		if lastError != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorChunkAssign).Inc()
