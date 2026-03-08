@@ -281,6 +281,11 @@ main {
     box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.15) !important;
 }
 
+/* Navbar user icon color */
+.navbar-toggler .fa-user {
+    color: rgba(255, 255, 255, 0.75);
+}
+
 /* Collapsible menu styles */
 .nav-link[data-bs-toggle="collapse"] {
     position: relative;
