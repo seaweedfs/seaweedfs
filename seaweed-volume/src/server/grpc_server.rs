@@ -1359,7 +1359,9 @@ impl VolumeServer for VolumeGrpcService {
             store.locations[loc_idx].directory.clone()
         };
 
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid)
+        let (data_shards, parity_shards) = crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, vid);
+
+        crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid, data_shards as usize, parity_shards as usize)
             .map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(volume_server_pb::VolumeEcShardsGenerateResponse {}))
@@ -1389,9 +1391,11 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         // Check which shards are missing
-        use crate::storage::erasure_coding::ec_shard::TOTAL_SHARDS_COUNT;
+        let (data_shards, parity_shards) = crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, vid);
+        let total_shards = data_shards + parity_shards;
+        
         let mut missing: Vec<u32> = Vec::new();
-        for shard_id in 0..TOTAL_SHARDS_COUNT as u8 {
+        for shard_id in 0..total_shards as u8 {
             let shard = crate::storage::erasure_coding::ec_shard::EcVolumeShard::new(&dir, collection, vid, shard_id);
             if !std::path::Path::new(&shard.file_name()).exists() {
                 missing.push(shard_id as u32);
@@ -1404,8 +1408,8 @@ impl VolumeServer for VolumeGrpcService {
             }));
         }
 
-        // Rebuild missing shards by regenerating all EC files
-        crate::storage::erasure_coding::ec_encoder::write_ec_files(&dir, collection, vid)
+        // Rebuild missing shards by regenerating all missing EC files via Reed-Solomon reconstruct
+        crate::storage::erasure_coding::ec_encoder::rebuild_ec_files(&dir, collection, vid, &missing, data_shards as usize, parity_shards as usize)
             .map_err(|e| Status::internal(format!("rebuild ec shards: {}", e)))?;
 
         Ok(Response::new(volume_server_pb::VolumeEcShardsRebuildResponse {
