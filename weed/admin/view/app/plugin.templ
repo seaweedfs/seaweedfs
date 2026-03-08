@@ -65,7 +65,7 @@ templ Plugin(page string) {
 
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-info h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Workers</div>
@@ -73,7 +73,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-warning h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
@@ -81,11 +81,20 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-success h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
                             <h4 class="mb-0" id="plugin-status-activities">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Next Run</div>
+                            <h4 class="mb-0 plugin-scheduler-next-run">-</h4>
+                            <div class="text-muted small plugin-scheduler-next-run-meta"></div>
                         </div>
                     </div>
                 </div>
@@ -144,20 +153,6 @@ templ Plugin(page string) {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="row mb-4">
-                <div class="col-12 mb-3">
-                    <div class="card shadow-sm">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
-                            <small class="text-muted">Scheduler</small>
-                        </div>
-                        <div class="card-body">
-                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
-                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
                         </div>
                     </div>
                 </div>
