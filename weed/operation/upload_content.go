@@ -135,9 +135,11 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	} else {
 		data, err = io.ReadAll(reader)
 		if err != nil {
+			glog.V(0).Infof("upload read input %s: %v", uploadOption.UploadUrl, err)
 			err = fmt.Errorf("read input: %w", err)
 			return
 		}
+		glog.V(4).Infof("upload read %d bytes for %s", len(data), uploadOption.UploadUrl)
 	}
 
 	doUploadFunc := func() error {
