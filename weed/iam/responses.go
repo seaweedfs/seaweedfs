@@ -300,9 +300,10 @@ type DeleteGroupResponse struct {
 type GetGroupResponse struct {
 	XMLName        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetGroupResponse"`
 	GetGroupResult struct {
-		Group   iam.Group   `xml:"Group"`
-		Users   []*iam.User `xml:"Users>member"`
-		IsTruncated bool    `xml:"IsTruncated"`
+		Group       iam.Group   `xml:"Group"`
+		Users       []*iam.User `xml:"Users>member"`
+		IsTruncated bool        `xml:"IsTruncated"`
+		Marker      string      `xml:"Marker"`
 	} `xml:"GetGroupResult"`
 	CommonResponse
 }
@@ -313,6 +314,7 @@ type ListGroupsResponse struct {
 	ListGroupsResult struct {
 		Groups      []*iam.Group `xml:"Groups>member"`
 		IsTruncated bool         `xml:"IsTruncated"`
+		Marker      string       `xml:"Marker"`
 	} `xml:"ListGroupsResult"`
 	CommonResponse
 }
@@ -347,6 +349,7 @@ type ListAttachedGroupPoliciesResponse struct {
 	ListAttachedGroupPoliciesResult struct {
 		AttachedPolicies []*iam.AttachedPolicy `xml:"AttachedPolicies>member"`
 		IsTruncated      bool                  `xml:"IsTruncated"`
+		Marker           string                `xml:"Marker"`
 	} `xml:"ListAttachedGroupPoliciesResult"`
 	CommonResponse
 }
@@ -357,6 +360,7 @@ type ListGroupsForUserResponse struct {
 	ListGroupsForUserResult struct {
 		Groups      []*iam.Group `xml:"Groups>member"`
 		IsTruncated bool         `xml:"IsTruncated"`
+		Marker      string       `xml:"Marker"`
 	} `xml:"ListGroupsForUserResult"`
 	CommonResponse
 }
