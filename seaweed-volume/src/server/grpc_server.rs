@@ -2530,6 +2530,9 @@ impl VolumeServer for VolumeGrpcService {
         _request: Request<volume_server_pb::VolumeServerLeaveRequest>,
     ) -> Result<Response<volume_server_pb::VolumeServerLeaveResponse>, Status> {
         *self.state.is_stopping.write().unwrap() = true;
+        self.state.is_heartbeating.store(false, Ordering::Relaxed);
+        // Wake heartbeat loop to send deregistration.
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(
             volume_server_pb::VolumeServerLeaveResponse {},
         ))
