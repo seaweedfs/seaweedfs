@@ -177,7 +177,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     }
 
     // Build HTTP routers
-    let mut admin_router = seaweed_volume::server::volume_server::build_admin_router(state.clone());
+    let mut admin_router = seaweed_volume::server::volume_server::build_admin_router_with_ui(
+        state.clone(),
+        config.ui_enabled,
+    );
     if config.pprof {
         admin_router = admin_router.merge(build_debug_router());
     }

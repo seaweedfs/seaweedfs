@@ -224,6 +224,7 @@ pub struct VolumeServerConfig {
     pub metrics_ip: String,
     pub debug: bool,
     pub debug_port: u16,
+    pub ui_enabled: bool,
     pub jwt_signing_key: Vec<u8>,
     pub jwt_signing_expires_seconds: i64,
     pub jwt_read_signing_key: Vec<u8>,
@@ -417,9 +418,9 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         .max
         .split(',')
         .map(|s| {
-            s.trim()
-                .parse::<i32>()
-                .unwrap_or_else(|_| panic!("The max specified in --max is not a valid number: {}", s))
+            s.trim().parse::<i32>().unwrap_or_else(|_| {
+                panic!("The max specified in --max is not a valid number: {}", s)
+            })
         })
         .collect();
     // Replicate single value to all folders
@@ -436,7 +437,8 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     }
 
     // Parse min free spaces
-    let mut min_free_spaces = parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent);
+    let mut min_free_spaces =
+        parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent);
     if min_free_spaces.len() == 1 && folder_count > 1 {
         let v = min_free_spaces[0].clone();
         min_free_spaces.resize(folder_count, v);
@@ -450,11 +452,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     }
 
     // Parse disk types
-    let mut disk_types: Vec<String> = cli
-        .disk
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
+    let mut disk_types: Vec<String> = cli.disk.split(',').map(|s| s.trim().to_string()).collect();
     if disk_types.len() == 1 && folder_count > 1 {
         let v = disk_types[0].clone();
         disk_types.resize(folder_count, v);
@@ -527,7 +525,10 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         "leveldb" => NeedleMapKind::LevelDb,
         "leveldbMedium" => NeedleMapKind::LevelDbMedium,
         "leveldbLarge" => NeedleMapKind::LevelDbLarge,
-        other => panic!("Unknown index type: {}. Use memory|leveldb|leveldbMedium|leveldbLarge", other),
+        other => panic!(
+            "Unknown index type: {}. Use memory|leveldb|leveldbMedium|leveldbLarge",
+            other
+        ),
     };
 
     // Parse read mode
@@ -593,6 +594,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         metrics_ip,
         debug: cli.debug,
         debug_port: cli.debug_port,
+        ui_enabled: sec.jwt_signing_key.is_empty() || sec.access_ui,
         jwt_signing_key: sec.jwt_signing_key,
         jwt_signing_expires_seconds: sec.jwt_signing_expires,
         jwt_read_signing_key: sec.jwt_read_signing_key,
@@ -601,7 +603,9 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         https_key_file: sec.https_key_file,
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
-        enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE").map(|v| v == "1" || v == "true").unwrap_or(false),
+        enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false),
     }
 }
 
@@ -616,6 +620,7 @@ pub struct SecurityConfig {
     pub https_key_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
+    pub access_ui: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
 }
@@ -658,6 +663,7 @@ fn parse_security_config(path: &str) -> SecurityConfig {
         HttpsVolume,
         GrpcVolume,
         Guard,
+        Access,
     }
 
     let mut section = Section::None;
@@ -687,6 +693,10 @@ fn parse_security_config(path: &str) -> SecurityConfig {
             section = Section::Guard;
             continue;
         }
+        if trimmed == "[access]" {
+            section = Section::Access;
+            continue;
+        }
         if trimmed.starts_with('[') {
             section = Section::None;
             continue;
@@ -698,7 +708,9 @@ fn parse_security_config(path: &str) -> SecurityConfig {
             match section {
                 Section::JwtSigningRead => match key {
                     "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
-                    "expires_after_seconds" => cfg.jwt_read_signing_expires = value.parse().unwrap_or(0),
+                    "expires_after_seconds" => {
+                        cfg.jwt_read_signing_expires = value.parse().unwrap_or(0)
+                    }
                     _ => {}
                 },
                 Section::JwtSigning => match key {
@@ -724,6 +736,10 @@ fn parse_security_config(path: &str) -> SecurityConfig {
                             .filter(|s| !s.is_empty())
                             .collect();
                     }
+                    _ => {}
+                },
+                Section::Access => match key {
+                    "ui" => cfg.access_ui = value.parse().unwrap_or(false),
                     _ => {}
                 },
                 Section::None => {}
@@ -805,5 +821,25 @@ mod tests {
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0], Vec::<String>::new());
         assert_eq!(tags[1], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_security_config_access_ui() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "secret"
+
+[access]
+ui = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = parse_security_config(tmp.path().to_str().unwrap());
+        assert_eq!(cfg.jwt_signing_key, b"secret");
+        assert!(cfg.access_ui);
     }
 }

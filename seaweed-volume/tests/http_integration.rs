@@ -11,7 +11,8 @@ use tower::ServiceExt; // for `oneshot`
 
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::volume_server::{
-    build_admin_router, build_metrics_router, VolumeServerState,
+    build_admin_router, build_admin_router_with_ui, build_metrics_router, build_public_router,
+    VolumeServerState,
 };
 use seaweed_volume::storage::needle_map::NeedleMapKind;
 use seaweed_volume::storage::store::Store;
@@ -22,6 +23,10 @@ use tempfile::TempDir;
 /// Create a test VolumeServerState with a temp directory, a single disk
 /// location, and one pre-created volume (VolumeId 1).
 fn test_state() -> (Arc<VolumeServerState>, TempDir) {
+    test_state_with_signing_key(Vec::new())
+}
+
+fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>, TempDir) {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let dir = tmp.path().to_str().unwrap();
 
@@ -40,7 +45,7 @@ fn test_state() -> (Arc<VolumeServerState>, TempDir) {
         .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive)
         .expect("failed to create volume");
 
-    let guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);
+    let guard = Guard::new(&[], SigningKey(signing_key), 0, SigningKey(vec![]), 0);
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
         guard,
@@ -395,4 +400,102 @@ async fn invalid_url_path_returns_400() {
         StatusCode::BAD_REQUEST,
         "invalid URL path should return 400"
     );
+}
+
+#[tokio::test]
+async fn admin_root_get_returns_400() {
+    let (state, _tmp) = test_state();
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn public_root_get_returns_400() {
+    let (state, _tmp) = test_state();
+    let app = build_public_router(state);
+
+    let response = app
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn public_router_does_not_expose_healthz() {
+    let (state, _tmp) = test_state();
+    let app = build_public_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn admin_router_does_not_expose_stats_routes() {
+    let (state, _tmp) = test_state();
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/stats/counter")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn admin_router_hides_ui_when_write_jwt_is_configured() {
+    let (state, _tmp) = test_state_with_signing_key(b"secret".to_vec());
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ui/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn admin_router_can_expose_ui_with_explicit_override() {
+    let (state, _tmp) = test_state_with_signing_key(b"secret".to_vec());
+    let app = build_admin_router_with_ui(state, true);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ui/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }

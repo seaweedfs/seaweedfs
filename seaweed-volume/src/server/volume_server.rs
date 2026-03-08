@@ -195,37 +195,27 @@ fn public_options_response() -> Response {
 
 /// Build the admin (private) HTTP router — supports all operations.
 pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
-    Router::new()
+    build_admin_router_with_ui(state.clone(), state.guard.signing_key.0.is_empty())
+}
+
+/// Build the admin router with an explicit UI exposure flag.
+pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: bool) -> Router {
+    let mut router = Router::new()
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
-        .route("/stats/counter", get(handlers::stats_counter_handler))
-        .route("/stats/memory", get(handlers::stats_memory_handler))
-        .route("/stats/disk", get(handlers::stats_disk_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
             "/seaweedfsstatic/*path",
             get(handlers::static_asset_handler),
         )
-        .route("/ui/index.html", get(handlers::ui_handler))
-        .route(
-            "/",
-            any(
-                |_state: State<Arc<VolumeServerState>>, request: Request| async move {
-                    match request.method().clone() {
-                        Method::OPTIONS => admin_options_response(),
-                        Method::GET => StatusCode::OK.into_response(),
-                        _ => (
-                            StatusCode::BAD_REQUEST,
-                            format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
-                        )
-                            .into_response(),
-                    }
-                },
-            ),
-        )
+        .route("/", any(admin_store_handler))
         .route("/:path", any(admin_store_handler))
         .route("/:vid/:fid", any(admin_store_handler))
-        .route("/:vid/:fid/:filename", any(admin_store_handler))
+        .route("/:vid/:fid/:filename", any(admin_store_handler));
+    if ui_enabled {
+        router = router.route("/ui/index.html", get(handlers::ui_handler));
+    }
+    router
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)
 }
@@ -233,24 +223,12 @@ pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
 /// Build the public (read-only) HTTP router — only GET/HEAD.
 pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
     Router::new()
-        .route("/healthz", get(handlers::healthz_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
             "/seaweedfsstatic/*path",
             get(handlers::static_asset_handler),
         )
-        .route(
-            "/",
-            any(
-                |_state: State<Arc<VolumeServerState>>, request: Request| async move {
-                    match request.method().clone() {
-                        Method::OPTIONS => public_options_response(),
-                        Method::GET => StatusCode::OK.into_response(),
-                        _ => StatusCode::OK.into_response(),
-                    }
-                },
-            ),
-        )
+        .route("/", any(public_store_handler))
         .route("/:path", any(public_store_handler))
         .route("/:vid/:fid", any(public_store_handler))
         .route("/:vid/:fid/:filename", any(public_store_handler))
