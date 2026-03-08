@@ -211,7 +211,8 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/", any(admin_store_handler))
         .route("/:path", any(admin_store_handler))
         .route("/:vid/:fid", any(admin_store_handler))
-        .route("/:vid/:fid/:filename", any(admin_store_handler));
+        .route("/:vid/:fid/:filename", any(admin_store_handler))
+        .fallback(admin_store_handler);
     if ui_enabled {
         router = router.route("/ui/index.html", get(handlers::ui_handler));
     }
@@ -232,6 +233,7 @@ pub fn build_public_router(state: Arc<VolumeServerState>) -> Router {
         .route("/:path", any(public_store_handler))
         .route("/:vid/:fid", any(public_store_handler))
         .route("/:vid/:fid/:filename", any(public_store_handler))
+        .fallback(public_store_handler)
         .layer(middleware::from_fn(common_headers_middleware))
         .with_state(state)
 }

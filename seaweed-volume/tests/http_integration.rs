@@ -403,6 +403,24 @@ async fn invalid_url_path_returns_400() {
 }
 
 #[tokio::test]
+async fn deep_invalid_url_path_returns_400() {
+    let (state, _tmp) = test_state();
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/not/a/valid/volume/path")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn admin_root_get_returns_400() {
     let (state, _tmp) = test_state();
     let app = build_admin_router(state);
