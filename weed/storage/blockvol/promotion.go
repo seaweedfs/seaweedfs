@@ -24,6 +24,9 @@ func HandleAssignment(vol *BlockVol, newEpoch uint64, newRole Role, leaseTTL tim
 
 	// Same role -> refresh lease and update epoch if bumped.
 	if current == newRole {
+		if newEpoch < vol.Epoch() {
+			return fmt.Errorf("%w: new %d < current %d", ErrEpochRegression, newEpoch, vol.Epoch())
+		}
 		if newEpoch > vol.Epoch() {
 			if err := vol.SetEpoch(newEpoch); err != nil {
 				return fmt.Errorf("assignment refresh: set epoch: %w", err)

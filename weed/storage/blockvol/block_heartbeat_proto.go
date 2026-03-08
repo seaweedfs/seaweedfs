@@ -158,3 +158,4 @@ func AssignmentsFromProto(protos []*master_pb.BlockVolumeAssignment) []BlockVolu
 	}
 	return out
 }
+

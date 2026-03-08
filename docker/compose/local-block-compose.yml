@@ -1,0 +1,38 @@
+## SeaweedFS Block Storage — Docker Compose
+##
+## Usage:
+##   HOST_IP=192.168.1.100 docker compose -f local-block-compose.yml up -d
+##
+## The HOST_IP is used for iSCSI discovery so external clients can connect.
+## If running on the same host, you can use: HOST_IP=127.0.0.1
+
+services:
+  master:
+    image: seaweedfs-block:local
+    entrypoint: ["/usr/bin/weed"]
+    ports:
+      - "9333:9333"
+      - "19333:19333"
+    command: ["master", "-ip=master", "-ip.bind=0.0.0.0", "-mdir=/data"]
+
+  volume:
+    image: seaweedfs-block:local
+    ports:
+      - "8280:8080"
+      - "18280:18080"
+      - "3260:3260"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mkdir -p /data/blocks &&
+        exec /usr/bin/weed volume
+        -ip=volume
+        -master=master:9333
+        -ip.bind=0.0.0.0
+        -port=8080
+        -dir=/data
+        -block.dir=/data/blocks
+        -block.listen=0.0.0.0:3260
+        -block.portal=${HOST_IP:-127.0.0.1}:3260,1
+    depends_on:
+      - master

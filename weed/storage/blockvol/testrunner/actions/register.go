@@ -12,4 +12,5 @@ func RegisterAll(r *tr.Registry) {
 	RegisterMetricsActions(r)
 	RegisterDevOpsActions(r)
 	RegisterSnapshotActions(r)
+	RegisterDatabaseActions(r)
 }

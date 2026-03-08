@@ -19,6 +19,9 @@ func RegisterSystemActions(r *tr.Registry) {
 	r.RegisterFunc("assert_status", tr.TierCore, assertStatus)
 	r.RegisterFunc("assert_contains", tr.TierCore, assertContains)
 	r.RegisterFunc("print", tr.TierCore, printAction)
+	r.RegisterFunc("fsck_ext4", tr.TierBlock, fsckExt4)
+	r.RegisterFunc("fsck_xfs", tr.TierBlock, fsckXfs)
+	r.RegisterFunc("grep_log", tr.TierCore, grepLog)
 }
 
 func execAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
@@ -147,4 +150,86 @@ func printAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 	}
 	actx.Log("  [print] %s", msg)
 	return nil, nil
+}
+
+// fsckExt4 runs e2fsck -fn on an unmounted ext4 device. Fails if exit code >= 4.
+// Params: device (required)
+func fsckExt4(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("fsck_ext4: device param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	stdout, stderr, code, err := node.RunRoot(ctx, fmt.Sprintf("e2fsck -fn %s 2>&1", device))
+	if err != nil {
+		return nil, fmt.Errorf("fsck_ext4: %w", err)
+	}
+	// e2fsck exit codes: 0=clean, 1=errors corrected, 2=reboot needed, 4+=serious error.
+	if code >= 4 {
+		return nil, fmt.Errorf("fsck_ext4: code=%d output=%s stderr=%s", code, stdout, stderr)
+	}
+
+	output := strings.TrimSpace(stdout)
+	return map[string]string{"value": output}, nil
+}
+
+// fsckXfs runs xfs_repair -n on an unmounted XFS device. Fails if non-zero exit.
+// Params: device (required)
+func fsckXfs(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("fsck_xfs: device param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	stdout, stderr, code, err := node.RunRoot(ctx, fmt.Sprintf("xfs_repair -n %s 2>&1", device))
+	if err != nil {
+		return nil, fmt.Errorf("fsck_xfs: %w", err)
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("fsck_xfs: code=%d output=%s stderr=%s", code, stdout, stderr)
+	}
+
+	output := strings.TrimSpace(stdout)
+	return map[string]string{"value": output}, nil
+}
+
+// grepLog counts occurrences of a pattern in a file. Returns count as value.
+// Params: path (required), pattern (required)
+func grepLog(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	path := act.Params["path"]
+	if path == "" {
+		return nil, fmt.Errorf("grep_log: path param required")
+	}
+	pattern := act.Params["pattern"]
+	if pattern == "" {
+		return nil, fmt.Errorf("grep_log: pattern param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := fmt.Sprintf("grep -c '%s' %s || true", pattern, path)
+	stdout, _, _, err := node.Run(ctx, cmd)
+	if err != nil {
+		return nil, fmt.Errorf("grep_log: %w", err)
+	}
+
+	count := strings.TrimSpace(stdout)
+	if count == "" {
+		count = "0"
+	}
+
+	return map[string]string{"value": count}, nil
 }

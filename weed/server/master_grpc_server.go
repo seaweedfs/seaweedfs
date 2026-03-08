@@ -290,10 +290,31 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 				ms.blockAssignmentQueue.ConfirmFromHeartbeat(dn.Url(), infos)
 			}
 
-			// Send remaining pending assignments.
+			// Pending assignments (role changes, epoch bumps).
 			pending := ms.blockAssignmentQueue.Peek(dn.Url())
-			if len(pending) > 0 {
-				assignProtos := blockvol.AssignmentsToProto(pending)
+
+			// Lease grants for confirmed volumes (lightweight: path+epoch+ttl).
+			// Skip volumes that already have a pending assignment.
+			pendingPaths := make(map[string]bool, len(pending))
+			for _, p := range pending {
+				pendingPaths[p.Path] = true
+			}
+			grants := ms.blockRegistry.LeaseGrants(dn.Url(), pendingPaths)
+
+			// Merge pending assignments + lease grants into one response.
+			// Lease grants reuse BlockVolumeAssignment (path+epoch+role+ttl)
+			// and are processed by HandleAssignment's same-role refresh path.
+			all := pending
+			for _, g := range grants {
+				all = append(all, blockvol.BlockVolumeAssignment{
+					Path:       g.Path,
+					Epoch:      g.Epoch,
+					Role:       g.Role,
+					LeaseTtlMs: g.LeaseTtlMs,
+				})
+			}
+			if len(all) > 0 {
+				assignProtos := blockvol.AssignmentsToProto(all)
 				if err := stream.Send(&master_pb.HeartbeatResponse{
 					BlockVolumeAssignments: assignProtos,
 				}); err != nil {

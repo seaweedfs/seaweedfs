@@ -1,0 +1,325 @@
+name: cp85-chaos-replica-kill-loop
+timeout: 15m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3270
+    admin_port: 8090
+    rebuild_port: 9030
+    iqn_suffix: cp85-rkill-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-rkill-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  # === Iteration 1: kill replica, verify primary I/O unblocked ===
+  - name: iter1_kill_replica
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter1
+      - action: kill_target
+        target: replica
+      - action: sleep
+        duration: 2s
+      # Primary should still serve I/O.
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        seek: "256"
+        save_as: md5_iter1_after
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        skip: "256"
+        save_as: read_iter1_after
+      - action: assert_equal
+        actual: "{{ read_iter1_after }}"
+        expected: "{{ md5_iter1_after }}"
+
+  - name: iter1_rebuild_replica
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "1"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 2 ===
+  - name: iter2_kill_replica
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter2
+      - action: kill_target
+        target: replica
+      - action: sleep
+        duration: 2s
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        seek: "512"
+        save_as: md5_iter2_after
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        skip: "512"
+        save_as: read_iter2_after
+      - action: assert_equal
+        actual: "{{ read_iter2_after }}"
+        expected: "{{ md5_iter2_after }}"
+
+  - name: iter2_rebuild_replica
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "1"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 3 ===
+  - name: iter3_kill_replica
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter3
+      - action: kill_target
+        target: replica
+      - action: sleep
+        duration: 2s
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        seek: "768"
+        save_as: md5_iter3_after
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        skip: "768"
+        save_as: read_iter3_after
+      - action: assert_equal
+        actual: "{{ read_iter3_after }}"
+        expected: "{{ md5_iter3_after }}"
+
+  - name: iter3_rebuild_replica
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "1"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 4 ===
+  - name: iter4_kill_replica
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter4
+      - action: kill_target
+        target: replica
+      - action: sleep
+        duration: 2s
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        seek: "1024"
+        save_as: md5_iter4_after
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        skip: "1024"
+        save_as: read_iter4_after
+      - action: assert_equal
+        actual: "{{ read_iter4_after }}"
+        expected: "{{ md5_iter4_after }}"
+
+  - name: iter4_rebuild_replica
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "1"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 5 ===
+  - name: iter5_kill_replica
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter5
+      - action: kill_target
+        target: replica
+      - action: sleep
+        duration: 2s
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        seek: "1280"
+        save_as: md5_iter5_after
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "16"
+        skip: "1280"
+        save_as: read_iter5_after
+      - action: assert_equal
+        actual: "{{ read_iter5_after }}"
+        expected: "{{ md5_iter5_after }}"
+
+  - name: final_verify
+    actions:
+      - action: print
+        msg: "All 5 replica-kill iterations passed. Primary I/O never blocked."
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

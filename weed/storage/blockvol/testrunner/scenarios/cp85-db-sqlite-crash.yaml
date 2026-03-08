@@ -1,0 +1,341 @@
+name: cp85-db-sqlite-crash
+timeout: 30m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3270
+    admin_port: 8090
+    replica_data_port: 9034
+    replica_ctrl_port: 9035
+    rebuild_port: 9030
+    iqn_suffix: cp85-sqlite-primary
+  replica:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-sqlite-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+
+  # === Iteration 1: primary writes, crash, replica promoted ===
+  - name: iter1_start
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device1
+
+  - name: iter1_db
+    actions:
+      - action: mkfs
+        node: client_node
+        device: "{{ device1 }}"
+        fstype: ext4
+      - action: mount
+        node: client_node
+        device: "{{ device1 }}"
+        mountpoint: /mnt/test
+      - action: sqlite_create_db
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_insert_rows
+        node: client_node
+        path: /mnt/test/test.db
+        count: "100"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+      # Wait for replication, then give extra time for WAL shipping to complete.
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+      - action: sleep
+        duration: 3s
+
+  - name: iter1_crash_promote
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: iter1_verify
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device1v
+      - action: mount
+        node: client_node
+        device: "{{ device1v }}"
+        mountpoint: /mnt/test
+      - action: sqlite_integrity_check
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_count_rows
+        node: client_node
+        path: /mnt/test/test.db
+        save_as: count1
+      - action: assert_greater
+        actual: "{{ count1 }}"
+        expected: "0"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+
+  - name: iter1_rebuild
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: primary
+        primary: replica
+        epoch: "2"
+      - action: wait_role
+        target: primary
+        role: replica
+        timeout: 30s
+
+  # === Iteration 2: replica (now primary) writes, crash, primary promoted ===
+  - name: iter2_db
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      - action: mkfs
+        node: client_node
+        device: "{{ device2 }}"
+        fstype: ext4
+      - action: mount
+        node: client_node
+        device: "{{ device2 }}"
+        mountpoint: /mnt/test
+      - action: sqlite_create_db
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_insert_rows
+        node: client_node
+        path: /mnt/test/test.db
+        count: "200"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+      - action: sleep
+        duration: 5s
+
+  - name: iter2_crash_promote
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: replica
+      - action: assign
+        target: primary
+        epoch: "3"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: primary
+        role: primary
+        timeout: 5s
+
+  - name: iter2_verify
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device2v
+      - action: mount
+        node: client_node
+        device: "{{ device2v }}"
+        mountpoint: /mnt/test
+      - action: sqlite_integrity_check
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_count_rows
+        node: client_node
+        path: /mnt/test/test.db
+        save_as: count2
+      - action: assert_greater
+        actual: "{{ count2 }}"
+        expected: "0"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+
+  - name: iter2_rebuild
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "3"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "3"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 3: primary writes, crash, replica promoted ===
+  - name: iter3_db
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device3
+      - action: mkfs
+        node: client_node
+        device: "{{ device3 }}"
+        fstype: ext4
+      - action: mount
+        node: client_node
+        device: "{{ device3 }}"
+        mountpoint: /mnt/test
+      - action: sqlite_create_db
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_insert_rows
+        node: client_node
+        path: /mnt/test/test.db
+        count: "300"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+      - action: sleep
+        duration: 5s
+
+  - name: iter3_crash_promote
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "4"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: iter3_verify
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device3v
+      - action: mount
+        node: client_node
+        device: "{{ device3v }}"
+        mountpoint: /mnt/test
+      - action: sqlite_integrity_check
+        node: client_node
+        path: /mnt/test/test.db
+      - action: sqlite_count_rows
+        node: client_node
+        path: /mnt/test/test.db
+        save_as: count3
+      - action: assert_greater
+        actual: "{{ count3 }}"
+        expected: "0"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+
+  - name: final
+    actions:
+      - action: print
+        msg: "All 3 SQLite crash iterations passed."
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

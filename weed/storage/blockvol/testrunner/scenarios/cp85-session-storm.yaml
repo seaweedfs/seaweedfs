@@ -1,0 +1,86 @@
+name: cp85-session-storm
+timeout: 15m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3270
+    admin_port: 8090
+    iqn_suffix: cp85-storm-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+
+  # 50 iterations: login -> write 4K -> logout -> short pause.
+  - name: session_cycle
+    repeat: 50
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "1"
+        save_as: md5_storm
+      - action: iscsi_logout
+        target: primary
+        node: client_node
+      - action: sleep
+        duration: 100ms
+
+  - name: final_verify
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: final_device
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ final_device }}"
+        bs: 4k
+        count: "1"
+        save_as: read_final
+      - action: print
+        msg: "Session storm complete: 50 login/write/logout cycles."
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

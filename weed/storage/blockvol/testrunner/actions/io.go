@@ -17,6 +17,8 @@ func RegisterIOActions(r *tr.Registry) {
 	r.RegisterFunc("mkfs", tr.TierBlock, mkfsAction)
 	r.RegisterFunc("mount", tr.TierBlock, mountAction)
 	r.RegisterFunc("umount", tr.TierBlock, umountAction)
+	r.RegisterFunc("write_loop_bg", tr.TierBlock, writeLoopBg)
+	r.RegisterFunc("stop_bg", tr.TierBlock, stopBg)
 }
 
 // ddWrite writes random data using dd, returns the md5 checksum.
@@ -156,6 +158,9 @@ func fioAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 
 	cmd := fmt.Sprintf("fio --name=%s --filename=%s --rw=%s --bs=%s --iodepth=%s --direct=1 --runtime=%s --time_based --output-format=json",
 		name, device, rw, bs, iodepth, runtime)
+	if size := act.Params["size"]; size != "" {
+		cmd += fmt.Sprintf(" --size=%s", size)
+	}
 	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("fio: code=%d stderr=%s err=%v", code, stderr, err)
@@ -256,5 +261,60 @@ func umountAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("umount: code=%d stderr=%s err=%v", code, stderr, err)
 	}
+	return nil, nil
+}
+
+// writeLoopBg starts a background dd write loop. Returns PID.
+// Params: device (required), bs (default: "4k"), oflag (default: "direct")
+func writeLoopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	device := act.Params["device"]
+	if device == "" {
+		return nil, fmt.Errorf("write_loop_bg: device param required")
+	}
+	bs := act.Params["bs"]
+	if bs == "" {
+		bs = "4k"
+	}
+	oflag := act.Params["oflag"]
+	if oflag == "" {
+		oflag = "direct"
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := fmt.Sprintf("setsid bash -c 'while true; do dd if=/dev/urandom of=%s bs=%s count=1 oflag=%s conv=notrunc 2>/dev/null; done' &>/tmp/sw_bg.log & echo $!",
+		device, bs, oflag)
+	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("write_loop_bg: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	pid := strings.TrimSpace(stdout)
+	if pid == "" {
+		return nil, fmt.Errorf("write_loop_bg: empty PID")
+	}
+
+	return map[string]string{"value": pid}, nil
+}
+
+// stopBg kills a background process by PID.
+// Params: pid (required)
+func stopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	pid := act.Params["pid"]
+	if pid == "" {
+		return nil, fmt.Errorf("stop_bg: pid param required")
+	}
+
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := fmt.Sprintf("kill %s; wait %s 2>/dev/null || true", pid, pid)
+	node.RunRoot(ctx, cmd)
+
 	return nil, nil
 }

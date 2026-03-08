@@ -1,0 +1,153 @@
+name: cp85-expand-failover
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3270
+    admin_port: 8090
+    replica_data_port: 9034
+    replica_ctrl_port: 9035
+    rebuild_port: 9030
+    iqn_suffix: cp85-expand-primary
+  replica:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-expand-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: expand_volume
+    actions:
+      # Expand from 50M to 100M.
+      - action: resize
+        target: primary
+        new_size: "100M"
+      - action: iscsi_rescan
+        node: client_node
+      - action: sleep
+        duration: 2s
+      - action: get_block_size
+        node: client_node
+        device: "{{ device }}"
+        save_as: new_size
+
+  - name: write_at_expanded_offset
+    actions:
+      # Write at offset 60M (past original 50M boundary).
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        seek: "60"
+        save_as: md5_expanded
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: failover
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: verify_expanded_on_new_primary
+    actions:
+      # Resize the new primary to 100M (replica had original 50M superblock).
+      - action: resize
+        target: replica
+        new_size: "100M"
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      - action: iscsi_rescan
+        node: client_node
+      - action: get_block_size
+        node: client_node
+        device: "{{ device2 }}"
+        save_as: new_primary_size
+      # Read at the expanded offset and verify.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "60"
+        save_as: read_expanded
+      - action: assert_equal
+        actual: "{{ read_expanded }}"
+        expected: "{{ md5_expanded }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

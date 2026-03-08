@@ -1,0 +1,154 @@
+name: cp85-db-ext4-fsck
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3270
+    admin_port: 8090
+    replica_data_port: 9034
+    replica_ctrl_port: 9035
+    rebuild_port: 9030
+    iqn_suffix: cp85-fsck-primary
+  replica:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-fsck-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: create_fs_and_files
+    actions:
+      - action: mkfs
+        node: client_node
+        device: "{{ device }}"
+        fstype: ext4
+      - action: mount
+        node: client_node
+        device: "{{ device }}"
+        mountpoint: /mnt/test
+      # Write 100 files.
+      - action: exec
+        node: client_node
+        root: "true"
+        cmd: "bash -c 'for i in $(seq 1 100); do dd if=/dev/urandom of=/mnt/test/file_$i bs=4k count=1 2>/dev/null; done'"
+      - action: exec
+        node: client_node
+        root: "true"
+        cmd: "sync"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+      - action: sleep
+        duration: 3s
+
+  - name: kill_and_promote
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: fsck_on_new_primary
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      # Run e2fsck on the unmounted device (iSCSI presents it; we haven't mounted).
+      - action: fsck_ext4
+        node: client_node
+        device: "{{ device2 }}"
+        save_as: fsck_result
+
+  - name: verify_files
+    actions:
+      - action: mount
+        node: client_node
+        device: "{{ device2 }}"
+        mountpoint: /mnt/test
+      - action: exec
+        node: client_node
+        root: "true"
+        cmd: "ls /mnt/test/file_* | wc -l"
+        save_as: file_count
+      - action: assert_equal
+        actual: "{{ file_count }}"
+        expected: "100"
+      - action: umount
+        node: client_node
+        mountpoint: /mnt/test
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

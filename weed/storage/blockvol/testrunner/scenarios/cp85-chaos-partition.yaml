@@ -1,0 +1,143 @@
+name: cp85-chaos-partition
+timeout: 15m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3270
+    admin_port: 8090
+    rebuild_port: 9030
+    iqn_suffix: cp85-part-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-part-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: pre_fault_write
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "4"
+        save_as: md5_pre
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: inject_partition
+    actions:
+      - action: inject_partition
+        node: target_node
+        target_ip: "127.0.0.1"
+        ports: "9031,9032"
+      - action: sleep
+        duration: 5s
+      # Write under partition — primary should still accept I/O.
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "128"
+        seek: "1024"
+        save_as: md5_during_fault
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_fault
+
+  - name: clear_partition
+    actions:
+      - action: clear_fault
+        type: partition
+        node: target_node
+      - action: sleep
+        duration: 5s
+      # Wait for replica to catch up after partition heals.
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 30s
+
+  - name: verify_data
+    actions:
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "128"
+        skip: "1024"
+        save_as: read_during_fault
+      - action: assert_equal
+        actual: "{{ read_during_fault }}"
+        expected: "{{ md5_during_fault }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        type: partition
+        node: target_node
+        ignore_error: true
+      - action: clear_fault
+        type: netem
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

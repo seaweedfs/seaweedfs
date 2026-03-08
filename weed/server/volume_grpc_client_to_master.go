@@ -220,20 +220,17 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 
 	// Send block volume full heartbeat if block service is enabled.
 	// R1-3: Also set up periodic block heartbeat so assignments get confirmed.
-	var blockVolTickChan *time.Ticker
+	// Always start the ticker — blockService may be set after heartbeat loop starts.
+	blockVolTickChan := time.NewTicker(5 * sleepInterval)
+	defer blockVolTickChan.Stop()
+	blockVolSent := false
 	if vs.blockService != nil {
 		blockBeat := vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)
 		if err = stream.Send(blockBeat); err != nil {
 			glog.V(0).Infof("Volume Server Failed to send block volume heartbeat to master %s: %v", masterAddress, err)
 			return "", err
 		}
-		blockVolTickChan = time.NewTicker(5 * sleepInterval)
-		defer blockVolTickChan.Stop()
-	}
-	// blockVolTickC is nil-safe: select on nil channel never fires.
-	var blockVolTickC <-chan time.Time
-	if blockVolTickChan != nil {
-		blockVolTickC = blockVolTickChan.C
+		blockVolSent = true
 	}
 	for {
 		select {
@@ -312,8 +309,14 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
-		case <-blockVolTickC:
-			// R1-3: Periodic full block heartbeat enables assignment confirmation on master.
+		case <-blockVolTickChan.C:
+			if vs.blockService == nil {
+				continue
+			}
+			if !blockVolSent {
+				glog.V(0).Infof("volume server %s:%d block service now available, sending first block heartbeat", vs.store.Ip, vs.store.Port)
+				blockVolSent = true
+			}
 			glog.V(4).Infof("volume server %s:%d block volume heartbeat", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)); err != nil {
 				glog.V(0).Infof("Volume Server Failed to send block volume heartbeat to master %s: %v", masterAddress, err)

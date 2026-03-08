@@ -706,6 +706,7 @@ func (v *BlockVol) Status() BlockVolumeStatus {
 	}
 }
 
+
 // CheckpointLSN returns the last LSN flushed to the extent region.
 func (v *BlockVol) CheckpointLSN() uint64 {
 	if v.flusher != nil {

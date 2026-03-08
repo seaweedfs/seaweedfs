@@ -78,6 +78,7 @@ type VolumeServerOptions struct {
 	blockListen    *string
 	blockDir       *string
 	blockIQNPrefix *string
+	blockPortal    *string
 }
 
 func init() {
@@ -121,6 +122,7 @@ func init() {
 	v.blockListen = cmdVolume.Flag.String("block.listen", "0.0.0.0:3260", "iSCSI target listen address for block volumes")
 	v.blockDir = cmdVolume.Flag.String("block.dir", "", "directory containing .blk block volume files. Empty disables iSCSI block service.")
 	v.blockIQNPrefix = cmdVolume.Flag.String("block.iqn.prefix", "iqn.2024-01.com.seaweedfs:vol.", "IQN prefix for block volume iSCSI targets")
+	v.blockPortal = cmdVolume.Flag.String("block.portal", "", "public iSCSI portal address for SendTargets discovery (e.g. 192.168.1.100:3260,1). Required for Windows clients and Docker deployments.")
 }
 
 var cmdVolume = &Command{
@@ -309,7 +311,19 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	clusterHttpServer := v.startClusterHttpService(volumeMux)
 
 	// Start block volume iSCSI service (disabled if block.dir is empty).
-	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix)
+	// Auto-derive portal from -ip flag if not explicitly set, so iSCSI
+	// discovery returns a routable address instead of 0.0.0.0.
+	blockPortal := *v.blockPortal
+	if blockPortal == "" && *v.blockDir != "" && *v.ip != "" && *v.ip != "0.0.0.0" && *v.ip != "::" {
+		// Extract port from listen address (default 3260).
+		port := "3260"
+		if idx := strings.LastIndex(*v.blockListen, ":"); idx >= 0 {
+			port = (*v.blockListen)[idx+1:]
+		}
+		blockPortal = fmt.Sprintf("%s:%s,1", *v.ip, port)
+		glog.V(0).Infof("block service: auto-derived portal address %s from -ip flag", blockPortal)
+	}
+	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix, blockPortal)
 	if blockService != nil {
 		volumeServer.SetBlockService(blockService)
 	}

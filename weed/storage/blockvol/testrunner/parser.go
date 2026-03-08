@@ -88,6 +88,9 @@ func validate(s *Scenario) error {
 		if phase.Name == "" {
 			return fmt.Errorf("phase name is required")
 		}
+		if phase.Repeat < 0 || phase.Repeat > 100 {
+			return fmt.Errorf("phase %q: repeat must be 0..100 (got %d)", phase.Name, phase.Repeat)
+		}
 
 		// Validate save_as uniqueness within parallel phases.
 		if phase.Parallel {

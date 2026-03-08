@@ -44,12 +44,14 @@ func InjectIptablesDrop(ctx context.Context, node *Node, targetIP string, ports 
 	}
 
 	// Build cleanup command that removes all rules.
+	// Use "|| true" so each removal succeeds even if the rule is already gone,
+	// and ";" so all ports are attempted even if one fails.
 	var cmds []string
 	for _, port := range ports {
 		cmds = append(cmds, fmt.Sprintf(
-			"iptables -D OUTPUT -d %s -p tcp --dport %d -j DROP 2>/dev/null", targetIP, port))
+			"iptables -D OUTPUT -d %s -p tcp --dport %d -j DROP 2>/dev/null || true", targetIP, port))
 	}
-	cleanupCmd = strings.Join(cmds, " && ")
+	cleanupCmd = strings.Join(cmds, " ; ")
 	return cleanupCmd, nil
 }
 

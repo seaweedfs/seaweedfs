@@ -2,6 +2,7 @@ package blockvol
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
 	"path/filepath"
 	"sync"
@@ -142,13 +143,17 @@ func testAssignSameRoleEpochRefresh(t *testing.T) {
 }
 
 func testAssignSameRoleEpochNoDowngrade(t *testing.T) {
-	// Epoch must not go backwards on same-role assignment (guard: newEpoch > vol.Epoch()).
+	// Epoch must not go backwards on same-role assignment — must be rejected.
 	vol := cp3Primary(t, "no_downgrade.bv", 5)
 	defer vol.Close()
 
-	// Send assignment with lower epoch.
-	if err := vol.HandleAssignment(3, RolePrimary, 30*time.Second); err != nil {
-		t.Fatalf("HandleAssignment: %v", err)
+	// Send assignment with lower epoch — must return epoch regression error.
+	err := vol.HandleAssignment(3, RolePrimary, 30*time.Second)
+	if err == nil {
+		t.Fatalf("expected error for stale epoch, got nil")
+	}
+	if !errors.Is(err, ErrEpochRegression) {
+		t.Fatalf("expected ErrEpochRegression, got: %v", err)
 	}
 	if vol.Epoch() != 5 {
 		t.Errorf("Epoch = %d, want 5 (epoch should not downgrade from 5 to 3)", vol.Epoch())

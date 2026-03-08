@@ -60,15 +60,28 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 		}
 	}
 
-	// Execute normal phases sequentially.
+	// Execute normal phases sequentially, expanding repeat.
 	failed := false
 	for _, phase := range normalPhases {
-		pr := e.runPhase(ctx, actx, phase)
-		result.Phases = append(result.Phases, pr)
-		if pr.Status == StatusFail {
-			failed = true
-			result.Status = StatusFail
-			result.Error = fmt.Sprintf("phase %q failed: %s", phase.Name, pr.Error)
+		count := phase.Repeat
+		if count <= 0 {
+			count = 1
+		}
+		for iter := 1; iter <= count; iter++ {
+			iterPhase := phase
+			if phase.Repeat > 1 {
+				iterPhase.Name = fmt.Sprintf("%s[%d/%d]", phase.Name, iter, count)
+			}
+			pr := e.runPhase(ctx, actx, iterPhase)
+			result.Phases = append(result.Phases, pr)
+			if pr.Status == StatusFail {
+				failed = true
+				result.Status = StatusFail
+				result.Error = fmt.Sprintf("phase %q failed: %s", iterPhase.Name, pr.Error)
+				break
+			}
+		}
+		if failed {
 			break
 		}
 	}

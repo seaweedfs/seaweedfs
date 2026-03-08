@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -163,13 +164,18 @@ func buildDeploySSH(ctx context.Context, actx *tr.ActionContext, repoDir string)
 		return nil, fmt.Errorf("build_deploy: no nodes available")
 	}
 
-	tgt := infra.NewTarget(node, infra.DefaultTargetConfig())
-	actx.Log("  building iscsi-target binary...")
-	if err := tgt.Build(ctx, repoDir); err != nil {
-		return nil, fmt.Errorf("build: %w", err)
-	}
-
 	localBin := repoDir + "/iscsi-target-linux"
+
+	// Skip build if binary already exists (pre-built deployment).
+	if _, err := os.Stat(localBin); err != nil {
+		tgt := infra.NewTarget(node, infra.DefaultTargetConfig())
+		actx.Log("  building iscsi-target binary...")
+		if err := tgt.Build(ctx, repoDir); err != nil {
+			return nil, fmt.Errorf("build: %w", err)
+		}
+	} else {
+		actx.Log("  using pre-built binary: %s", localBin)
+	}
 
 	// Deploy only to nodes that host targets (not client-only nodes).
 	targetNodes := make(map[string]bool)

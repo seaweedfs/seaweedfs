@@ -991,3 +991,122 @@ func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
 		t.Fatalf("expected 'lagging' promoted, got %q", e.VolumeServer)
 	}
 }
+
+// --- LeaseGrants ---
+
+func TestRegistry_LeaseGrants_PrimaryOnly(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// Register a primary volume.
+	r.Register(&BlockVolumeEntry{
+		Name:         "prim1",
+		VolumeServer: "s1:18080",
+		Path:         "/data/prim1.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        5,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:       StatusActive,
+		LeaseTTL:     30 * time.Second,
+	})
+
+	// Register a replica volume on the same server.
+	r.Register(&BlockVolumeEntry{
+		Name:         "repl1",
+		VolumeServer: "s2:18080",
+		Path:         "/data/repl1.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        3,
+		Role:         blockvol.RoleToWire(blockvol.RoleReplica),
+		Status:       StatusActive,
+	})
+	r.AddReplica("repl1", ReplicaInfo{Server: "s1:18080", Path: "/data/repl1-replica.blk"})
+
+	// Register a none-role volume.
+	r.Register(&BlockVolumeEntry{
+		Name:         "none1",
+		VolumeServer: "s1:18080",
+		Path:         "/data/none1.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        1,
+		Role:         blockvol.RoleToWire(blockvol.RoleNone),
+		Status:       StatusActive,
+	})
+
+	// LeaseGrants for s1 should only include prim1 (the primary).
+	grants := r.LeaseGrants("s1:18080", nil)
+	if len(grants) != 1 {
+		t.Fatalf("expected 1 grant, got %d: %+v", len(grants), grants)
+	}
+	if grants[0].Path != "/data/prim1.blk" {
+		t.Errorf("expected prim1 path, got %q", grants[0].Path)
+	}
+	if grants[0].Epoch != 5 {
+		t.Errorf("expected epoch 5, got %d", grants[0].Epoch)
+	}
+	if grants[0].LeaseTtlMs != 30000 {
+		t.Errorf("expected 30000ms TTL, got %d", grants[0].LeaseTtlMs)
+	}
+}
+
+func TestRegistry_LeaseGrants_PendingExcluded(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "s1:18080",
+		Path:         "/data/vol1.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        2,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:       StatusActive,
+		LeaseTTL:     30 * time.Second,
+	})
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol2",
+		VolumeServer: "s1:18080",
+		Path:         "/data/vol2.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        1,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:       StatusActive,
+		LeaseTTL:     30 * time.Second,
+	})
+
+	// vol1 has a pending assignment — should be excluded.
+	pending := map[string]bool{"/data/vol1.blk": true}
+	grants := r.LeaseGrants("s1:18080", pending)
+	if len(grants) != 1 {
+		t.Fatalf("expected 1 grant (vol2 only), got %d: %+v", len(grants), grants)
+	}
+	if grants[0].Path != "/data/vol2.blk" {
+		t.Errorf("expected vol2 path, got %q", grants[0].Path)
+	}
+}
+
+func TestRegistry_LeaseGrants_InactiveExcluded(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	r.Register(&BlockVolumeEntry{
+		Name:         "pending-vol",
+		VolumeServer: "s1:18080",
+		Path:         "/data/pending.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        1,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:       StatusPending, // not yet confirmed by heartbeat
+		LeaseTTL:     30 * time.Second,
+	})
+
+	grants := r.LeaseGrants("s1:18080", nil)
+	if len(grants) != 0 {
+		t.Fatalf("expected 0 grants for pending volume, got %d", len(grants))
+	}
+}
+
+func TestRegistry_LeaseGrants_UnknownServer(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	grants := r.LeaseGrants("unknown:18080", nil)
+	if grants != nil {
+		t.Fatalf("expected nil for unknown server, got %+v", grants)
+	}
+}

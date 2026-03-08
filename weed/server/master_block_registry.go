@@ -859,6 +859,55 @@ func (r *BlockVolumeRegistry) UnmarkBlockCapable(server string) {
 	r.mu.Unlock()
 }
 
+// LeaseGrant holds the minimal fields for a lease renewal.
+type LeaseGrant struct {
+	Path       string
+	Epoch      uint64
+	Role       uint32
+	LeaseTtlMs uint32
+}
+
+// LeaseGrants generates lightweight lease renewals for all active primary
+// volumes on a server. Only primaries need lease renewal — replicas are passive
+// WAL receivers without a write lease. Grants carry path + epoch + role + TTL
+// and are processed by HandleAssignment's same-role refresh path, which
+// validates the epoch and calls lease.Grant().
+// Volumes with a pending assignment are excluded (the full assignment handles lease).
+func (r *BlockVolumeRegistry) LeaseGrants(server string, pendingPaths map[string]bool) []LeaseGrant {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names, ok := r.byServer[server]
+	if !ok {
+		return nil
+	}
+	var grants []LeaseGrant
+	for name := range names {
+		e := r.volumes[name]
+		if e == nil || e.Status != StatusActive {
+			continue
+		}
+		// Only primaries need lease renewal. Replicas are passive WAL receivers
+		// and don't hold a write lease.
+		if blockvol.RoleFromWire(e.Role) != blockvol.RolePrimary {
+			continue
+		}
+		// Primary must be on this server.
+		if e.VolumeServer != server {
+			continue
+		}
+		if pendingPaths[e.Path] {
+			continue
+		}
+		grants = append(grants, LeaseGrant{
+			Path:       e.Path,
+			Epoch:      e.Epoch,
+			Role:       e.Role,
+			LeaseTtlMs: blockvol.LeaseTTLToWire(e.LeaseTTL),
+		})
+	}
+	return grants
+}
+
 // ListAll returns all registered block volume entries, sorted by name.
 func (r *BlockVolumeRegistry) ListAll() []*BlockVolumeEntry {
 	r.mu.RLock()

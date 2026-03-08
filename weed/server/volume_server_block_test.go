@@ -26,7 +26,7 @@ func createTestBlockVolFile(t *testing.T, dir, name string) string {
 
 func TestBlockServiceDisabledByDefault(t *testing.T) {
 	// Empty blockDir means feature is disabled.
-	bs := StartBlockService("0.0.0.0:3260", "", "")
+	bs := StartBlockService("0.0.0.0:3260", "", "", "")
 	if bs != nil {
 		bs.Shutdown()
 		t.Fatal("expected nil BlockService when blockDir is empty")
@@ -41,7 +41,7 @@ func TestBlockServiceStartAndShutdown(t *testing.T) {
 	dir := t.TempDir()
 	createTestBlockVolFile(t, dir, "testvol.blk")
 
-	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.")
+	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.", "127.0.0.1:3260,1")
 	if bs == nil {
 		t.Fatal("expected non-nil BlockService")
 	}

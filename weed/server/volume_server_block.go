@@ -37,7 +37,7 @@ type BlockService struct {
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
 // registers them with an iSCSI target server, and starts listening.
 // Returns nil if blockDir is empty (feature disabled).
-func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
+func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string) *BlockService {
 	if blockDir == "" {
 		return nil
 	}
@@ -59,6 +59,9 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix string) *BlockService {
 	config.TargetName = iqnPrefix + "default"
 
 	bs.targetServer = iscsi.NewTargetServer(listenAddr, config, logger)
+	if portalAddr != "" {
+		bs.targetServer.SetPortalAddr(portalAddr)
+	}
 
 	// Scan blockDir for .blk files.
 	entries, err := os.ReadDir(blockDir)

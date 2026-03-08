@@ -74,6 +74,7 @@ type Phase struct {
 	Name     string   `yaml:"name"`
 	Always   bool     `yaml:"always"`
 	Parallel bool     `yaml:"parallel"`
+	Repeat   int      `yaml:"repeat"`
 	Actions  []Action `yaml:"actions"`
 }
 

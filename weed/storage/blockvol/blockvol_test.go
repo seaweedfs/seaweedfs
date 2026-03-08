@@ -4754,11 +4754,14 @@ func testAdversarialStaleEpochAssignment(t *testing.T) {
 	master.BumpEpoch(v)
 	master.BumpEpoch(v)
 
-	// Send assignment with stale epoch (1 < 3). HandleAssignment's
-	// same-role path only updates epoch if newEpoch > current, so this
-	// should be a no-op (no error, epoch unchanged).
-	if err := v.HandleAssignment(1, RolePrimary, 30*time.Second); err != nil {
-		t.Fatalf("stale epoch assignment: %v", err)
+	// Send assignment with stale epoch (1 < 3). Must be rejected —
+	// stale epoch could be a replay from an old master or stale queue.
+	err := v.HandleAssignment(1, RolePrimary, 30*time.Second)
+	if err == nil {
+		t.Fatalf("expected error for stale epoch assignment, got nil")
+	}
+	if !errors.Is(err, ErrEpochRegression) {
+		t.Fatalf("expected ErrEpochRegression, got: %v", err)
 	}
 	if v.Epoch() != 3 {
 		t.Errorf("epoch should remain 3, got %d", v.Epoch())

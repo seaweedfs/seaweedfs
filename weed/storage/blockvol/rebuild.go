@@ -247,6 +247,7 @@ catchUpDone:
 	if err := rebuildSecondCatchUp(vol, primaryAddr, snapshotLSN, epoch); err != nil {
 		return err
 	}
+	syncLSNAfterRebuild(vol, snapshotLSN)
 	return vol.SetRole(RoleReplica)
 }
 
@@ -342,6 +343,7 @@ extentDone:
 	if err := rebuildSecondCatchUp(vol, primaryAddr, snapshotLSN, epoch); err != nil {
 		return err
 	}
+	syncLSNAfterRebuild(vol, snapshotLSN)
 	return vol.SetRole(RoleReplica)
 }
 
@@ -385,6 +387,36 @@ func rebuildSecondCatchUp(vol *BlockVol, primaryAddr string, snapshotLSN uint64,
 		default:
 			return fmt.Errorf("rebuild: unexpected message type 0x%02x during second catch-up", msgType)
 		}
+	}
+}
+
+// syncLSNAfterRebuild advances the volume's nextLSN and the replica
+// receiver's receivedLSN to the primary's snapshot point. Without this,
+// new WAL entries shipped by the primary (with LSN > 0) would be rejected
+// by the contiguous LSN check in ReplicaReceiver.applyEntry.
+func syncLSNAfterRebuild(vol *BlockVol, snapshotLSN uint64) {
+	if snapshotLSN == 0 {
+		return
+	}
+	// Advance nextLSN to at least snapshotLSN.
+	for {
+		cur := vol.nextLSN.Load()
+		if snapshotLSN <= cur {
+			break
+		}
+		if vol.nextLSN.CompareAndSwap(cur, snapshotLSN) {
+			break
+		}
+	}
+	// Advance the replica receiver's receivedLSN so it accepts the next
+	// entry from the primary (snapshotLSN) without a gap error.
+	if vol.replRecv != nil {
+		vol.replRecv.mu.Lock()
+		target := snapshotLSN - 1
+		if target > vol.replRecv.receivedLSN {
+			vol.replRecv.receivedLSN = target
+		}
+		vol.replRecv.mu.Unlock()
 	}
 }
 

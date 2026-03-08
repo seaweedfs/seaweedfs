@@ -462,6 +462,102 @@ func TestEngine_VarsInResult(t *testing.T) {
 	}
 }
 
+func TestEngine_Repeat3Pass(t *testing.T) {
+	registry := NewRegistry()
+
+	callCount := 0
+	step := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		callCount++
+		return map[string]string{"value": fmt.Sprintf("iter%d", callCount)}, nil
+	})
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "repeat-3-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:   "repeating",
+				Repeat: 3,
+				Actions: []Action{
+					{Action: "step"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusPass {
+		t.Fatalf("status = %s, want PASS: %s", result.Status, result.Error)
+	}
+	if callCount != 3 {
+		t.Errorf("step called %d times, want 3", callCount)
+	}
+	if len(result.Phases) != 3 {
+		t.Fatalf("phases = %d, want 3", len(result.Phases))
+	}
+	// Check decorated names.
+	for i, pr := range result.Phases {
+		expected := fmt.Sprintf("repeating[%d/3]", i+1)
+		if pr.Name != expected {
+			t.Errorf("phase[%d].Name = %q, want %q", i, pr.Name, expected)
+		}
+	}
+}
+
+func TestEngine_RepeatFailStopsEarly(t *testing.T) {
+	registry := NewRegistry()
+
+	callCount := 0
+	step := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		callCount++
+		if callCount == 2 {
+			return nil, fmt.Errorf("fail on iter 2")
+		}
+		return nil, nil
+	})
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "repeat-fail-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:   "repeating",
+				Repeat: 5,
+				Actions: []Action{
+					{Action: "step"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusFail {
+		t.Errorf("status = %s, want FAIL", result.Status)
+	}
+	if callCount != 2 {
+		t.Errorf("step called %d times, want 2 (should stop on first failure)", callCount)
+	}
+	if len(result.Phases) != 2 {
+		t.Errorf("phases = %d, want 2", len(result.Phases))
+	}
+}
+
 func TestEngine_CleanupVars(t *testing.T) {
 	registry := NewRegistry()
 
