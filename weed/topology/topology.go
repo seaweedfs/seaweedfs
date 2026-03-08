@@ -149,6 +149,19 @@ func (t *Topology) WarmupDuration() time.Duration {
 	return time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
 }
 
+// RemainingWarmupDuration returns how much warmup time is left, or 0 if not warming up.
+func (t *Topology) RemainingWarmupDuration() time.Duration {
+	lastChange := t.GetLastLeaderChangeTime()
+	if lastChange.IsZero() {
+		return 0
+	}
+	remaining := t.WarmupDuration() - time.Since(lastChange)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()

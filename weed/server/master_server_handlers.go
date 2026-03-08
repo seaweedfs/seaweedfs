@@ -56,7 +56,11 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 		if location.Locations == nil && strings.Contains(location.Error, "not found") &&
 			ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
 			httpStatus = http.StatusServiceUnavailable
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(ms.Topo.WarmupDuration().Seconds())))
+			remaining := ms.Topo.RemainingWarmupDuration()
+			if remaining < time.Second {
+				remaining = time.Second
+			}
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
 		} else {
 			httpStatus = http.StatusNotFound
 		}
