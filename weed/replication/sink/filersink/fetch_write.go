@@ -3,11 +3,14 @@ package filersink
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 	"google.golang.org/protobuf/proto"
@@ -220,7 +223,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 			glog.V(1).Infof("skip retrying stale source manifest %s for %s: %v", sourceFileId, path, uploadErr)
 			return false
 		}
-		glog.V(0).Infof("upload source manifest %v: %v", sourceFileId, uploadErr)
+		glog.V(0).Infof("replicate manifest %s for %s: %v", sourceFileId, path, uploadErr)
 		return true
 	})
 	if err != nil {
@@ -237,6 +240,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		return "", fmt.Errorf("upload data: %w", err)
 	}
 
+	eofBackoff := time.Duration(0)
 	retryName := fmt.Sprintf("replicate chunk %s", sourceChunk.GetFileIdString())
 	err = util.RetryUntil(retryName, func() error {
 		filename, header, resp, readErr := fs.filerSource.ReadPart(sourceChunk.GetFileIdString())
@@ -244,6 +248,11 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			return fmt.Errorf("read part %s: %w", sourceChunk.GetFileIdString(), readErr)
 		}
 		defer util_http.CloseResponse(resp)
+
+		sourceUrl := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			sourceUrl = resp.Request.URL.String()
+		}
 
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
@@ -263,6 +272,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 				MimeType:          header.Get("Content-Type"),
 				PairMap:           nil,
 				RetryForever:      false,
+				SourceUrl:         sourceUrl,
 			},
 			func(host, fileId string) string {
 				fileUrl := fs.buildUploadUrl(host, fileId)
@@ -278,6 +288,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			return fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
+		eofBackoff = 0
 		fileId = currentFileId
 		return nil
 	}, func(uploadErr error) (shouldContinue bool) {
@@ -285,7 +296,13 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
 			return false
 		}
-		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), uploadErr)
+		if isEofError(uploadErr) {
+			eofBackoff = nextEofBackoff(eofBackoff)
+			glog.V(0).Infof("source connection interrupted while replicating %s for %s, backing off %v: %v", sourceChunk.GetFileIdString(), path, eofBackoff, uploadErr)
+			time.Sleep(eofBackoff)
+		} else {
+			glog.V(0).Infof("replicate %s for %s: %v", sourceChunk.GetFileIdString(), path, uploadErr)
+		}
 		return true
 	})
 	if err != nil {
@@ -293,6 +310,28 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 	}
 
 	return fileId, nil
+}
+
+const maxEofBackoff = 2 * time.Minute
+
+// nextEofBackoff returns the next backoff duration for unexpected EOF errors.
+// It starts at 10s, doubles each time, and caps at 2 minutes.
+func nextEofBackoff(current time.Duration) time.Duration {
+	if current < 10*time.Second {
+		return 10 * time.Second
+	}
+	current *= 2
+	if current > maxEofBackoff {
+		current = maxEofBackoff
+	}
+	return current
+}
+
+func isEofError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
 func (fs *FilerSink) buildUploadUrl(host, fileId string) string {

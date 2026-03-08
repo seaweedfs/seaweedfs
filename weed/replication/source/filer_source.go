@@ -107,7 +107,13 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Header, resp *http.Response, err error) {
 
 	if fs.proxyByFiler {
-		return util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		filename, header, resp, err = util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		if err != nil {
+			glog.V(0).Infof("read part %s via filer proxy %s: %v", fileId, fs.address, err)
+		} else {
+			glog.V(4).Infof("read part %s via filer proxy %s content-length:%s", fileId, fs.address, header.Get("Content-Length"))
+		}
+		return
 	}
 
 	fileUrls, err := fs.LookupFileId(context.Background(), fileId)
@@ -118,8 +124,9 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 	for _, fileUrl := range fileUrls {
 		filename, header, resp, err = util_http.DownloadFile(fileUrl, "")
 		if err != nil {
-			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
+			glog.V(0).Infof("fail to read part %s from %s: %v", fileId, fileUrl, err)
 		} else {
+			glog.V(4).Infof("read part %s from %s content-length:%s", fileId, fileUrl, header.Get("Content-Length"))
 			break
 		}
 	}
