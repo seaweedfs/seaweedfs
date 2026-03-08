@@ -65,7 +65,7 @@ templ Plugin(page string) {
 
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-info h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Workers</div>
@@ -73,7 +73,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-warning h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
@@ -81,11 +81,20 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-success h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
                             <h4 class="mb-0" id="plugin-status-activities">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Next Run</div>
+                            <h4 class="mb-0 plugin-scheduler-next-run">-</h4>
+                            <div class="text-muted small plugin-scheduler-next-run-meta"></div>
                         </div>
                     </div>
                 </div>
@@ -144,31 +153,6 @@ templ Plugin(page string) {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="row mb-4">
-                <div class="col-lg-6 mb-3">
-                    <div class="card shadow-sm h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Scheduler Settings</h5>
-                            <small class="text-muted">Global</small>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted mb-0">Detection intervals are configured per job type in the job type settings below.</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-lg-6 mb-3">
-                    <div class="card shadow-sm h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
-                            <small class="text-muted">Scheduler</small>
-                        </div>
-                        <div class="card-body">
-                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
-                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
                         </div>
                     </div>
                 </div>
@@ -301,15 +285,6 @@ templ Plugin(page string) {
                                     <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <div class="card shadow-sm mt-3">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler Settings</h5>
-                        </div>
-                        <div class="card-body">
-                            <p class="text-muted mb-0">Detection intervals are configured per job type in the settings above.</p>
                         </div>
                     </div>
 
