@@ -5,8 +5,8 @@
 //! volume_server_handlers_admin.go.
 
 use std::future::Future;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Query, State};
@@ -14,11 +14,11 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use super::volume_server::VolumeServerState;
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
-use super::volume_server::VolumeServerState;
 
 // ============================================================================
 // Inflight Throttle Guard
@@ -63,7 +63,9 @@ impl http_body::Body for TrackedBody {
 
 impl Drop for TrackedBody {
     fn drop(&mut self) {
-        self.state.inflight_download_bytes.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.state
+            .inflight_download_bytes
+            .fetch_sub(self.bytes, Ordering::Relaxed);
         self.state.download_notify.notify_waiters();
     }
 }
@@ -75,8 +77,8 @@ impl Drop for TrackedBody {
 /// Threshold in bytes above which we stream needle data instead of buffering.
 const STREAMING_THRESHOLD: u32 = 1024 * 1024; // 1 MB
 
-/// Chunk size for streaming reads from the dat file.
-const STREAMING_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
+/// Default chunk size for streaming reads from the dat file.
+const DEFAULT_STREAMING_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 
 /// A body that streams needle data from the dat file in chunks using pread,
 /// avoiding loading the entire payload into memory at once.
@@ -85,6 +87,10 @@ struct StreamingBody {
     data_offset: u64,
     data_size: u32,
     pos: usize,
+    chunk_size: usize,
+    data_file_access_control: Arc<crate::storage::volume::DataFileAccessControl>,
+    hold_read_lock_for_stream: bool,
+    _held_read_lease: Option<crate::storage::volume::DataFileReadLease>,
     /// Pending result from spawn_blocking, polled to completion.
     pending: Option<tokio::task::JoinHandle<Result<bytes::Bytes, std::io::Error>>>,
     /// For download throttling — released on drop.
@@ -111,12 +117,17 @@ impl http_body::Body for StreamingBody {
                             Ok(Ok(chunk)) => {
                                 let len = chunk.len();
                                 self.pos += len;
-                                return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(chunk))));
+                                return std::task::Poll::Ready(Some(Ok(http_body::Frame::data(
+                                    chunk,
+                                ))));
                             }
                             Ok(Err(e)) => return std::task::Poll::Ready(Some(Err(e))),
-                            Err(e) => return std::task::Poll::Ready(Some(Err(
-                                std::io::Error::new(std::io::ErrorKind::Other, e),
-                            ))),
+                            Err(e) => {
+                                return std::task::Poll::Ready(Some(Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    e,
+                                ))))
+                            }
                         }
                     }
                 }
@@ -127,15 +138,22 @@ impl http_body::Body for StreamingBody {
                 return std::task::Poll::Ready(None);
             }
 
-            let chunk_len = std::cmp::min(STREAMING_CHUNK_SIZE, total - self.pos);
+            let chunk_len = std::cmp::min(self.chunk_size, total - self.pos);
             let file_offset = self.data_offset + self.pos as u64;
 
             let file_clone = match self.dat_file.try_clone() {
                 Ok(f) => f,
                 Err(e) => return std::task::Poll::Ready(Some(Err(e))),
             };
+            let data_file_access_control = self.data_file_access_control.clone();
+            let hold_read_lock_for_stream = self.hold_read_lock_for_stream;
 
             let handle = tokio::task::spawn_blocking(move || {
+                let _lease = if hold_read_lock_for_stream {
+                    None
+                } else {
+                    Some(data_file_access_control.read_lock())
+                };
                 let mut buf = vec![0u8; chunk_len];
                 #[cfg(unix)]
                 {
@@ -159,7 +177,8 @@ impl http_body::Body for StreamingBody {
 impl Drop for StreamingBody {
     fn drop(&mut self) {
         if let Some(ref st) = self.state {
-            st.inflight_download_bytes.fetch_sub(self.tracked_bytes, Ordering::Relaxed);
+            st.inflight_download_bytes
+                .fetch_sub(self.tracked_bytes, Ordering::Relaxed);
             st.download_notify.notify_waiters();
         }
     }
@@ -196,6 +215,13 @@ fn extract_file_id(path: &str) -> String {
     }
 }
 
+fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
+    std::cmp::min(
+        read_buffer_size_bytes.max(DEFAULT_STREAMING_CHUNK_SIZE),
+        data_size.max(1),
+    )
+}
+
 fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
     let path = path.trim_start_matches('/');
 
@@ -222,7 +248,8 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
     };
 
     let vid = VolumeId::parse(vid_str).ok()?;
-    let (needle_id, cookie) = crate::storage::needle::needle::parse_needle_id_cookie(fid_str).ok()?;
+    let (needle_id, cookie) =
+        crate::storage::needle::needle::parse_needle_id_cookie(fid_str).ok()?;
 
     Some((vid, needle_id, cookie))
 }
@@ -255,8 +282,15 @@ async fn lookup_volume(
     volume_id: u32,
 ) -> Result<Vec<VolumeLocation>, String> {
     let url = format!("http://{}/dir/lookup?volumeId={}", master_url, volume_id);
-    let resp = client.get(&url).send().await.map_err(|e| format!("lookup request failed: {}", e))?;
-    let result: LookupResult = resp.json().await.map_err(|e| format!("lookup parse failed: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("lookup request failed: {}", e))?;
+    let result: LookupResult = resp
+        .json()
+        .await
+        .map_err(|e| format!("lookup parse failed: {}", e))?;
     if let Some(err) = result.error {
         if !err.is_empty() {
             return Err(err);
@@ -313,12 +347,8 @@ async fn proxy_or_redirect_to_target(
     let target = candidates[0];
 
     match state.read_mode {
-        ReadMode::Proxy => {
-            proxy_request(state, &info, target).await
-        }
-        ReadMode::Redirect => {
-            redirect_request(&info, target)
-        }
+        ReadMode::Proxy => proxy_request(state, &info, target).await,
+        ReadMode::Redirect => redirect_request(&info, target),
         ReadMode::Local => unreachable!(),
     }
 }
@@ -337,7 +367,10 @@ async fn proxy_request(
     let target_url = if info.original_query.is_empty() {
         format!("{}://{}/{}?proxied=true", scheme, target_host, path)
     } else {
-        format!("{}://{}/{}?{}&proxied=true", scheme, target_host, path, info.original_query)
+        format!(
+            "{}://{}/{}?{}&proxied=true",
+            scheme, target_host, path, info.original_query
+        )
     };
 
     // Build the proxy request
@@ -359,7 +392,8 @@ async fn proxy_request(
     };
 
     // Build response, copying headers and body from remote
-    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut response_headers = HeaderMap::new();
     for (name, value) in resp.headers() {
         if name.as_str().eq_ignore_ascii_case("server") {
@@ -383,10 +417,7 @@ async fn proxy_request(
 }
 
 /// Return a redirect response to the target volume server.
-fn redirect_request(
-    info: &ProxyRequestInfo,
-    target: &VolumeLocation,
-) -> Response {
+fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation) -> Response {
     let scheme = "http";
     let target_host = &target.public_url;
 
@@ -405,12 +436,18 @@ fn redirect_request(
     query_params.push("proxied=true".to_string());
     let query = query_params.join("&");
 
-    let location = format!("{}://{}/{},{}?{}", scheme, target_host, &info.vid_str, &info.fid_str, query);
+    let location = format!(
+        "{}://{}/{},{}?{}",
+        scheme, target_host, &info.vid_str, &info.fid_str, query
+    );
 
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
         .header("Location", &location)
-        .body(Body::from(format!("<a href=\"{}\">Moved Permanently</a>.\n\n", location)))
+        .body(Body::from(format!(
+            "<a href=\"{}\">Moved Permanently</a>.\n\n",
+            location
+        )))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
@@ -468,7 +505,8 @@ pub async fn get_or_head_handler_from_request(
     let headers = request.headers().clone();
 
     // Parse query params manually from URI
-    let query_params: ReadQueryParams = uri.query()
+    let query_params: ReadQueryParams = uri
+        .query()
         .and_then(|q| serde_urlencoded::from_str(q).ok())
         .unwrap_or_default();
 
@@ -504,7 +542,10 @@ async fn get_or_head_handler_inner(
     // JWT check for reads
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, false) {
+    if let Err(e) = state
+        .guard
+        .check_jwt_for_file(token.as_deref(), &file_id, false)
+    {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
@@ -574,7 +615,10 @@ async fn get_or_head_handler_inner(
             if current < state.concurrent_download_limit {
                 break;
             }
-            if tokio::time::timeout_at(deadline, state.download_notify.notified()).await.is_err() {
+            if tokio::time::timeout_at(deadline, state.download_notify.notified())
+                .await
+                .is_err()
+            {
                 return (StatusCode::TOO_MANY_REQUESTS, "download limit exceeded").into_response();
             }
         }
@@ -595,8 +639,10 @@ async fn get_or_head_handler_inner(
     let has_range = headers.contains_key(header::RANGE);
     let ext = extract_extension_from_path(&path);
     let is_image = is_image_ext(&ext);
-    let has_image_ops = query.width.is_some() || query.height.is_some()
-        || query.crop_x1.is_some() || query.crop_y1.is_some();
+    let has_image_ops = query.width.is_some()
+        || query.height.is_some()
+        || query.crop_x1.is_some()
+        || query.crop_y1.is_some();
 
     // Try meta-only read first for potential streaming
     let store = state.store.read().unwrap();
@@ -610,7 +656,11 @@ async fn get_or_head_handler_inner(
             return StatusCode::NOT_FOUND.into_response();
         }
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {}", e)).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("read error: {}", e),
+            )
+                .into_response();
         }
     };
     drop(store);
@@ -653,7 +703,11 @@ async fn get_or_head_handler_inner(
                 return StatusCode::NOT_FOUND.into_response();
             }
             Err(e) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("read error: {}", e)).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("read error: {}", e),
+                )
+                    .into_response();
             }
         }
         drop(store);
@@ -689,7 +743,9 @@ async fn get_or_head_handler_inner(
         if let Some(ims_header) = headers.get(header::IF_MODIFIED_SINCE) {
             if let Ok(ims_str) = ims_header.to_str() {
                 // Parse HTTP date format: "Mon, 02 Jan 2006 15:04:05 GMT"
-                if let Ok(ims_time) = chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT") {
+                if let Ok(ims_time) =
+                    chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
+                {
                     if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
                         return StatusCode::NOT_MODIFIED.into_response();
                     }
@@ -771,7 +827,9 @@ async fn get_or_head_handler_inner(
 
             let tracked_bytes = info.data_size as i64;
             let tracking_state = if download_guard.is_some() {
-                state.inflight_download_bytes.fetch_add(tracked_bytes, Ordering::Relaxed);
+                state
+                    .inflight_download_bytes
+                    .fetch_add(tracked_bytes, Ordering::Relaxed);
                 Some(state.clone())
             } else {
                 None
@@ -782,6 +840,17 @@ async fn get_or_head_handler_inner(
                 data_offset: info.data_file_offset,
                 data_size: info.data_size,
                 pos: 0,
+                chunk_size: streaming_chunk_size(
+                    state.read_buffer_size_bytes,
+                    info.data_size as usize,
+                ),
+                _held_read_lease: if state.has_slow_read {
+                    None
+                } else {
+                    Some(info.data_file_access_control.read_lock())
+                },
+                data_file_access_control: info.data_file_access_control,
+                hold_read_lock_for_stream: !state.has_slow_read,
                 pending: None,
                 state: tracking_state,
                 tracked_bytes,
@@ -801,7 +870,8 @@ async fn get_or_head_handler_inner(
     let is_compressed = n.is_compressed();
     let mut data = n.data;
     if is_compressed {
-        let accept_encoding = headers.get(header::ACCEPT_ENCODING)
+        let accept_encoding = headers
+            .get(header::ACCEPT_ENCODING)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
         if accept_encoding.contains("gzip") {
@@ -835,7 +905,10 @@ async fn get_or_head_handler_inner(
     }
 
     if method == Method::HEAD {
-        response_headers.insert(header::CONTENT_LENGTH, data.len().to_string().parse().unwrap());
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            data.len().to_string().parse().unwrap(),
+        );
         return (StatusCode::OK, response_headers).into_response();
     }
 
@@ -846,7 +919,9 @@ async fn get_or_head_handler_inner(
     // If download throttling is active, wrap the body so we track when it's fully sent
     if download_guard.is_some() {
         let data_len = data.len() as i64;
-        state.inflight_download_bytes.fetch_add(data_len, Ordering::Relaxed);
+        state
+            .inflight_download_bytes
+            .fetch_add(data_len, Ordering::Relaxed);
         let tracked_body = TrackedBody {
             data,
             state: state.clone(),
@@ -929,9 +1004,14 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
         let slice = &data[start..=end];
         headers.insert(
             "Content-Range",
-            format!("bytes {}-{}/{}", start, end, total).parse().unwrap(),
+            format!("bytes {}-{}/{}", start, end, total)
+                .parse()
+                .unwrap(),
         );
-        headers.insert(header::CONTENT_LENGTH, slice.len().to_string().parse().unwrap());
+        headers.insert(
+            header::CONTENT_LENGTH,
+            slice.len().to_string().parse().unwrap(),
+        );
         (StatusCode::PARTIAL_CONTENT, headers, slice.to_vec()).into_response()
     } else {
         // Multi-range: build multipart/byteranges response
@@ -945,9 +1025,7 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
         let mut body = Vec::new();
         for &(start, end) in &ranges {
             body.extend_from_slice(format!("\r\n--{}\r\n", boundary).as_bytes());
-            body.extend_from_slice(
-                format!("Content-Type: {}\r\n", content_type).as_bytes(),
-            );
+            body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
             body.extend_from_slice(
                 format!("Content-Range: bytes {}-{}/{}\r\n\r\n", start, end, total).as_bytes(),
             );
@@ -961,7 +1039,10 @@ fn handle_range_request(range_str: &str, data: &[u8], mut headers: HeaderMap) ->
                 .parse()
                 .unwrap(),
         );
-        headers.insert(header::CONTENT_LENGTH, body.len().to_string().parse().unwrap());
+        headers.insert(
+            header::CONTENT_LENGTH,
+            body.len().to_string().parse().unwrap(),
+        );
         (StatusCode::PARTIAL_CONTENT, headers, body).into_response()
     }
 }
@@ -1094,13 +1175,17 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
+    if let Err(e) = state
+        .guard
+        .check_jwt_for_file(token.as_deref(), &file_id, true)
+    {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
     // Upload throttling: check inflight bytes against limit
     let is_replicate = query.split('&').any(|p| p == "type=replicate");
-    let content_length = headers.get(header::CONTENT_LENGTH)
+    let content_length = headers
+        .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
@@ -1120,11 +1205,16 @@ pub async fn post_handler(
                 break;
             }
             // Wait for notification or timeout
-            if tokio::time::timeout_at(deadline, state.upload_notify.notified()).await.is_err() {
+            if tokio::time::timeout_at(deadline, state.upload_notify.notified())
+                .await
+                .is_err()
+            {
                 return (StatusCode::TOO_MANY_REQUESTS, "upload limit exceeded").into_response();
             }
         }
-        state.inflight_upload_bytes.fetch_add(content_length, Ordering::Relaxed);
+        state
+            .inflight_upload_bytes
+            .fetch_add(content_length, Ordering::Relaxed);
     }
 
     // RAII guard to release upload throttle on any exit path
@@ -1139,19 +1229,25 @@ pub async fn post_handler(
     };
 
     // Check for chunk manifest flag
-    let is_chunk_manifest = query.split('&')
-        .any(|p| p == "cm=true" || p == "cm=1");
+    let is_chunk_manifest = query.split('&').any(|p| p == "cm=true" || p == "cm=1");
 
     // Validate multipart/form-data has a boundary
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         if let Ok(ct_str) = ct.to_str() {
             if ct_str.starts_with("multipart/form-data") && !ct_str.contains("boundary=") {
-                return (StatusCode::BAD_REQUEST, "no multipart boundary param in Content-Type").into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "no multipart boundary param in Content-Type",
+                )
+                    .into_response();
             }
         }
     }
 
-    let content_md5 = headers.get("Content-MD5").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    let content_md5 = headers
+        .get("Content-MD5")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     // Read body
     let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
@@ -1166,13 +1262,20 @@ pub async fn post_handler(
 
     // Validate Content-MD5 if provided
     if let Some(ref expected_md5) = content_md5 {
-        use md5::{Md5, Digest};
         use base64::Engine;
+        use md5::{Digest, Md5};
         let mut hasher = Md5::new();
         hasher.update(&body);
         let actual = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
         if actual != *expected_md5 {
-            return (StatusCode::BAD_REQUEST, format!("Content-MD5 mismatch: expected {} got {}", expected_md5, actual)).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Content-MD5 mismatch: expected {} got {}",
+                    expected_md5, actual
+                ),
+            )
+                .into_response();
         }
     }
 
@@ -1182,7 +1285,8 @@ pub async fn post_handler(
         .as_secs();
 
     // Parse custom timestamp from query param
-    let ts_str = query.split('&')
+    let ts_str = query
+        .split('&')
         .find_map(|p| p.strip_prefix("ts="))
         .unwrap_or("");
     let last_modified = if !ts_str.is_empty() {
@@ -1192,13 +1296,15 @@ pub async fn post_handler(
     };
 
     // Check if upload is pre-compressed
-    let is_gzipped = headers.get(header::CONTENT_ENCODING)
+    let is_gzipped = headers
+        .get(header::CONTENT_ENCODING)
         .and_then(|v| v.to_str().ok())
         .map(|s| s == "gzip")
         .unwrap_or(false);
 
     // Extract MIME type from Content-Type header (needed early for JPEG orientation fix)
-    let mime_type = headers.get(header::CONTENT_TYPE)
+    let mime_type = headers
+        .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .map(|ct| {
             if ct.starts_with("multipart/") {
@@ -1210,7 +1316,8 @@ pub async fn post_handler(
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
     // Parse TTL from query param (matches Go's r.FormValue("ttl"))
-    let ttl_str = query.split('&')
+    let ttl_str = query
+        .split('&')
         .find_map(|p| p.strip_prefix("ttl="))
         .unwrap_or("");
     let ttl = if !ttl_str.is_empty() {
@@ -1220,7 +1327,8 @@ pub async fn post_handler(
     };
 
     // Extract Seaweed-* custom metadata headers (pairs)
-    let pair_map: std::collections::HashMap<String, String> = headers.iter()
+    let pair_map: std::collections::HashMap<String, String> = headers
+        .iter()
         .filter_map(|(k, v)| {
             let key = k.as_str();
             if key.len() > 8 && key[..8].eq_ignore_ascii_case("seaweed-") {
@@ -1249,7 +1357,9 @@ pub async fn post_handler(
     let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
         let ext = {
             let dot_pos = path.rfind('.');
-            dot_pos.map(|p| path[p..].to_lowercase()).unwrap_or_default()
+            dot_pos
+                .map(|p| path[p..].to_lowercase())
+                .unwrap_or_default()
         };
         if is_compressible_file_type(&ext, &mime_type) {
             if let Some(compressed) = try_gzip_data(&body_data) {
@@ -1347,9 +1457,11 @@ pub async fn post_handler(
         Err(crate::storage::volume::VolumeError::ReadOnly) => {
             (StatusCode::FORBIDDEN, "volume is read-only").into_response()
         }
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("write error: {}", e)).into_response()
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write error: {}", e),
+        )
+            .into_response(),
     };
 
     // _upload_guard drops here, releasing inflight bytes
@@ -1370,7 +1482,9 @@ pub async fn delete_handler(
     request: Request<Body>,
 ) -> Response {
     let start = std::time::Instant::now();
-    metrics::REQUEST_COUNTER.with_label_values(&["delete"]).inc();
+    metrics::REQUEST_COUNTER
+        .with_label_values(&["delete"])
+        .inc();
 
     let path = request.uri().path().to_string();
     let headers = request.headers().clone();
@@ -1383,13 +1497,17 @@ pub async fn delete_handler(
     // JWT check for writes (deletes use write key)
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state.guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
+    if let Err(e) = state
+        .guard
+        .check_jwt_for_file(token.as_deref(), &file_id, true)
+    {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
 
     // Parse custom timestamp from query param
     let del_query = request.uri().query().unwrap_or("");
-    let del_ts_str = del_query.split('&')
+    let del_ts_str = del_query
+        .split('&')
         .find_map(|p| p.strip_prefix("ts="))
         .unwrap_or("");
     let del_last_modified = if !del_ts_str.is_empty() {
@@ -1417,7 +1535,11 @@ pub async fn delete_handler(
         }
     }
     if n.cookie != original_cookie {
-        return (StatusCode::BAD_REQUEST, "File Random Cookie does not match.").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "File Random Cookie does not match.",
+        )
+            .into_response();
     }
 
     // Apply custom timestamp if provided
@@ -1448,7 +1570,11 @@ pub async fn delete_handler(
                 let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
                     Some(p) => p,
                     None => {
-                        return (StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response();
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("invalid chunk fid: {}", chunk.fid),
+                        )
+                            .into_response();
                     }
                 };
                 let mut chunk_needle = Needle {
@@ -1460,25 +1586,39 @@ pub async fn delete_handler(
                 {
                     let store = state.store.read().unwrap();
                     if let Err(e) = store.read_volume_needle(chunk_vid, &mut chunk_needle) {
-                        return (StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response();
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("read chunk {}: {}", chunk.fid, e),
+                        )
+                            .into_response();
                     }
                 }
                 // Delete the chunk
                 let mut store = state.store.write().unwrap();
                 if let Err(e) = store.delete_volume_needle(chunk_vid, &mut chunk_needle) {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("delete chunk {}: {}", chunk.fid, e)).into_response();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("delete chunk {}: {}", chunk.fid, e),
+                    )
+                        .into_response();
                 }
             }
             // Delete the manifest itself
             let mut store = state.store.write().unwrap();
             if let Err(e) = store.delete_volume_needle(vid, &mut n) {
-                return (StatusCode::INTERNAL_SERVER_ERROR, format!("delete manifest: {}", e)).into_response();
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("delete manifest: {}", e),
+                )
+                    .into_response();
             }
             metrics::REQUEST_DURATION
                 .with_label_values(&["delete"])
                 .observe(start.elapsed().as_secs_f64());
             // Return the manifest's declared size (matches Go behavior)
-            let result = DeleteResult { size: manifest.size as i32 };
+            let result = DeleteResult {
+                size: manifest.size as i32,
+            };
             return (StatusCode::ACCEPTED, axum::Json(result)).into_response();
         }
     }
@@ -1500,9 +1640,11 @@ pub async fn delete_handler(
             let result = DeleteResult { size: 0 };
             (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
         }
-        Err(e) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("delete error: {}", e)).into_response()
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("delete error: {}", e),
+        )
+            .into_response(),
     }
 }
 
@@ -1521,12 +1663,30 @@ pub async fn status_handler(
         for (_vid, vol) in loc.volumes() {
             let mut vol_info = serde_json::Map::new();
             vol_info.insert("Id".to_string(), serde_json::Value::from(vol.id.0));
-            vol_info.insert("Collection".to_string(), serde_json::Value::from(vol.collection.clone()));
-            vol_info.insert("Size".to_string(), serde_json::Value::from(vol.content_size()));
-            vol_info.insert("FileCount".to_string(), serde_json::Value::from(vol.file_count()));
-            vol_info.insert("DeleteCount".to_string(), serde_json::Value::from(vol.deleted_count()));
-            vol_info.insert("ReadOnly".to_string(), serde_json::Value::from(vol.is_read_only()));
-            vol_info.insert("Version".to_string(), serde_json::Value::from(vol.version().0));
+            vol_info.insert(
+                "Collection".to_string(),
+                serde_json::Value::from(vol.collection.clone()),
+            );
+            vol_info.insert(
+                "Size".to_string(),
+                serde_json::Value::from(vol.content_size()),
+            );
+            vol_info.insert(
+                "FileCount".to_string(),
+                serde_json::Value::from(vol.file_count()),
+            );
+            vol_info.insert(
+                "DeleteCount".to_string(),
+                serde_json::Value::from(vol.deleted_count()),
+            );
+            vol_info.insert(
+                "ReadOnly".to_string(),
+                serde_json::Value::from(vol.is_read_only()),
+            );
+            vol_info.insert(
+                "Version".to_string(),
+                serde_json::Value::from(vol.version().0),
+            );
             volumes.push(serde_json::Value::Object(vol_info));
         }
     }
@@ -1539,15 +1699,24 @@ pub async fn status_handler(
         ds.insert("dir".to_string(), serde_json::Value::from(dir.clone()));
         // Add disk stats if available
         if let Ok(path) = std::path::Path::new(&dir).canonicalize() {
-            ds.insert("dir".to_string(), serde_json::Value::from(path.to_string_lossy().to_string()));
+            ds.insert(
+                "dir".to_string(),
+                serde_json::Value::from(path.to_string_lossy().to_string()),
+            );
         }
         disk_statuses.push(serde_json::Value::Object(ds));
     }
 
     let mut m = serde_json::Map::new();
-    m.insert("Version".to_string(), serde_json::Value::from(env!("CARGO_PKG_VERSION")));
+    m.insert(
+        "Version".to_string(),
+        serde_json::Value::from(env!("CARGO_PKG_VERSION")),
+    );
     m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
-    m.insert("DiskStatuses".to_string(), serde_json::Value::Array(disk_statuses));
+    m.insert(
+        "DiskStatuses".to_string(),
+        serde_json::Value::Array(disk_statuses),
+    );
 
     let json_value = serde_json::Value::Object(m);
 
@@ -1576,9 +1745,7 @@ pub async fn status_handler(
 // Health Check Handler
 // ============================================================================
 
-pub async fn healthz_handler(
-    State(state): State<Arc<VolumeServerState>>,
-) -> Response {
+pub async fn healthz_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
     let is_stopping = *state.is_stopping.read().unwrap();
     if is_stopping {
         return (StatusCode::SERVICE_UNAVAILABLE, "stopping").into_response();
@@ -1598,7 +1765,10 @@ pub async fn metrics_handler() -> Response {
     let body = metrics::gather_metrics();
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
     )
         .into_response()
@@ -1626,12 +1796,15 @@ pub async fn stats_memory_handler() -> Response {
             "HeapReleased": 0,
         },
     });
-    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], info.to_string()).into_response()
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        info.to_string(),
+    )
+        .into_response()
 }
 
-pub async fn stats_disk_handler(
-    State(state): State<Arc<VolumeServerState>>,
-) -> Response {
+pub async fn stats_disk_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
     let store = state.store.read().unwrap();
     let mut ds = Vec::new();
     for loc in &store.locations {
@@ -1648,7 +1821,12 @@ pub async fn stats_disk_handler(
         "Version": env!("CARGO_PKG_VERSION"),
         "DiskStatuses": ds,
     });
-    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], info.to_string()).into_response()
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        info.to_string(),
+    )
+        .into_response()
 }
 
 // ============================================================================
@@ -1669,18 +1847,13 @@ pub async fn favicon_handler() -> Response {
 pub async fn static_asset_handler() -> Response {
     // Return a minimal valid PNG (1x1 transparent)
     let png: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-        0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
-        0x9C, 0x62, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00,
-        0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
+        0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+        0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/png")],
-        png,
-    )
-        .into_response()
+    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response()
 }
 
 pub async fn ui_handler(
@@ -1762,7 +1935,15 @@ fn try_expand_chunk_manifest(
     for chunk in &manifest.chunks {
         let (chunk_vid, chunk_nid, chunk_cookie) = match parse_url_path(&chunk.fid) {
             Some(p) => p,
-            None => return Some((StatusCode::INTERNAL_SERVER_ERROR, format!("invalid chunk fid: {}", chunk.fid)).into_response()),
+            None => {
+                return Some(
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("invalid chunk fid: {}", chunk.fid),
+                    )
+                        .into_response(),
+                )
+            }
         };
         let mut chunk_needle = Needle {
             id: chunk_nid,
@@ -1771,7 +1952,15 @@ fn try_expand_chunk_manifest(
         };
         match store.read_volume_needle(chunk_vid, &mut chunk_needle) {
             Ok(_) => {}
-            Err(e) => return Some((StatusCode::INTERNAL_SERVER_ERROR, format!("read chunk {}: {}", chunk.fid, e)).into_response()),
+            Err(e) => {
+                return Some(
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("read chunk {}: {}", chunk.fid, e),
+                    )
+                        .into_response(),
+                )
+            }
         }
         let chunk_data = if chunk_needle.is_compressed() {
             use flate2::read::GzDecoder;
@@ -1805,7 +1994,10 @@ fn try_expand_chunk_manifest(
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
 
     if *method == Method::HEAD {
-        response_headers.insert(header::CONTENT_LENGTH, result.len().to_string().parse().unwrap());
+        response_headers.insert(
+            header::CONTENT_LENGTH,
+            result.len().to_string().parse().unwrap(),
+        );
         return Some((StatusCode::OK, response_headers).into_response());
     }
 
@@ -1886,10 +2078,18 @@ fn is_compressible_file_type(ext: &str, mtype: &str) -> bool {
     }
     // By MIME type
     if mtype.starts_with("application/") {
-        if mtype.ends_with("zstd") { return false; }
-        if mtype.ends_with("xml") { return true; }
-        if mtype.ends_with("script") { return true; }
-        if mtype.ends_with("vnd.rar") { return false; }
+        if mtype.ends_with("zstd") {
+            return false;
+        }
+        if mtype.ends_with("xml") {
+            return true;
+        }
+        if mtype.ends_with("script") {
+            return true;
+        }
+        if mtype.ends_with("vnd.rar") {
+            return false;
+        }
     }
     if mtype.starts_with("audio/") {
         let sub = mtype.strip_prefix("audio/").unwrap_or("");
@@ -1970,7 +2170,10 @@ mod tests {
     #[test]
     fn test_extract_jwt_query_over_header() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, "Bearer header_token".parse().unwrap());
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer header_token".parse().unwrap(),
+        );
         let uri: axum::http::Uri = "/test?jwt=query_token".parse().unwrap();
         assert_eq!(extract_jwt(&headers, &uri), Some("query_token".to_string()));
     }
@@ -2034,7 +2237,10 @@ mod tests {
         assert!(!is_compressible_file_type("", "audio/mpeg"));
 
         // Unknown
-        assert!(!is_compressible_file_type(".xyz", "application/octet-stream"));
+        assert!(!is_compressible_file_type(
+            ".xyz",
+            "application/octet-stream"
+        ));
     }
 
     #[test]
@@ -2053,5 +2259,21 @@ mod tests {
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed).unwrap();
         assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_streaming_chunk_size_respects_configured_read_buffer() {
+        assert_eq!(
+            streaming_chunk_size(4 * 1024 * 1024, 8 * 1024 * 1024),
+            4 * 1024 * 1024
+        );
+        assert_eq!(
+            streaming_chunk_size(32 * 1024, 512 * 1024),
+            DEFAULT_STREAMING_CHUNK_SIZE
+        );
+        assert_eq!(
+            streaming_chunk_size(8 * 1024 * 1024, 128 * 1024),
+            128 * 1024
+        );
     }
 }
