@@ -81,6 +81,18 @@ func TestRemoteMountNoSync(t *testing.T) {
 	require.NoError(t, err, "failed to mount with -noSync")
 	t.Logf("Mount output: %s", output)
 
+	listCmd := fmt.Sprintf("fs.ls %s", testDir)
+	listOutput, err := runWeedShellWithOutput(t, listCmd)
+	require.NoError(t, err, "failed to list mount dir")
+	listLines := strings.Split(strings.TrimSpace(listOutput), "\n")
+	nonEmptyLines := 0
+	for _, line := range listLines {
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "total ") {
+			nonEmptyLines++
+		}
+	}
+	assert.Zero(t, nonEmptyLines, "expected no upfront metadata (empty dir listing) after -noSync mount, got %d entries: %s", nonEmptyLines, listOutput)
+
 	output, err = runWeedShellWithOutput(t, "remote.mount")
 	require.NoError(t, err, "failed to list mounts")
 	assert.Contains(t, output, testDir, "mount not found in list after -noSync mount")
