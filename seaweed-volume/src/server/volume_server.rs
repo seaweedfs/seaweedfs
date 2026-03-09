@@ -238,6 +238,7 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
     let mut router = Router::new()
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
+        .route("/metrics", get(handlers::metrics_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
             "/seaweedfsstatic/*path",
