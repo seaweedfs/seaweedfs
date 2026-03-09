@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -40,8 +41,11 @@ func (s *AdminServer) GetGroups(ctx context.Context) ([]GroupData, error) {
 	for _, name := range groupNames {
 		g, err := s.credentialManager.GetGroup(ctx, name)
 		if err != nil {
-			glog.V(1).Infof("Failed to get group %s: %v", name, err)
-			continue
+			if errors.Is(err, credential.ErrGroupNotFound) {
+				glog.V(1).Infof("Group %s listed but not found, skipping", name)
+				continue
+			}
+			return nil, fmt.Errorf("failed to get group %s: %w", name, err)
 		}
 		status := "enabled"
 		if g.Disabled {
