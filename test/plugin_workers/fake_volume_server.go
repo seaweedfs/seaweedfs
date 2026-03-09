@@ -27,19 +27,21 @@ type VolumeServer struct {
 	address  string
 	baseDir  string
 
-	mu                 sync.Mutex
-	receivedFiles      map[string]uint64
-	mountRequests      []*volume_server_pb.VolumeEcShardsMountRequest
-	deleteRequests     []*volume_server_pb.VolumeDeleteRequest
-	markReadonlyCalls  int
-	vacuumGarbageRatio float64
-	vacuumCheckCalls   int
-	vacuumCompactCalls int
-	vacuumCommitCalls  int
-	vacuumCleanupCalls int
-	volumeCopyCalls    int
-	volumeMountCalls   int
-	tailReceiverCalls  int
+	mu                  sync.Mutex
+	receivedFiles       map[string]uint64
+	mountRequests       []*volume_server_pb.VolumeEcShardsMountRequest
+	deleteRequests      []*volume_server_pb.VolumeDeleteRequest
+	markReadonlyCalls   int
+	markWritableCalls   int
+	readFileStatusCalls int
+	vacuumGarbageRatio  float64
+	vacuumCheckCalls    int
+	vacuumCompactCalls  int
+	vacuumCommitCalls   int
+	vacuumCleanupCalls  int
+	volumeCopyCalls     int
+	volumeMountCalls    int
+	tailReceiverCalls   int
 }
 
 // NewVolumeServer starts a test volume server using the provided base directory.
@@ -278,6 +280,25 @@ func (v *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_serve
 	v.markReadonlyCalls++
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeMarkReadonlyResponse{}, nil
+}
+
+func (v *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
+	v.mu.Lock()
+	v.markWritableCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.VolumeMarkWritableResponse{}, nil
+}
+
+func (v *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
+	v.mu.Lock()
+	v.readFileStatusCalls++
+	v.mu.Unlock()
+	return &volume_server_pb.ReadVolumeFileStatusResponse{
+		VolumeId:    req.VolumeId,
+		DatFileSize: 1024,
+		IdxFileSize: 16,
+		FileCount:   1,
+	}, nil
 }
 
 func (v *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_server_pb.VacuumVolumeCheckRequest) (*volume_server_pb.VacuumVolumeCheckResponse, error) {

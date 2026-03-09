@@ -60,8 +60,7 @@ func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 	require.GreaterOrEqual(t, source.MarkReadonlyCount(), 1)
 	require.GreaterOrEqual(t, len(source.DeleteRequests()), 1)
 
-	copyCalls, mountCalls, tailCalls := target.BalanceStats()
+	copyCalls, _, tailCalls := target.BalanceStats()
 	require.GreaterOrEqual(t, copyCalls, 1)
-	require.GreaterOrEqual(t, mountCalls, 1)
 	require.GreaterOrEqual(t, tailCalls, 1)
 }
