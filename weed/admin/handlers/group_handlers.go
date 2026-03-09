@@ -48,7 +48,12 @@ func NewGroupHandlers(adminServer *dash.AdminServer) *GroupHandlers {
 }
 
 func (h *GroupHandlers) ShowGroups(w http.ResponseWriter, r *http.Request) {
-	data := h.getGroupsPageData(r)
+	data, err := h.getGroupsPageData(r)
+	if err != nil {
+		glog.Errorf("Failed to get groups data: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "Failed to load groups: "+err.Error())
+		return
+	}
 
 	var buf bytes.Buffer
 	component := app.Groups(data)
@@ -218,7 +223,7 @@ func (h *GroupHandlers) SetGroupStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Group status updated"})
 }
 
-func (h *GroupHandlers) getGroupsPageData(r *http.Request) dash.GroupsPageData {
+func (h *GroupHandlers) getGroupsPageData(r *http.Request) (dash.GroupsPageData, error) {
 	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
@@ -226,12 +231,7 @@ func (h *GroupHandlers) getGroupsPageData(r *http.Request) dash.GroupsPageData {
 
 	groups, err := h.adminServer.GetGroups(r.Context())
 	if err != nil {
-		glog.Errorf("Failed to get groups: %v", err)
-		return dash.GroupsPageData{
-			Username:    username,
-			Groups:      []dash.GroupData{},
-			LastUpdated: time.Now(),
-		}
+		return dash.GroupsPageData{}, err
 	}
 
 	activeCount := 0
@@ -267,5 +267,5 @@ func (h *GroupHandlers) getGroupsPageData(r *http.Request) dash.GroupsPageData {
 		AvailableUsers:    availableUsers,
 		AvailablePolicies: availablePolicies,
 		LastUpdated:       time.Now(),
-	}
+	}, nil
 }
