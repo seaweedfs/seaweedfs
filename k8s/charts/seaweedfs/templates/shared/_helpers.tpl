@@ -338,11 +338,41 @@ Create the name of the service account to use
 {{- .Values.global.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}
 
-{{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35 */}}
+{{/* S3 TLS cert/key arguments, using custom secret if s3.tlsSecret is set */}}
+{{- define "seaweedfs.s3.tlsArgs" -}}
+{{- $prefix := .prefix -}}
+{{- $root := .root -}}
+{{- if $root.Values.s3.tlsSecret -}}
+-{{ $prefix }}cert.file=/usr/local/share/ca-certificates/s3/tls.crt \
+-{{ $prefix }}key.file=/usr/local/share/ca-certificates/s3/tls.key \
+{{- else -}}
+-{{ $prefix }}cert.file=/usr/local/share/ca-certificates/client/tls.crt \
+-{{ $prefix }}key.file=/usr/local/share/ca-certificates/client/tls.key \
+{{- end -}}
+{{- end -}}
+
+{{/* S3 custom TLS volume mount */}}
+{{- define "seaweedfs.s3.tlsVolumeMount" -}}
+{{- if .Values.s3.tlsSecret }}
+- name: s3-tls-cert
+  readOnly: true
+  mountPath: /usr/local/share/ca-certificates/s3/
+{{- end }}
+{{- end -}}
+
+{{/* S3 custom TLS volume */}}
+{{- define "seaweedfs.s3.tlsVolume" -}}
+{{- if .Values.s3.tlsSecret }}
+- name: s3-tls-cert
+  secret:
+    secretName: {{ .Values.s3.tlsSecret }}
+{{- end }}
+{{- end -}}
+
+{{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35.
+     Accepts a dict with "value" (the trafficDistribution string) and "Capabilities". */}}
 {{- define "seaweedfs.trafficDistribution" -}}
-{{- if .Values.s3.trafficDistribution -}}
-{{- and (eq .Values.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.s3.trafficDistribution -}}
-{{- else if .Values.filer.s3.trafficDistribution -}}
-{{- and (eq .Values.filer.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.filer.s3.trafficDistribution -}}
+{{- if .value -}}
+{{- and (eq .value "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .value -}}
 {{- end -}}
 {{- end -}}
