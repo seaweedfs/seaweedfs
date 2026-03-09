@@ -391,7 +391,9 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 // via the filer subscription mechanism (watching /etc/iam/groups/ directory).
 
 func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
-	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	}
 	return s.CredentialStore.CreateGroup(ctx, group)
 }
 
@@ -409,6 +411,8 @@ func (s *PropagatingCredentialStore) ListGroups(ctx context.Context) ([]string, 
 }
 
 func (s *PropagatingCredentialStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
-	glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	}
 	return s.CredentialStore.UpdateGroup(ctx, group)
 }
