@@ -2196,10 +2196,6 @@ function showNewAccessKeyModal(accessKeyData) {
             <i class="fas fa-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
         </div>
-        <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle me-2"></i>
-            <strong>Important:</strong> This is the only time the secret key will be displayed. Please save it securely.
-        </div>
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">

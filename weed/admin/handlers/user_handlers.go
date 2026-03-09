@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -155,10 +157,30 @@ func (h *UserHandlers) CreateAccessKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessKey, err := h.adminServer.CreateAccessKey(username)
+	var req *dash.CreateAccessKeyRequest
+	var body dash.CreateAccessKeyRequest
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+			return
+		}
+		// Empty body: auto-generate both keys
+	} else {
+		req = &body
+	}
+
+	accessKey, err := h.adminServer.CreateAccessKey(username, req)
 	if err != nil {
 		glog.Errorf("Failed to create access key for user %s: %v", username, err)
-		writeJSONError(w, http.StatusInternalServerError, "Failed to create access key: "+err.Error())
+		if errors.Is(err, dash.ErrAccessKeyInUse) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+		} else if errors.Is(err, dash.ErrUserNotFound) {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+		} else if errors.Is(err, dash.ErrInvalidInput) {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to create access key: "+err.Error())
+		}
 		return
 	}
 
