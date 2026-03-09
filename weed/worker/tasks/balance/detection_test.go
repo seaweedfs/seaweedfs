@@ -918,22 +918,14 @@ func TestDetection_HeterogeneousCapacity(t *testing.T) {
 	t.Logf("First balance task: move from %s (correct: highest utilization)", firstSource)
 }
 
-// TestDetection_UnseededDestinationDoesNotOverload verifies that when a
-// destination server has 0 volumes and is NOT in the initial serverVolumeCounts
-// (because it has no matching disk type in the topology), the algorithm still
-// tracks it correctly after the first move targets it.
-// Before the fix, adjustments for unknown destinations were silently ignored,
-// causing all moves to pile onto the same empty server.
-func TestDetection_UnseededDestinationDoesNotOverload(t *testing.T) {
+// TestDetection_ZeroVolumeServerIncludedInBalance verifies that a server
+// with zero volumes (seeded from topology with a matching disk type) is
+// correctly included in the balance calculation and receives moves to
+// equalize the distribution.
+func TestDetection_ZeroVolumeServerIncludedInBalance(t *testing.T) {
 	// 4 servers total, but only 3 have volumes.
 	// node-d has a disk of the same type but zero volumes, so it appears in the
-	// topology but has no metrics. If the topology seeding misses it (e.g.,
-	// because the disk type name doesn't match), it acts as a "phantom" target.
-	//
-	// We simulate this by building a topology where node-d has disk type "hdd"
-	// but with VolumeCount=0. The detection should discover it as a destination
-	// via planBalanceDestination, add it to serverVolumeCounts, and properly
-	// account for it in subsequent iterations.
+	// topology and is seeded into serverVolumeCounts with count=0.
 
 	servers := []serverSpec{
 		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
