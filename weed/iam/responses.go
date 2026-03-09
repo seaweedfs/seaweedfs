@@ -296,6 +296,12 @@ type DeleteGroupResponse struct {
 	CommonResponse
 }
 
+// UpdateGroupResponse is the response for UpdateGroup action.
+type UpdateGroupResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateGroupResponse"`
+	CommonResponse
+}
+
 // GetGroupResponse is the response for GetGroup action.
 type GetGroupResponse struct {
 	XMLName        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetGroupResponse"`

@@ -116,6 +116,7 @@ type (
 	// Group response types
 	iamCreateGroupResponse               = iamlib.CreateGroupResponse
 	iamDeleteGroupResponse               = iamlib.DeleteGroupResponse
+	iamUpdateGroupResponse               = iamlib.UpdateGroupResponse
 	iamGetGroupResponse                  = iamlib.GetGroupResponse
 	iamListGroupsResponse                = iamlib.ListGroupsResponse
 	iamAddUserToGroupResponse            = iamlib.AddUserToGroupResponse
@@ -1495,6 +1496,26 @@ func (e *EmbeddedIamApi) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 }
 
+func (e *EmbeddedIamApi) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateGroupResponse, *iamError) {
+	resp := &iamUpdateGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			if disabled := values.Get("Disabled"); disabled != "" {
+				g.Disabled = disabled == "true"
+			}
+			if newName := values.Get("NewGroupName"); newName != "" {
+				g.Name = newName
+			}
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
 func (e *EmbeddedIamApi) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamGetGroupResponse, *iamError) {
 	resp := &iamGetGroupResponse{}
 	groupName := values.Get("GroupName")
@@ -2042,6 +2063,12 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	case "DeleteGroup":
 		var iamErr *iamError
 		response, iamErr = e.DeleteGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "UpdateGroup":
+		var iamErr *iamError
+		response, iamErr = e.UpdateGroup(s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
