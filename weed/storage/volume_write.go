@@ -99,6 +99,8 @@ func removeVolumeFiles(filename string) {
 	os.Remove(filename + ".cpx")
 	// level db index file
 	os.RemoveAll(filename + ".ldb")
+	// redb index file (Rust volume server)
+	os.Remove(filename + ".rdb")
 	// marker for damaged or incomplete volume
 	os.Remove(filename + ".note")
 }
