@@ -206,12 +206,18 @@ func TestIAMGroupPolicyAttachment(t *testing.T) {
 
 	// Cleanup in correct order: detach policy, delete group, delete policy
 	t.Cleanup(func() {
-		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+		if _, err := iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
 			GroupName: aws.String(groupName),
 			PolicyArn: policyArn,
-		})
-		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
-		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+		}); err != nil {
+			t.Logf("cleanup: failed to detach group policy: %v", err)
+		}
+		if _, err := iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)}); err != nil {
+			t.Logf("cleanup: failed to delete group: %v", err)
+		}
+		if _, err := iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn}); err != nil {
+			t.Logf("cleanup: failed to delete policy: %v", err)
+		}
 	})
 
 	t.Run("attach_group_policy", func(t *testing.T) {
@@ -307,21 +313,33 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 	// Cleanup in correct order: remove user from group, detach policy,
 	// delete access key, delete user, delete group, delete policy
 	t.Cleanup(func() {
-		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
+		if _, err := iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
 			GroupName: aws.String(groupName),
 			UserName:  aws.String(userName),
-		})
-		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+		}); err != nil {
+			t.Logf("cleanup: failed to remove user from group: %v", err)
+		}
+		if _, err := iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
 			GroupName: aws.String(groupName),
 			PolicyArn: policyArn,
-		})
-		iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+		}); err != nil {
+			t.Logf("cleanup: failed to detach group policy: %v", err)
+		}
+		if _, err := iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 			UserName:    aws.String(userName),
 			AccessKeyId: keyResp.AccessKey.AccessKeyId,
-		})
-		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
-		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
-		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+		}); err != nil {
+			t.Logf("cleanup: failed to delete access key: %v", err)
+		}
+		if _, err := iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)}); err != nil {
+			t.Logf("cleanup: failed to delete user: %v", err)
+		}
+		if _, err := iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)}); err != nil {
+			t.Logf("cleanup: failed to delete group: %v", err)
+		}
+		if _, err := iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn}); err != nil {
+			t.Logf("cleanup: failed to delete policy: %v", err)
+		}
 	})
 
 	// Register bucket cleanup on parent test with admin credentials
@@ -329,11 +347,15 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 	adminS3, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		adminS3.DeleteObject(&s3.DeleteObjectInput{
+		if _, err := adminS3.DeleteObject(&s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String("test-key"),
-		})
-		adminS3.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
+		}); err != nil {
+			t.Logf("cleanup: failed to delete object: %v", err)
+		}
+		if _, err := adminS3.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)}); err != nil {
+			t.Logf("cleanup: failed to delete bucket: %v", err)
+		}
 	})
 
 	t.Run("user_without_group_denied", func(t *testing.T) {
@@ -434,19 +456,31 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 	// Cleanup in correct order: remove user from group, detach policy,
 	// delete access key, delete user, delete group, delete policy
 	t.Cleanup(func() {
-		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
+		if _, err := iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
 			GroupName: aws.String(groupName), UserName: aws.String(userName),
-		})
-		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+		}); err != nil {
+			t.Logf("cleanup: failed to remove user from group: %v", err)
+		}
+		if _, err := iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
 			GroupName: aws.String(groupName),
 			PolicyArn: aws.String("arn:aws:iam:::policy/" + policyName),
-		})
-		iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+		}); err != nil {
+			t.Logf("cleanup: failed to detach group policy: %v", err)
+		}
+		if _, err := iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
 			UserName: aws.String(userName), AccessKeyId: keyResp.AccessKey.AccessKeyId,
-		})
-		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
-		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
-		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createPolicyResp.Policy.Arn})
+		}); err != nil {
+			t.Logf("cleanup: failed to delete access key: %v", err)
+		}
+		if _, err := iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)}); err != nil {
+			t.Logf("cleanup: failed to delete user: %v", err)
+		}
+		if _, err := iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)}); err != nil {
+			t.Logf("cleanup: failed to delete group: %v", err)
+		}
+		if _, err := iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createPolicyResp.Policy.Arn}); err != nil {
+			t.Logf("cleanup: failed to delete policy: %v", err)
+		}
 	})
 
 	// Setup: attach policy, add user, create bucket with admin
