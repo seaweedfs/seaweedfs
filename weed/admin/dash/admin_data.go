@@ -80,6 +80,11 @@ type AccessKeyInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CreateAccessKeyRequest struct {
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+}
+
 type UpdateAccessKeyStatusRequest struct {
 	Status string `json:"status" binding:"required"`
 }

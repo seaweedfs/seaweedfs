@@ -442,9 +442,26 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 <div class="modal-body">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6>Access Keys for <span id="accessKeysUsername"></span></h6>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="toggleCreateKeyForm()">
                             <i class="fas fa-plus me-1"></i>Create New Key
                         </button>
+                    </div>
+                    <div id="createKeyForm" class="card mb-3" style="display: none;">
+                        <div class="card-body">
+                            <p class="text-muted small mb-2">Leave blank to auto-generate.</p>
+                            <div class="mb-2">
+                                <label for="newAccessKeyInput" class="form-label form-label-sm">Access Key</label>
+                                <input type="text" class="form-control form-control-sm" id="newAccessKeyInput" placeholder="Auto-generated if empty">
+                            </div>
+                            <div class="mb-2">
+                                <label for="newSecretKeyInput" class="form-label form-label-sm">Secret Key</label>
+                                <input type="text" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty">
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">Create</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCreateKeyForm()">Cancel</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="accessKeysContent">
                         <!-- Content will be loaded dynamically -->
@@ -1347,10 +1364,28 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Toggle create key form visibility
+        function toggleCreateKeyForm() {
+            const form = document.getElementById('createKeyForm');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                form.style.display = 'none';
+                document.getElementById('newAccessKeyInput').value = '';
+                document.getElementById('newSecretKeyInput').value = '';
+            }
+        }
+
         // Create new access key
         async function createAccessKey() {
             const username = document.getElementById('accessKeysUsername').textContent;
-            
+            const accessKey = document.getElementById('newAccessKeyInput').value.trim();
+            const secretKey = document.getElementById('newSecretKeyInput').value.trim();
+
+            const body = {};
+            if (accessKey) body.access_key = accessKey;
+            if (secretKey) body.secret_key = secretKey;
+
             try {
                 const encodedUsername = encodeURIComponent(username);
                 const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
@@ -1358,7 +1393,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({})
+                    body: JSON.stringify(body)
                 });
                 
                 if (response.ok) {
@@ -1370,7 +1405,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     }
                     
                     showSuccessMessage('Access key created successfully');
-                    
+
+                    // Hide form and clear fields
+                    document.getElementById('createKeyForm').style.display = 'none';
+                    document.getElementById('newAccessKeyInput').value = '';
+                    document.getElementById('newSecretKeyInput').value = '';
+
                     // Refresh access keys display
                     refreshAccessKeysList(username);
                 } else {

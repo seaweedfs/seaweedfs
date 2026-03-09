@@ -219,7 +219,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 }
 
 // CreateAccessKey creates a new access key for a user
-func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
+func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyRequest) (*AccessKeyInfo, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
@@ -235,9 +235,15 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Generate new access key
-	accessKey := generateAccessKey()
-	secretKey := generateSecretKey()
+	// Use provided keys or generate new ones
+	accessKey := req.AccessKey
+	if accessKey == "" {
+		accessKey = generateAccessKey()
+	}
+	secretKey := req.SecretKey
+	if secretKey == "" {
+		secretKey = generateSecretKey()
+	}
 
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
