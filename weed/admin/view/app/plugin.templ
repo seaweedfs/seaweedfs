@@ -1026,6 +1026,9 @@ templ Plugin(page string) {
                 }
 
                 var jobType = String(plan.job_type || '').trim().toLowerCase();
+                if (jobType === 'volume_balance') {
+                    return renderBalanceExecutionPlan(plan);
+                }
                 if (jobType !== 'erasure_coding') {
                     var fallbackText = toPrettyJson(plan);
                     if (!fallbackText) {
@@ -1098,6 +1101,44 @@ templ Plugin(page string) {
                             '<td><code>' + escapeHtml(textOrDash(assignment.target_node)) + '</code></td>' +
                             '<td>' + escapeHtml(textOrDash(assignment.target_data_center)) + '</td>' +
                             '<td>' + escapeHtml(textOrDash(assignment.target_rack)) + '</td>' +
+                            '</tr>';
+                    }
+                    html += '</tbody></table></div>';
+                }
+
+                html += '</div>';
+                return html;
+            }
+
+            function renderBalanceExecutionPlan(plan) {
+                var html = '<div class="mb-3"><h6>Execution Plan</h6>';
+                var moves = Array.isArray(plan.moves) ? plan.moves : [];
+
+                if (moves.length === 0) {
+                    // Single-move balance job
+                    var src = textOrDash(plan.source_node || plan.source_server);
+                    var dst = textOrDash(plan.target_node || plan.target_server);
+                    var vid = textOrDash(plan.volume_id);
+                    var col = textOrDash(plan.collection);
+                    html += '<div class="row g-2 mb-2">' +
+                        '<div class="col-md-3"><small><strong>Volume:</strong> ' + escapeHtml(vid) + '</small></div>' +
+                        '<div class="col-md-3"><small><strong>Collection:</strong> ' + escapeHtml(col) + '</small></div>' +
+                        '<div class="col-md-3"><small><strong>Source:</strong> <code>' + escapeHtml(src) + '</code></small></div>' +
+                        '<div class="col-md-3"><small><strong>Target:</strong> <code>' + escapeHtml(dst) + '</code></small></div>' +
+                        '</div>';
+                } else {
+                    // Batch balance job
+                    html += '<div class="mb-2"><span class="badge bg-info">' + escapeHtml(String(moves.length)) + ' moves</span></div>';
+                    html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0">' +
+                        '<thead><tr><th>#</th><th>Volume</th><th>Source</th><th>Target</th><th>Collection</th></tr></thead><tbody>';
+                    for (var i = 0; i < moves.length; i++) {
+                        var move = moves[i] || {};
+                        html += '<tr>' +
+                            '<td>' + escapeHtml(String(i + 1)) + '</td>' +
+                            '<td>' + escapeHtml(textOrDash(move.volume_id)) + '</td>' +
+                            '<td><code>' + escapeHtml(textOrDash(move.source_node)) + '</code></td>' +
+                            '<td><code>' + escapeHtml(textOrDash(move.target_node)) + '</code></td>' +
+                            '<td>' + escapeHtml(textOrDash(move.collection)) + '</td>' +
                             '</tr>';
                     }
                     html += '</tbody></table></div>';
@@ -1676,9 +1717,15 @@ templ Plugin(page string) {
                         barClass = 'bg-warning';
                     }
 
+                    var jobTypeCell = escapeHtml(textOrDash(executionJob.job_type));
+                    var execLabels = executionJob.labels || {};
+                    if (execLabels.batch === 'true' && execLabels.batch_size) {
+                        jobTypeCell += ' <span class="badge bg-info">' + escapeHtml(execLabels.batch_size) + ' moves</span>';
+                    }
+
                     rows += '<tr>' +
                         '<td>' + renderJobLink(executionJob.job_id) + '</td>' +
-                        '<td>' + escapeHtml(textOrDash(executionJob.job_type)) + '</td>' +
+                        '<td>' + jobTypeCell + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionJob.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
                         '<td><small>' + escapeHtml(textOrDash(executionJob.worker_id)) + '</small></td>' +
