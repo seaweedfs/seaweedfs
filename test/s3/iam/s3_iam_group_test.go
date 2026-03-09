@@ -520,6 +520,7 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "UpdateGroup (disable) should return 200")
 
 		// Wait for propagation — user should be denied
 		require.Eventually(t, func() bool {
@@ -538,6 +539,7 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 		})
 		require.NoError(t, err)
 		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "UpdateGroup (re-enable) should return 200")
 
 		// Wait for propagation — user should have access again
 		require.Eventually(t, func() bool {
