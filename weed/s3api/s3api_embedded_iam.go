@@ -1583,7 +1583,7 @@ func (e *EmbeddedIamApi) RemoveUserFromGroup(s3cfg *iam_pb.S3ApiConfiguration, v
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 }
 
-func (e *EmbeddedIamApi) AttachGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamAttachGroupPolicyResponse, *iamError) {
+func (e *EmbeddedIamApi) AttachGroupPolicy(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamAttachGroupPolicyResponse, *iamError) {
 	resp := &iamAttachGroupPolicyResponse{}
 	groupName := values.Get("GroupName")
 	policyArn := values.Get("PolicyArn")
@@ -1594,16 +1594,12 @@ func (e *EmbeddedIamApi) AttachGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	if err != nil {
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 	}
-	// Verify policy exists
-	policyFound := false
-	for _, p := range s3cfg.Policies {
-		if p.Name == policyName {
-			policyFound = true
-			break
+	// Verify policy exists via credential manager
+	if e.credentialManager != nil {
+		policy, pErr := e.credentialManager.GetPolicy(ctx, policyName)
+		if pErr != nil || policy == nil {
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 		}
-	}
-	if !policyFound {
-		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 	for _, g := range s3cfg.Groups {
 		if g.Name == groupName {
@@ -2073,7 +2069,7 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		}
 	case "AttachGroupPolicy":
 		var iamErr *iamError
-		response, iamErr = e.AttachGroupPolicy(s3cfg, values)
+		response, iamErr = e.AttachGroupPolicy(ctx, s3cfg, values)
 		if iamErr != nil {
 			return nil, iamErr
 		}
