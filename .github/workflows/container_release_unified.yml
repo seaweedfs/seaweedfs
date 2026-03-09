@@ -129,7 +129,7 @@ jobs:
           
       - name: Set up Docker Buildx
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           buildkitd-config: /tmp/buildkitd.toml
           

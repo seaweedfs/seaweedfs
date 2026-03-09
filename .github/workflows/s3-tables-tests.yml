@@ -144,7 +144,7 @@ jobs:
         id: go
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Trino image
         run: docker pull trinodb/trino:479
@@ -271,7 +271,7 @@ jobs:
         id: go
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Spark image
         run: docker pull apache/spark:3.5.1
@@ -337,7 +337,7 @@ jobs:
         id: go
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull RisingWave image
         run: |
@@ -405,7 +405,7 @@ jobs:
         id: go
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Python image
         run: docker pull python:3
@@ -471,7 +471,7 @@ jobs:
         id: go
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Pre-pull Python image
         run: docker pull python:3
