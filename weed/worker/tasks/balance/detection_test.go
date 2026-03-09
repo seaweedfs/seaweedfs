@@ -489,7 +489,7 @@ func TestDetection_ThreeServers_ConvergesToBalance(t *testing.T) {
 	// Verify convergence: effective counts should be within 20% imbalance.
 	effective := computeEffectiveCounts(servers, metrics, tasks)
 	total := 0
-	maxC, minC := 0, 100
+	maxC, minC := 0, len(metrics)
 	for _, c := range effective {
 		total += c
 		if c > maxC {

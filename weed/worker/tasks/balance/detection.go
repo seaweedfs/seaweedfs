@@ -81,7 +81,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// Seed from ActiveTopology so servers with matching disk type but zero
 	// volumes are included in the count and imbalance calculation.
 	serverVolumeCounts := make(map[string]int)
-	if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
+	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
 			for _, dc := range topologyInfo.DataCenterInfos {
@@ -125,14 +125,6 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			effectiveCounts[server] = effective
 			totalVolumes += effective
 		}
-		// Include any destination servers not in the original disk metrics
-		for server, adj := range adjustments {
-			if _, exists := serverVolumeCounts[server]; !exists && adj > 0 {
-				effectiveCounts[server] = adj
-				totalVolumes += adj
-			}
-		}
-
 		avgVolumesPerServer := float64(totalVolumes) / float64(len(effectiveCounts))
 
 		maxVolumes := 0
@@ -141,23 +133,18 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		minServer := ""
 
 		for server, count := range effectiveCounts {
+			// Min is calculated across all servers for an accurate imbalance ratio
+			if count < minVolumes {
+				minVolumes = count
+				minServer = server
+			}
+			// Max is only among non-exhausted servers since we can only move from them
 			if exhaustedServers[server] {
 				continue
 			}
 			if count > maxVolumes {
 				maxVolumes = count
 				maxServer = server
-			}
-			if count < minVolumes {
-				minVolumes = count
-				minServer = server
-			}
-		}
-		// Also consider exhausted servers for minVolumes (they still exist)
-		for server, count := range effectiveCounts {
-			if count < minVolumes {
-				minVolumes = count
-				minServer = server
 			}
 		}
 
