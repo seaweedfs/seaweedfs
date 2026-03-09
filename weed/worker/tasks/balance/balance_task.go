@@ -86,19 +86,19 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		return fmt.Errorf("failed to mark volume readonly: %v", err)
 	}
 
-	// Step 2: Copy volume to destination
+	// Step 2: Read source volume size before copy (for post-copy verification)
+	t.ReportProgress(15.0)
+	sourceStatus, err := t.readVolumeFileStatus(sourceServer, volumeId)
+	if err != nil {
+		return fmt.Errorf("failed to read source volume status: %v", err)
+	}
+
+	// Step 3: Copy volume to destination (VolumeCopy also mounts the volume)
 	t.ReportProgress(20.0)
 	t.GetLogger().Info("Copying volume to destination")
 	lastAppendAtNs, err := t.copyVolume(sourceServer, targetServer, volumeId)
 	if err != nil {
 		return fmt.Errorf("failed to copy volume: %v", err)
-	}
-
-	// Step 3: Mount volume on target and mark it readonly
-	t.ReportProgress(60.0)
-	t.GetLogger().Info("Mounting volume on target server")
-	if err := t.mountVolume(targetServer, volumeId); err != nil {
-		return fmt.Errorf("failed to mount volume on target: %v", err)
 	}
 
 	// Step 4: Tail for updates
@@ -108,7 +108,25 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		glog.Warningf("Tail operation failed (may be normal): %v", err)
 	}
 
-	// Step 5: Delete from source
+	// Step 5: Verify the volume on target before deleting source.
+	// This is a critical safety check — once the source is deleted, data loss
+	// is irreversible. We verify the target has the volume with matching size.
+	t.ReportProgress(85.0)
+	t.GetLogger().Info("Verifying volume on target before deleting source")
+	targetStatus, err := t.readVolumeFileStatus(targetServer, volumeId)
+	if err != nil {
+		return fmt.Errorf("aborting: cannot verify volume %d on target %s before deleting source: %v", volumeId, targetServer, err)
+	}
+	if targetStatus.DatFileSize != sourceStatus.DatFileSize {
+		return fmt.Errorf("aborting: volume %d .dat size mismatch — source %d bytes, target %d bytes",
+			volumeId, sourceStatus.DatFileSize, targetStatus.DatFileSize)
+	}
+	if targetStatus.FileCount != sourceStatus.FileCount {
+		return fmt.Errorf("aborting: volume %d file count mismatch — source %d, target %d",
+			volumeId, sourceStatus.FileCount, targetStatus.FileCount)
+	}
+
+	// Step 6: Delete from source
 	t.ReportProgress(90.0)
 	t.GetLogger().Info("Deleting volume from source server")
 	if err := t.deleteVolume(sourceServer, volumeId); err != nil {
@@ -213,17 +231,6 @@ func (t *BalanceTask) copyVolume(sourceServer, targetServer pb.ServerAddress, vo
 	return lastAppendAtNs, err
 }
 
-// mountVolume mounts the volume on the target server
-func (t *BalanceTask) mountVolume(server pb.ServerAddress, volumeId needle.VolumeId) error {
-	return operation.WithVolumeServerClient(false, server, t.grpcDialOption,
-		func(client volume_server_pb.VolumeServerClient) error {
-			_, err := client.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
-				VolumeId: uint32(volumeId),
-			})
-			return err
-		})
-}
-
 // tailVolume syncs remaining updates from source to target
 func (t *BalanceTask) tailVolume(sourceServer, targetServer pb.ServerAddress, volumeId needle.VolumeId, sinceNs uint64) error {
 	return operation.WithVolumeServerClient(true, targetServer, t.grpcDialOption,
@@ -236,6 +243,21 @@ func (t *BalanceTask) tailVolume(sourceServer, targetServer pb.ServerAddress, vo
 			})
 			return err
 		})
+}
+
+// readVolumeFileStatus reads the volume's file status (sizes, file count) from a server.
+func (t *BalanceTask) readVolumeFileStatus(server pb.ServerAddress, volumeId needle.VolumeId) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
+	var resp *volume_server_pb.ReadVolumeFileStatusResponse
+	err := operation.WithVolumeServerClient(false, server, t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			var err error
+			resp, err = client.ReadVolumeFileStatus(context.Background(),
+				&volume_server_pb.ReadVolumeFileStatusRequest{
+					VolumeId: uint32(volumeId),
+				})
+			return err
+		})
+	return resp, err
 }
 
 // deleteVolume deletes the volume from the server
