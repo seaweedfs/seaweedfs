@@ -2,6 +2,7 @@ package pluginworker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -156,6 +157,112 @@ func TestDeriveBalanceWorkerConfigBatchClamping(t *testing.T) {
 	}
 	if cfg.BatchSize != 1 {
 		t.Fatalf("expected batch_size clamped to 1, got %d", cfg.BatchSize)
+	}
+}
+
+func makeDetectionResult(volumeID uint32, source, target, collection string) *workertypes.TaskDetectionResult {
+	return &workertypes.TaskDetectionResult{
+		TaskID:     fmt.Sprintf("balance-%d", volumeID),
+		TaskType:   workertypes.TaskTypeBalance,
+		VolumeID:   volumeID,
+		Server:     source,
+		Collection: collection,
+		Priority:   workertypes.TaskPriorityNormal,
+		Reason:     "imbalanced",
+		TypedParams: &worker_pb.TaskParams{
+			VolumeId:   volumeID,
+			Collection: collection,
+			VolumeSize: 1024,
+			Sources: []*worker_pb.TaskSource{
+				{Node: source, VolumeId: volumeID},
+			},
+			Targets: []*worker_pb.TaskTarget{
+				{Node: target, VolumeId: volumeID},
+			},
+			TaskParams: &worker_pb.TaskParams_BalanceParams{
+				BalanceParams: &worker_pb.BalanceTaskParams{TimeoutSeconds: 600},
+			},
+		},
+	}
+}
+
+func TestBuildBatchVolumeBalanceProposals_SingleBatch(t *testing.T) {
+	results := []*workertypes.TaskDetectionResult{
+		makeDetectionResult(1, "s1:8080", "t1:8080", "c1"),
+		makeDetectionResult(2, "s2:8080", "t2:8080", "c1"),
+		makeDetectionResult(3, "s1:8080", "t2:8080", "c1"),
+	}
+
+	proposals := buildBatchVolumeBalanceProposals(results, 10, 5)
+	if len(proposals) != 1 {
+		t.Fatalf("expected 1 batch proposal, got %d", len(proposals))
+	}
+
+	p := proposals[0]
+	if p.Labels["batch"] != "true" {
+		t.Fatalf("expected batch label")
+	}
+	if p.Labels["batch_size"] != "3" {
+		t.Fatalf("expected batch_size label '3', got %q", p.Labels["batch_size"])
+	}
+
+	// Decode and verify moves
+	payload := p.Parameters["task_params_pb"].GetBytesValue()
+	if len(payload) == 0 {
+		t.Fatalf("expected task_params_pb payload")
+	}
+	decoded := &worker_pb.TaskParams{}
+	if err := proto.Unmarshal(payload, decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	moves := decoded.GetBalanceParams().GetMoves()
+	if len(moves) != 3 {
+		t.Fatalf("expected 3 moves, got %d", len(moves))
+	}
+	if moves[0].VolumeId != 1 || moves[1].VolumeId != 2 || moves[2].VolumeId != 3 {
+		t.Fatalf("unexpected volume IDs: %v", moves)
+	}
+	if decoded.GetBalanceParams().MaxConcurrentMoves != 5 {
+		t.Fatalf("expected MaxConcurrentMoves 5, got %d", decoded.GetBalanceParams().MaxConcurrentMoves)
+	}
+}
+
+func TestBuildBatchVolumeBalanceProposals_MultipleBatches(t *testing.T) {
+	results := make([]*workertypes.TaskDetectionResult, 5)
+	for i := range results {
+		results[i] = makeDetectionResult(uint32(i+1), "s1:8080", "t1:8080", "c1")
+	}
+
+	proposals := buildBatchVolumeBalanceProposals(results, 2, 3)
+	// 5 results / batch_size 2 = 3 proposals (2, 2, 1)
+	if len(proposals) != 3 {
+		t.Fatalf("expected 3 proposals, got %d", len(proposals))
+	}
+
+	// First two should be batch proposals
+	if proposals[0].Labels["batch"] != "true" {
+		t.Fatalf("first proposal should be batch")
+	}
+	if proposals[1].Labels["batch"] != "true" {
+		t.Fatalf("second proposal should be batch")
+	}
+	// Last one has only 1 result, should fall back to single-move proposal
+	if proposals[2].Labels["batch"] == "true" {
+		t.Fatalf("last proposal with 1 result should be single-move, not batch")
+	}
+}
+
+func TestBuildBatchVolumeBalanceProposals_BatchSizeOne(t *testing.T) {
+	results := []*workertypes.TaskDetectionResult{
+		makeDetectionResult(1, "s1:8080", "t1:8080", "c1"),
+		makeDetectionResult(2, "s2:8080", "t2:8080", "c1"),
+	}
+
+	// batch_size=1 should not be called (Detect guards this), but test the function directly
+	proposals := buildBatchVolumeBalanceProposals(results, 1, 5)
+	// Each result becomes its own single-move proposal
+	if len(proposals) != 2 {
+		t.Fatalf("expected 2 proposals, got %d", len(proposals))
 	}
 }
 

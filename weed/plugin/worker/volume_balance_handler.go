@@ -274,14 +274,19 @@ func (h *VolumeBalanceHandler) Detect(
 		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
-	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
-	for _, result := range results {
-		proposal, proposalErr := buildVolumeBalanceProposal(result)
-		if proposalErr != nil {
-			glog.Warningf("Plugin worker skip invalid volume_balance proposal: %v", proposalErr)
-			continue
+	var proposals []*plugin_pb.JobProposal
+	if workerConfig.BatchSize > 1 && len(results) > 1 {
+		proposals = buildBatchVolumeBalanceProposals(results, workerConfig.BatchSize, workerConfig.MaxConcurrentMoves)
+	} else {
+		proposals = make([]*plugin_pb.JobProposal, 0, len(results))
+		for _, result := range results {
+			proposal, proposalErr := buildVolumeBalanceProposal(result)
+			if proposalErr != nil {
+				glog.Warningf("Plugin worker skip invalid volume_balance proposal: %v", proposalErr)
+				continue
+			}
+			proposals = append(proposals, proposal)
 		}
-		proposals = append(proposals, proposal)
 	}
 
 	if err := sender.SendProposals(&plugin_pb.DetectionProposals{
@@ -987,6 +992,136 @@ func buildVolumeBalanceProposal(
 			"target_server": targetNode,
 		},
 	}, nil
+}
+
+// buildBatchVolumeBalanceProposals groups detection results into batch proposals.
+// Each batch proposal encodes multiple moves in BalanceTaskParams.Moves.
+func buildBatchVolumeBalanceProposals(
+	results []*workertypes.TaskDetectionResult,
+	batchSize int,
+	maxConcurrentMoves int,
+) []*plugin_pb.JobProposal {
+	if batchSize <= 0 {
+		batchSize = 1
+	}
+	if maxConcurrentMoves <= 0 {
+		maxConcurrentMoves = defaultMaxConcurrentMoves
+	}
+
+	var proposals []*plugin_pb.JobProposal
+
+	for batchStart := 0; batchStart < len(results); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(results) {
+			batchEnd = len(results)
+		}
+		batch := results[batchStart:batchEnd]
+
+		// If only one result in this batch, emit a single-move proposal
+		if len(batch) == 1 {
+			proposal, err := buildVolumeBalanceProposal(batch[0])
+			if err != nil {
+				glog.Warningf("Plugin worker skip invalid volume_balance proposal: %v", err)
+				continue
+			}
+			proposals = append(proposals, proposal)
+			continue
+		}
+
+		// Build batch proposal with BalanceMoveSpec entries
+		moves := make([]*worker_pb.BalanceMoveSpec, 0, len(batch))
+		var volumeIDs []string
+		var dedupeKeys []string
+		highestPriority := workertypes.TaskPriorityLow
+
+		for _, result := range batch {
+			if result == nil || result.TypedParams == nil {
+				continue
+			}
+			sourceNode := ""
+			targetNode := ""
+			if len(result.TypedParams.Sources) > 0 {
+				sourceNode = result.TypedParams.Sources[0].Node
+			}
+			if len(result.TypedParams.Targets) > 0 {
+				targetNode = result.TypedParams.Targets[0].Node
+			}
+			moves = append(moves, &worker_pb.BalanceMoveSpec{
+				VolumeId:   uint32(result.VolumeID),
+				SourceNode: sourceNode,
+				TargetNode: targetNode,
+				Collection: result.Collection,
+				VolumeSize: result.TypedParams.VolumeSize,
+			})
+			volumeIDs = append(volumeIDs, fmt.Sprintf("%d", result.VolumeID))
+
+			dedupeKey := fmt.Sprintf("volume_balance:%d", result.VolumeID)
+			if result.Collection != "" {
+				dedupeKey += ":" + result.Collection
+			}
+			dedupeKeys = append(dedupeKeys, dedupeKey)
+
+			if result.Priority > highestPriority {
+				highestPriority = result.Priority
+			}
+		}
+
+		if len(moves) == 0 {
+			continue
+		}
+
+		// Serialize batch params
+		taskParams := &worker_pb.TaskParams{
+			TaskParams: &worker_pb.TaskParams_BalanceParams{
+				BalanceParams: &worker_pb.BalanceTaskParams{
+					TimeoutSeconds:     defaultBalanceTimeoutSeconds,
+					MaxConcurrentMoves: int32(maxConcurrentMoves),
+					Moves:              moves,
+				},
+			},
+		}
+		payload, err := proto.Marshal(taskParams)
+		if err != nil {
+			glog.Warningf("Plugin worker failed to marshal batch balance proposal: %v", err)
+			continue
+		}
+
+		proposalID := fmt.Sprintf("volume-balance-batch-%d-%d", batchStart, time.Now().UnixNano())
+		summary := fmt.Sprintf("Batch balance %d volumes (%s)", len(moves), strings.Join(volumeIDs, ","))
+		if len(summary) > 200 {
+			summary = fmt.Sprintf("Batch balance %d volumes", len(moves))
+		}
+
+		// Use composite dedupe key for the batch
+		compositeDedupeKey := fmt.Sprintf("volume_balance_batch:%s", strings.Join(dedupeKeys, "+"))
+		if len(compositeDedupeKey) > 200 {
+			compositeDedupeKey = fmt.Sprintf("volume_balance_batch:%d-%d", batchStart, time.Now().UnixNano())
+		}
+
+		proposals = append(proposals, &plugin_pb.JobProposal{
+			ProposalId: proposalID,
+			DedupeKey:  compositeDedupeKey,
+			JobType:    "volume_balance",
+			Priority:   mapTaskPriority(highestPriority),
+			Summary:    summary,
+			Detail:     fmt.Sprintf("Batch of %d volume moves with concurrency %d", len(moves), maxConcurrentMoves),
+			Parameters: map[string]*plugin_pb.ConfigValue{
+				"task_params_pb": {
+					Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: payload},
+				},
+				"batch_size": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(moves))},
+				},
+			},
+			Labels: map[string]string{
+				"task_type":  "balance",
+				"batch":     "true",
+				"batch_size": fmt.Sprintf("%d", len(moves)),
+			},
+		})
+	}
+
+	return proposals
 }
 
 func decodeVolumeBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, error) {
