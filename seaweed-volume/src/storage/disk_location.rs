@@ -13,8 +13,10 @@ use tracing::{info, warn};
 
 use crate::config::MinFreeSpace;
 use crate::storage::erasure_coding::ec_shard::{
-    DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE, ERASURE_CODING_SMALL_BLOCK_SIZE,
+    EcVolumeShard, DATA_SHARDS_COUNT, ERASURE_CODING_LARGE_BLOCK_SIZE,
+    ERASURE_CODING_SMALL_BLOCK_SIZE,
 };
+use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle_map::NeedleMapKind;
 use crate::storage::super_block::ReplicaPlacement;
 use crate::storage::types::*;
@@ -30,6 +32,7 @@ pub struct DiskLocation {
     pub max_volume_count: AtomicI32,
     pub original_max_volume_count: i32,
     volumes: HashMap<VolumeId, Volume>,
+    ec_volumes: HashMap<VolumeId, EcVolume>,
     pub is_disk_space_low: AtomicBool,
     pub available_space: AtomicU64,
     pub min_free_space: MinFreeSpace,
@@ -65,6 +68,7 @@ impl DiskLocation {
             max_volume_count: AtomicI32::new(max_volume_count),
             original_max_volume_count: max_volume_count,
             volumes: HashMap::new(),
+            ec_volumes: HashMap::new(),
             is_disk_space_low: AtomicBool::new(false),
             available_space: AtomicU64::new(0),
             min_free_space,
@@ -475,12 +479,90 @@ impl DiskLocation {
             .set(free as f64);
     }
 
+    // ---- EC volume operations ----
+
+    /// Find an EC volume by ID.
+    pub fn find_ec_volume(&self, vid: VolumeId) -> Option<&EcVolume> {
+        self.ec_volumes.get(&vid)
+    }
+
+    /// Find an EC volume by ID (mutable).
+    pub fn find_ec_volume_mut(&mut self, vid: VolumeId) -> Option<&mut EcVolume> {
+        self.ec_volumes.get_mut(&vid)
+    }
+
+    /// Check if this location has an EC volume.
+    pub fn has_ec_volume(&self, vid: VolumeId) -> bool {
+        self.ec_volumes.contains_key(&vid)
+    }
+
+    /// Remove an EC volume, returning it.
+    pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
+        self.ec_volumes.remove(&vid)
+    }
+
+    /// Mount EC shards for a volume on this location.
+    pub fn mount_ec_shards(
+        &mut self,
+        vid: VolumeId,
+        collection: &str,
+        shard_ids: &[u32],
+    ) -> Result<(), VolumeError> {
+        let dir = self.directory.clone();
+        let ec_vol = self
+            .ec_volumes
+            .entry(vid)
+            .or_insert_with(|| EcVolume::new(&dir, &dir, collection, vid).unwrap());
+
+        for &shard_id in shard_ids {
+            let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
+            ec_vol.add_shard(shard).map_err(VolumeError::Io)?;
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[collection, "ec_shards"])
+                .inc();
+        }
+        Ok(())
+    }
+
+    /// Unmount EC shards for a volume on this location.
+    pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
+        if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
+            let collection = ec_vol.collection.clone();
+            for &shard_id in shard_ids {
+                ec_vol.remove_shard(shard_id as u8);
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&collection, "ec_shards"])
+                    .dec();
+            }
+            if ec_vol.shard_count() == 0 {
+                let mut vol = self.ec_volumes.remove(&vid).unwrap();
+                vol.close();
+            }
+        }
+    }
+
+    /// Total number of EC shards on this location.
+    pub fn ec_shard_count(&self) -> usize {
+        self.ec_volumes
+            .values()
+            .map(|ecv| ecv.shards.iter().filter(|s| s.is_some()).count())
+            .sum()
+    }
+
+    /// Iterate over all EC volumes.
+    pub fn ec_volumes(&self) -> impl Iterator<Item = (&VolumeId, &EcVolume)> {
+        self.ec_volumes.iter()
+    }
+
     /// Close all volumes.
     pub fn close(&mut self) {
         for (_, v) in self.volumes.iter_mut() {
             v.close();
         }
         self.volumes.clear();
+        for (_, mut ec_vol) in self.ec_volumes.drain() {
+            ec_vol.close();
+        }
     }
 }
 

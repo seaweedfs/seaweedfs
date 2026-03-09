@@ -122,7 +122,7 @@ impl VolumeServer for VolumeGrpcService {
             // Check if this is an EC volume
             let is_ec_volume = {
                 let store = self.state.store.read().unwrap();
-                store.ec_volumes.contains_key(&file_id.volume_id)
+                store.has_ec_volume(file_id.volume_id)
             };
 
             // Cookie validation (unless skip_cookie_check)
@@ -146,7 +146,7 @@ impl VolumeServer for VolumeGrpcService {
                 } else {
                     // For EC volumes, verify needle exists in ecx index
                     let store = self.state.store.read().unwrap();
-                    if let Some(ec_vol) = store.ec_volumes.get(&file_id.volume_id) {
+                    if let Some(ec_vol) = store.find_ec_volume(file_id.volume_id) {
                         match ec_vol.find_needle_from_ecx(n.id) {
                             Ok(Some((_, size))) if !size.is_deleted() => {
                                 // Needle exists and is not deleted — cookie check not possible
@@ -247,7 +247,7 @@ impl VolumeServer for VolumeGrpcService {
             } else {
                 // EC volume deletion: journal the delete locally (with cookie validation, matching Go)
                 let mut store = self.state.store.write().unwrap();
-                if let Some(ec_vol) = store.ec_volumes.get_mut(&file_id.volume_id) {
+                if let Some(ec_vol) = store.find_ec_volume_mut(file_id.volume_id) {
                     match ec_vol.journal_delete_with_cookie(n.id, n.cookie) {
                         Ok(()) => {
                             results.push(volume_server_pb::DeleteResult {
@@ -2085,7 +2085,7 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
 
         let store = self.state.store.read().unwrap();
-        let ec_vol = store.ec_volumes.get(&vid).ok_or_else(|| {
+        let ec_vol = store.find_ec_volume(vid).ok_or_else(|| {
             Status::not_found(format!(
                 "ec volume {} shard {} not found",
                 req.volume_id, req.shard_id
@@ -2147,7 +2147,7 @@ impl VolumeServer for VolumeGrpcService {
         let needle_id = NeedleId(req.file_key);
 
         let mut store = self.state.store.write().unwrap();
-        if let Some(ec_vol) = store.ec_volumes.get_mut(&vid) {
+        if let Some(ec_vol) = store.find_ec_volume_mut(vid) {
             ec_vol
                 .journal_delete(needle_id)
                 .map_err(|e| Status::internal(e.to_string()))?;
@@ -2168,8 +2168,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
         let ec_vol = store
-            .ec_volumes
-            .get(&vid)
+            .find_ec_volume(vid)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
         if ec_vol.collection != req.collection {
@@ -2253,7 +2252,7 @@ impl VolumeServer for VolumeGrpcService {
         {
             let mut store = self.state.store.write().unwrap();
             // Remove EC volume
-            if let Some(mut ec_vol) = store.ec_volumes.remove(&vid) {
+            if let Some(mut ec_vol) = store.remove_ec_volume(vid) {
                 ec_vol.close();
             }
             // Unmount existing volume if any, then mount fresh
@@ -2277,8 +2276,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
         let ec_vol = store
-            .ec_volumes
-            .get(&vid)
+            .find_ec_volume(vid)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
         let mut shard_infos = Vec::new();
@@ -2853,7 +2851,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
         let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-            store.ec_volumes.keys().copied().collect()
+            store.locations.iter().flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid)).collect()
         } else {
             req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
         };
@@ -2866,7 +2864,7 @@ impl VolumeServer for VolumeGrpcService {
 
         for vid in &vids {
             let collection = {
-                if let Some(ecv) = store.ec_volumes.get(vid) {
+                if let Some(ecv) = store.find_ec_volume(*vid) {
                     ecv.collection.clone()
                 } else {
                     return Err(Status::not_found(format!(
@@ -3114,7 +3112,7 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         // Fall back to EC shards
-        if let Some(ec_vol) = store.ec_volumes.get(&vid) {
+        if let Some(ec_vol) = store.find_ec_volume(vid) {
             match ec_vol.find_needle_from_ecx(needle_id) {
                 Ok(Some((offset, size))) if !size.is_deleted() && !offset.is_zero() => {
                     // Read the needle header from EC shards to get cookie

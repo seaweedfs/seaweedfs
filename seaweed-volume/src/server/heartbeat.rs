@@ -527,20 +527,22 @@ fn collect_ec_heartbeat(state: &Arc<VolumeServerState>) -> master_pb::Heartbeat 
     let store = state.store.read().unwrap();
 
     let mut ec_shards = Vec::new();
-    for (vid, ec_vol) in &store.ec_volumes {
-        let mut ec_index_bits: u32 = 0;
-        for shard_opt in &ec_vol.shards {
-            if let Some(shard) = shard_opt {
-                ec_index_bits |= 1u32 << shard.shard_id;
+    for loc in &store.locations {
+        for (vid, ec_vol) in loc.ec_volumes() {
+            let mut ec_index_bits: u32 = 0;
+            for shard_opt in &ec_vol.shards {
+                if let Some(shard) = shard_opt {
+                    ec_index_bits |= 1u32 << shard.shard_id;
+                }
             }
-        }
-        if ec_index_bits > 0 {
-            ec_shards.push(master_pb::VolumeEcShardInformationMessage {
-                id: vid.0,
-                collection: ec_vol.collection.clone(),
-                ec_index_bits,
-                ..Default::default()
-            });
+            if ec_index_bits > 0 {
+                ec_shards.push(master_pb::VolumeEcShardInformationMessage {
+                    id: vid.0,
+                    collection: ec_vol.collection.clone(),
+                    ec_index_bits,
+                    ..Default::default()
+                });
+            }
         }
     }
 
