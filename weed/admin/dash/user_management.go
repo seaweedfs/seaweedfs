@@ -189,17 +189,18 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 
 	// Look up groups the user belongs to
 	groupNames, err := s.credentialManager.ListGroups(ctx)
-	if err == nil {
-		for _, gName := range groupNames {
-			g, err := s.credentialManager.GetGroup(ctx, gName)
-			if err != nil {
-				continue
-			}
-			for _, member := range g.Members {
-				if member == username {
-					details.Groups = append(details.Groups, gName)
-					break
-				}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	for _, gName := range groupNames {
+		g, err := s.credentialManager.GetGroup(ctx, gName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get group %s: %w", gName, err)
+		}
+		for _, member := range g.Members {
+			if member == username {
+				details.Groups = append(details.Groups, gName)
+				break
 			}
 		}
 	}
