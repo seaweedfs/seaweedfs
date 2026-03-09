@@ -84,7 +84,11 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("mount setup: %w", err)
 	}
 
-	if !*noSync {
+	if *noSync {
+		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
+			return fmt.Errorf("validate mount root: %w", err)
+		}
+	} else {
 		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
@@ -162,6 +166,26 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 
 		return nil
 	})
+}
+
+func validateMountRoot(remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
+	client, err := remote_storage.GetRemoteStorage(remoteConf)
+	if err != nil {
+		return err
+	}
+	if remote.Bucket == "" {
+		return nil
+	}
+	buckets, err := client.ListBuckets()
+	if err != nil {
+		return fmt.Errorf("list buckets: %w", err)
+	}
+	for _, b := range buckets {
+		if b.Name == remote.Bucket {
+			return nil
+		}
+	}
+	return fmt.Errorf("bucket %q not found in remote %s", remote.Bucket, remote.Name)
 }
 
 // if an entry has synchronized metadata but has not synchronized content
