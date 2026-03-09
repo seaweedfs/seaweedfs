@@ -377,6 +377,14 @@ func planBalanceDestination(activeTopology *topology.ActiveTopology, selectedVol
 		return nil, fmt.Errorf("no available disks for balance operation")
 	}
 
+	// Sort available disks by NodeID then DiskID for deterministic tie-breaking
+	sort.Slice(availableDisks, func(i, j int) bool {
+		if availableDisks[i].NodeID != availableDisks[j].NodeID {
+			return availableDisks[i].NodeID < availableDisks[j].NodeID
+		}
+		return availableDisks[i].DiskID < availableDisks[j].DiskID
+	})
+
 	// Find the best destination disk based on balance criteria
 	var bestDisk *topology.DiskInfo
 	bestScore := math.Inf(-1)
