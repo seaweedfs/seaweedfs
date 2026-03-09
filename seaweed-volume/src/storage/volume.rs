@@ -513,8 +513,7 @@ impl Volume {
                 .create(true)
                 .open(&dat_path)?;
             if preallocate > 0 {
-                file.set_len(preallocate)?;
-                file.set_len(0)?; // truncate back — the preallocate is just a hint
+                preallocate_file(&file, preallocate);
             }
             self.dat_file = Some(file);
         } else {
@@ -2147,6 +2146,33 @@ pub fn scan_volume_file(
     }
 
     Ok(())
+}
+
+/// Reserve disk blocks for a file without changing its visible size.
+/// On Linux, uses `fallocate(FALLOC_FL_KEEP_SIZE)` to actually reserve blocks.
+/// On other platforms, this is a no-op.
+fn preallocate_file(file: &File, size: u64) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = file.as_raw_fd();
+        // FALLOC_FL_KEEP_SIZE = 1: allocate blocks without changing file size
+        let ret = unsafe { libc::fallocate(fd, 1, 0, size as libc::off_t) };
+        if ret == 0 {
+            tracing::info!(bytes = size, "preallocated disk space");
+        } else {
+            tracing::warn!(
+                bytes = size,
+                error = %io::Error::last_os_error(),
+                "fallocate failed"
+            );
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, size);
+        tracing::debug!(bytes = size, "preallocation not supported on this platform");
+    }
 }
 
 // ============================================================================
