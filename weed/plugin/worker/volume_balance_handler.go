@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -511,6 +512,8 @@ func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
 	return len(diskTypes)
 }
 
+const defaultMaxConcurrentMoves = 5
+
 func (h *VolumeBalanceHandler) Execute(
 	ctx context.Context,
 	request *plugin_pb.ExecuteJobRequest,
@@ -530,14 +533,30 @@ func (h *VolumeBalanceHandler) Execute(
 	if err != nil {
 		return err
 	}
+
+	applyBalanceExecutionDefaults(params)
+
+	// Batch path: if BalanceTaskParams has moves, execute them concurrently
+	if bp := params.GetBalanceParams(); bp != nil && len(bp.Moves) > 0 {
+		return h.executeBatchMoves(ctx, request, params, sender)
+	}
+
+	// Single-move path (backward compatible)
+	return h.executeSingleMove(ctx, request, params, sender)
+}
+
+func (h *VolumeBalanceHandler) executeSingleMove(
+	ctx context.Context,
+	request *plugin_pb.ExecuteJobRequest,
+	params *worker_pb.TaskParams,
+	sender ExecutionSender,
+) error {
 	if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
 		return fmt.Errorf("volume balance source node is required")
 	}
 	if len(params.Targets) == 0 || strings.TrimSpace(params.Targets[0].Node) == "" {
 		return fmt.Errorf("volume balance target node is required")
 	}
-
-	applyBalanceExecutionDefaults(params)
 
 	task := balancetask.NewBalanceTask(
 		request.Job.JobId,
@@ -619,6 +638,181 @@ func (h *VolumeBalanceHandler) Execute(
 			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
+}
+
+// executeBatchMoves runs multiple volume moves concurrently within a single job.
+func (h *VolumeBalanceHandler) executeBatchMoves(
+	ctx context.Context,
+	request *plugin_pb.ExecuteJobRequest,
+	params *worker_pb.TaskParams,
+	sender ExecutionSender,
+) error {
+	bp := params.GetBalanceParams()
+	moves := bp.Moves
+	maxConcurrent := int(bp.MaxConcurrentMoves)
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMaxConcurrentMoves
+	}
+
+	totalMoves := len(moves)
+	glog.Infof("batch volume balance: %d moves, max concurrent %d", totalMoves, maxConcurrent)
+
+	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		JobId:           request.Job.JobId,
+		JobType:         request.Job.JobType,
+		State:           plugin_pb.JobState_JOB_STATE_ASSIGNED,
+		ProgressPercent: 0,
+		Stage:           "assigned",
+		Message:         fmt.Sprintf("batch volume balance accepted: %d moves", totalMoves),
+		Activities: []*plugin_pb.ActivityEvent{
+			BuildExecutorActivity("assigned", fmt.Sprintf("batch volume balance: %d moves, concurrency %d", totalMoves, maxConcurrent)),
+		},
+	}); err != nil {
+		return err
+	}
+
+	// Per-move progress tracking
+	var mu sync.Mutex
+	moveProgress := make([]float64, totalMoves)
+
+	reportAggregate := func(moveIndex int, progress float64, stage string) {
+		mu.Lock()
+		moveProgress[moveIndex] = progress
+		total := 0.0
+		for _, p := range moveProgress {
+			total += p
+		}
+		mu.Unlock()
+
+		aggregate := total / float64(totalMoves)
+		move := moves[moveIndex]
+		message := fmt.Sprintf("[Move %d/%d vol:%d] %s", moveIndex+1, totalMoves, move.VolumeId, stage)
+
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId:           request.Job.JobId,
+			JobType:         request.Job.JobType,
+			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+			ProgressPercent: aggregate,
+			Stage:           fmt.Sprintf("move %d/%d", moveIndex+1, totalMoves),
+			Message:         message,
+			Activities: []*plugin_pb.ActivityEvent{
+				BuildExecutorActivity(fmt.Sprintf("move-%d", moveIndex+1), message),
+			},
+		})
+	}
+
+	type moveResult struct {
+		index    int
+		volumeID uint32
+		source   string
+		target   string
+		err      error
+	}
+
+	sem := make(chan struct{}, maxConcurrent)
+	results := make(chan moveResult, totalMoves)
+
+	for i, move := range moves {
+		sem <- struct{}{} // acquire slot
+		go func(idx int, m *worker_pb.BalanceMoveSpec) {
+			defer func() { <-sem }() // release slot
+
+			task := balancetask.NewBalanceTask(
+				fmt.Sprintf("%s-move-%d", request.Job.JobId, idx),
+				m.SourceNode,
+				m.VolumeId,
+				m.Collection,
+				h.grpcDialOption,
+			)
+			task.SetProgressCallback(func(progress float64, stage string) {
+				reportAggregate(idx, progress, stage)
+			})
+
+			moveParams := buildMoveTaskParams(m, bp.TimeoutSeconds)
+			err := task.Execute(ctx, moveParams)
+			results <- moveResult{
+				index:    idx,
+				volumeID: m.VolumeId,
+				source:   m.SourceNode,
+				target:   m.TargetNode,
+				err:      err,
+			}
+		}(i, move)
+	}
+
+	// Collect all results
+	var succeeded, failed int
+	var errMessages []string
+	var successDetails []string
+	for range moves {
+		r := <-results
+		if r.err != nil {
+			failed++
+			errMessages = append(errMessages, fmt.Sprintf("volume %d (%s→%s): %v", r.volumeID, r.source, r.target, r.err))
+			glog.Warningf("batch balance move %d failed: volume %d %s→%s: %v", r.index, r.volumeID, r.source, r.target, r.err)
+		} else {
+			succeeded++
+			successDetails = append(successDetails, fmt.Sprintf("volume %d (%s→%s)", r.volumeID, r.source, r.target))
+		}
+	}
+
+	summary := fmt.Sprintf("%d/%d volumes moved successfully", succeeded, totalMoves)
+	if failed > 0 {
+		summary += fmt.Sprintf("; %d failed", failed)
+	}
+
+	success := failed == 0
+	var errMsg string
+	if !success {
+		errMsg = strings.Join(errMessages, "; ")
+	}
+
+	return sender.SendCompleted(&plugin_pb.JobCompleted{
+		JobId:        request.Job.JobId,
+		JobType:      request.Job.JobType,
+		Success:      success,
+		ErrorMessage: errMsg,
+		Result: &plugin_pb.JobResult{
+			Summary: summary,
+			OutputValues: map[string]*plugin_pb.ConfigValue{
+				"total_moves": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalMoves)},
+				},
+				"succeeded": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(succeeded)},
+				},
+				"failed": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(failed)},
+				},
+			},
+		},
+		Activities: []*plugin_pb.ActivityEvent{
+			BuildExecutorActivity("completed", summary),
+		},
+	})
+}
+
+// buildMoveTaskParams constructs a TaskParams for a single move within a batch.
+func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, timeoutSeconds int32) *worker_pb.TaskParams {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = defaultBalanceTimeoutSeconds
+	}
+	return &worker_pb.TaskParams{
+		VolumeId:   move.VolumeId,
+		Collection: move.Collection,
+		VolumeSize: move.VolumeSize,
+		Sources: []*worker_pb.TaskSource{
+			{Node: move.SourceNode, VolumeId: move.VolumeId},
+		},
+		Targets: []*worker_pb.TaskTarget{
+			{Node: move.TargetNode, VolumeId: move.VolumeId},
+		},
+		TaskParams: &worker_pb.TaskParams_BalanceParams{
+			BalanceParams: &worker_pb.BalanceTaskParams{
+				TimeoutSeconds: timeoutSeconds,
+			},
+		},
+	}
 }
 
 func (h *VolumeBalanceHandler) collectVolumeMetrics(

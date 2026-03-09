@@ -3,6 +3,7 @@ package pluginworker
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -262,6 +263,197 @@ func TestVolumeBalanceDescriptorOmitsExecutionTuningFields(t *testing.T) {
 	}
 	if workerConfigFormHasField(descriptor.WorkerConfigForm, "force_move") {
 		t.Fatalf("unexpected force_move in volume balance worker config form")
+	}
+}
+
+type recordingExecutionSender struct {
+	mu        sync.Mutex
+	progress  []*plugin_pb.JobProgressUpdate
+	completed *plugin_pb.JobCompleted
+}
+
+func (r *recordingExecutionSender) SendProgress(p *plugin_pb.JobProgressUpdate) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.progress = append(r.progress, p)
+	return nil
+}
+
+func (r *recordingExecutionSender) SendCompleted(c *plugin_pb.JobCompleted) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completed = c
+	return nil
+}
+
+func TestBuildMoveTaskParams(t *testing.T) {
+	move := &worker_pb.BalanceMoveSpec{
+		VolumeId:   42,
+		SourceNode: "10.0.0.1:8080",
+		TargetNode: "10.0.0.2:8080",
+		Collection: "photos",
+		VolumeSize: 1024 * 1024,
+	}
+
+	params := buildMoveTaskParams(move, 300)
+	if params.VolumeId != 42 {
+		t.Fatalf("expected volume_id 42, got %d", params.VolumeId)
+	}
+	if params.Collection != "photos" {
+		t.Fatalf("expected collection photos, got %s", params.Collection)
+	}
+	if params.VolumeSize != 1024*1024 {
+		t.Fatalf("expected volume_size %d, got %d", 1024*1024, params.VolumeSize)
+	}
+	if len(params.Sources) != 1 || params.Sources[0].Node != "10.0.0.1:8080" {
+		t.Fatalf("unexpected sources: %+v", params.Sources)
+	}
+	if len(params.Targets) != 1 || params.Targets[0].Node != "10.0.0.2:8080" {
+		t.Fatalf("unexpected targets: %+v", params.Targets)
+	}
+	bp := params.GetBalanceParams()
+	if bp == nil {
+		t.Fatalf("expected balance params")
+	}
+	if bp.TimeoutSeconds != 300 {
+		t.Fatalf("expected timeout 300, got %d", bp.TimeoutSeconds)
+	}
+}
+
+func TestBuildMoveTaskParamsDefaultTimeout(t *testing.T) {
+	move := &worker_pb.BalanceMoveSpec{
+		VolumeId:   1,
+		SourceNode: "a:8080",
+		TargetNode: "b:8080",
+	}
+	params := buildMoveTaskParams(move, 0)
+	if params.GetBalanceParams().TimeoutSeconds != defaultBalanceTimeoutSeconds {
+		t.Fatalf("expected default timeout %d, got %d", defaultBalanceTimeoutSeconds, params.GetBalanceParams().TimeoutSeconds)
+	}
+}
+
+func TestExecuteDispatchesBatchPath(t *testing.T) {
+	// Build a job with batch moves in BalanceTaskParams
+	bp := &worker_pb.BalanceTaskParams{
+		TimeoutSeconds:     60,
+		MaxConcurrentMoves: 2,
+		Moves: []*worker_pb.BalanceMoveSpec{
+			{VolumeId: 1, SourceNode: "s1:8080", TargetNode: "t1:8080", Collection: "c1"},
+			{VolumeId: 2, SourceNode: "s2:8080", TargetNode: "t2:8080", Collection: "c1"},
+		},
+	}
+	taskParams := &worker_pb.TaskParams{
+		TaskId: "batch-1",
+		TaskParams: &worker_pb.TaskParams_BalanceParams{
+			BalanceParams: bp,
+		},
+	}
+	payload, err := proto.Marshal(taskParams)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	job := &plugin_pb.JobSpec{
+		JobId:   "batch-job-1",
+		JobType: "volume_balance",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"task_params_pb": {Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: payload}},
+		},
+	}
+
+	handler := NewVolumeBalanceHandler(nil)
+	sender := &recordingExecutionSender{}
+
+	// Execute will enter the batch path. It will fail because there's no real gRPC server,
+	// but we verify it sends the assigned progress and eventually a completion.
+	err = handler.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: job,
+	}, sender)
+
+	// Expect an error since no real volume servers exist
+	// But verify the batch path was taken by checking the assigned message
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+
+	if len(sender.progress) == 0 {
+		t.Fatalf("expected progress messages from batch path")
+	}
+
+	// First progress should be "assigned" with batch info
+	first := sender.progress[0]
+	if first.Stage != "assigned" {
+		t.Fatalf("expected first stage 'assigned', got %q", first.Stage)
+	}
+	if !strings.Contains(first.Message, "batch") || !strings.Contains(first.Message, "2 moves") {
+		t.Fatalf("expected batch assigned message, got %q", first.Message)
+	}
+
+	// Should have a completion with failure details (since no servers)
+	if sender.completed == nil {
+		t.Fatalf("expected completion message")
+	}
+	if sender.completed.Success {
+		t.Fatalf("expected failure since no real gRPC servers")
+	}
+	// Should report 0 succeeded, 2 failed
+	if v, ok := sender.completed.Result.OutputValues["failed"]; !ok || v.GetInt64Value() != 2 {
+		t.Fatalf("expected 2 failed moves, got %+v", sender.completed.Result.OutputValues)
+	}
+}
+
+func TestExecuteSingleMovePathUnchanged(t *testing.T) {
+	// Build a single-move job (no batch moves)
+	taskParams := &worker_pb.TaskParams{
+		TaskId:     "single-1",
+		VolumeId:   99,
+		Collection: "videos",
+		Sources: []*worker_pb.TaskSource{
+			{Node: "src:8080", VolumeId: 99},
+		},
+		Targets: []*worker_pb.TaskTarget{
+			{Node: "dst:8080", VolumeId: 99},
+		},
+		TaskParams: &worker_pb.TaskParams_BalanceParams{
+			BalanceParams: &worker_pb.BalanceTaskParams{
+				TimeoutSeconds: 60,
+			},
+		},
+	}
+	payload, err := proto.Marshal(taskParams)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	job := &plugin_pb.JobSpec{
+		JobId:   "single-job-1",
+		JobType: "volume_balance",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"task_params_pb": {Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: payload}},
+		},
+	}
+
+	handler := NewVolumeBalanceHandler(nil)
+	sender := &recordingExecutionSender{}
+
+	// Execute single-move path. Will fail on gRPC but verify it takes the single-move path.
+	_ = handler.Execute(context.Background(), &plugin_pb.ExecuteJobRequest{
+		Job: job,
+	}, sender)
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+
+	if len(sender.progress) == 0 {
+		t.Fatalf("expected progress messages")
+	}
+
+	// Single-move path sends "volume balance job accepted" not "batch volume balance"
+	first := sender.progress[0]
+	if first.Stage != "assigned" {
+		t.Fatalf("expected first stage 'assigned', got %q", first.Stage)
+	}
+	if strings.Contains(first.Message, "batch") {
+		t.Fatalf("single-move path should not mention batch, got %q", first.Message)
 	}
 }
 
