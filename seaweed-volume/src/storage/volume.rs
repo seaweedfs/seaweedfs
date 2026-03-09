@@ -2068,7 +2068,7 @@ fn get_append_at_ns(last: u64) -> u64 {
 }
 
 /// Remove all files associated with a volume.
-fn remove_volume_files(base: &str) {
+pub(crate) fn remove_volume_files(base: &str) {
     for ext in &[".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note"] {
         let _ = fs::remove_file(format!("{}{}", base, ext));
     }
