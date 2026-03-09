@@ -87,7 +87,7 @@ require (
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.etcd.io/etcd/client/v3 v3.6.7
-	go.mongodb.org/mongo-driver v1.17.6
+	go.mongodb.org/mongo-driver v1.17.9
 	go.opencensus.io v0.24.0 // indirect
 	gocloud.dev v0.45.0
 	gocloud.dev/pubsub/natspubsub v0.45.0
@@ -97,7 +97,7 @@ require (
 	golang.org/x/image v0.36.0
 	golang.org/x/net v0.49.0
 	golang.org/x/oauth2 v0.35.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"strconv"
 	"strings"
@@ -430,6 +431,120 @@ type customTestFilerClient struct {
 func (c *customTestFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
 	(*c.traversedDirs)[in.Directory] = true
 	return c.testFilerClient.ListEntries(ctx, in, opts...)
+}
+
+// TestListObjectVersionsResult_XMLInterleaving validates that Version and DeleteMarker elements
+// are interleaved in the correct sort order in the XML output, matching the S3 API contract.
+func TestListObjectVersionsResult_XMLInterleaving(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-24 * time.Hour)
+
+	dm := &DeleteMarkerEntry{
+		Key:          "object1.txt",
+		VersionId:    "newer-dm",
+		IsLatest:     true,
+		LastModified: now,
+	}
+	ver := &VersionEntry{
+		Key:          "object1.txt",
+		VersionId:    "older-version",
+		IsLatest:     false,
+		LastModified: earlier,
+		ETag:         "\"abc\"",
+		Size:         100,
+		StorageClass: "STANDARD",
+	}
+
+	// Entries are in correct sort order: newest first for same key
+	result := &S3ListObjectVersionsResult{
+		Name:    "test-bucket",
+		MaxKeys: 1000,
+		Entries: []VersionListEntry{
+			{DeleteMarker: dm},
+			{Version: ver},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Verify DeleteMarker appears BEFORE Version in the XML output
+	dmIdx := strings.Index(xmlStr, "<DeleteMarker>")
+	vIdx := strings.Index(xmlStr, "<Version>")
+	assert.True(t, dmIdx >= 0, "DeleteMarker element should be present")
+	assert.True(t, vIdx >= 0, "Version element should be present")
+	assert.True(t, dmIdx < vIdx, "DeleteMarker should appear before Version for same key (newest first), got DM at %d, V at %d", dmIdx, vIdx)
+}
+
+// TestListObjectVersionsResult_XMLInterleavingMultipleKeys validates interleaving across multiple keys
+func TestListObjectVersionsResult_XMLInterleavingMultipleKeys(t *testing.T) {
+	now := time.Now()
+	earlier := now.Add(-24 * time.Hour)
+
+	dm := &DeleteMarkerEntry{Key: "aaa", VersionId: "dm1", IsLatest: true, LastModified: now}
+	v1 := &VersionEntry{Key: "aaa", VersionId: "v1", IsLatest: false, LastModified: earlier, StorageClass: "STANDARD"}
+	v2 := &VersionEntry{Key: "bbb", VersionId: "v2", IsLatest: true, LastModified: now, StorageClass: "STANDARD"}
+
+	// Expected XML order: aaa/DM, aaa/V, bbb/V
+	result := &S3ListObjectVersionsResult{
+		Name:    "test-bucket",
+		MaxKeys: 1000,
+		Entries: []VersionListEntry{
+			{DeleteMarker: dm},
+			{Version: v1},
+			{Version: v2},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Find positions of each element
+	dmIdx := strings.Index(xmlStr, "<DeleteMarker>")
+	v1Idx := strings.Index(xmlStr, "<Version><Key>aaa</Key>")
+	v2Idx := strings.Index(xmlStr, "<Version><Key>bbb</Key>")
+
+	assert.True(t, dmIdx >= 0, "DeleteMarker should be present")
+	assert.True(t, v1Idx >= 0, "Version for aaa should be present")
+	assert.True(t, v2Idx >= 0, "Version for bbb should be present")
+	assert.True(t, dmIdx < v1Idx, "aaa DeleteMarker should appear before aaa Version")
+	assert.True(t, v1Idx < v2Idx, "aaa Version should appear before bbb Version")
+}
+
+// TestListObjectVersionsResult_XMLCommonPrefixes validates that CommonPrefixes entries
+// are correctly marshaled when interleaved with Version and DeleteMarker entries.
+func TestListObjectVersionsResult_XMLCommonPrefixes(t *testing.T) {
+	now := time.Now()
+
+	ver := &VersionEntry{Key: "docs/readme.txt", VersionId: "v1", IsLatest: true, LastModified: now, StorageClass: "STANDARD"}
+
+	result := &S3ListObjectVersionsResult{
+		Name:      "test-bucket",
+		MaxKeys:   1000,
+		Delimiter: "/",
+		Entries: []VersionListEntry{
+			{Version: ver},
+			{Prefix: &PrefixEntry{Prefix: "images/"}},
+			{Prefix: &PrefixEntry{Prefix: "logs/"}},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Verify CommonPrefixes elements are present with correct content
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>images/</Prefix></CommonPrefixes>")
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>logs/</Prefix></CommonPrefixes>")
+
+	// Verify ordering: Version before CommonPrefixes (as placed in Entries)
+	vIdx := strings.Index(xmlStr, "<Version>")
+	cpIdx := strings.Index(xmlStr, "<CommonPrefixes>")
+	assert.True(t, vIdx >= 0, "Version element should be present")
+	assert.True(t, cpIdx >= 0, "CommonPrefixes element should be present")
+	assert.True(t, vIdx < cpIdx, "Version should appear before CommonPrefixes as ordered in Entries")
 }
 
 // TestListObjectVersions_PrefixWithLeadingSlash tests that prefixes with leading slashes work correctly
