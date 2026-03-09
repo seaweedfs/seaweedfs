@@ -289,6 +289,12 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 				}
 				// Update group membership references
 				updateUserInGroups(s3cfg, userName, newUserName)
+				// Update service account parent references
+				for _, sa := range s3cfg.ServiceAccounts {
+					if sa.ParentUser == userName {
+						sa.ParentUser = newUserName
+					}
+				}
 				return resp, nil
 			}
 		}
