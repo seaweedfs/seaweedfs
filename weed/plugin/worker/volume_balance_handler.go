@@ -559,7 +559,10 @@ func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
 	return len(diskTypes)
 }
 
-const defaultMaxConcurrentMoves = 5
+const (
+	defaultMaxConcurrentMoves = 5
+	maxConcurrentMovesLimit   = 50
+)
 
 func (h *VolumeBalanceHandler) Execute(
 	ctx context.Context,
@@ -702,8 +705,8 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	}
 	// Clamp to the worker-side upper bound so a stale or malicious job
 	// cannot request unbounded fan-out of concurrent volume moves.
-	if maxConcurrent > defaultMaxConcurrentMoves {
-		maxConcurrent = defaultMaxConcurrentMoves
+	if maxConcurrent > maxConcurrentMovesLimit {
+		maxConcurrent = maxConcurrentMovesLimit
 	}
 
 	totalMoves := len(moves)
