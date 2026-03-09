@@ -179,12 +179,9 @@ func TestRequestIdGeneration(t *testing.T) {
 	if reqID == "" {
 		t.Fatalf("expected auto-generated x-amz-request-id header, got empty")
 	}
-	// UUID format: 8-4-4-4-12 hex digits with hyphens, total 36 chars
-	if len(reqID) < 32 {
-		t.Fatalf("x-amz-request-id too short to be a UUID: %q (len=%d)", reqID, len(reqID))
-	}
-	if !strings.Contains(reqID, "-") {
-		t.Fatalf("x-amz-request-id does not look like a UUID (no hyphens): %q", reqID)
+	// Go format: "%X%08X" (timestamp hex + 8 random hex), typically 20-24 chars, all hex, no hyphens.
+	if len(reqID) < 16 {
+		t.Fatalf("x-amz-request-id too short: %q (len=%d)", reqID, len(reqID))
 	}
 }
 

@@ -117,10 +117,17 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
         headers.insert("Server", val);
     }
 
-    if let Some(rid) = request_id {
-        headers.insert("x-amz-request-id", rid);
-    } else {
-        let id = uuid::Uuid::new_v4().to_string();
+    // Always generate a server-side request ID (matching Go's request_id.Ensure
+    // which ignores client-sent headers to prevent spoofing).
+    // Format: "%X%08X" — nanosecond timestamp hex + 4 random bytes hex.
+    {
+        use rand::Rng;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let rand_val: u32 = rand::thread_rng().gen();
+        let id = format!("{:X}{:08X}", nanos, rand_val);
         if let Ok(val) = HeaderValue::from_str(&id) {
             headers.insert("x-amz-request-id", val);
         }
