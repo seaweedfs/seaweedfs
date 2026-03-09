@@ -424,6 +424,24 @@ impl DiskLocation {
         self.volumes.iter_mut()
     }
 
+    /// Sum of unused space in writable volumes (volumeSizeLimit - actual size per volume).
+    /// Used by auto-max-volume-count to estimate how many more volumes can fit.
+    pub fn unused_space(&self, volume_size_limit: u64) -> u64 {
+        let mut unused: u64 = 0;
+        for vol in self.volumes.values() {
+            if vol.is_read_only() {
+                continue;
+            }
+            let dat_size = vol.dat_file_size().unwrap_or(0);
+            let idx_size = vol.idx_file_size();
+            let used = dat_size + idx_size;
+            if volume_size_limit > used {
+                unused += volume_size_limit - used;
+            }
+        }
+        unused
+    }
+
     /// Check disk space against min_free_space and update is_disk_space_low.
     pub fn check_disk_space(&self) {
         let (total, free) = get_disk_stats(&self.directory);

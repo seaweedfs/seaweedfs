@@ -236,11 +236,21 @@ async fn do_heartbeat(
                 match resp {
                     Ok(Some(hb_resp)) => {
                         if hb_resp.volume_size_limit > 0 {
-                            let s = state.store.read().unwrap();
-                            s.volume_size_limit.store(
-                                hb_resp.volume_size_limit,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                            let changed = {
+                                let s = state.store.read().unwrap();
+                                s.volume_size_limit.store(
+                                    hb_resp.volume_size_limit,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                s.maybe_adjust_volume_max()
+                            };
+                            if changed {
+                                let adjusted_hb = collect_heartbeat(config, state);
+                                last_volumes = adjusted_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+                                if tx.send(adjusted_hb).await.is_err() {
+                                    return Ok(None);
+                                }
+                            }
                         }
                         let metrics_changed = apply_metrics_push_settings(
                             state,
@@ -263,6 +273,10 @@ async fn do_heartbeat(
             }
 
             _ = volume_tick.tick() => {
+                {
+                    let s = state.store.read().unwrap();
+                    s.maybe_adjust_volume_max();
+                }
                 let current_hb = collect_heartbeat(config, state);
                 last_volumes = current_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
                 if tx.send(current_hb).await.is_err() {

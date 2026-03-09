@@ -373,6 +373,58 @@ impl Store {
             .sum()
     }
 
+    /// Total EC shard count across all EC volumes.
+    pub fn ec_shard_count(&self) -> usize {
+        self.ec_volumes
+            .values()
+            .map(|ecv| ecv.shards.iter().filter(|s| s.is_some()).count())
+            .sum()
+    }
+
+    /// Recalculate max volume counts for locations with original_max_volume_count == 0.
+    /// Returns true if any max changed (caller should re-send heartbeat).
+    pub fn maybe_adjust_volume_max(&self) -> bool {
+        let volume_size_limit = self.volume_size_limit.load(Ordering::Relaxed);
+        if volume_size_limit == 0 {
+            return false;
+        }
+
+        let mut has_changes = false;
+        let mut new_max_total: i32 = 0;
+
+        let total_ec_shards = self.ec_shard_count();
+
+        for loc in &self.locations {
+            if loc.original_max_volume_count == 0 {
+                let current = loc.max_volume_count.load(Ordering::Relaxed);
+                let (_, free) = super::disk_location::get_disk_stats(&loc.directory);
+
+                let unused_space = loc.unused_space(volume_size_limit);
+                let unclaimed = (free as i64) - (unused_space as i64);
+
+                let vol_count = loc.volumes_len() as i32;
+                let ec_equivalent = ((total_ec_shards
+                    + crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                    / crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT)
+                    as i32;
+                let mut max_count = vol_count + ec_equivalent;
+
+                if unclaimed > volume_size_limit as i64 {
+                    max_count += (unclaimed as u64 / volume_size_limit) as i32 - 1;
+                }
+
+                loc.max_volume_count.store(max_count, Ordering::Relaxed);
+                new_max_total += max_count;
+                has_changes = has_changes || current != max_count;
+            } else {
+                new_max_total += loc.original_max_volume_count;
+            }
+        }
+
+        crate::metrics::MAX_VOLUMES.set(new_max_total as i64);
+        has_changes
+    }
+
     /// Free volume slots across all locations.
     pub fn free_volume_count(&self) -> i32 {
         self.locations
