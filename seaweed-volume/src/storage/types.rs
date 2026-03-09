@@ -394,6 +394,55 @@ impl From<u8> for Version {
 }
 
 // ============================================================================
+// ReadOption
+// ============================================================================
+
+/// Options controlling needle read behavior, matching Go's `ReadOption` in store.go.
+///
+/// Fields are split into request-side options (set by the caller) and response-side
+/// flags (set during the read to communicate status back).
+#[derive(Debug, Clone)]
+pub struct ReadOption {
+    // -- request --
+    /// If true, allow reading needles that have been soft-deleted.
+    pub read_deleted: bool,
+    /// If true, attempt to read only metadata for large needles (> PagedReadLimit).
+    pub attempt_meta_only: bool,
+    /// If true, the caller requires metadata only (no data payload).
+    pub must_meta_only: bool,
+
+    // -- response --
+    /// Set to true when the read actually returned metadata only.
+    pub is_meta_only: bool,
+    /// Compaction revision at the time of the read (for consistency during streaming).
+    pub volume_revision: u16,
+    /// Set to true when the offset exceeded MaxPossibleVolumeSize (4-byte offset wrap).
+    pub is_out_of_range: bool,
+
+    // -- slow-read / streaming --
+    /// When true, the read lock is acquired and released per chunk instead of held
+    /// for the entire read, reducing write latency at the cost of higher read P99.
+    pub has_slow_read: bool,
+    /// Buffer size for chunked streaming reads (used with `has_slow_read`).
+    pub read_buffer_size: i32,
+}
+
+impl Default for ReadOption {
+    fn default() -> Self {
+        ReadOption {
+            read_deleted: false,
+            attempt_meta_only: false,
+            must_meta_only: false,
+            is_meta_only: false,
+            volume_revision: 0,
+            is_out_of_range: false,
+            has_slow_read: false,
+            read_buffer_size: 0,
+        }
+    }
+}
+
+// ============================================================================
 // NeedleMapEntry helpers (for .idx file)
 // ============================================================================
 
@@ -587,5 +636,47 @@ mod tests {
         );
         assert_eq!(DiskType::HardDrive.readable_string(), "hdd");
         assert_eq!(DiskType::Ssd.readable_string(), "ssd");
+    }
+
+    #[test]
+    fn test_read_option_default() {
+        let ro = ReadOption::default();
+        assert!(!ro.read_deleted);
+        assert!(!ro.attempt_meta_only);
+        assert!(!ro.must_meta_only);
+        assert!(!ro.is_meta_only);
+        assert_eq!(ro.volume_revision, 0);
+        assert!(!ro.is_out_of_range);
+        assert!(!ro.has_slow_read);
+        assert_eq!(ro.read_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_read_option_custom() {
+        let ro = ReadOption {
+            read_deleted: true,
+            attempt_meta_only: true,
+            has_slow_read: true,
+            read_buffer_size: 1024 * 1024,
+            ..ReadOption::default()
+        };
+        assert!(ro.read_deleted);
+        assert!(ro.attempt_meta_only);
+        assert!(!ro.must_meta_only);
+        assert!(!ro.is_meta_only);
+        assert!(ro.has_slow_read);
+        assert_eq!(ro.read_buffer_size, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_read_option_clone() {
+        let ro = ReadOption {
+            is_out_of_range: true,
+            volume_revision: 42,
+            ..ReadOption::default()
+        };
+        let ro2 = ro.clone();
+        assert!(ro2.is_out_of_range);
+        assert_eq!(ro2.volume_revision, 42);
     }
 }
