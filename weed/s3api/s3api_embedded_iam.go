@@ -348,40 +348,51 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	resp := &iamUpdateUserResponse{}
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
-	if newUserName != "" {
-		// Check for name collision before renaming
-		if newUserName != userName {
-			for _, ident := range s3cfg.Identities {
-				if ident.Name == newUserName {
-					return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", newUserName)}
-				}
-			}
-		}
-		for _, ident := range s3cfg.Identities {
-			if userName == ident.Name {
-				ident.Name = newUserName
-				// Update group membership references
-				for _, g := range s3cfg.Groups {
-					for j, m := range g.Members {
-						if m == userName {
-							g.Members[j] = newUserName
-							break
-						}
-					}
-				}
-				// Update service account parent references
-				for _, sa := range s3cfg.ServiceAccounts {
-					if sa.ParentUser == userName {
-						sa.ParentUser = newUserName
-					}
-				}
-				return resp, nil
-			}
-		}
-	} else {
+	if newUserName == "" {
 		return resp, nil
 	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+
+	// Find the source identity first
+	var sourceIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			sourceIdent = ident
+			break
+		}
+	}
+	if sourceIdent == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	}
+
+	// No-op if renaming to the same name
+	if newUserName == userName {
+		return resp, nil
+	}
+
+	// Check for name collision before renaming
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == newUserName {
+			return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", newUserName)}
+		}
+	}
+
+	sourceIdent.Name = newUserName
+	// Update group membership references
+	for _, g := range s3cfg.Groups {
+		for j, m := range g.Members {
+			if m == userName {
+				g.Members[j] = newUserName
+				break
+			}
+		}
+	}
+	// Update service account parent references
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.ParentUser == userName {
+			sa.ParentUser = newUserName
+		}
+	}
+	return resp, nil
 }
 
 // CreateAccessKey creates an access key for a user.
