@@ -231,8 +231,10 @@ pub struct VolumeServerConfig {
     pub jwt_read_signing_expires_seconds: i64,
     pub https_cert_file: String,
     pub https_key_file: String,
+    pub https_ca_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
+    pub grpc_ca_file: String,
     /// Enable batched write queue for improved throughput under load.
     pub enable_write_queue: bool,
 }
@@ -639,8 +641,10 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         jwt_read_signing_expires_seconds: sec.jwt_read_signing_expires,
         https_cert_file: sec.https_cert_file,
         https_key_file: sec.https_key_file,
+        https_ca_file: sec.https_ca_file,
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
+        grpc_ca_file: sec.grpc_ca_file,
         enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
@@ -656,8 +660,10 @@ pub struct SecurityConfig {
     pub jwt_read_signing_expires: i64,
     pub https_cert_file: String,
     pub https_key_file: String,
+    pub https_ca_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
+    pub grpc_ca_file: String,
     pub access_ui: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
@@ -759,11 +765,13 @@ fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::HttpsVolume => match key {
                     "cert" => cfg.https_cert_file = value.to_string(),
                     "key" => cfg.https_key_file = value.to_string(),
+                    "ca" => cfg.https_ca_file = value.to_string(),
                     _ => {}
                 },
                 Section::GrpcVolume => match key {
                     "cert" => cfg.grpc_cert_file = value.to_string(),
                     "key" => cfg.grpc_key_file = value.to_string(),
+                    "ca" => cfg.grpc_ca_file = value.to_string(),
                     _ => {}
                 },
                 Section::Guard => match key {

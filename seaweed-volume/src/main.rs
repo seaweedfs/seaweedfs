@@ -47,8 +47,9 @@ fn main() {
     }
 }
 
-/// Build a rustls ServerConfig from cert and key PEM files.
-fn load_rustls_config(cert_path: &str, key_path: &str) -> rustls::ServerConfig {
+/// Build a rustls ServerConfig from cert, key, and optional CA PEM files.
+/// When `ca_path` is non-empty, enables mTLS (client certificate verification).
+fn load_rustls_config(cert_path: &str, key_path: &str, ca_path: &str) -> rustls::ServerConfig {
     let cert_pem = std::fs::read(cert_path)
         .unwrap_or_else(|e| panic!("Failed to read TLS cert file '{}': {}", cert_path, e));
     let key_pem = std::fs::read(key_path)
@@ -61,10 +62,31 @@ fn load_rustls_config(cert_path: &str, key_path: &str) -> rustls::ServerConfig {
         .expect("Failed to parse TLS private key PEM")
         .expect("No private key found in PEM file");
 
-    rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .expect("Failed to build rustls ServerConfig")
+    let builder = rustls::ServerConfig::builder();
+    if !ca_path.is_empty() {
+        // mTLS: verify client certificates against the CA
+        let ca_pem = std::fs::read(ca_path)
+            .unwrap_or_else(|e| panic!("Failed to read CA cert file '{}': {}", ca_path, e));
+        let ca_certs = rustls_pemfile::certs(&mut &ca_pem[..])
+            .collect::<Result<Vec<_>, _>>()
+            .expect("Failed to parse CA certificate PEM");
+        let mut root_store = rustls::RootCertStore::empty();
+        for cert in ca_certs {
+            root_store.add(cert).expect("Failed to add CA certificate to root store");
+        }
+        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
+            .expect("Failed to build client certificate verifier");
+        builder
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certs, key)
+            .expect("Failed to build rustls ServerConfig with mTLS")
+    } else {
+        builder
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .expect("Failed to build rustls ServerConfig")
+    }
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -257,7 +279,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                 "TLS enabled for HTTP server (cert={}, key={})",
                 config.https_cert_file, config.https_key_file
             );
-            let tls_config = load_rustls_config(&config.https_cert_file, &config.https_key_file);
+            let tls_config = load_rustls_config(&config.https_cert_file, &config.https_key_file, &config.https_ca_file);
             Some(TlsAcceptor::from(Arc::new(tls_config)))
         } else {
             None
@@ -312,7 +334,14 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     panic!("Failed to read gRPC key '{}': {}", grpc_key_file, e)
                 });
                 let identity = tonic::transport::Identity::from_pem(cert, key);
-                let tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+                let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+                let grpc_ca_file = config.grpc_ca_file.clone();
+                if !grpc_ca_file.is_empty() {
+                    let ca_cert = std::fs::read_to_string(&grpc_ca_file).unwrap_or_else(|e| {
+                        panic!("Failed to read gRPC CA cert '{}': {}", grpc_ca_file, e)
+                    });
+                    tls_config = tls_config.client_ca_root(tonic::transport::Certificate::from_pem(ca_cert));
+                }
                 if let Err(e) = tonic::transport::Server::builder()
                     .tls_config(tls_config)
                     .expect("Failed to configure gRPC TLS")
