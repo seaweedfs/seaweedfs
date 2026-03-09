@@ -230,7 +230,7 @@ func (h *VolumeBalanceHandler) Detect(
 		return err
 	}
 
-	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
+	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
@@ -262,6 +262,7 @@ func (h *VolumeBalanceHandler) Detect(
 func emitVolumeBalanceDetectionDecisionTrace(
 	sender DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
+	activeTopology *topology.ActiveTopology,
 	taskConfig *balancetask.Config,
 	results []*workertypes.TaskDetectionResult,
 ) error {
@@ -357,7 +358,25 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			continue
 		}
 
+		// Seed server counts from topology so zero-volume servers are included,
+		// matching the same logic used in balancetask.Detection.
 		serverVolumeCounts := make(map[string]int)
+		if activeTopology != nil {
+			topologyInfo := activeTopology.GetTopologyInfo()
+			if topologyInfo != nil {
+				for _, dc := range topologyInfo.DataCenterInfos {
+					for _, rack := range dc.RackInfos {
+						for _, node := range rack.DataNodeInfos {
+							for diskTypeName := range node.DiskInfos {
+								if diskTypeName == diskType {
+									serverVolumeCounts[node.Id] = 0
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, metric := range diskMetrics {
 			serverVolumeCounts[metric.Server]++
 		}
