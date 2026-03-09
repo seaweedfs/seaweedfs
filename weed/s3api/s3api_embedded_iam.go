@@ -361,6 +361,12 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 						}
 					}
 				}
+				// Update service account parent references
+				for _, sa := range s3cfg.ServiceAccounts {
+					if sa.ParentUser == userName {
+						sa.ParentUser = newUserName
+					}
+				}
 				return resp, nil
 			}
 		}
