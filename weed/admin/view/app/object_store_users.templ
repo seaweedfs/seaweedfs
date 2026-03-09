@@ -393,7 +393,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <select class="form-select" id="editGroupSelect">
                                     <option value="">Add to group...</option>
                                 </select>
-                                <button class="btn btn-outline-primary" type="button" onclick="addUserToGroupFromEdit()">
+                                <button class="btn btn-outline-primary" type="button" onclick="addUserToGroupFromEdit()"
+                                        aria-label="Add user to group" title="Add user to group">
                                     <i class="fas fa-plus"></i>
                                 </button>
                             </div>
@@ -1069,7 +1070,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     userGroups.forEach(function(group) {
                         const badge = document.createElement('span');
                         badge.className = 'badge bg-primary me-1 mb-1';
-                        badge.innerHTML = escapeHtml(group) + ' <i class="fas fa-times ms-1" style="cursor:pointer" onclick="removeUserFromGroupInEdit(\'' + escapeHtml(group) + '\')"></i>';
+                        badge.textContent = group + ' ';
+                        const removeIcon = document.createElement('i');
+                        removeIcon.className = 'fas fa-times ms-1';
+                        removeIcon.style.cursor = 'pointer';
+                        removeIcon.setAttribute('aria-label', 'Remove from group ' + group);
+                        removeIcon.setAttribute('title', 'Remove from group');
+                        removeIcon.addEventListener('click', function() {
+                            removeUserFromGroupInEdit(group);
+                        });
+                        badge.appendChild(removeIcon);
                         container.appendChild(badge);
                     });
                 } else {
