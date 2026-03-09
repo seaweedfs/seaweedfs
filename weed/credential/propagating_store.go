@@ -386,6 +386,10 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 	return nil
 }
 
+// Group methods do not call propagateChange because there are no group-specific
+// gRPC RPCs in the S3 cache protocol. Group changes are propagated to S3 servers
+// via the filer subscription mechanism (watching /etc/iam/groups/ directory).
+
 func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
 	glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
 	return s.CredentialStore.CreateGroup(ctx, group)
