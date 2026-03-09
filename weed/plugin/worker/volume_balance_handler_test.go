@@ -437,14 +437,14 @@ type recordingExecutionSender struct {
 func (r *recordingExecutionSender) SendProgress(p *plugin_pb.JobProgressUpdate) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.progress = append(r.progress, p)
+	r.progress = append(r.progress, proto.Clone(p).(*plugin_pb.JobProgressUpdate))
 	return nil
 }
 
 func (r *recordingExecutionSender) SendCompleted(c *plugin_pb.JobCompleted) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.completed = c
+	r.completed = proto.Clone(c).(*plugin_pb.JobCompleted)
 	return nil
 }
 
