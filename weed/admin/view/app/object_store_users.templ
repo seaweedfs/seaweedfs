@@ -1405,7 +1405,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         document.getElementById('accessKeysModal').addEventListener('hidden.bs.modal', resetCreateKeyForm);
 
         // Create new access key
+        var isCreatingKey = false;
         async function createAccessKey() {
+            if (isCreatingKey) return;
+
             const username = document.getElementById('accessKeysUsername').textContent;
             const accessKeyInput = document.getElementById('newAccessKeyInput');
             const secretKeyInput = document.getElementById('newSecretKeyInput');
@@ -1419,6 +1422,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             const body = {};
             if (accessKey) body.access_key = accessKey;
             if (secretKey) body.secret_key = secretKey;
+
+            isCreatingKey = true;
+            const createBtn = document.querySelector('#createKeyForm .btn-primary');
+            const cancelBtn = document.querySelector('#createKeyForm .btn-secondary');
+            if (createBtn) createBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = true;
 
             try {
                 const encodedUsername = encodeURIComponent(username);
@@ -1450,6 +1459,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             } catch (error) {
                 console.error('Error creating access key:', error);
                 showAlert('Failed to create access key: ' + error.message, 'error');
+            } finally {
+                isCreatingKey = false;
+                if (createBtn) createBtn.disabled = false;
+                if (cancelBtn) cancelBtn.disabled = false;
             }
         }
 

@@ -4,11 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+)
+
+var (
+	ErrAccessKeyInUse = errors.New("access key already in use")
+	ErrUserNotFound   = errors.New("user not found")
+	ErrInvalidInput   = errors.New("invalid input")
 )
 
 // CreateObjectStoreUser creates a new user using the credential manager
@@ -230,7 +238,7 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 	_, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
-			return nil, fmt.Errorf("user %s not found", username)
+			return nil, fmt.Errorf("user %s: %w", username, ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -241,10 +249,10 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 
 	// Validate provided keys
 	if req.AccessKey != "" && (len(req.AccessKey) < 4 || len(req.AccessKey) > 128) {
-		return nil, fmt.Errorf("access key must be between 4 and 128 characters")
+		return nil, fmt.Errorf("access key must be between 4 and 128 characters: %w", ErrInvalidInput)
 	}
 	if req.SecretKey != "" && (len(req.SecretKey) < 8 || len(req.SecretKey) > 128) {
-		return nil, fmt.Errorf("secret key must be between 8 and 128 characters")
+		return nil, fmt.Errorf("secret key must be between 8 and 128 characters: %w", ErrInvalidInput)
 	}
 
 	// Use provided keys or generate new ones
@@ -257,10 +265,13 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 		secretKey = generateSecretKey()
 	}
 
-	// Verify access key is globally unique (best-effort; the store also enforces this)
+	// Verify access key is globally unique
 	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
-	if err == nil && existingUser != nil {
-		return nil, fmt.Errorf("access key already in use")
+	if existingUser != nil {
+		return nil, ErrAccessKeyInUse
+	}
+	if err != nil && !errors.Is(err, credential.ErrAccessKeyNotFound) && !isNotFoundError(err) {
+		return nil, fmt.Errorf("failed to check access key uniqueness: %w", err)
 	}
 
 	credential := &iam_pb.Credential{
@@ -404,6 +415,12 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 	}
 
 	return nil
+}
+
+// isNotFoundError checks for "not found" in the error message as a fallback
+// for stores (e.g. gRPC) that don't return the credential.ErrAccessKeyNotFound sentinel.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 // Helper functions for generating keys and IDs

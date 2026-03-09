@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -173,11 +172,11 @@ func (h *UserHandlers) CreateAccessKey(w http.ResponseWriter, r *http.Request) {
 	accessKey, err := h.adminServer.CreateAccessKey(username, req)
 	if err != nil {
 		glog.Errorf("Failed to create access key for user %s: %v", username, err)
-		if strings.Contains(err.Error(), "already in use") {
+		if errors.Is(err, dash.ErrAccessKeyInUse) {
 			writeJSONError(w, http.StatusConflict, err.Error())
-		} else if strings.Contains(err.Error(), "not found") {
+		} else if errors.Is(err, dash.ErrUserNotFound) {
 			writeJSONError(w, http.StatusNotFound, err.Error())
-		} else if strings.Contains(err.Error(), "must be") {
+		} else if errors.Is(err, dash.ErrInvalidInput) {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 		} else {
 			writeJSONError(w, http.StatusInternalServerError, "Failed to create access key: "+err.Error())
