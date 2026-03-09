@@ -235,6 +235,10 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	if req == nil {
+		req = &CreateAccessKeyRequest{}
+	}
+
 	// Validate provided keys
 	if req.AccessKey != "" && (len(req.AccessKey) < 4 || len(req.AccessKey) > 128) {
 		return nil, fmt.Errorf("access key must be between 4 and 128 characters")
@@ -255,6 +259,9 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 
 	// Verify access key is globally unique
 	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
+	if err != nil && err != credential.ErrAccessKeyNotFound {
+		return nil, fmt.Errorf("failed to check access key uniqueness: %w", err)
+	}
 	if err == nil && existingUser != nil {
 		return nil, fmt.Errorf("access key %q is already in use", accessKey)
 	}
