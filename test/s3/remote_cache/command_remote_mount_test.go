@@ -69,6 +69,27 @@ func TestRemoteMountNonEmpty(t *testing.T) {
 	require.NoError(t, err, "failed to unmount")
 }
 
+// TestRemoteMountNoSync tests mounting with -noSync: no upfront metadata pull, mount mapping persisted
+func TestRemoteMountNoSync(t *testing.T) {
+	checkServersRunning(t)
+
+	testDir := fmt.Sprintf("/buckets/testnosync%d", time.Now().UnixNano()%1000000)
+
+	t.Logf("Mounting with -noSync...")
+	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -noSync", testDir)
+	output, err := runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to mount with -noSync")
+	t.Logf("Mount output: %s", output)
+
+	output, err = runWeedShellWithOutput(t, "remote.mount")
+	require.NoError(t, err, "failed to list mounts")
+	assert.Contains(t, output, testDir, "mount not found in list after -noSync mount")
+
+	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
+	_, err = runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to unmount")
+}
+
 // TestRemoteMountInvalidRemote tests mounting with non-existent remote configuration
 func TestRemoteMountInvalidRemote(t *testing.T) {
 	checkServersRunning(t)
