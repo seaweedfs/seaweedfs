@@ -3,6 +3,7 @@ package balance
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -20,6 +21,9 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	if !config.IsEnabled() {
 		return nil, nil
 	}
+	if clusterInfo == nil {
+		return nil, nil
+	}
 
 	balanceConfig := config.(*Config)
 
@@ -33,14 +37,22 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 		volumesByDiskType[metric.DiskType] = append(volumesByDiskType[metric.DiskType], metric)
 	}
 
+	// Sort disk types for deterministic iteration order when maxResults
+	// spans multiple disk types.
+	diskTypes := make([]string, 0, len(volumesByDiskType))
+	for dt := range volumesByDiskType {
+		diskTypes = append(diskTypes, dt)
+	}
+	sort.Strings(diskTypes)
+
 	var allParams []*types.TaskDetectionResult
 
-	for diskType, diskMetrics := range volumesByDiskType {
+	for _, diskType := range diskTypes {
 		remaining := maxResults - len(allParams)
 		if remaining <= 0 {
 			break
 		}
-		tasks := detectForDiskType(diskType, diskMetrics, balanceConfig, clusterInfo, remaining)
+		tasks := detectForDiskType(diskType, volumesByDiskType[diskType], balanceConfig, clusterInfo, remaining)
 		allParams = append(allParams, tasks...)
 	}
 
