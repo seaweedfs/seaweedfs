@@ -3,6 +3,7 @@
 //! Each EcVolume has a sorted index (.ecx) and a deletion journal (.ecj).
 //! Shards (.ec00-.ec13) may be distributed across multiple servers.
 
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 
@@ -25,6 +26,11 @@ pub struct EcVolume {
     ecx_file_size: i64,
     ecj_file: Option<File>,
     pub disk_type: DiskType,
+    /// Maps shard ID -> list of server addresses where that shard exists.
+    /// Used for distributed EC reads across the cluster.
+    pub shard_locations: HashMap<ShardId, Vec<String>>,
+    /// EC volume expiration time (unix epoch seconds), set during EC encode from TTL.
+    pub expire_at_sec: u64,
 }
 
 pub fn read_ec_shard_config(dir: &str, volume_id: VolumeId) -> (u32, u32) {
@@ -62,6 +68,24 @@ impl EcVolume {
             shards.push(None);
         }
 
+        // Read expire_at_sec from .vif if present
+        let expire_at_sec = {
+            let base =
+                crate::storage::volume::volume_file_name(dir, collection, volume_id);
+            let vif_path = format!("{}.vif", base);
+            if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
+                if let Ok(vif_info) =
+                    serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
+                {
+                    vif_info.expire_at_sec
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        };
+
         let mut vol = EcVolume {
             volume_id,
             collection: collection.to_string(),
@@ -76,6 +100,8 @@ impl EcVolume {
             ecx_file_size: 0,
             ecj_file: None,
             disk_type: DiskType::default(),
+            shard_locations: HashMap::new(),
+            expire_at_sec,
         };
 
         // Open .ecx file (sorted index)
@@ -157,6 +183,21 @@ impl EcVolume {
     /// Count of locally available shards.
     pub fn shard_count(&self) -> usize {
         self.shards.iter().filter(|s| s.is_some()).count()
+    }
+
+    // ---- Shard locations (distributed tracking) ----
+
+    /// Set the list of server addresses for a given shard ID.
+    pub fn set_shard_locations(&mut self, shard_id: ShardId, locations: Vec<String>) {
+        self.shard_locations.insert(shard_id, locations);
+    }
+
+    /// Get the list of server addresses for a given shard ID.
+    pub fn get_shard_locations(&self, shard_id: ShardId) -> &[String] {
+        self.shard_locations
+            .get(&shard_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     // ---- Index operations ----
