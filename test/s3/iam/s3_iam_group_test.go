@@ -324,13 +324,16 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
 	})
 
-	// Register bucket cleanup on parent test so it runs after all subtests
+	// Register bucket cleanup on parent test with admin credentials
+	// (userS3Client may lack permissions by cleanup time)
+	adminS3, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
+	require.NoError(t, err)
 	t.Cleanup(func() {
-		userS3Client.DeleteObject(&s3.DeleteObjectInput{
+		adminS3.DeleteObject(&s3.DeleteObjectInput{
 			Bucket: aws.String(bucketName),
 			Key:    aws.String("test-key"),
 		})
-		userS3Client.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
+		adminS3.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
 	})
 
 	t.Run("user_without_group_denied", func(t *testing.T) {
