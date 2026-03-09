@@ -106,7 +106,9 @@ type S3ListObjectVersionsResult struct {
 	// Entries holds all versions, delete markers, and common prefixes in their
 	// correct interleaved sort order. Each entry's MarshalXML outputs the correct
 	// XML element name (<Version>, <DeleteMarker>, or <CommonPrefixes>).
-	Entries []VersionListEntry `xml:"Version"`
+	// MarshalXML on each entry overrides the element name to <Version>,
+	// <DeleteMarker>, or <CommonPrefixes> as appropriate.
+	Entries []VersionListEntry `xml:",omitempty"`
 
 	EncodingType string `xml:"EncodingType,omitempty"`
 }
@@ -121,19 +123,33 @@ type VersionListEntry struct {
 }
 
 // MarshalXML outputs the entry as <Version>, <DeleteMarker>, or <CommonPrefixes>
-// depending on which field is populated. This ensures elements are interleaved in
-// their correct sort order in the XML response.
+// depending on which field is populated. Exactly one field must be set.
 func (e VersionListEntry) MarshalXML(enc *xml.Encoder, start xml.StartElement) error {
+	var (
+		value any
+		name  string
+		count int
+	)
 	if e.DeleteMarker != nil {
-		start.Name.Local = "DeleteMarker"
-		return enc.EncodeElement(e.DeleteMarker, start)
+		value = e.DeleteMarker
+		name = "DeleteMarker"
+		count++
 	}
 	if e.Prefix != nil {
-		start.Name.Local = "CommonPrefixes"
-		return enc.EncodeElement(e.Prefix, start)
+		value = e.Prefix
+		name = "CommonPrefixes"
+		count++
 	}
-	start.Name.Local = "Version"
-	return enc.EncodeElement(e.Version, start)
+	if e.Version != nil {
+		value = e.Version
+		name = "Version"
+		count++
+	}
+	if count != 1 {
+		return fmt.Errorf("VersionListEntry must have exactly one of DeleteMarker, Prefix, or Version set (got %d)", count)
+	}
+	start.Name.Local = name
+	return enc.EncodeElement(value, start)
 }
 
 // ObjectVersion represents a version of an S3 object
