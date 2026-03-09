@@ -101,6 +101,9 @@ func (store *FilerEtcStore) deleteGroupFile(ctx context.Context, groupName strin
 }
 
 func (store *FilerEtcStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		group.Name = strings.TrimSpace(group.Name)
+	}
 	if group == nil || group.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
@@ -162,6 +165,9 @@ func (store *FilerEtcStore) ListGroups(ctx context.Context) ([]string, error) {
 }
 
 func (store *FilerEtcStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		group.Name = strings.TrimSpace(group.Name)
+	}
 	if group == nil || group.Name == "" {
 		return fmt.Errorf("group name is required")
 	}
