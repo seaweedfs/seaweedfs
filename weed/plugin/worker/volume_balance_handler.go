@@ -36,6 +36,8 @@ func init() {
 type volumeBalanceWorkerConfig struct {
 	TaskConfig         *balancetask.Config
 	MinIntervalSeconds int
+	MaxConcurrentMoves int
+	BatchSize          int
 }
 
 // VolumeBalanceHandler is the plugin job handler for volume balancing.
@@ -134,6 +136,31 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
+				{
+					SectionId:   "batch_execution",
+					Title:       "Batch Execution",
+					Description: "Controls for running multiple volume moves per job. The worker coordinates moves via gRPC and is not on the data path.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "max_concurrent_moves",
+							Label:       "Max Concurrent Moves",
+							Description: "Maximum number of volume moves to run concurrently within a single batch job.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 50}},
+						},
+						{
+							Name:        "batch_size",
+							Label:       "Batch Size",
+							Description: "Maximum number of volume moves to group into a single job. Set to 1 to disable batching.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 100}},
+						},
+					},
+				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"imbalance_threshold": {
@@ -144,6 +171,12 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_interval_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
+				},
+				"max_concurrent_moves": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
+				},
+				"batch_size": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 20},
 				},
 			},
 		},
@@ -167,6 +200,12 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_interval_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
+			},
+			"max_concurrent_moves": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
+			},
+			"batch_size": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 20},
 			},
 		},
 	}
@@ -848,9 +887,27 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		minIntervalSeconds = 0
 	}
 
+	maxConcurrentMoves := int(readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves)))
+	if maxConcurrentMoves < 1 {
+		maxConcurrentMoves = 1
+	}
+	if maxConcurrentMoves > 50 {
+		maxConcurrentMoves = 50
+	}
+
+	batchSize := int(readInt64Config(values, "batch_size", 20))
+	if batchSize < 1 {
+		batchSize = 1
+	}
+	if batchSize > 100 {
+		batchSize = 100
+	}
+
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
 		MinIntervalSeconds: minIntervalSeconds,
+		MaxConcurrentMoves: maxConcurrentMoves,
+		BatchSize:          batchSize,
 	}
 }
 

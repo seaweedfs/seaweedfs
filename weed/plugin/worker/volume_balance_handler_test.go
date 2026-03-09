@@ -112,6 +112,61 @@ func TestDeriveBalanceWorkerConfig(t *testing.T) {
 	if cfg.MinIntervalSeconds != 33 {
 		t.Fatalf("expected min_interval_seconds 33, got %d", cfg.MinIntervalSeconds)
 	}
+	// Defaults for batch config when not specified
+	if cfg.MaxConcurrentMoves != defaultMaxConcurrentMoves {
+		t.Fatalf("expected default max_concurrent_moves %d, got %d", defaultMaxConcurrentMoves, cfg.MaxConcurrentMoves)
+	}
+	if cfg.BatchSize != 20 {
+		t.Fatalf("expected default batch_size 20, got %d", cfg.BatchSize)
+	}
+}
+
+func TestDeriveBalanceWorkerConfigBatchFields(t *testing.T) {
+	values := map[string]*plugin_pb.ConfigValue{
+		"max_concurrent_moves": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10},
+		},
+		"batch_size": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 50},
+		},
+	}
+
+	cfg := deriveBalanceWorkerConfig(values)
+	if cfg.MaxConcurrentMoves != 10 {
+		t.Fatalf("expected max_concurrent_moves 10, got %d", cfg.MaxConcurrentMoves)
+	}
+	if cfg.BatchSize != 50 {
+		t.Fatalf("expected batch_size 50, got %d", cfg.BatchSize)
+	}
+}
+
+func TestDeriveBalanceWorkerConfigBatchClamping(t *testing.T) {
+	values := map[string]*plugin_pb.ConfigValue{
+		"max_concurrent_moves": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 999},
+		},
+		"batch_size": {
+			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
+		},
+	}
+
+	cfg := deriveBalanceWorkerConfig(values)
+	if cfg.MaxConcurrentMoves != 50 {
+		t.Fatalf("expected max_concurrent_moves clamped to 50, got %d", cfg.MaxConcurrentMoves)
+	}
+	if cfg.BatchSize != 1 {
+		t.Fatalf("expected batch_size clamped to 1, got %d", cfg.BatchSize)
+	}
+}
+
+func TestVolumeBalanceDescriptorHasBatchFields(t *testing.T) {
+	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
+	if !workerConfigFormHasField(descriptor.WorkerConfigForm, "max_concurrent_moves") {
+		t.Fatalf("expected max_concurrent_moves in worker config form")
+	}
+	if !workerConfigFormHasField(descriptor.WorkerConfigForm, "batch_size") {
+		t.Fatalf("expected batch_size in worker config form")
+	}
 }
 
 func TestBuildVolumeBalanceProposal(t *testing.T) {
