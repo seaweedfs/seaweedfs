@@ -37,9 +37,8 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 		MasterGrpcAddresses: []string{master.Address()},
 	}, 10)
 	require.NoError(t, err)
-	// With 10 volumes on one server and 1 on the other (avg=5.5),
-	// multiple balance moves should be detected until imbalance is within threshold.
-	require.Greater(t, len(proposals), 1, "expected multiple balance proposals")
+	// With default batch_size=20, all moves are grouped into a single batch proposal.
+	require.GreaterOrEqual(t, len(proposals), 1, "expected at least one balance proposal")
 
 	for _, proposal := range proposals {
 		require.Equal(t, "volume_balance", proposal.JobType)
@@ -48,8 +47,21 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 
 		params := &worker_pb.TaskParams{}
 		require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
-		require.NotEmpty(t, params.Sources)
-		require.NotEmpty(t, params.Targets)
+
+		// A proposal is either a batch (with BalanceParams.Moves) or a
+		// single-move (with Sources/Targets at the top level).
+		bp := params.GetBalanceParams()
+		if bp != nil && len(bp.Moves) > 0 {
+			require.Greater(t, len(bp.Moves), 1, "batch proposal should contain multiple moves")
+			for _, move := range bp.Moves {
+				require.NotZero(t, move.VolumeId)
+				require.NotEmpty(t, move.SourceNode)
+				require.NotEmpty(t, move.TargetNode)
+			}
+		} else {
+			require.NotEmpty(t, params.Sources)
+			require.NotEmpty(t, params.Targets)
+		}
 	}
 }
 
