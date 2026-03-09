@@ -1364,7 +1364,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 if (response.ok) {
                     const result = await response.json();
                     
-                    // Show the new access key details (IMPORTANT: secret key is only shown once!)
+                    // Show the new access key details
                     if (result.access_key) {
                         showNewAccessKeyModal(result.access_key);
                     }
