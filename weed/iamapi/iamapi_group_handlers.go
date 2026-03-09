@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -325,7 +324,3 @@ func buildUserGroupsIndex(s3cfg *iam_pb.S3ApiConfiguration) map[string][]string 
 	return index
 }
 
-// policyNameFromArn extracts policy name from ARN for standalone handlers.
-func policyNameFromArn(policyArn string) string {
-	return strings.TrimPrefix(policyArn, policyArnPrefix)
-}
