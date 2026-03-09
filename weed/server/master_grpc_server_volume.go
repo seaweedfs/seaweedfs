@@ -382,7 +382,7 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 	}
 
 	if !ms.Topo.DataCenterExists(volumeGrowOption.DataCenter) {
-		err = fmt.Errorf("data center %v not found in topology", volumeGrowOption.DataCenter)
+		return nil, fmt.Errorf("data center %v not found in topology", volumeGrowOption.DataCenter)
 	}
 
 	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
