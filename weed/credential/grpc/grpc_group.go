@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -13,6 +14,9 @@ import (
 // A future improvement would add dedicated gRPC RPCs for atomic group operations.
 
 func (store *IamGrpcStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
 		return err
@@ -66,6 +70,9 @@ func (store *IamGrpcStore) ListGroups(ctx context.Context) ([]string, error) {
 }
 
 func (store *IamGrpcStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	config, err := store.LoadConfiguration(ctx)
 	if err != nil {
 		return err
