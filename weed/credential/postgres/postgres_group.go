@@ -42,7 +42,7 @@ func (store *PostgresStore) GetGroup(ctx context.Context, groupName string) (*ia
 		`SELECT members, policy_names, disabled FROM groups WHERE name = $1`, groupName).
 		Scan(&membersJSON, &policyNamesJSON, &disabled)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, credential.ErrGroupNotFound
 		}
 		return nil, fmt.Errorf("failed to get group: %w", err)
