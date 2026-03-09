@@ -2,6 +2,8 @@ package pluginworker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +22,7 @@ import (
 
 const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
+	maxProposalStringLength      = 200
 )
 
 func init() {
@@ -772,7 +775,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 				reportAggregate(idx, progress, stage)
 			})
 
-			moveParams := buildMoveTaskParams(m, bp.TimeoutSeconds)
+			moveParams := buildMoveTaskParams(m, bp)
 			err := task.Execute(ctx, moveParams)
 			results <- moveResult{
 				index:    idx,
@@ -787,7 +790,6 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	// Collect all results
 	var succeeded, failed int
 	var errMessages []string
-	var successDetails []string
 	for range moves {
 		r := <-results
 		if r.err != nil {
@@ -796,7 +798,6 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			glog.Warningf("batch balance move %d failed: volume %d %s→%s: %v", r.index, r.volumeID, r.source, r.target, r.err)
 		} else {
 			succeeded++
-			successDetails = append(successDetails, fmt.Sprintf("volume %d (%s→%s)", r.volumeID, r.source, r.target))
 		}
 	}
 
@@ -805,9 +806,13 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		summary += fmt.Sprintf("; %d failed", failed)
 	}
 
-	success := failed == 0
+	// Mark the job as successful if at least one move succeeded. This avoids
+	// the standard retry path re-running already-completed moves. The failed
+	// move details are available in ErrorMessage and result metadata so a
+	// retry mechanism can operate only on the failed items.
+	success := succeeded > 0 || failed == 0
 	var errMsg string
-	if !success {
+	if failed > 0 {
 		errMsg = strings.Join(errMessages, "; ")
 	}
 
@@ -837,9 +842,14 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 }
 
 // buildMoveTaskParams constructs a TaskParams for a single move within a batch.
-func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, timeoutSeconds int32) *worker_pb.TaskParams {
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = defaultBalanceTimeoutSeconds
+func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, outerParams *worker_pb.BalanceTaskParams) *worker_pb.TaskParams {
+	timeoutSeconds := defaultBalanceTimeoutSeconds
+	forceMove := false
+	if outerParams != nil {
+		if outerParams.TimeoutSeconds > 0 {
+			timeoutSeconds = outerParams.TimeoutSeconds
+		}
+		forceMove = outerParams.ForceMove
 	}
 	return &worker_pb.TaskParams{
 		VolumeId:   move.VolumeId,
@@ -853,6 +863,7 @@ func buildMoveTaskParams(move *worker_pb.BalanceMoveSpec, timeoutSeconds int32) 
 		},
 		TaskParams: &worker_pb.TaskParams_BalanceParams{
 			BalanceParams: &worker_pb.BalanceTaskParams{
+				ForceMove:      forceMove,
 				TimeoutSeconds: timeoutSeconds,
 			},
 		},
@@ -1088,14 +1099,18 @@ func buildBatchVolumeBalanceProposals(
 
 		proposalID := fmt.Sprintf("volume-balance-batch-%d-%d", batchStart, time.Now().UnixNano())
 		summary := fmt.Sprintf("Batch balance %d volumes (%s)", len(moves), strings.Join(volumeIDs, ","))
-		if len(summary) > 200 {
+		if len(summary) > maxProposalStringLength {
 			summary = fmt.Sprintf("Batch balance %d volumes", len(moves))
 		}
 
-		// Use composite dedupe key for the batch
+		// Use composite dedupe key for the batch. When the full key exceeds
+		// the length limit, fall back to a deterministic hash of the sorted
+		// keys so the same batch always produces the same dedupe key.
+		sort.Strings(dedupeKeys)
 		compositeDedupeKey := fmt.Sprintf("volume_balance_batch:%s", strings.Join(dedupeKeys, "+"))
-		if len(compositeDedupeKey) > 200 {
-			compositeDedupeKey = fmt.Sprintf("volume_balance_batch:%d-%d", batchStart, time.Now().UnixNano())
+		if len(compositeDedupeKey) > maxProposalStringLength {
+			h := sha256.Sum256([]byte(strings.Join(dedupeKeys, "+")))
+			compositeDedupeKey = fmt.Sprintf("volume_balance_batch:%d-%s", batchStart, hex.EncodeToString(h[:12]))
 		}
 
 		proposals = append(proposals, &plugin_pb.JobProposal{

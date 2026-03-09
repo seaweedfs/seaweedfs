@@ -457,7 +457,11 @@ func TestBuildMoveTaskParams(t *testing.T) {
 		VolumeSize: 1024 * 1024,
 	}
 
-	params := buildMoveTaskParams(move, 300)
+	outerParams := &worker_pb.BalanceTaskParams{
+		ForceMove:      true,
+		TimeoutSeconds: 300,
+	}
+	params := buildMoveTaskParams(move, outerParams)
 	if params.VolumeId != 42 {
 		t.Fatalf("expected volume_id 42, got %d", params.VolumeId)
 	}
@@ -480,6 +484,9 @@ func TestBuildMoveTaskParams(t *testing.T) {
 	if bp.TimeoutSeconds != 300 {
 		t.Fatalf("expected timeout 300, got %d", bp.TimeoutSeconds)
 	}
+	if !bp.ForceMove {
+		t.Fatalf("expected force_move to be propagated from outer params")
+	}
 }
 
 func TestBuildMoveTaskParamsDefaultTimeout(t *testing.T) {
@@ -488,9 +495,12 @@ func TestBuildMoveTaskParamsDefaultTimeout(t *testing.T) {
 		SourceNode: "a:8080",
 		TargetNode: "b:8080",
 	}
-	params := buildMoveTaskParams(move, 0)
+	params := buildMoveTaskParams(move, nil)
 	if params.GetBalanceParams().TimeoutSeconds != defaultBalanceTimeoutSeconds {
 		t.Fatalf("expected default timeout %d, got %d", defaultBalanceTimeoutSeconds, params.GetBalanceParams().TimeoutSeconds)
+	}
+	if params.GetBalanceParams().ForceMove {
+		t.Fatalf("expected force_move to default to false with nil outer params")
 	}
 }
 
