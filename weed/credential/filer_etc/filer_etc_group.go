@@ -9,7 +9,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -38,8 +37,7 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 			} else {
 				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
-					glog.Warningf("Failed to read group file %s: %v", entry.Name, err)
-					continue
+					return fmt.Errorf("failed to read group file %s: %w", entry.Name, err)
 				}
 				content = c
 			}
@@ -47,8 +45,7 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 			if len(content) > 0 {
 				g := &iam_pb.Group{}
 				if err := json.Unmarshal(content, g); err != nil {
-					glog.Warningf("Failed to unmarshal group %s: %v", entry.Name, err)
-					continue
+					return fmt.Errorf("failed to unmarshal group %s: %w", entry.Name, err)
 				}
 				s3cfg.Groups = append(s3cfg.Groups, g)
 			}
