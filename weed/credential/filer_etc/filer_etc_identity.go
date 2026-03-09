@@ -271,11 +271,14 @@ func (store *FilerEtcStore) SaveConfiguration(ctx context.Context, config *iam_p
 
 		for _, entry := range entries {
 			if !entry.IsDirectory && !validNames[entry.Name] {
-				if _, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+				resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 					Directory: dir,
 					Name:      entry.Name,
-				}); err != nil {
+				})
+				if err != nil {
 					glog.Warningf("Failed to delete obsolete group file %s: %v", entry.Name, err)
+				} else if resp != nil && resp.Error != "" {
+					glog.Warningf("Failed to delete obsolete group file %s: %s", entry.Name, resp.Error)
 				}
 			}
 		}
