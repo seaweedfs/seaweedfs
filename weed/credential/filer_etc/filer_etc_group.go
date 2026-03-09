@@ -69,6 +69,10 @@ func (store *FilerEtcStore) saveGroup(ctx context.Context, group *iam_pb.Group) 
 	if group == nil {
 		return fmt.Errorf("group is nil")
 	}
+	group.Name = strings.TrimSpace(group.Name)
+	if group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := json.MarshalIndent(group, "", "  ")
 		if err != nil {
