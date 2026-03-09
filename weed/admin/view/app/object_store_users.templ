@@ -1055,8 +1055,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 // Fetch all groups
                 const groupsResp = await fetch('/api/groups');
                 if (!groupsResp.ok) return;
-                const allGroups = await groupsResp.json();
-                if (!allGroups) return;
+                const groupsData = await groupsResp.json();
+                const allGroups = groupsData.groups || [];
 
                 // Fetch user details to get current groups
                 const userResp = await fetch(`/api/users/${encodeURIComponent(username)}`);
