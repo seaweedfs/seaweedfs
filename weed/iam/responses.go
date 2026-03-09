@@ -309,7 +309,7 @@ type GetGroupResponse struct {
 		Group       iam.Group   `xml:"Group"`
 		Users       []*iam.User `xml:"Users>member"`
 		IsTruncated bool        `xml:"IsTruncated"`
-		Marker      string      `xml:"Marker"`
+		Marker      string      `xml:"Marker,omitempty"`
 	} `xml:"GetGroupResult"`
 	CommonResponse
 }
@@ -320,7 +320,7 @@ type ListGroupsResponse struct {
 	ListGroupsResult struct {
 		Groups      []*iam.Group `xml:"Groups>member"`
 		IsTruncated bool         `xml:"IsTruncated"`
-		Marker      string       `xml:"Marker"`
+		Marker      string       `xml:"Marker,omitempty"`
 	} `xml:"ListGroupsResult"`
 	CommonResponse
 }
@@ -355,7 +355,7 @@ type ListAttachedGroupPoliciesResponse struct {
 	ListAttachedGroupPoliciesResult struct {
 		AttachedPolicies []*iam.AttachedPolicy `xml:"AttachedPolicies>member"`
 		IsTruncated      bool                  `xml:"IsTruncated"`
-		Marker           string                `xml:"Marker"`
+		Marker           string                `xml:"Marker,omitempty"`
 	} `xml:"ListAttachedGroupPoliciesResult"`
 	CommonResponse
 }
@@ -366,7 +366,7 @@ type ListGroupsForUserResponse struct {
 	ListGroupsForUserResult struct {
 		Groups      []*iam.Group `xml:"Groups>member"`
 		IsTruncated bool         `xml:"IsTruncated"`
-		Marker      string       `xml:"Marker"`
+		Marker      string       `xml:"Marker,omitempty"`
 	} `xml:"ListGroupsForUserResult"`
 	CommonResponse
 }
