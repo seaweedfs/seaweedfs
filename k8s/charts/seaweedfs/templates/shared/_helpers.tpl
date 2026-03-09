@@ -375,5 +375,7 @@ Create the name of the service account to use
 {{- and (eq .Values.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.s3.trafficDistribution -}}
 {{- else if .Values.filer.s3.trafficDistribution -}}
 {{- and (eq .Values.filer.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.filer.s3.trafficDistribution -}}
+{{- else if .Values.allInOne.s3.trafficDistribution -}}
+{{- and (eq .Values.allInOne.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.allInOne.s3.trafficDistribution -}}
 {{- end -}}
 {{- end -}}
