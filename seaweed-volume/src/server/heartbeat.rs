@@ -632,7 +632,7 @@ mod tests {
     fn test_state_with_store(store: Store) -> Arc<VolumeServerState> {
         Arc::new(VolumeServerState {
             store: RwLock::new(store),
-            guard: Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0),
+            guard: RwLock::new(Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0)),
             is_stopping: RwLock::new(false),
             maintenance: std::sync::atomic::AtomicBool::new(false),
             state_version: std::sync::atomic::AtomicU32::new(0),
@@ -661,6 +661,8 @@ mod tests {
             metrics_notify: tokio::sync::Notify::new(),
             has_slow_read: true,
             read_buffer_size_bytes: 4 * 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
         })
     }
 

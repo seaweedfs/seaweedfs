@@ -181,6 +181,10 @@ pub struct Cli {
     /// Path to security.toml configuration file for JWT signing keys.
     #[arg(long = "securityFile", default_value = "")]
     pub security_file: String,
+
+    /// A file of command line options, each line in optionName=optionValue format.
+    #[arg(long = "options", default_value = "")]
+    pub options: String,
 }
 
 /// Resolved configuration after applying defaults and validation.
@@ -237,6 +241,8 @@ pub struct VolumeServerConfig {
     pub grpc_ca_file: String,
     /// Enable batched write queue for improved throughput under load.
     pub enable_write_queue: bool,
+    /// Path to security.toml — stored for SIGHUP reload.
+    pub security_file: String,
 }
 
 pub use crate::storage::needle_map::NeedleMapKind;
@@ -292,10 +298,122 @@ fn normalize_args_vec(args: Vec<String>) -> Vec<String> {
 }
 
 /// Parse CLI arguments and resolve all defaults — mirroring Go's `runVolume()` + `startVolumeServer()`.
+///
+/// Supports `-options <file>` to load defaults from a file (same format as Go's fla9).
+/// CLI arguments take precedence over file values.
 pub fn parse_cli() -> VolumeServerConfig {
     let args: Vec<String> = std::env::args().collect();
-    let cli = Cli::parse_from(normalize_args_vec(args));
+    let normalized = normalize_args_vec(args);
+    let merged = merge_options_file(normalized);
+    let cli = Cli::parse_from(merged);
     resolve_config(cli)
+}
+
+/// Find `-options`/`--options` in args, parse the referenced file, and inject
+/// file-based defaults for any flags not already set on the command line.
+///
+/// File format (matching Go's fla9.ParseFile):
+///   - One option per line: `key=value`, `key value`, or `key:value`
+///   - Lines starting with `#` are comments; blank lines are ignored
+///   - Leading `-` on key names is stripped
+///   - CLI arguments take precedence over file values
+fn merge_options_file(args: Vec<String>) -> Vec<String> {
+    // Find the options file path from the args
+    let options_path = find_options_arg(&args);
+    if options_path.is_empty() {
+        return args;
+    }
+
+    let content = match std::fs::read_to_string(&options_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("WARNING: could not read options file {}: {}", options_path, e);
+            return args;
+        }
+    };
+
+    // Collect which flags are already explicitly set on the command line.
+    let mut cli_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut i = 1; // skip binary name
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if arg.starts_with("--") {
+            let key = if let Some(eq) = arg.find('=') {
+                arg[2..eq].to_string()
+            } else {
+                arg[2..].to_string()
+            };
+            cli_flags.insert(key);
+        } else if arg.starts_with('-') && arg.len() > 2 {
+            // Single-dash long option (already normalized to -- at this point,
+            // but handle both for safety)
+            let without_dash = &arg[1..];
+            let key = if let Some(eq) = without_dash.find('=') {
+                without_dash[..eq].to_string()
+            } else {
+                without_dash.to_string()
+            };
+            cli_flags.insert(key);
+        }
+        i += 1;
+    }
+
+    // Parse file and append missing options
+    let mut extra_args: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Split on first `=`, ` `, or `:`
+        let (name, value) = if let Some(pos) = trimmed.find(|c: char| c == '=' || c == ' ' || c == ':') {
+            (trimmed[..pos].trim().to_string(), trimmed[pos + 1..].trim().to_string())
+        } else {
+            (trimmed.to_string(), String::new())
+        };
+
+        // Strip leading dashes from name
+        let name = name.trim_start_matches('-').to_string();
+        if name.is_empty() || name == "options" {
+            continue;
+        }
+
+        // Skip if already set on CLI
+        if cli_flags.contains(&name) {
+            continue;
+        }
+
+        extra_args.push(format!("--{}", name));
+        if !value.is_empty() {
+            extra_args.push(value);
+        }
+    }
+
+    let mut merged = args;
+    merged.extend(extra_args);
+    merged
+}
+
+/// Extract the options file path from args (looks for --options or -options).
+fn find_options_arg(args: &[String]) -> String {
+    for i in 1..args.len() {
+        if args[i] == "--options" || args[i] == "-options" {
+            if i + 1 < args.len() {
+                return args[i + 1].clone();
+            }
+        }
+        if let Some(rest) = args[i].strip_prefix("--options=") {
+            return rest.to_string();
+        }
+        if let Some(rest) = args[i].strip_prefix("-options=") {
+            return rest.to_string();
+        }
+    }
+    String::new()
 }
 
 /// Parse a duration string like "60s", "5m", "1h" into a std::time::Duration.
@@ -648,6 +766,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
+        security_file: cli.security_file,
     }
 }
 
@@ -688,7 +807,7 @@ pub struct SecurityConfig {
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
 /// ```
-fn parse_security_config(path: &str) -> SecurityConfig {
+pub fn parse_security_config(path: &str) -> SecurityConfig {
     if path.is_empty() {
         return SecurityConfig::default();
     }
@@ -935,5 +1054,110 @@ ui = true
         let cfg = parse_security_config(tmp.path().to_str().unwrap());
         assert_eq!(cfg.jwt_signing_key, b"secret");
         assert!(cfg.access_ui);
+    }
+
+    #[test]
+    fn test_merge_options_file_basic() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "port=9999\ndir=/data\nmaster=localhost:9333\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // Should contain the original args plus the file-based ones
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"9999".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"/data".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_cli_precedence() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "port=9999\ndir=/data\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--port".into(),
+            "8080".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // port should NOT be duplicated from file since CLI already set it
+        let port_count = merged.iter().filter(|a| *a == "--port").count();
+        assert_eq!(port_count, 1, "CLI port should take precedence, file port skipped");
+        // dir should be added from file
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_comments_and_blanks() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "# this is a comment\n\nport=9999\n# another comment\ndir=/data\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_with_dashes_in_key() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "-port=9999\n--dir=/data\nip.bind=0.0.0.0\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"--ip.bind".to_string()));
+    }
+
+    #[test]
+    fn test_find_options_arg() {
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "-options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options=/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--port".into(), "8080".into()]),
+            ""
+        );
     }
 }

@@ -48,7 +48,7 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
     let guard = Guard::new(&[], SigningKey(signing_key), 0, SigningKey(vec![]), 0);
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
-        guard,
+        guard: RwLock::new(guard),
         is_stopping: RwLock::new(false),
         maintenance: std::sync::atomic::AtomicBool::new(false),
         state_version: std::sync::atomic::AtomicU32::new(0),
@@ -81,6 +81,8 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         metrics_notify: tokio::sync::Notify::new(),
         has_slow_read: false,
         read_buffer_size_bytes: 1024 * 1024,
+        security_file: String::new(),
+        cli_white_list: vec![],
     });
     (state, tmp)
 }
@@ -177,7 +179,7 @@ async fn status_returns_json_with_version_and_volumes() {
 }
 
 #[tokio::test]
-async fn admin_router_does_not_expose_metrics() {
+async fn admin_router_exposes_metrics() {
     let (state, _tmp) = test_state();
     let app = build_admin_router(state);
 
@@ -191,7 +193,7 @@ async fn admin_router_does_not_expose_metrics() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

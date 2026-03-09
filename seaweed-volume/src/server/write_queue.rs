@@ -171,7 +171,7 @@ mod tests {
 
         Arc::new(VolumeServerState {
             store: RwLock::new(store),
-            guard,
+            guard: RwLock::new(guard),
             is_stopping: RwLock::new(false),
             maintenance: AtomicBool::new(false),
             state_version: AtomicU32::new(0),
@@ -202,6 +202,8 @@ mod tests {
             metrics_notify: tokio::sync::Notify::new(),
             has_slow_read: true,
             read_buffer_size_bytes: 4 * 1024 * 1024,
+            security_file: String::new(),
+            cli_white_list: vec![],
         })
     }
 

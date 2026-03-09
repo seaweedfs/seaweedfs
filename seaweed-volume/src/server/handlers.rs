@@ -663,6 +663,8 @@ async fn get_or_head_handler_inner(
     let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state
         .guard
+        .read()
+        .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, false)
     {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
@@ -1436,6 +1438,8 @@ pub async fn post_handler(
     let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state
         .guard
+        .read()
+        .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
         return json_error_with_query(
@@ -1925,6 +1929,8 @@ pub async fn delete_handler(
     let token = extract_jwt(&headers, request.uri());
     if let Err(e) = state
         .guard
+        .read()
+        .unwrap()
         .check_jwt_for_file(token.as_deref(), &file_id, true)
     {
         return json_error_with_query(
@@ -2323,11 +2329,13 @@ pub async fn ui_handler(
 ) -> Response {
     // If JWT signing is enabled, require auth
     let token = extract_jwt(&headers, &axum::http::Uri::from_static("/ui/index.html"));
-    if let Err(e) = state.guard.check_jwt(token.as_deref(), false) {
-        if state.guard.has_read_signing_key() {
+    let guard = state.guard.read().unwrap();
+    if let Err(e) = guard.check_jwt(token.as_deref(), false) {
+        if guard.has_read_signing_key() {
             return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
         }
     }
+    drop(guard);
 
     let html = r#"<!DOCTYPE html>
 <html><head><title>SeaweedFS Volume Server</title></head>

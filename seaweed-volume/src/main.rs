@@ -132,9 +132,12 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     let master_url = config.masters.first().cloned().unwrap_or_default();
     let self_url = format!("{}:{}", config.ip, config.port);
 
+    let security_file = config.security_file.clone();
+    let cli_white_list = config.white_list.clone();
+
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
-        guard,
+        guard: RwLock::new(guard),
         is_stopping: RwLock::new(false),
         maintenance: std::sync::atomic::AtomicBool::new(false),
         state_version: std::sync::atomic::AtomicU32::new(0),
@@ -165,6 +168,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         metrics_notify: tokio::sync::Notify::new(),
         has_slow_read: config.has_slow_read,
         read_buffer_size_bytes: (config.read_buffer_size_mb.max(1) as usize) * 1024 * 1024,
+        security_file,
+        cli_white_list,
     });
 
     // Initialize the batched write queue if enabled
@@ -271,6 +276,42 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
 
         let _ = shutdown_tx_clone.send(());
     });
+
+    // Set up SIGHUP handler for config reload (mirrors Go's grace.OnReload)
+    #[cfg(unix)]
+    {
+        let state_reload = state.clone();
+        tokio::spawn(async move {
+            let mut sighup =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+                    .expect("Failed to install SIGHUP handler");
+            loop {
+                sighup.recv().await;
+                info!("Received SIGHUP, reloading...");
+
+                // 1. Load new volumes from disk (Go's LoadNewVolumes)
+                {
+                    info!("Loading new volume ids...");
+                    let mut store = state_reload.store.write().unwrap();
+                    store.load_new_volumes();
+                }
+
+                // 2. Reload security config (Go's Reload)
+                {
+                    info!("Reloading security config...");
+                    let sec = config::parse_security_config(&state_reload.security_file);
+                    let mut whitelist = state_reload.cli_white_list.clone();
+                    whitelist.extend(sec.guard_white_list.iter().cloned());
+                    let mut guard = state_reload.guard.write().unwrap();
+                    guard.update_whitelist(&whitelist);
+                }
+
+                // Trigger heartbeat to report new volumes
+                state_reload.volume_state_notify.notify_one();
+                info!("SIGHUP reload complete");
+            }
+        });
+    }
 
     // Build optional TLS acceptor for HTTPS
     let https_tls_acceptor =

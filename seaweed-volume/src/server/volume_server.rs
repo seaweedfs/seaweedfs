@@ -36,7 +36,7 @@ pub struct RuntimeMetricsConfig {
 /// Shared state for the volume server.
 pub struct VolumeServerState {
     pub store: RwLock<Store>,
-    pub guard: Guard,
+    pub guard: RwLock<Guard>,
     pub is_stopping: RwLock<bool>,
     /// Maintenance mode flag.
     pub maintenance: AtomicBool,
@@ -85,6 +85,10 @@ pub struct VolumeServerState {
     /// Read tuning flags for large-file streaming.
     pub has_slow_read: bool,
     pub read_buffer_size_bytes: usize,
+    /// Path to security.toml — stored for SIGHUP reload.
+    pub security_file: String,
+    /// Original CLI whitelist entries — stored for SIGHUP reload.
+    pub cli_white_list: Vec<String>,
 }
 
 impl VolumeServerState {
@@ -229,7 +233,9 @@ fn public_options_response() -> Response {
 /// UI route is only registered when no signing keys are configured,
 /// matching Go's `if signingKey == "" || enableUiAccess` check.
 pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
-    let ui_enabled = state.guard.signing_key.0.is_empty() && !state.guard.has_read_signing_key();
+    let guard = state.guard.read().unwrap();
+    let ui_enabled = guard.signing_key.0.is_empty() && !guard.has_read_signing_key();
+    drop(guard);
     build_admin_router_with_ui(state, ui_enabled)
 }
 

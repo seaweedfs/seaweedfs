@@ -84,6 +84,16 @@ impl Store {
         Ok(())
     }
 
+    /// Scan disk locations for new volume files and load them.
+    /// Mirrors Go's `Store.LoadNewVolumes()`.
+    pub fn load_new_volumes(&mut self) {
+        for loc in &mut self.locations {
+            if let Err(e) = loc.load_existing_volumes(self.needle_map_kind) {
+                tracing::error!("load_new_volumes error in {}: {}", loc.directory, e);
+            }
+        }
+    }
+
     // ---- Volume lookup ----
 
     /// Find which location contains a volume.
