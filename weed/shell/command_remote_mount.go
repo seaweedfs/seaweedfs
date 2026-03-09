@@ -80,8 +80,14 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, *noSync, remoteConf, remoteStorageLocation); err != nil {
+	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
 		return fmt.Errorf("mount setup: %w", err)
+	}
+
+	if !*noSync {
+		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf); err != nil {
+			return fmt.Errorf("cache metadata: %w", err)
+		}
 	}
 
 	// store a mount configuration in filer
@@ -110,10 +116,8 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return filer.ProtoToText(writer, message)
 }
 
-func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, noSync bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
-
-	// find existing directory, and ensure the directory is empty
-	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
+	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
 		_, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
@@ -158,19 +162,6 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-
-	if noSync {
-		return nil
-	}
-
-	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
-		return fmt.Errorf("cache metadata: %w", err)
-	}
-
-	return nil
 }
 
 // if an entry has synchronized metadata but has not synchronized content
