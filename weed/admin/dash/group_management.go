@@ -91,9 +91,9 @@ func (s *AdminServer) CreateGroup(ctx context.Context, name string) (*GroupData,
 	if err := s.credentialManager.CreateGroup(ctx, group); err != nil {
 		return nil, fmt.Errorf("failed to create group: %w", err)
 	}
-	glog.V(1).Infof("Created group %s", name)
+	glog.V(1).Infof("Created group %s", group.Name)
 	return &GroupData{
-		Name:   name,
+		Name:   group.Name,
 		Status: "enabled",
 	}, nil
 }
