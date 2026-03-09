@@ -1,7 +1,7 @@
 //! NeedleMapper: index mapping NeedleId -> (Offset, Size).
 //!
 //! Two implementations:
-//!   - `CompactNeedleMap`: in-memory HashMap (fast, uses more RAM)
+//!   - `CompactNeedleMap`: in-memory segmented sorted arrays (~10 bytes/entry)
 //!   - `RedbNeedleMap`: disk-backed via redb (low RAM, slightly slower)
 //!
 //! The `NeedleMap` enum wraps both and provides a uniform interface.
@@ -12,6 +12,9 @@ use std::collections::HashMap;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+mod compact_map;
+use compact_map::CompactMap;
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -135,10 +138,11 @@ impl IdxFileWriter for std::fs::File {
 // CompactNeedleMap (in-memory)
 // ============================================================================
 
-/// In-memory needle map backed by a HashMap.
+/// In-memory needle map backed by a CompactMap (segmented sorted arrays).
+/// Uses ~10 bytes per entry instead of ~40-48 bytes with HashMap.
 /// The .idx file is kept open for append-only writes.
 pub struct CompactNeedleMap {
-    map: HashMap<NeedleId, NeedleValue>,
+    map: CompactMap,
     metric: NeedleMapMetric,
     idx_file: Option<Box<dyn IdxFileWriter>>,
     idx_file_offset: u64,
@@ -148,7 +152,7 @@ impl CompactNeedleMap {
     /// Create a new empty in-memory map.
     pub fn new() -> Self {
         CompactNeedleMap {
-            map: HashMap::new(),
+            map: CompactMap::new(),
             metric: NeedleMapMetric::default(),
             idx_file: None,
             idx_file_offset: 0,
@@ -162,7 +166,7 @@ impl CompactNeedleMap {
             if offset.is_zero() || size.is_deleted() {
                 nm.delete_from_map(key);
             } else {
-                nm.set(key, NeedleValue { offset, size });
+                nm.set_internal(key, NeedleValue { offset, size });
             }
             Ok(())
         })?;
@@ -185,21 +189,20 @@ impl CompactNeedleMap {
             self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
         }
 
-        let old = self.map.get(&key).cloned();
-        let nv = NeedleValue { offset, size };
+        let old = self.map.get(key);
         self.metric.on_put(key, old.as_ref(), size);
-        self.map.insert(key, nv);
+        self.map.set(key, offset, size);
         Ok(())
     }
 
     /// Look up a needle.
     pub fn get(&self, key: NeedleId) -> Option<NeedleValue> {
-        self.map.get(&key).cloned()
+        self.map.get(key)
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file.
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
-        if let Some(old) = self.map.get(&key).cloned() {
+        if let Some(old) = self.map.get(key) {
             if old.size.is_valid() {
                 // Persist tombstone to idx file BEFORE mutating in-memory state for crash consistency
                 if let Some(ref mut idx_file) = self.idx_file {
@@ -208,15 +211,8 @@ impl CompactNeedleMap {
                 }
 
                 self.metric.on_delete(&old);
-                let deleted_size = Size(-(old.size.0));
-                // Keep original offset so readDeleted can find original data (matching Go behavior)
-                self.map.insert(
-                    key,
-                    NeedleValue {
-                        offset: old.offset,
-                        size: deleted_size,
-                    },
-                );
+                // Mark as deleted in compact map (negates size in-place)
+                self.map.delete(key);
                 return Ok(Some(old.size));
             }
         }
@@ -226,26 +222,21 @@ impl CompactNeedleMap {
     // ---- Internal helpers ----
 
     /// Insert into map during loading (no idx file write).
-    fn set(&mut self, key: NeedleId, nv: NeedleValue) {
-        let old = self.map.get(&key).cloned();
+    fn set_internal(&mut self, key: NeedleId, nv: NeedleValue) {
+        let old = self.map.get(key);
         self.metric.on_put(key, old.as_ref(), nv.size);
-        self.map.insert(key, nv);
+        self.map.set(key, nv.offset, nv.size);
     }
 
     /// Remove from map during loading (handle deletions in idx walk).
     fn delete_from_map(&mut self, key: NeedleId) {
         self.metric.maybe_set_max_file_key(key);
-        if let Some(old) = self.map.get(&key).cloned() {
+        if let Some(old) = self.map.get(key) {
             if old.size.is_valid() {
                 self.metric.on_delete(&old);
             }
         }
-        self.map.remove(&key);
-    }
-
-    /// Iterate over all entries in the needle map.
-    pub fn iter(&self) -> impl Iterator<Item = (&NeedleId, &NeedleValue)> {
-        self.map.iter()
+        self.map.remove(key);
     }
 
     // ---- Metrics accessors ----
@@ -290,37 +281,29 @@ impl CompactNeedleMap {
 
     /// Save the in-memory map to an index file, sorted by needle ID ascending.
     pub fn save_to_idx(&self, path: &str) -> io::Result<()> {
-        let mut entries: Vec<_> = self
-            .map
-            .iter()
-            .filter(|(_, nv)| nv.size.is_valid())
-            .collect();
-        entries.sort_by_key(|(id, _)| **id);
-
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(path)?;
 
-        for (id, nv) in entries {
-            idx::write_index_entry(&mut file, *id, nv.offset, nv.size)?;
-        }
+        self.map.ascending_visit(|id, nv| {
+            if nv.size.is_valid() {
+                idx::write_index_entry(&mut file, id, nv.offset, nv.size)
+            } else {
+                Ok(())
+            }
+        })?;
         file.sync_all()?;
         Ok(())
     }
 
-    /// Visit all live entries in ascending order by needle ID.
-    pub fn ascending_visit<F>(&self, mut f: F) -> Result<(), String>
+    /// Visit all entries in ascending order by needle ID.
+    pub fn ascending_visit<F>(&self, f: F) -> Result<(), String>
     where
         F: FnMut(NeedleId, &NeedleValue) -> Result<(), String>,
     {
-        let mut entries: Vec<_> = self.map.iter().collect();
-        entries.sort_by_key(|(id, _)| **id);
-        for (&id, nv) in entries {
-            f(id, nv)?;
-        }
-        Ok(())
+        self.map.ascending_visit(f)
     }
 }
 
@@ -1032,10 +1015,17 @@ impl NeedleMap {
     }
 
     /// Iterate all entries. Returns a Vec of (NeedleId, NeedleValue) pairs.
-    /// For InMemory this collects from the HashMap; for Redb it reads from disk.
+    /// For InMemory this collects via ascending visit; for Redb it reads from disk.
     pub fn iter_entries(&self) -> Vec<(NeedleId, NeedleValue)> {
         match self {
-            NeedleMap::InMemory(nm) => nm.iter().map(|(&id, &nv)| (id, nv)).collect(),
+            NeedleMap::InMemory(nm) => {
+                let mut entries = Vec::new();
+                let _ = nm.ascending_visit(|id, nv| {
+                    entries.push((id, *nv));
+                    Ok(())
+                });
+                entries
+            }
             NeedleMap::Redb(nm) => nm.collect_entries(),
         }
     }
