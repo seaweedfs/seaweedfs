@@ -1865,6 +1865,10 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 // Returns true if any matching statement explicitly allows the action.
 // Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
 func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil {
+		return false
+	}
+
 	iam.m.RLock()
 	engine := iam.iamPolicyEngine
 	groupNames := iam.userGroups[identity.Name]
@@ -1872,8 +1876,7 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	iam.m.RUnlock()
 
 	// Collect all policy names: user policies + group policies
-	hasPolicies := len(identity.PolicyNames) > 0 || len(groupNames) > 0
-	if identity == nil || !hasPolicies {
+	if len(identity.PolicyNames) == 0 && len(groupNames) == 0 {
 		return false
 	}
 
@@ -1947,8 +1950,15 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
 	iam.m.RLock()
 	userGroupNames := iam.userGroups[identity.Name]
+	groupsHavePolicies := false
+	for _, gn := range userGroupNames {
+		if g, ok := iam.groups[gn]; ok && !g.Disabled && len(g.PolicyNames) > 0 {
+			groupsHavePolicies = true
+			break
+		}
+	}
 	iam.m.RUnlock()
-	hasAttachedPolicies := len(identity.PolicyNames) > 0 || len(userGroupNames) > 0
+	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
 
 	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
