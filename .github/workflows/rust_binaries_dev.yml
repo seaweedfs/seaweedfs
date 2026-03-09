@@ -1,0 +1,165 @@
+name: "rust: build dev volume server binaries"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'seaweed-volume/**'
+      - '.github/workflows/rust_binaries_dev.yml'
+
+permissions:
+  contents: read
+
+jobs:
+
+  cleanup:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old Rust volume dev assets
+        uses: mknejp/delete-release-assets@v1
+        with:
+          token: ${{ github.token }}
+          tag: dev
+          fail-if-no-assets: false
+          assets: |
+            seaweed-volume-*
+
+  build-rust-volume-dev-linux:
+    permissions:
+      contents: write
+    needs: cleanup
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-amd64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-dev-${{ matrix.target }}-
+
+      - name: Set BUILD_TIME
+        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> "$GITHUB_ENV"
+
+      - name: Build Rust volume server (large disk)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: cd seaweed-volume && cargo build --release
+
+      - name: Package large disk binary
+        run: |
+          cp seaweed-volume/target/release/seaweed-volume seaweed-volume-large-disk
+          tar czf "seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-large-disk
+          rm seaweed-volume-large-disk
+
+      - name: Build Rust volume server (normal)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: cd seaweed-volume && cargo build --release --no-default-features
+
+      - name: Package normal binary
+        run: |
+          cp seaweed-volume/target/release/seaweed-volume seaweed-volume-normal
+          tar czf "seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-normal
+          rm seaweed-volume-normal
+
+      - name: Upload dev release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          prerelease: true
+          files: |
+            seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-rust-volume-dev-darwin:
+    permissions:
+      contents: write
+    needs: build-rust-volume-dev-linux
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            asset_suffix: darwin-arm64
+          - target: x86_64-apple-darwin
+            asset_suffix: darwin-amd64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: brew install protobuf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-dev-${{ matrix.target }}-
+
+      - name: Set BUILD_TIME
+        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> "$GITHUB_ENV"
+
+      - name: Build Rust volume server (large disk)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: cd seaweed-volume && cargo build --release --target ${{ matrix.target }}
+
+      - name: Package large disk binary
+        run: |
+          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-large-disk
+          tar czf "seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-large-disk
+          rm seaweed-volume-large-disk
+
+      - name: Build Rust volume server (normal)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: cd seaweed-volume && cargo build --release --target ${{ matrix.target }} --no-default-features
+
+      - name: Package normal binary
+        run: |
+          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-normal
+          tar czf "seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-normal
+          rm seaweed-volume-normal
+
+      - name: Upload dev release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: dev
+          prerelease: true
+          files: |
+            seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
