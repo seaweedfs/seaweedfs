@@ -541,4 +541,118 @@ mod tests {
         assert_eq!(shard_opts[0].as_ref().unwrap(), &original_0);
         assert_eq!(shard_opts[1].as_ref().unwrap(), &original_1);
     }
+
+    /// EC encode must read .idx from a separate index directory when configured.
+    #[test]
+    fn test_ec_encode_with_separate_idx_dir() {
+        let dat_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let dat_dir = dat_tmp.path().to_str().unwrap();
+        let idx_dir = idx_tmp.path().to_str().unwrap();
+
+        // Create a volume with separate data and index directories
+        let mut v = Volume::new(
+            dat_dir,
+            idx_dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        for i in 1..=5 {
+            let data = format!("needle {} payload", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+        v.close();
+
+        // Verify .dat is in data dir, .idx is in idx dir
+        assert!(std::path::Path::new(&format!("{}/1.dat", dat_dir)).exists());
+        assert!(!std::path::Path::new(&format!("{}/1.idx", dat_dir)).exists());
+        assert!(std::path::Path::new(&format!("{}/1.idx", idx_dir)).exists());
+        assert!(!std::path::Path::new(&format!("{}/1.dat", idx_dir)).exists());
+
+        // EC encode with separate idx dir
+        let data_shards = 10;
+        let parity_shards = 4;
+        let total_shards = data_shards + parity_shards;
+        write_ec_files(dat_dir, idx_dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+
+        // Verify all 14 shard files in data dir
+        for i in 0..total_shards {
+            let path = format!("{}/1.ec{:02}", dat_dir, i);
+            assert!(
+                std::path::Path::new(&path).exists(),
+                "shard {} should exist in data dir",
+                path
+            );
+        }
+
+        // Verify .ecx in data dir (not idx dir)
+        assert!(std::path::Path::new(&format!("{}/1.ecx", dat_dir)).exists());
+        assert!(!std::path::Path::new(&format!("{}/1.ecx", idx_dir)).exists());
+
+        // Verify no shard files leaked into idx dir
+        for i in 0..total_shards {
+            let path = format!("{}/1.ec{:02}", idx_dir, i);
+            assert!(
+                !std::path::Path::new(&path).exists(),
+                "shard {} should NOT exist in idx dir",
+                path
+            );
+        }
+    }
+
+    /// EC encode should fail gracefully when .idx is only in the data dir
+    /// but we pass a wrong idx_dir. This guards against regressions where
+    /// write_ec_files ignores the idx_dir parameter.
+    #[test]
+    fn test_ec_encode_fails_with_wrong_idx_dir() {
+        let dat_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let wrong_tmp = TempDir::new().unwrap();
+        let dat_dir = dat_tmp.path().to_str().unwrap();
+        let idx_dir = idx_tmp.path().to_str().unwrap();
+        let wrong_dir = wrong_tmp.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dat_dir,
+            idx_dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"hello".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        v.sync_to_disk().unwrap();
+        v.close();
+
+        // Should fail: .idx is in idx_dir, not wrong_dir
+        let result = write_ec_files(dat_dir, wrong_dir, "", VolumeId(1), 10, 4);
+        assert!(result.is_err(), "should fail when idx_dir doesn't contain .idx");
+    }
 }

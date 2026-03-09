@@ -2759,4 +2759,88 @@ mod tests {
         assert_eq!(info.data_size, data.len() as u32);
         assert!(info.data_file_offset > 0);
     }
+
+    /// Volume destroy must preserve .vif files (needed by EC volumes).
+    #[test]
+    fn test_destroy_preserves_vif() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut v = make_test_volume(dir);
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"test".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write a .vif file (as EC encode would)
+        let vif_path = format!("{}/1.vif", dir);
+        std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
+        assert!(std::path::Path::new(&vif_path).exists());
+
+        // .dat and .idx should exist
+        let dat_path = format!("{}/1.dat", dir);
+        let idx_path = format!("{}/1.idx", dir);
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert!(std::path::Path::new(&idx_path).exists());
+
+        // Destroy the volume
+        v.destroy().unwrap();
+
+        // .dat and .idx should be gone
+        assert!(!std::path::Path::new(&dat_path).exists(), ".dat should be removed");
+        assert!(!std::path::Path::new(&idx_path).exists(), ".idx should be removed");
+
+        // .vif MUST be preserved for EC volumes
+        assert!(std::path::Path::new(&vif_path).exists(), ".vif must survive destroy");
+    }
+
+    /// Volume destroy with separate idx directory must clean up both dirs.
+    #[test]
+    fn test_destroy_with_separate_idx_dir() {
+        let dat_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let dat_dir = dat_tmp.path().to_str().unwrap();
+        let idx_dir = idx_tmp.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dat_dir,
+            idx_dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"hello".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write .vif in data dir (as EC encode would)
+        let vif_path = format!("{}/1.vif", dat_dir);
+        std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
+
+        let dat_path = format!("{}/1.dat", dat_dir);
+        let idx_path = format!("{}/1.idx", idx_dir);
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert!(std::path::Path::new(&idx_path).exists());
+
+        v.destroy().unwrap();
+
+        assert!(!std::path::Path::new(&dat_path).exists(), ".dat removed from data dir");
+        assert!(!std::path::Path::new(&idx_path).exists(), ".idx removed from idx dir");
+        assert!(std::path::Path::new(&vif_path).exists(), ".vif preserved in data dir");
+    }
 }

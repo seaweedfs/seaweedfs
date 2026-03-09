@@ -3575,3 +3575,43 @@ fn get_process_rss_linux() -> Option<u64> {
     }
     Some(resident * page_size as u64)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_grpc_address_with_explicit_grpc_port() {
+        // Format: "ip:port.grpcPort" — used by SeaweedFS for source_data_node
+        let result = parse_grpc_address("192.168.1.66:8080.18080").unwrap();
+        assert_eq!(result, "192.168.1.66:18080");
+    }
+
+    #[test]
+    fn test_parse_grpc_address_with_implicit_grpc_port() {
+        // Format: "ip:port" — grpc port = port + 10000
+        let result = parse_grpc_address("192.168.1.66:8080").unwrap();
+        assert_eq!(result, "192.168.1.66:18080");
+    }
+
+    #[test]
+    fn test_parse_grpc_address_localhost() {
+        let result = parse_grpc_address("localhost:9333").unwrap();
+        assert_eq!(result, "localhost:19333");
+    }
+
+    #[test]
+    fn test_parse_grpc_address_with_ipv4_dots() {
+        // Regression: naive split on '.' breaks on IP addresses
+        let result = parse_grpc_address("10.0.0.1:8080.18080").unwrap();
+        assert_eq!(result, "10.0.0.1:18080");
+
+        let result = parse_grpc_address("10.0.0.1:8080").unwrap();
+        assert_eq!(result, "10.0.0.1:18080");
+    }
+
+    #[test]
+    fn test_parse_grpc_address_invalid() {
+        assert!(parse_grpc_address("no-colon").is_err());
+    }
+}
