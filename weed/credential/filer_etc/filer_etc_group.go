@@ -20,7 +20,7 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 		dir := filer.IamConfigDirectory + "/" + IamGroupsDirectory
 		entries, err := listEntries(ctx, client, dir)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
+			if errors.Is(err, filer_pb.ErrNotFound) {
 				return nil
 			}
 			return err
@@ -109,7 +109,7 @@ func (store *FilerEtcStore) GetGroup(ctx context.Context, groupName string) (*ia
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamGroupsDirectory, groupName+".json")
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
+			if errors.Is(err, filer_pb.ErrNotFound) {
 				return credential.ErrGroupNotFound
 			}
 			return err
@@ -135,7 +135,7 @@ func (store *FilerEtcStore) ListGroups(ctx context.Context) ([]string, error) {
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		entries, err := listEntries(ctx, client, filer.IamConfigDirectory+"/"+IamGroupsDirectory)
 		if err != nil {
-			if err == filer_pb.ErrNotFound {
+			if errors.Is(err, filer_pb.ErrNotFound) {
 				return nil
 			}
 			return err
