@@ -97,7 +97,12 @@ func (h *GroupHandlers) GetGroupDetails(w http.ResponseWriter, r *http.Request) 
 	group, err := h.adminServer.GetGroupDetails(r.Context(), name)
 	if err != nil {
 		glog.Errorf("Failed to get group details: %v", err)
-		writeJSONError(w, groupErrorToHTTPStatus(err), "Group not found")
+		status := groupErrorToHTTPStatus(err)
+		msg := "Failed to retrieve group"
+		if status == http.StatusNotFound {
+			msg = "Group not found"
+		}
+		writeJSONError(w, status, msg)
 		return
 	}
 	writeJSON(w, http.StatusOK, group)
