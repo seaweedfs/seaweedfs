@@ -109,9 +109,8 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 				Path:   "/",
 			}
 
-			// sync metadata from remote
-			if err = syncMetadata(commandEnv, writer, string(dir), true, remoteConf, remoteStorageLocation); err != nil {
-				return fmt.Errorf("pull metadata on %+v: %v", remoteStorageLocation, err)
+			if err = syncMetadata(commandEnv, writer, string(dir), true, false, remoteConf, remoteStorageLocation); err != nil {
+				return fmt.Errorf("mount setup on %+v: %v", remoteStorageLocation, err)
 			}
 
 			// store a mount configuration in filer

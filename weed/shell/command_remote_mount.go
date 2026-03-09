@@ -29,13 +29,15 @@ func (c *commandRemoteMount) Name() string {
 }
 
 func (c *commandRemoteMount) Help() string {
-	return `mount remote storage and pull its metadata
+	return `mount remote storage and optionally pull its metadata
 
 	# assume a remote storage is configured to name "cloud1"
 	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy
 
-	# mount and pull one bucket
+	# mount and pull one bucket (full upfront metadata sync)
 	remote.mount -dir=/xxx -remote=cloud1/bucket
+	# mount without upfront sync; metadata is fetched lazily on access
+	remote.mount -dir=/xxx -remote=cloud1/bucket -noSync
 	# mount and pull one directory in the bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
 
@@ -55,6 +57,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
+	noSync := remoteMountCommand.Bool("noSync", false, "skip upfront metadata pull; rely on lazy metadata fetch on access")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
@@ -77,9 +80,8 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	// sync metadata from remote
-	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
-		return fmt.Errorf("pull metadata: %w", err)
+	if err = syncMetadata(commandEnv, writer, *dir, *nonEmpty, *noSync, remoteConf, remoteStorageLocation); err != nil {
+		return fmt.Errorf("mount setup: %w", err)
 	}
 
 	// store a mount configuration in filer
@@ -108,7 +110,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return filer.ProtoToText(writer, message)
 }
 
-func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
+func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty bool, noSync bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 
 	// find existing directory, and ensure the directory is empty
 	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -160,7 +162,10 @@ func syncMetadata(commandEnv *CommandEnv, writer io.Writer, dir string, nonEmpty
 		return err
 	}
 
-	// pull metadata from remote
+	if noSync {
+		return nil
+	}
+
 	if err = pullMetadata(commandEnv, writer, util.FullPath(dir), remote, util.FullPath(dir), remoteConf); err != nil {
 		return fmt.Errorf("cache metadata: %w", err)
 	}
