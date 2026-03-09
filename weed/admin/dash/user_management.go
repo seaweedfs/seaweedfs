@@ -235,6 +235,14 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	// Validate provided keys
+	if req.AccessKey != "" && (len(req.AccessKey) < 4 || len(req.AccessKey) > 128) {
+		return nil, fmt.Errorf("access key must be between 4 and 128 characters")
+	}
+	if req.SecretKey != "" && (len(req.SecretKey) < 8 || len(req.SecretKey) > 128) {
+		return nil, fmt.Errorf("secret key must be between 8 and 128 characters")
+	}
+
 	// Use provided keys or generate new ones
 	accessKey := req.AccessKey
 	if accessKey == "" {

@@ -1,9 +1,9 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -157,14 +157,21 @@ func (h *UserHandlers) CreateAccessKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req dash.CreateAccessKeyRequest
-	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+		return
 	}
 
 	accessKey, err := h.adminServer.CreateAccessKey(username, &req)
 	if err != nil {
 		glog.Errorf("Failed to create access key for user %s: %v", username, err)
-		writeJSONError(w, http.StatusInternalServerError, "Failed to create access key: "+err.Error())
+		if strings.Contains(err.Error(), "already in use") {
+			writeJSONError(w, http.StatusConflict, err.Error())
+		} else if strings.Contains(err.Error(), "must be") {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to create access key: "+err.Error())
+		}
 		return
 	}
 

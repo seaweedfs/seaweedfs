@@ -455,7 +455,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                             </div>
                             <div class="mb-2">
                                 <label for="newSecretKeyInput" class="form-label form-label-sm">Secret Key</label>
-                                <input type="text" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty">
+                                <div class="input-group input-group-sm">
+                                    <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="toggleSecretKeyVisibility()" aria-label="Toggle secret key visibility">
+                                        <i class="fas fa-eye" id="secretKeyToggleIcon"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="d-flex gap-2">
                                 <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">Create</button>
@@ -1364,17 +1369,40 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Reset and hide the create key form
+        function resetCreateKeyForm() {
+            document.getElementById('createKeyForm').style.display = 'none';
+            document.getElementById('newAccessKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').type = 'password';
+            document.getElementById('secretKeyToggleIcon').className = 'fas fa-eye';
+        }
+
         // Toggle create key form visibility
         function toggleCreateKeyForm() {
             const form = document.getElementById('createKeyForm');
             if (form.style.display === 'none') {
                 form.style.display = 'block';
             } else {
-                form.style.display = 'none';
-                document.getElementById('newAccessKeyInput').value = '';
-                document.getElementById('newSecretKeyInput').value = '';
+                resetCreateKeyForm();
             }
         }
+
+        // Toggle secret key input visibility
+        function toggleSecretKeyVisibility() {
+            const input = document.getElementById('newSecretKeyInput');
+            const icon = document.getElementById('secretKeyToggleIcon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                input.type = 'password';
+                icon.className = 'fas fa-eye';
+            }
+        }
+
+        // Reset form when modal is dismissed
+        document.getElementById('accessKeysModal').addEventListener('hidden.bs.modal', resetCreateKeyForm);
 
         // Create new access key
         async function createAccessKey() {
@@ -1395,21 +1423,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     },
                     body: JSON.stringify(body)
                 });
-                
+
                 if (response.ok) {
                     const result = await response.json();
-                    
+
                     // Show the new access key details
                     if (result.access_key) {
                         showNewAccessKeyModal(result.access_key);
                     }
-                    
-                    showSuccessMessage('Access key created successfully');
 
-                    // Hide form and clear fields
-                    document.getElementById('createKeyForm').style.display = 'none';
-                    document.getElementById('newAccessKeyInput').value = '';
-                    document.getElementById('newSecretKeyInput').value = '';
+                    showSuccessMessage('Access key created successfully');
+                    resetCreateKeyForm();
 
                     // Refresh access keys display
                     refreshAccessKeysList(username);
