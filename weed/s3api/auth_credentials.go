@@ -925,18 +925,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		policies[policy.Name] = policy
 	}
 
-	// Process groups from dynamic config (groups are always dynamic, never in static s3.config)
-	mergedGroups := make(map[string]*iam_pb.Group)
-	mergedUserGroups := make(map[string][]string)
-	for _, g := range config.Groups {
-		mergedGroups[g.Name] = g
-		if !g.Disabled {
-			for _, member := range g.Members {
-				mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
-			}
-		}
-	}
-
 	iam.m.Lock()
 	// atomically switch
 	iam.identities = identities
@@ -946,8 +934,23 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
-	iam.groups = mergedGroups
-	iam.userGroups = mergedUserGroups
+
+	// Process groups: only replace if config.Groups is non-nil (full config reload).
+	// Partial updates (e.g., UpsertIdentity) pass nil Groups and should preserve existing state.
+	if config.Groups != nil {
+		mergedGroups := make(map[string]*iam_pb.Group)
+		mergedUserGroups := make(map[string][]string)
+		for _, g := range config.Groups {
+			mergedGroups[g.Name] = g
+			if !g.Disabled {
+				for _, member := range g.Members {
+					mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
+				}
+			}
+		}
+		iam.groups = mergedGroups
+		iam.userGroups = mergedUserGroups
+	}
 	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
