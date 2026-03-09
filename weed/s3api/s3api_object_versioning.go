@@ -82,9 +82,14 @@ func clearCachedListMetadata(extended map[string][]byte) {
 	clearCachedVersionMetadata(extended)
 }
 
-// S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response
-// This avoids conflicts with the XSD generated ListVersionsResult struct
-// and ensures proper separation of versions and delete markers into arrays
+// S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response.
+// This avoids conflicts with the XSD generated ListVersionsResult struct.
+//
+// The Entries slice holds Version, DeleteMarker, and CommonPrefix items in their
+// correct interleaved sort order (by key ascending, then newest version first).
+// Each entry uses a per-element MarshalXML to output the correct XML element name.
+// This ensures the XML output matches the S3 API contract where these elements
+// are interleaved in sort order, not grouped by type.
 type S3ListObjectVersionsResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResult"`
 
@@ -98,29 +103,53 @@ type S3ListObjectVersionsResult struct {
 	Delimiter           string `xml:"Delimiter,omitempty"`
 	IsTruncated         bool   `xml:"IsTruncated"`
 
-	// These are the critical fields - arrays instead of single elements
-	Versions      []VersionEntry      `xml:"Version,omitempty"`      // Array for versions
-	DeleteMarkers []DeleteMarkerEntry `xml:"DeleteMarker,omitempty"` // Array for delete markers
+	// Entries holds all versions, delete markers, and common prefixes in their
+	// correct interleaved sort order. Each entry's MarshalXML outputs the correct
+	// XML element name (<Version>, <DeleteMarker>, or <CommonPrefixes>).
+	// MarshalXML on each entry overrides the element name to <Version>,
+	// <DeleteMarker>, or <CommonPrefixes> as appropriate.
+	Entries []VersionListEntry `xml:",omitempty"`
 
-	CommonPrefixes []PrefixEntry `xml:"CommonPrefixes,omitempty"`
-	EncodingType   string        `xml:"EncodingType,omitempty"`
+	EncodingType string `xml:"EncodingType,omitempty"`
 }
 
-// Original struct - keeping for compatibility but will use S3ListObjectVersionsResult for XML response
-type ListObjectVersionsResult struct {
-	XMLName             xml.Name            `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListVersionsResult"`
-	Name                string              `xml:"Name"`
-	Prefix              string              `xml:"Prefix"`
-	KeyMarker           string              `xml:"KeyMarker,omitempty"`
-	VersionIdMarker     string              `xml:"VersionIdMarker,omitempty"`
-	NextKeyMarker       string              `xml:"NextKeyMarker,omitempty"`
-	NextVersionIdMarker string              `xml:"NextVersionIdMarker,omitempty"`
-	MaxKeys             int                 `xml:"MaxKeys"`
-	Delimiter           string              `xml:"Delimiter,omitempty"`
-	IsTruncated         bool                `xml:"IsTruncated"`
-	Versions            []VersionEntry      `xml:"Version,omitempty"`
-	DeleteMarkers       []DeleteMarkerEntry `xml:"DeleteMarker,omitempty"`
-	CommonPrefixes      []PrefixEntry       `xml:"CommonPrefixes,omitempty"`
+// VersionListEntry represents a single item in the ListObjectVersions response.
+// It wraps either a VersionEntry, DeleteMarkerEntry, or PrefixEntry and outputs
+// the correct XML element name via custom MarshalXML.
+type VersionListEntry struct {
+	Version      *VersionEntry
+	DeleteMarker *DeleteMarkerEntry
+	Prefix       *PrefixEntry
+}
+
+// MarshalXML outputs the entry as <Version>, <DeleteMarker>, or <CommonPrefixes>
+// depending on which field is populated. Exactly one field must be set.
+func (e VersionListEntry) MarshalXML(enc *xml.Encoder, start xml.StartElement) error {
+	var (
+		value any
+		name  string
+		count int
+	)
+	if e.DeleteMarker != nil {
+		value = e.DeleteMarker
+		name = "DeleteMarker"
+		count++
+	}
+	if e.Prefix != nil {
+		value = e.Prefix
+		name = "CommonPrefixes"
+		count++
+	}
+	if e.Version != nil {
+		value = e.Version
+		name = "Version"
+		count++
+	}
+	if count != 1 {
+		return fmt.Errorf("VersionListEntry must have exactly one of DeleteMarker, Prefix, or Version set (got %d)", count)
+	}
+	start.Name.Local = name
+	return enc.EncodeElement(value, start)
 }
 
 // ObjectVersion represents a version of an S3 object
@@ -260,7 +289,7 @@ func (s3a *S3ApiServer) listObjectVersions(bucket, prefix, keyMarker, versionIdM
 
 	// Build the final response by splitting items back into their respective fields
 	result := s3a.splitIntoResult(truncatedList, bucket, prefix, keyMarker, versionIdMarker, delimiter, maxKeys, isTruncated, nextKeyMarker, nextVersionIdMarker)
-	glog.V(1).Infof("listObjectVersions: final result - %d versions, %d delete markers, %d common prefixes", len(result.Versions), len(result.DeleteMarkers), len(result.CommonPrefixes))
+	glog.V(1).Infof("listObjectVersions: final result - %d entries", len(result.Entries))
 
 	return result, nil
 }
@@ -329,7 +358,8 @@ func (s3a *S3ApiServer) truncateAndSetMarkers(combinedList []versionListItem, ma
 	return combinedList, nextKeyMarker, nextVersionIdMarker, isTruncated
 }
 
-// splitIntoResult builds the final S3ListObjectVersionsResult from the combined list
+// splitIntoResult builds the final S3ListObjectVersionsResult from the combined list.
+// It populates a single Entries slice that preserves the interleaved sort order.
 func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, prefix, keyMarker, versionIdMarker, delimiter string, maxKeys int, isTruncated bool, nextKeyMarker, nextVersionIdMarker string) *S3ListObjectVersionsResult {
 	result := &S3ListObjectVersionsResult{
 		Name:                bucket,
@@ -341,20 +371,20 @@ func (s3a *S3ApiServer) splitIntoResult(combinedList []versionListItem, bucket, 
 		IsTruncated:         isTruncated,
 		NextKeyMarker:       nextKeyMarker,
 		NextVersionIdMarker: nextVersionIdMarker,
-		Versions:            make([]VersionEntry, 0),
-		DeleteMarkers:       make([]DeleteMarkerEntry, 0),
-		CommonPrefixes:      make([]PrefixEntry, 0),
+		Entries:             make([]VersionListEntry, 0, len(combinedList)),
 	}
 
 	for _, item := range combinedList {
 		if item.isPrefix {
-			result.CommonPrefixes = append(result.CommonPrefixes, PrefixEntry{Prefix: item.key})
+			result.Entries = append(result.Entries, VersionListEntry{
+				Prefix: &PrefixEntry{Prefix: item.key},
+			})
 		} else {
 			switch v := item.versionData.(type) {
 			case *VersionEntry:
-				result.Versions = append(result.Versions, *v)
+				result.Entries = append(result.Entries, VersionListEntry{Version: v})
 			case *DeleteMarkerEntry:
-				result.DeleteMarkers = append(result.DeleteMarkers, *v)
+				result.Entries = append(result.Entries, VersionListEntry{DeleteMarker: v})
 			}
 		}
 	}
