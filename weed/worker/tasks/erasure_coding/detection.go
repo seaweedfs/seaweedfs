@@ -316,7 +316,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 && !stoppedEarly {
 		totalVolumes := len(metrics)
-		glog.Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
+		glog.V(1).Infof("EC detection: No tasks created for %d volumes (skipped: %d already EC, %d too small, %d filtered, %d not quiet, %d not full)",
 			totalVolumes, skippedAlreadyEC, skippedTooSmall, skippedCollectionFilter, skippedQuietTime, skippedFullness)
 
 		// Show details for first few volumes
@@ -325,7 +325,7 @@ func Detection(ctx context.Context, metrics []*types.VolumeHealthMetrics, cluste
 				continue
 			}
 			sizeMB := float64(metric.Size) / (1024 * 1024)
-			glog.Infof("ERASURE CODING: Volume %d: size=%.1fMB (need ≥%dMB), age=%s (need ≥%s), fullness=%.1f%% (need ≥%.1f%%)",
+			glog.V(1).Infof("ERASURE CODING: Volume %d: size=%.1fMB (need ≥%dMB), age=%s (need ≥%s), fullness=%.1f%% (need ≥%.1f%%)",
 				metric.VolumeID, sizeMB, ecConfig.MinSizeMB, metric.Age.Truncate(time.Minute), quietThreshold.Truncate(time.Minute),
 				metric.FullnessRatio*100, ecConfig.FullnessRatio*100)
 		}
