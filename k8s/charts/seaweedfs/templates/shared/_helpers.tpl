@@ -369,13 +369,10 @@ Create the name of the service account to use
 {{- end }}
 {{- end -}}
 
-{{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35 */}}
+{{/* Generate a compatible trafficDistribution value due to "PreferClose" fast deprecation in k8s v1.35.
+     Accepts a dict with "value" (the trafficDistribution string) and "Capabilities". */}}
 {{- define "seaweedfs.trafficDistribution" -}}
-{{- if .Values.s3.trafficDistribution -}}
-{{- and (eq .Values.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.s3.trafficDistribution -}}
-{{- else if .Values.filer.s3.trafficDistribution -}}
-{{- and (eq .Values.filer.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.filer.s3.trafficDistribution -}}
-{{- else if .Values.allInOne.s3.trafficDistribution -}}
-{{- and (eq .Values.allInOne.s3.trafficDistribution "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .Values.allInOne.s3.trafficDistribution -}}
+{{- if .value -}}
+{{- and (eq .value "PreferClose") (semverCompare ">=1.35-0" .Capabilities.KubeVersion.GitVersion) | ternary "PreferSameZone" .value -}}
 {{- end -}}
 {{- end -}}

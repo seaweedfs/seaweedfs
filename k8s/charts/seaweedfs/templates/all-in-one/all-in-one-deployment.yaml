@@ -345,7 +345,9 @@ spec:
             - name: client-cert
               mountPath: /usr/local/share/ca-certificates/client/
               readOnly: true
+            {{- if .Values.allInOne.s3.enabled }}
             {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
+            {{- end }}
             {{- end }}
             {{ tpl .Values.allInOne.extraVolumeMounts . | nindent 12 }}
           ports:
@@ -473,7 +475,9 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- if .Values.allInOne.s3.enabled }}
         {{- include "seaweedfs.s3.tlsVolume" . | nindent 8 }}
+        {{- end }}
         {{- end }}
         {{ tpl .Values.allInOne.extraVolumes . | nindent 8 }}
       {{- if .Values.allInOne.nodeSelector }}
