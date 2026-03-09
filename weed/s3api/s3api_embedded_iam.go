@@ -1507,7 +1507,12 @@ func (e *EmbeddedIamApi) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values ur
 			if disabled := values.Get("Disabled"); disabled != "" {
 				g.Disabled = disabled == "true"
 			}
-			if newName := values.Get("NewGroupName"); newName != "" {
+			if newName := values.Get("NewGroupName"); newName != "" && newName != g.Name {
+				for _, other := range s3cfg.Groups {
+					if other.Name == newName {
+						return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("group %s already exists", newName)}
+					}
+				}
 				g.Name = newName
 			}
 			return resp, nil
@@ -1618,7 +1623,10 @@ func (e *EmbeddedIamApi) AttachGroupPolicy(ctx context.Context, s3cfg *iam_pb.S3
 	// Verify policy exists via credential manager
 	if e.credentialManager != nil {
 		policy, pErr := e.credentialManager.GetPolicy(ctx, policyName)
-		if pErr != nil || policy == nil {
+		if pErr != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to look up policy %s: %w", policyName, pErr)}
+		}
+		if policy == nil {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 		}
 	}
@@ -1701,13 +1709,15 @@ func (e *EmbeddedIamApi) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, val
 	if !userFound {
 		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s does not exist", userName)}
 	}
-	// Use the in-memory reverse index for O(1) lookup
-	e.iam.m.RLock()
-	groupNames := e.iam.userGroups[userName]
-	e.iam.m.RUnlock()
-	for _, gName := range groupNames {
-		name := gName
-		resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
+	// Build from s3cfg.Groups for consistency with freshly loaded config
+	for _, g := range s3cfg.Groups {
+		for _, m := range g.Members {
+			if m == userName {
+				name := g.Name
+				resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
+				break
+			}
+		}
 	}
 	return resp, nil
 }
