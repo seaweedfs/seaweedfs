@@ -1649,14 +1649,15 @@ func (e *EmbeddedIamApi) AttachGroupPolicy(ctx context.Context, s3cfg *iam_pb.S3
 		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
 	}
 	// Verify policy exists via credential manager
-	if e.credentialManager != nil {
-		policy, pErr := e.credentialManager.GetPolicy(ctx, policyName)
-		if pErr != nil {
-			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to look up policy %s: %w", policyName, pErr)}
-		}
-		if policy == nil {
-			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
-		}
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not available to validate policy %s", policyName)}
+	}
+	policy, pErr := e.credentialManager.GetPolicy(ctx, policyName)
+	if pErr != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to look up policy %s: %w", policyName, pErr)}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 	for _, g := range s3cfg.Groups {
 		if g.Name == groupName {
