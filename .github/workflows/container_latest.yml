@@ -98,7 +98,7 @@ jobs:
             org.opencontainers.image.vendor=Chris Lu
       - name: Set up QEMU
         if: matrix.platform != 'amd64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Create BuildKit config
         run: |
           cat > /tmp/buildkitd.toml <<EOF
