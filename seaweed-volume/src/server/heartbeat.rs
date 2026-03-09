@@ -46,6 +46,9 @@ pub async fn run_heartbeat_with_state(
         config.master_addresses
     );
 
+    // Call GetMasterConfiguration before starting the heartbeat loop (matches Go behavior).
+    check_with_master(&config, &state).await;
+
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
@@ -175,6 +178,54 @@ fn to_grpc_address(master_addr: &str) -> String {
         }
     }
     format!("http://{}", master_addr)
+}
+
+/// Call GetMasterConfiguration on seed masters before starting the heartbeat loop.
+/// Mirrors Go's `checkWithMaster()` in `volume_grpc_client_to_master.go`.
+/// Retries across all seed masters with a 1790ms sleep between rounds (matching Go).
+/// Stores metrics address/interval from the response into server state.
+async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) {
+    loop {
+        for master_addr in &config.master_addresses {
+            let grpc_addr = to_grpc_address(master_addr);
+            match try_get_master_configuration(&grpc_addr).await {
+                Ok(resp) => {
+                    let changed = apply_metrics_push_settings(
+                        state,
+                        &resp.metrics_address,
+                        resp.metrics_interval_seconds,
+                    );
+                    if changed {
+                        state.metrics_notify.notify_waiters();
+                    }
+                    info!(
+                        "Got master configuration from {}: metrics_address={}, metrics_interval={}s",
+                        master_addr, resp.metrics_address, resp.metrics_interval_seconds
+                    );
+                    return;
+                }
+                Err(e) => {
+                    warn!("checkWithMaster {}: {}", master_addr, e);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(1790)).await;
+    }
+}
+
+async fn try_get_master_configuration(
+    grpc_addr: &str,
+) -> Result<master_pb::GetMasterConfigurationResponse, Box<dyn std::error::Error>> {
+    let channel = Channel::from_shared(grpc_addr.to_string())?
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
+        .connect()
+        .await?;
+    let mut client = SeaweedClient::new(channel);
+    let resp = client
+        .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
+        .await?;
+    Ok(resp.into_inner())
 }
 
 fn is_stopping(state: &VolumeServerState) -> bool {
