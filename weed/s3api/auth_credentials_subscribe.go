@@ -35,7 +35,9 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 		// For moves across directories, also notify handlers about the source directory
 		if message.NewParentPath != "" && resp.Directory != message.NewParentPath {
-			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, message.NewEntry)
+			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
+			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
+			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
 		}
 
 		return nil
