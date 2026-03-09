@@ -2167,7 +2167,10 @@ fn get_append_at_ns(last: u64) -> u64 {
 
 /// Remove all files associated with a volume.
 pub(crate) fn remove_volume_files(base: &str) {
-    for ext in &[".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb"] {
+    // Note: .vif is intentionally NOT deleted here — it must be preserved
+    // for EC volumes that reference it after the original volume is destroyed.
+    // Matches Go's volume.Destroy() which only removes .dat/.idx.
+    for ext in &[".dat", ".idx", ".sdx", ".cpd", ".cpx", ".note", ".rdb"] {
         let _ = fs::remove_file(format!("{}{}", base, ext));
     }
     // leveldb uses a directory

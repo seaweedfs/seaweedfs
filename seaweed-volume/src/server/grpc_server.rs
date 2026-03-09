@@ -1814,22 +1814,12 @@ impl VolumeServer for VolumeGrpcService {
 
         // Connect to source and copy shard files via CopyFile
         let source = &req.source_data_node;
-        // Parse source address: "ip:port.grpc_port"
-        let parts: Vec<&str> = source.split('.').collect();
-        if parts.len() != 2 {
-            return Err(Status::internal(format!(
-                "VolumeEcShardsCopy volume {} invalid source_data_node {}",
-                vid, source
-            )));
-        }
-        let grpc_addr = format!(
-            "{}:{}",
-            parts[0]
-                .rsplit_once(':')
-                .map(|(h, _)| h)
-                .unwrap_or(parts[0]),
-            parts[1]
-        );
+        let grpc_addr = parse_grpc_address(source).map_err(|e| {
+            Status::internal(format!(
+                "VolumeEcShardsCopy volume {} invalid source_data_node {}: {}",
+                vid, source, e
+            ))
+        })?;
 
         let channel = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
             .map_err(|e| {
