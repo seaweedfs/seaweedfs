@@ -46,6 +46,26 @@ func (iama *IamApiServer) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 }
 
+func (iama *IamApiServer) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*UpdateGroupResponse, *IamError) {
+	resp := &UpdateGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			if disabled := values.Get("Disabled"); disabled != "" {
+				g.Disabled = disabled == "true"
+			}
+			if newName := values.Get("NewGroupName"); newName != "" {
+				g.Name = newName
+			}
+			return resp, nil
+		}
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
 func (iama *IamApiServer) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*GetGroupResponse, *IamError) {
 	resp := &GetGroupResponse{}
 	groupName := values.Get("GroupName")

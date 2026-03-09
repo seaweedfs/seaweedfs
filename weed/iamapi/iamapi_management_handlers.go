@@ -1105,6 +1105,13 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+	case "UpdateGroup":
+		var err *IamError
+		response, err = iama.UpdateGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
 	case "GetGroup":
 		var err *IamError
 		response, err = iama.GetGroup(s3cfg, values)

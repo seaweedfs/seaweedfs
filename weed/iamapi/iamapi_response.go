@@ -39,6 +39,7 @@ type (
 	// Group response types
 	CreateGroupResponse               = iamlib.CreateGroupResponse
 	DeleteGroupResponse               = iamlib.DeleteGroupResponse
+	UpdateGroupResponse               = iamlib.UpdateGroupResponse
 	GetGroupResponse                  = iamlib.GetGroupResponse
 	ListGroupsResponse                = iamlib.ListGroupsResponse
 	AddUserToGroupResponse            = iamlib.AddUserToGroupResponse
