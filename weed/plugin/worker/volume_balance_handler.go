@@ -224,19 +224,14 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
+	maxResults := int(request.MaxResults)
+	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
-	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
-		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
-	}
 
-	maxResults := int(request.MaxResults)
-	hasMore := false
-	if maxResults > 0 && len(results) > maxResults {
-		hasMore = true
-		results = results[:maxResults]
+	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
@@ -267,6 +262,7 @@ func (h *VolumeBalanceHandler) Detect(
 func emitVolumeBalanceDetectionDecisionTrace(
 	sender DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
+	activeTopology *topology.ActiveTopology,
 	taskConfig *balancetask.Config,
 	results []*workertypes.TaskDetectionResult,
 ) error {
@@ -362,7 +358,25 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			continue
 		}
 
+		// Seed server counts from topology so zero-volume servers are included,
+		// matching the same logic used in balancetask.Detection.
 		serverVolumeCounts := make(map[string]int)
+		if activeTopology != nil {
+			topologyInfo := activeTopology.GetTopologyInfo()
+			if topologyInfo != nil {
+				for _, dc := range topologyInfo.DataCenterInfos {
+					for _, rack := range dc.RackInfos {
+						for _, node := range rack.DataNodeInfos {
+							for diskTypeName := range node.DiskInfos {
+								if diskTypeName == diskType {
+									serverVolumeCounts[node.Id] = 0
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, metric := range diskMetrics {
 			serverVolumeCounts[metric.Server]++
 		}
