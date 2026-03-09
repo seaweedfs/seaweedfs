@@ -513,6 +513,40 @@ func TestListObjectVersionsResult_XMLInterleavingMultipleKeys(t *testing.T) {
 	assert.True(t, v1Idx < v2Idx, "aaa Version should appear before bbb Version")
 }
 
+// TestListObjectVersionsResult_XMLCommonPrefixes validates that CommonPrefixes entries
+// are correctly marshaled when interleaved with Version and DeleteMarker entries.
+func TestListObjectVersionsResult_XMLCommonPrefixes(t *testing.T) {
+	now := time.Now()
+
+	ver := &VersionEntry{Key: "docs/readme.txt", VersionId: "v1", IsLatest: true, LastModified: now, StorageClass: "STANDARD"}
+
+	result := &S3ListObjectVersionsResult{
+		Name:      "test-bucket",
+		MaxKeys:   1000,
+		Delimiter: "/",
+		Entries: []VersionListEntry{
+			{Version: ver},
+			{Prefix: &PrefixEntry{Prefix: "images/"}},
+			{Prefix: &PrefixEntry{Prefix: "logs/"}},
+		},
+	}
+
+	xmlBytes, err := xml.Marshal(result)
+	assert.NoError(t, err)
+	xmlStr := string(xmlBytes)
+
+	// Verify CommonPrefixes elements are present with correct content
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>images/</Prefix></CommonPrefixes>")
+	assert.Contains(t, xmlStr, "<CommonPrefixes><Prefix>logs/</Prefix></CommonPrefixes>")
+
+	// Verify ordering: Version before CommonPrefixes (as placed in Entries)
+	vIdx := strings.Index(xmlStr, "<Version>")
+	cpIdx := strings.Index(xmlStr, "<CommonPrefixes>")
+	assert.True(t, vIdx >= 0, "Version element should be present")
+	assert.True(t, cpIdx >= 0, "CommonPrefixes element should be present")
+	assert.True(t, vIdx < cpIdx, "Version should appear before CommonPrefixes as ordered in Entries")
+}
+
 // TestListObjectVersions_PrefixWithLeadingSlash tests that prefixes with leading slashes work correctly
 // This validates the fix for the bug where "/Veeam/Archive/" would fail to match relative paths
 func TestListObjectVersions_PrefixWithLeadingSlash(t *testing.T) {
