@@ -700,6 +700,11 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	if maxConcurrent <= 0 {
 		maxConcurrent = defaultMaxConcurrentMoves
 	}
+	// Clamp to the worker-side upper bound so a stale or malicious job
+	// cannot request unbounded fan-out of concurrent volume moves.
+	if maxConcurrent > defaultMaxConcurrentMoves {
+		maxConcurrent = defaultMaxConcurrentMoves
+	}
 
 	totalMoves := len(moves)
 	glog.Infof("batch volume balance: %d moves, max concurrent %d", totalMoves, maxConcurrent)
@@ -718,18 +723,21 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		return err
 	}
 
-	// Per-move progress tracking
-	var mu sync.Mutex
+	// Per-move progress tracking. The mutex serializes both the progress
+	// bookkeeping and the sender.SendProgress call, since the underlying
+	// gRPC stream is not safe for concurrent writes.
+	var progressMu sync.Mutex
 	moveProgress := make([]float64, totalMoves)
 
 	reportAggregate := func(moveIndex int, progress float64, stage string) {
-		mu.Lock()
+		progressMu.Lock()
+		defer progressMu.Unlock()
+
 		moveProgress[moveIndex] = progress
 		total := 0.0
 		for _, p := range moveProgress {
 			total += p
 		}
-		mu.Unlock()
 
 		aggregate := total / float64(totalMoves)
 		move := moves[moveIndex]
@@ -903,21 +911,23 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		minIntervalSeconds = 0
 	}
 
-	maxConcurrentMoves := int(readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves)))
-	if maxConcurrentMoves < 1 {
-		maxConcurrentMoves = 1
+	maxConcurrentMoves64 := readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves))
+	if maxConcurrentMoves64 < 1 {
+		maxConcurrentMoves64 = 1
 	}
-	if maxConcurrentMoves > 50 {
-		maxConcurrentMoves = 50
+	if maxConcurrentMoves64 > 50 {
+		maxConcurrentMoves64 = 50
 	}
+	maxConcurrentMoves := int(maxConcurrentMoves64)
 
-	batchSize := int(readInt64Config(values, "batch_size", 20))
-	if batchSize < 1 {
-		batchSize = 1
+	batchSize64 := readInt64Config(values, "batch_size", 20)
+	if batchSize64 < 1 {
+		batchSize64 = 1
 	}
-	if batchSize > 100 {
-		batchSize = 100
+	if batchSize64 > 100 {
+		batchSize64 = 100
 	}
+	batchSize := int(batchSize64)
 
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
