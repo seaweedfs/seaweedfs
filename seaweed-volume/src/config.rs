@@ -252,9 +252,47 @@ pub enum MinFreeSpace {
     Bytes(u64),
 }
 
+/// Convert single-dash long options to double-dash for clap compatibility.
+/// Go's `flag` package uses `-port`, clap expects `--port`.
+/// This allows both `-port 8080` and `--port 8080` to work.
+fn normalize_args_vec(args: Vec<String>) -> Vec<String> {
+    let mut args = args;
+    // Skip args[0] (binary name).
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        // Stop processing after "--"
+        if arg == "--" {
+            break;
+        }
+        // Already double-dash or not a flag: leave as-is
+        if arg.starts_with("--") || !arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        // Single char flags like -h, -V: leave as-is
+        let without_dash = &arg[1..];
+        // Check if it's a single-dash long option: more than 1 char and not a negative number
+        if without_dash.len() > 1 && !without_dash.starts_with(|c: char| c.is_ascii_digit()) {
+            // Handle -key=value format
+            if let Some(eq_pos) = without_dash.find('=') {
+                let key = &without_dash[..eq_pos];
+                if key.len() > 1 {
+                    args[i] = format!("--{}", without_dash);
+                }
+            } else {
+                args[i] = format!("-{}", arg);
+            }
+        }
+        i += 1;
+    }
+    args
+}
+
 /// Parse CLI arguments and resolve all defaults — mirroring Go's `runVolume()` + `startVolumeServer()`.
 pub fn parse_cli() -> VolumeServerConfig {
-    let cli = Cli::parse();
+    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse_from(normalize_args_vec(args));
     resolve_config(cli)
 }
 
@@ -821,6 +859,54 @@ mod tests {
         assert_eq!(tags.len(), 2);
         assert_eq!(tags[0], Vec::<String>::new());
         assert_eq!(tags[1], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_normalize_args_single_dash_to_double() {
+        let args = vec![
+            "bin".into(),
+            "-port".into(), "8080".into(),
+            "-ip.bind".into(), "127.0.0.1".into(),
+            "-dir".into(), "/data".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec![
+            "bin", "--port", "8080", "--ip.bind", "127.0.0.1", "--dir", "/data",
+        ]);
+    }
+
+    #[test]
+    fn test_normalize_args_double_dash_unchanged() {
+        let args = vec![
+            "bin".into(),
+            "--port".into(), "8080".into(),
+            "--master".into(), "localhost:9333".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec![
+            "bin", "--port", "8080", "--master", "localhost:9333",
+        ]);
+    }
+
+    #[test]
+    fn test_normalize_args_single_char_flags_unchanged() {
+        let args = vec!["bin".into(), "-h".into(), "-V".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "-h", "-V"]);
+    }
+
+    #[test]
+    fn test_normalize_args_equals_format() {
+        let args = vec!["bin".into(), "-port=8080".into(), "-ip.bind=0.0.0.0".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port=8080", "--ip.bind=0.0.0.0"]);
+    }
+
+    #[test]
+    fn test_normalize_args_stop_at_double_dash() {
+        let args = vec!["bin".into(), "-port".into(), "8080".into(), "--".into(), "-notaflag".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port", "8080", "--", "-notaflag"]);
     }
 
     #[test]
