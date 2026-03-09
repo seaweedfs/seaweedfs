@@ -1827,9 +1827,11 @@ impl Volume {
         fs::rename(&cpd_path, &dat_path)?;
         fs::rename(&cpx_path, &idx_path)?;
 
-        // Remove any leveldb files
+        // Remove any leveldb/redb index files (rebuilt from .idx on reload)
         let ldb_path = self.file_name(".ldb");
         let _ = fs::remove_dir_all(&ldb_path);
+        let rdb_path = self.file_name(".rdb");
+        let _ = fs::remove_file(&rdb_path);
 
         // Reload
         self.load(true, false, 0, self.version())?;
@@ -2069,9 +2071,10 @@ fn get_append_at_ns(last: u64) -> u64 {
 
 /// Remove all files associated with a volume.
 pub(crate) fn remove_volume_files(base: &str) {
-    for ext in &[".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note"] {
+    for ext in &[".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb"] {
         let _ = fs::remove_file(format!("{}{}", base, ext));
     }
+    // leveldb uses a directory
     let _ = fs::remove_dir_all(format!("{}.ldb", base));
 }
 
