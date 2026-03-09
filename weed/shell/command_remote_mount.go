@@ -146,6 +146,7 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 				})
 				return createErr
 			}
+			return lookupErr
 		}
 
 		mountToDirIsEmpty := true
