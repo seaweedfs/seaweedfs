@@ -90,6 +90,7 @@ type UserDetails struct {
 	Actions     []string        `json:"actions"`
 	PolicyNames []string        `json:"policy_names"`
 	AccessKeys  []AccessKeyInfo `json:"access_keys"`
+	Groups      []string        `json:"groups"`
 }
 
 type FilerNode struct {
