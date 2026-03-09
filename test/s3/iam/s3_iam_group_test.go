@@ -459,7 +459,7 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 
 	t.Run("disabled_group_denies_access", func(t *testing.T) {
 		// Disable group via raw IAM API (no SDK support for this extension)
-		resp, err := callIAMAPI(t, "UpdateGroup", url.Values{
+		resp, err := callIAMAPIAuthenticated(t, framework, "UpdateGroup", url.Values{
 			"GroupName": {groupName},
 			"Disabled":  {"true"},
 		})
@@ -477,7 +477,7 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 
 	t.Run("re_enabled_group_restores_access", func(t *testing.T) {
 		// Re-enable the group
-		resp, err := callIAMAPI(t, "UpdateGroup", url.Values{
+		resp, err := callIAMAPIAuthenticated(t, framework, "UpdateGroup", url.Values{
 			"GroupName": {groupName},
 			"Disabled":  {"false"},
 		})
@@ -614,9 +614,34 @@ type ListGroupsResponse struct {
 	} `xml:"ListGroupsResult"`
 }
 
+// callIAMAPIAuthenticated sends an authenticated raw IAM API request using the
+// framework's JWT token. This is needed for custom extensions not in the AWS SDK
+// (like UpdateGroup with Disabled parameter).
+func callIAMAPIAuthenticated(_ *testing.T, framework *S3IAMTestFramework, action string, params url.Values) (*http.Response, error) {
+	params.Set("Action", action)
+
+	req, err := http.NewRequest(http.MethodPost, TestIAMEndpoint+"/",
+		strings.NewReader(params.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	token, err := framework.generateSTSSessionToken("admin-user", "TestAdminRole", time.Hour, "", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &BearerTokenTransport{Token: token},
+	}
+	return client.Do(req)
+}
+
 // TestIAMGroupRawAPI tests group operations using raw HTTP IAM API calls,
-// for operations not covered by the AWS SDK (like the SeaweedFS extension
-// to disable/enable groups via UpdateGroup with Disabled parameter).
+// verifying XML response format for group operations.
 func TestIAMGroupRawAPI(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -625,10 +650,13 @@ func TestIAMGroupRawAPI(t *testing.T) {
 		t.Skip("SeaweedFS is not running at", TestIAMEndpoint)
 	}
 
+	framework := NewS3IAMTestFramework(t)
+	defer framework.Cleanup()
+
 	groupName := "test-raw-api-group"
 
 	t.Run("create_group_raw", func(t *testing.T) {
-		resp, err := callIAMAPI(t, "CreateGroup", url.Values{
+		resp, err := callIAMAPIAuthenticated(t, framework, "CreateGroup", url.Values{
 			"GroupName": {groupName},
 		})
 		require.NoError(t, err)
@@ -645,7 +673,7 @@ func TestIAMGroupRawAPI(t *testing.T) {
 	})
 
 	t.Run("list_groups_raw", func(t *testing.T) {
-		resp, err := callIAMAPI(t, "ListGroups", url.Values{})
+		resp, err := callIAMAPIAuthenticated(t, framework, "ListGroups", url.Values{})
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -668,7 +696,7 @@ func TestIAMGroupRawAPI(t *testing.T) {
 	})
 
 	t.Run("delete_group_raw", func(t *testing.T) {
-		resp, err := callIAMAPI(t, "DeleteGroup", url.Values{
+		resp, err := callIAMAPIAuthenticated(t, framework, "DeleteGroup", url.Values{
 			"GroupName": {groupName},
 		})
 		require.NoError(t, err)
