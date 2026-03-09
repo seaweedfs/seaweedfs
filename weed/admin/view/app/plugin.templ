@@ -1120,12 +1120,12 @@ templ Plugin(page string) {
                     var dst = textOrDash(plan.target_node || plan.target_server);
                     var vid = textOrDash(plan.volume_id);
                     var col = textOrDash(plan.collection);
-                    html += '<div class="row g-2 mb-2">' +
-                        '<div class="col-md-3"><small><strong>Volume:</strong> ' + escapeHtml(vid) + '</small></div>' +
-                        '<div class="col-md-3"><small><strong>Collection:</strong> ' + escapeHtml(col) + '</small></div>' +
-                        '<div class="col-md-3"><small><strong>Source:</strong> <code>' + escapeHtml(src) + '</code></small></div>' +
-                        '<div class="col-md-3"><small><strong>Target:</strong> <code>' + escapeHtml(dst) + '</code></small></div>' +
-                        '</div>';
+                    html += `<div class="row g-2 mb-2">
+                        <div class="col-md-3"><small><strong>Volume:</strong> ${escapeHtml(vid)}</small></div>
+                        <div class="col-md-3"><small><strong>Collection:</strong> ${escapeHtml(col)}</small></div>
+                        <div class="col-md-3"><small><strong>Source:</strong> <code>${escapeHtml(src)}</code></small></div>
+                        <div class="col-md-3"><small><strong>Target:</strong> <code>${escapeHtml(dst)}</code></small></div>
+                        </div>`;
                 } else {
                     // Batch balance job
                     html += '<div class="mb-2"><span class="badge bg-info">' + escapeHtml(String(moves.length)) + ' moves</span></div>';
@@ -1133,13 +1133,13 @@ templ Plugin(page string) {
                         '<thead><tr><th>#</th><th>Volume</th><th>Source</th><th>Target</th><th>Collection</th></tr></thead><tbody>';
                     for (var i = 0; i < moves.length; i++) {
                         var move = moves[i] || {};
-                        html += '<tr>' +
-                            '<td>' + escapeHtml(String(i + 1)) + '</td>' +
-                            '<td>' + escapeHtml(textOrDash(move.volume_id)) + '</td>' +
-                            '<td><code>' + escapeHtml(textOrDash(move.source_node)) + '</code></td>' +
-                            '<td><code>' + escapeHtml(textOrDash(move.target_node)) + '</code></td>' +
-                            '<td>' + escapeHtml(textOrDash(move.collection)) + '</td>' +
-                            '</tr>';
+                        html += `<tr>
+                            <td>${escapeHtml(String(i + 1))}</td>
+                            <td>${escapeHtml(textOrDash(move.volume_id))}</td>
+                            <td><code>${escapeHtml(textOrDash(move.source_node))}</code></td>
+                            <td><code>${escapeHtml(textOrDash(move.target_node))}</code></td>
+                            <td>${escapeHtml(textOrDash(move.collection))}</td>
+                        </tr>`;
                     }
                     html += '</tbody></table></div>';
                 }
