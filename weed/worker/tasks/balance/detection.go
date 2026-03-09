@@ -106,8 +106,15 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		return nil, false
 	}
 
-	// Track effective adjustments as we plan moves in this detection run
-	adjustments := make(map[string]int)
+	// Seed adjustments from existing pending/assigned balance tasks so that
+	// effectiveCounts reflects in-flight moves and prevents over-scheduling.
+	var adjustments map[string]int
+	if clusterInfo.ActiveTopology != nil {
+		adjustments = clusterInfo.ActiveTopology.GetTaskServerAdjustments(topology.TaskTypeBalance)
+	}
+	if adjustments == nil {
+		adjustments = make(map[string]int)
+	}
 	// Servers where we can no longer find eligible volumes or plan destinations
 	exhaustedServers := make(map[string]bool)
 

@@ -576,13 +576,14 @@ func TestDetection_SkipsPreExistingPendingTasks(t *testing.T) {
 		}
 	}
 
-	// With 15 of 20 volumes on node-a already having pending tasks, only
-	// volumes 16-20 are eligible. Detection should produce at most 5 new tasks.
+	// With 15 pending A→B moves, effective counts are A=5, B=20.
+	// Detection sees B as overloaded and may plan moves from B (5 volumes).
+	// Should produce a reasonable number of tasks without over-scheduling.
 	if len(tasks) > 5 {
-		t.Errorf("Expected at most 5 new tasks (only 5 eligible volumes remain), got %d", len(tasks))
+		t.Errorf("Expected at most 5 new tasks, got %d", len(tasks))
 	}
 	if len(tasks) == 0 {
-		t.Errorf("Expected at least 1 new task since imbalance still exists with actual volume counts")
+		t.Errorf("Expected at least 1 new task since projected imbalance still exists")
 	}
 
 	assertNoDuplicateVolumes(t, tasks)
