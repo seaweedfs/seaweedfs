@@ -13,6 +13,9 @@ import (
 )
 
 func (store *PostgresStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	membersJSON, err := json.Marshal(group.Members)
 	if err != nil {
 		return fmt.Errorf("failed to marshal members: %w", err)
@@ -95,6 +98,9 @@ func (store *PostgresStore) ListGroups(ctx context.Context) ([]string, error) {
 }
 
 func (store *PostgresStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	membersJSON, err := json.Marshal(group.Members)
 	if err != nil {
 		return fmt.Errorf("failed to marshal members: %w", err)
