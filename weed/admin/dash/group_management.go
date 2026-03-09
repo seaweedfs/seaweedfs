@@ -207,7 +207,7 @@ func (s *AdminServer) DetachGroupPolicy(ctx context.Context, groupName, policyNa
 		}
 	}
 	if !found {
-		return fmt.Errorf("policy %s is not attached to group %s", policyName, groupName)
+		return fmt.Errorf("policy %s is not attached to group %s: %w", policyName, groupName, credential.ErrPolicyNotAttached)
 	}
 	g.PolicyNames = newPolicies
 	if err := s.credentialManager.UpdateGroup(ctx, g); err != nil {

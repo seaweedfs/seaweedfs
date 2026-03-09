@@ -24,6 +24,9 @@ func groupErrorToHTTPStatus(err error) int {
 	if errors.Is(err, credential.ErrUserNotInGroup) {
 		return http.StatusBadRequest
 	}
+	if errors.Is(err, credential.ErrPolicyNotAttached) {
+		return http.StatusBadRequest
+	}
 	return http.StatusInternalServerError
 }
 
