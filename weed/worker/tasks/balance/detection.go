@@ -118,10 +118,16 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	}
 	sort.Strings(sortedServers)
 
-	// Pre-index volumes by server with cursors to avoid O(maxResults * volumes) scanning
+	// Pre-index volumes by server with cursors to avoid O(maxResults * volumes) scanning.
+	// Sort each server's volumes by VolumeID for deterministic selection.
 	volumesByServer := make(map[string][]*types.VolumeHealthMetrics, len(serverVolumeCounts))
 	for _, metric := range diskMetrics {
 		volumesByServer[metric.Server] = append(volumesByServer[metric.Server], metric)
+	}
+	for _, vols := range volumesByServer {
+		sort.Slice(vols, func(i, j int) bool {
+			return vols[i].VolumeID < vols[j].VolumeID
+		})
 	}
 	serverCursors := make(map[string]int, len(serverVolumeCounts))
 
@@ -206,11 +212,13 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			continue
 		}
 
-		// Plan destination and create task
+		// Plan destination and create task.
+		// On failure, continue to the next volume on the same server rather
+		// than exhausting the entire server — the failure may be per-volume
+		// (e.g., volume not found in topology, AddPendingTask failed).
 		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo)
 		if task == nil {
-			glog.V(1).Infof("BALANCE [%s]: Cannot plan destination for server %s, trying other servers", diskType, maxServer)
-			exhaustedServers[maxServer] = true
+			glog.V(1).Infof("BALANCE [%s]: Cannot plan task for volume %d on server %s, trying next volume", diskType, selectedVolume.VolumeID, maxServer)
 			continue
 		}
 
