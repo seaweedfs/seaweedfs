@@ -349,6 +349,14 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
 	if newUserName != "" {
+		// Check for name collision before renaming
+		if newUserName != userName {
+			for _, ident := range s3cfg.Identities {
+				if ident.Name == newUserName {
+					return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", newUserName)}
+				}
+			}
+		}
 		for _, ident := range s3cfg.Identities {
 			if userName == ident.Name {
 				ident.Name = newUserName
