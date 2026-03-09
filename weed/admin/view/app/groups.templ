@@ -111,12 +111,16 @@ templ Groups(data dash.GroupsPageData) {
                                         <td>
                                             <button class="btn btn-sm btn-outline-primary me-1"
                                                     data-group-name={group.Name}
-                                                    data-action="view">
+                                                    data-action="view"
+                                                    aria-label={"View group " + group.Name}
+                                                    title={"View " + group.Name}>
                                                 <i class="fas fa-eye"></i>
                                             </button>
                                             <button class="btn btn-sm btn-outline-danger"
                                                     data-group-name={group.Name}
-                                                    data-action="delete">
+                                                    data-action="delete"
+                                                    aria-label={"Delete group " + group.Name}
+                                                    title={"Delete " + group.Name}>
                                                 <i class="fas fa-trash"></i>
                                             </button>
                                         </td>
