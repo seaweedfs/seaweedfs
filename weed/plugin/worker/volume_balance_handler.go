@@ -726,15 +726,25 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		return err
 	}
 
+	// Derive a cancellable context so we can abort remaining moves if the
+	// progress stream breaks (client disconnect, context cancelled).
+	batchCtx, batchCancel := context.WithCancel(ctx)
+	defer batchCancel()
+
 	// Per-move progress tracking. The mutex serializes both the progress
 	// bookkeeping and the sender.SendProgress call, since the underlying
 	// gRPC stream is not safe for concurrent writes.
 	var progressMu sync.Mutex
 	moveProgress := make([]float64, totalMoves)
+	var sendErr error // first progress send error
 
 	reportAggregate := func(moveIndex int, progress float64, stage string) {
 		progressMu.Lock()
 		defer progressMu.Unlock()
+
+		if sendErr != nil {
+			return // stream already broken, skip further sends
+		}
 
 		moveProgress[moveIndex] = progress
 		total := 0.0
@@ -746,7 +756,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 		move := moves[moveIndex]
 		message := fmt.Sprintf("[Move %d/%d vol:%d] %s", moveIndex+1, totalMoves, move.VolumeId, stage)
 
-		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
@@ -756,7 +766,10 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			Activities: []*plugin_pb.ActivityEvent{
 				BuildExecutorActivity(fmt.Sprintf("move-%d", moveIndex+1), message),
 			},
-		})
+		}); err != nil {
+			sendErr = err
+			batchCancel() // cancel in-flight and pending moves
+		}
 	}
 
 	type moveResult struct {
@@ -787,7 +800,7 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 			})
 
 			moveParams := buildMoveTaskParams(m, bp)
-			err := task.Execute(ctx, moveParams)
+			err := task.Execute(batchCtx, moveParams)
 			results <- moveResult{
 				index:    idx,
 				volumeID: m.VolumeId,
