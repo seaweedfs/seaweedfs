@@ -225,15 +225,10 @@ func (h *VolumeBalanceHandler) Detect(
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
 	maxResults := int(request.MaxResults)
-	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
-
-	// Detection is stateful (registers planned moves in ActiveTopology), so we
-	// cannot over-fetch to probe for truncation. Instead, hitting the exact
-	// limit signals that more work may exist.
-	hasMore := maxResults > 0 && len(results) >= maxResults
 
 	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
 		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)

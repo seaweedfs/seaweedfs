@@ -17,12 +17,14 @@ import (
 // Detection implements the detection logic for balance tasks.
 // maxResults limits how many balance operations are returned per invocation.
 // A non-positive maxResults means no explicit limit (uses a large default).
-func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, error) {
+// The returned truncated flag is true when detection stopped because it hit
+// maxResults rather than running out of work.
+func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, config base.TaskConfig, maxResults int) ([]*types.TaskDetectionResult, bool, error) {
 	if !config.IsEnabled() {
-		return nil, nil
+		return nil, false, nil
 	}
 	if clusterInfo == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	balanceConfig := config.(*Config)
@@ -46,28 +48,33 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	sort.Strings(diskTypes)
 
 	var allParams []*types.TaskDetectionResult
+	truncated := false
 
 	for _, diskType := range diskTypes {
 		remaining := maxResults - len(allParams)
 		if remaining <= 0 {
+			truncated = true
 			break
 		}
-		tasks := detectForDiskType(diskType, volumesByDiskType[diskType], balanceConfig, clusterInfo, remaining)
+		tasks, diskTruncated := detectForDiskType(diskType, volumesByDiskType[diskType], balanceConfig, clusterInfo, remaining)
 		allParams = append(allParams, tasks...)
+		if diskTruncated {
+			truncated = true
+		}
 	}
 
-	return allParams, nil
+	return allParams, truncated, nil
 }
 
 // detectForDiskType performs balance detection for a specific disk type,
-// returning up to maxResults balance tasks.
-func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics, balanceConfig *Config, clusterInfo *types.ClusterInfo, maxResults int) []*types.TaskDetectionResult {
+// returning up to maxResults balance tasks and whether it was truncated by the limit.
+func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics, balanceConfig *Config, clusterInfo *types.ClusterInfo, maxResults int) ([]*types.TaskDetectionResult, bool) {
 	// Skip if cluster segment is too small
 	minVolumeCount := 2 // More reasonable for small clusters
 	if len(diskMetrics) < minVolumeCount {
 		// Only log at verbose level to avoid spamming for small/empty disk types
 		glog.V(1).Infof("BALANCE [%s]: No tasks created - cluster too small (%d volumes, need ≥%d)", diskType, len(diskMetrics), minVolumeCount)
-		return nil
+		return nil, false
 	}
 
 	// Analyze volume distribution across servers.
@@ -96,7 +103,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 
 	if len(serverVolumeCounts) < balanceConfig.MinServerCount {
 		glog.V(1).Infof("BALANCE [%s]: No tasks created - too few servers (%d servers, need ≥%d)", diskType, len(serverVolumeCounts), balanceConfig.MinServerCount)
-		return nil
+		return nil, false
 	}
 
 	// Track effective adjustments as we plan moves in this detection run
@@ -209,7 +216,8 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		}
 	}
 
-	return results
+	// Truncated if the loop exited because we hit the maxResults cap
+	return results, len(results) >= maxResults
 }
 
 // createBalanceTask creates a single balance task for the selected volume.

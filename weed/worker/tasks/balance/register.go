@@ -59,7 +59,8 @@ func RegisterBalanceTask() {
 			), nil
 		},
 		DetectionFunc: func(metrics []*types.VolumeHealthMetrics, info *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
-			return Detection(metrics, info, config, 0)
+			results, _, err := Detection(metrics, info, config, 0)
+			return results, err
 		},
 		ScanInterval:   30 * time.Minute,
 		SchedulingFunc: Scheduling,

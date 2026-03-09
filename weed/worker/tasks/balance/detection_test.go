@@ -311,7 +311,7 @@ func TestDetection_MixedDiskTypes(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf, 100)
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestDetection_ImbalancedDiskType(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	tasks, err := Detection(metrics, clusterInfo, conf, 100)
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestDetection_RespectsMaxResults(t *testing.T) {
 	}
 
 	// Request only 3 results
-	tasks, err := Detection(metrics, clusterInfo, conf, 3)
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 3)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestDetection_ThreeServers_ConvergesToBalance(t *testing.T) {
 	at := buildTopology(servers, metrics)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
 
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestDetection_SkipsPreExistingPendingTasks(t *testing.T) {
 	}
 
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestDetection_NoDuplicateVolumesAcrossIterations(t *testing.T) {
 	at := buildTopology(servers, metrics)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
 
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 200)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 200)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestDetection_ThreeServers_MaxServerShifts(t *testing.T) {
 	at := buildTopology(servers, metrics)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
 
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestDetection_FourServers_DestinationSpreading(t *testing.T) {
 	at := buildTopology(servers, metrics)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
 
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
@@ -723,7 +723,7 @@ func TestDetection_ConvergenceVerification(t *testing.T) {
 			conf := defaultConf()
 			conf.ImbalanceThreshold = tt.threshold
 
-			tasks, err := Detection(metrics, clusterInfo, conf, 500)
+			tasks, _, err := Detection(metrics, clusterInfo, conf, 500)
 			if err != nil {
 				t.Fatalf("Detection failed: %v", err)
 			}
@@ -795,7 +795,7 @@ func TestDetection_ExhaustedServerFallsThrough(t *testing.T) {
 	}
 
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
-	tasks, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
