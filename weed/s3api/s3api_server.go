@@ -276,6 +276,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		filer.IamConfigDirectory + "/identities",
 		filer.IamConfigDirectory + "/policies",
 		filer.IamConfigDirectory + "/service_accounts",
+		filer.IamConfigDirectory + "/groups",
 	})
 
 	// Start bucket size metrics collection in background
