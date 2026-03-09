@@ -111,7 +111,22 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// Servers where we can no longer find eligible volumes or plan destinations
 	exhaustedServers := make(map[string]bool)
 
+	// Sort servers for deterministic iteration and tie-breaking
+	sortedServers := make([]string, 0, len(serverVolumeCounts))
+	for server := range serverVolumeCounts {
+		sortedServers = append(sortedServers, server)
+	}
+	sort.Strings(sortedServers)
+
+	// Pre-index volumes by server with cursors to avoid O(maxResults * volumes) scanning
+	volumesByServer := make(map[string][]*types.VolumeHealthMetrics, len(serverVolumeCounts))
+	for _, metric := range diskMetrics {
+		volumesByServer[metric.Server] = append(volumesByServer[metric.Server], metric)
+	}
+	serverCursors := make(map[string]int, len(serverVolumeCounts))
+
 	var results []*types.TaskDetectionResult
+	balanced := false
 
 	for len(results) < maxResults {
 		// Compute effective volume counts with adjustments from planned moves
@@ -132,7 +147,8 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		maxServer := ""
 		minServer := ""
 
-		for server, count := range effectiveCounts {
+		for _, server := range sortedServers {
+			count := effectiveCounts[server]
 			// Min is calculated across all servers for an accurate imbalance ratio
 			if count < minVolumes {
 				minVolumes = count
@@ -164,21 +180,25 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 				glog.Infof("BALANCE [%s]: Created %d task(s), cluster now balanced. Imbalance=%.1f%% (threshold=%.1f%%)",
 					diskType, len(results), imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100)
 			}
+			balanced = true
 			break
 		}
 
-		// Select a volume from the overloaded server for balance
+		// Select a volume from the overloaded server using per-server cursor
 		var selectedVolume *types.VolumeHealthMetrics
-		for _, metric := range diskMetrics {
-			if metric.Server == maxServer {
-				// Skip volumes that already have a task in ActiveTopology
-				if clusterInfo.ActiveTopology != nil && clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
-					continue
-				}
-				selectedVolume = metric
-				break
+		serverVols := volumesByServer[maxServer]
+		cursor := serverCursors[maxServer]
+		for cursor < len(serverVols) {
+			metric := serverVols[cursor]
+			cursor++
+			// Skip volumes that already have a task in ActiveTopology
+			if clusterInfo.ActiveTopology != nil && clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
+				continue
 			}
+			selectedVolume = metric
+			break
 		}
+		serverCursors[maxServer] = cursor
 
 		if selectedVolume == nil {
 			glog.V(1).Infof("BALANCE [%s]: No more eligible volumes on overloaded server %s, trying other servers", diskType, maxServer)
@@ -203,8 +223,9 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		}
 	}
 
-	// Truncated if the loop exited because we hit the maxResults cap
-	return results, len(results) >= maxResults
+	// Truncated only if we hit maxResults and detection didn't naturally finish
+	truncated := len(results) >= maxResults && !balanced
+	return results, truncated
 }
 
 // createBalanceTask creates a single balance task for the selected volume.

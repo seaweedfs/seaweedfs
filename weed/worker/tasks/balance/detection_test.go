@@ -444,14 +444,29 @@ func TestDetection_RespectsMaxResults(t *testing.T) {
 		ActiveTopology: at,
 	}
 
-	// Request only 3 results
-	tasks, _, err := Detection(metrics, clusterInfo, conf, 3)
+	// Request only 3 results — there are enough volumes to produce more,
+	// so truncated should be true.
+	tasks, truncated, err := Detection(metrics, clusterInfo, conf, 3)
 	if err != nil {
 		t.Fatalf("Detection failed: %v", err)
 	}
 
 	if len(tasks) != 3 {
 		t.Errorf("Expected exactly 3 tasks (maxResults=3), got %d", len(tasks))
+	}
+	if !truncated {
+		t.Errorf("Expected truncated=true when maxResults caps results")
+	}
+
+	// Verify truncated=false when detection finishes naturally (no cap)
+	at2 := createMockTopology(metrics...)
+	clusterInfo2 := &types.ClusterInfo{ActiveTopology: at2}
+	tasks2, truncated2, err := Detection(metrics, clusterInfo2, conf, 500)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if truncated2 {
+		t.Errorf("Expected truncated=false when detection finishes naturally, got true (len=%d)", len(tasks2))
 	}
 }
 
