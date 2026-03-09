@@ -2093,6 +2093,66 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	return nil
 }
 
+func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
+	if group == nil {
+		return fmt.Errorf("put group failed: nil group")
+	}
+	if group.Name == "" {
+		return fmt.Errorf("put group failed: empty group name")
+	}
+	glog.V(1).Infof("IAM: put group %s", group.Name)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	// Remove old reverse index entries for this group
+	if old, ok := iam.groups[group.Name]; ok && !old.Disabled {
+		for _, member := range old.Members {
+			iam.removeUserGroupLocked(member, group.Name)
+		}
+	}
+
+	iam.groups[group.Name] = group
+
+	// Add new reverse index entries if group is enabled
+	if !group.Disabled {
+		for _, member := range group.Members {
+			iam.userGroups[member] = append(iam.userGroups[member], group.Name)
+		}
+	}
+
+	return nil
+}
+
+func (iam *IdentityAccessManagement) RemoveGroup(groupName string) {
+	glog.V(1).Infof("IAM: remove group %s", groupName)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	if g, ok := iam.groups[groupName]; ok && !g.Disabled {
+		for _, member := range g.Members {
+			iam.removeUserGroupLocked(member, groupName)
+		}
+	}
+	delete(iam.groups, groupName)
+}
+
+// removeUserGroupLocked removes a group from a user's group list.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) removeUserGroupLocked(username, groupName string) {
+	groups := iam.userGroups[username]
+	for i, g := range groups {
+		if g == groupName {
+			iam.userGroups[username] = append(groups[:i], groups[i+1:]...)
+			if len(iam.userGroups[username]) == 0 {
+				delete(iam.userGroups, username)
+			}
+			return
+		}
+	}
+}
+
 // ensureIAMPolicyEngine lazily initializes the shared IAM policy engine.
 // Must be called with iam.m held.
 func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {

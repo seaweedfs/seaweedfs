@@ -92,6 +92,27 @@ func (s3a *S3ApiServer) GetPolicy(ctx context.Context, req *iam_pb.GetPolicyRequ
 	}, nil
 }
 
+func (s3a *S3ApiServer) PutGroup(ctx context.Context, req *iam_pb.PutGroupRequest) (*iam_pb.PutGroupResponse, error) {
+	if req.Group == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "group is required")
+	}
+	glog.V(1).Infof("IAM: received group update for %s", req.Group.Name)
+	if err := s3a.iam.PutGroup(req.Group); err != nil {
+		glog.Errorf("failed to update group cache for %s: %v", req.Group.Name, err)
+		return nil, status.Errorf(codes.Internal, "failed to update group cache: %v", err)
+	}
+	return &iam_pb.PutGroupResponse{}, nil
+}
+
+func (s3a *S3ApiServer) RemoveGroup(ctx context.Context, req *iam_pb.RemoveGroupRequest) (*iam_pb.RemoveGroupResponse, error) {
+	if req.GroupName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "group name is required")
+	}
+	glog.V(1).Infof("IAM: received group removal for %s", req.GroupName)
+	s3a.iam.RemoveGroup(req.GroupName)
+	return &iam_pb.RemoveGroupResponse{}, nil
+}
+
 func (s3a *S3ApiServer) ListPolicies(ctx context.Context, req *iam_pb.ListPoliciesRequest) (*iam_pb.ListPoliciesResponse, error) {
 	resp := &iam_pb.ListPoliciesResponse{}
 	if s3a.iam == nil {

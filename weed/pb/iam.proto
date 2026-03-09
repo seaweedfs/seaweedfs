@@ -317,3 +317,17 @@ message RemoveIdentityRequest {
 
 message RemoveIdentityResponse {
 }
+
+message PutGroupRequest {
+    Group group = 1;
+}
+
+message PutGroupResponse {
+}
+
+message RemoveGroupRequest {
+    string group_name = 1;
+}
+
+message RemoveGroupResponse {
+}

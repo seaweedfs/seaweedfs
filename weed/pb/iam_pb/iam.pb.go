@@ -2772,6 +2772,166 @@ func (*RemoveIdentityResponse) Descriptor() ([]byte, []int) {
 	return file_iam_proto_rawDescGZIP(), []int{58}
 }
 
+type PutGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Group         *Group                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutGroupRequest) Reset() {
+	*x = PutGroupRequest{}
+	mi := &file_iam_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutGroupRequest) ProtoMessage() {}
+
+func (x *PutGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutGroupRequest.ProtoReflect.Descriptor instead.
+func (*PutGroupRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *PutGroupRequest) GetGroup() *Group {
+	if x != nil {
+		return x.Group
+	}
+	return nil
+}
+
+type PutGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PutGroupResponse) Reset() {
+	*x = PutGroupResponse{}
+	mi := &file_iam_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PutGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PutGroupResponse) ProtoMessage() {}
+
+func (x *PutGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PutGroupResponse.ProtoReflect.Descriptor instead.
+func (*PutGroupResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{60}
+}
+
+type RemoveGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupName     string                 `protobuf:"bytes,1,opt,name=group_name,json=groupName,proto3" json:"group_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveGroupRequest) Reset() {
+	*x = RemoveGroupRequest{}
+	mi := &file_iam_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveGroupRequest) ProtoMessage() {}
+
+func (x *RemoveGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveGroupRequest.ProtoReflect.Descriptor instead.
+func (*RemoveGroupRequest) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *RemoveGroupRequest) GetGroupName() string {
+	if x != nil {
+		return x.GroupName
+	}
+	return ""
+}
+
+type RemoveGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveGroupResponse) Reset() {
+	*x = RemoveGroupResponse{}
+	mi := &file_iam_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveGroupResponse) ProtoMessage() {}
+
+func (x *RemoveGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_iam_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveGroupResponse.ProtoReflect.Descriptor instead.
+func (*RemoveGroupResponse) Descriptor() ([]byte, []int) {
+	return file_iam_proto_rawDescGZIP(), []int{62}
+}
+
 var File_iam_proto protoreflect.FileDescriptor
 
 const file_iam_proto_rawDesc = "" +
@@ -2935,7 +3095,14 @@ const file_iam_proto_rawDesc = "" +
 	"\x13PutIdentityResponse\"3\n" +
 	"\x15RemoveIdentityRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\"\x18\n" +
-	"\x16RemoveIdentityResponse2\x99\r\n" +
+	"\x16RemoveIdentityResponse\"6\n" +
+	"\x0fPutGroupRequest\x12#\n" +
+	"\x05group\x18\x01 \x01(\v2\r.iam_pb.GroupR\x05group\"\x12\n" +
+	"\x10PutGroupResponse\"3\n" +
+	"\x12RemoveGroupRequest\x12\x1d\n" +
+	"\n" +
+	"group_name\x18\x01 \x01(\tR\tgroupName\"\x15\n" +
+	"\x13RemoveGroupResponse2\x99\r\n" +
 	"\x1fSeaweedIdentityAccessManagement\x12U\n" +
 	"\x10GetConfiguration\x12\x1f.iam_pb.GetConfigurationRequest\x1a .iam_pb.GetConfigurationResponse\x12U\n" +
 	"\x10PutConfiguration\x12\x1f.iam_pb.PutConfigurationRequest\x1a .iam_pb.PutConfigurationResponse\x12C\n" +
@@ -2974,7 +3141,7 @@ func file_iam_proto_rawDescGZIP() []byte {
 	return file_iam_proto_rawDescData
 }
 
-var file_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 59)
+var file_iam_proto_msgTypes = make([]protoimpl.MessageInfo, 63)
 var file_iam_proto_goTypes = []any{
 	(*GetConfigurationRequest)(nil),              // 0: iam_pb.GetConfigurationRequest
 	(*GetConfigurationResponse)(nil),             // 1: iam_pb.GetConfigurationResponse
@@ -3035,6 +3202,10 @@ var file_iam_proto_goTypes = []any{
 	(*PutIdentityResponse)(nil),                  // 56: iam_pb.PutIdentityResponse
 	(*RemoveIdentityRequest)(nil),                // 57: iam_pb.RemoveIdentityRequest
 	(*RemoveIdentityResponse)(nil),               // 58: iam_pb.RemoveIdentityResponse
+	(*PutGroupRequest)(nil),                      // 59: iam_pb.PutGroupRequest
+	(*PutGroupResponse)(nil),                     // 60: iam_pb.PutGroupResponse
+	(*RemoveGroupRequest)(nil),                   // 61: iam_pb.RemoveGroupRequest
+	(*RemoveGroupResponse)(nil),                  // 62: iam_pb.RemoveGroupResponse
 }
 var file_iam_proto_depIdxs = []int32{
 	28, // 0: iam_pb.GetConfigurationResponse.configuration:type_name -> iam_pb.S3ApiConfiguration
@@ -3060,51 +3231,52 @@ var file_iam_proto_depIdxs = []int32{
 	33, // 20: iam_pb.ListServiceAccountsResponse.service_accounts:type_name -> iam_pb.ServiceAccount
 	33, // 21: iam_pb.GetServiceAccountByAccessKeyResponse.service_account:type_name -> iam_pb.ServiceAccount
 	30, // 22: iam_pb.PutIdentityRequest.identity:type_name -> iam_pb.Identity
-	0,  // 23: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:input_type -> iam_pb.GetConfigurationRequest
-	2,  // 24: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:input_type -> iam_pb.PutConfigurationRequest
-	4,  // 25: iam_pb.SeaweedIdentityAccessManagement.CreateUser:input_type -> iam_pb.CreateUserRequest
-	6,  // 26: iam_pb.SeaweedIdentityAccessManagement.GetUser:input_type -> iam_pb.GetUserRequest
-	8,  // 27: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:input_type -> iam_pb.UpdateUserRequest
-	10, // 28: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:input_type -> iam_pb.DeleteUserRequest
-	12, // 29: iam_pb.SeaweedIdentityAccessManagement.ListUsers:input_type -> iam_pb.ListUsersRequest
-	14, // 30: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:input_type -> iam_pb.CreateAccessKeyRequest
-	16, // 31: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:input_type -> iam_pb.DeleteAccessKeyRequest
-	18, // 32: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:input_type -> iam_pb.GetUserByAccessKeyRequest
-	34, // 33: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:input_type -> iam_pb.PutPolicyRequest
-	36, // 34: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:input_type -> iam_pb.GetPolicyRequest
-	38, // 35: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
-	40, // 36: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
-	43, // 37: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:input_type -> iam_pb.CreateServiceAccountRequest
-	45, // 38: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:input_type -> iam_pb.UpdateServiceAccountRequest
-	47, // 39: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:input_type -> iam_pb.DeleteServiceAccountRequest
-	49, // 40: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:input_type -> iam_pb.GetServiceAccountRequest
-	51, // 41: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:input_type -> iam_pb.ListServiceAccountsRequest
-	53, // 42: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:input_type -> iam_pb.GetServiceAccountByAccessKeyRequest
-	1,  // 43: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:output_type -> iam_pb.GetConfigurationResponse
-	3,  // 44: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:output_type -> iam_pb.PutConfigurationResponse
-	5,  // 45: iam_pb.SeaweedIdentityAccessManagement.CreateUser:output_type -> iam_pb.CreateUserResponse
-	7,  // 46: iam_pb.SeaweedIdentityAccessManagement.GetUser:output_type -> iam_pb.GetUserResponse
-	9,  // 47: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:output_type -> iam_pb.UpdateUserResponse
-	11, // 48: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:output_type -> iam_pb.DeleteUserResponse
-	13, // 49: iam_pb.SeaweedIdentityAccessManagement.ListUsers:output_type -> iam_pb.ListUsersResponse
-	15, // 50: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:output_type -> iam_pb.CreateAccessKeyResponse
-	17, // 51: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:output_type -> iam_pb.DeleteAccessKeyResponse
-	19, // 52: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:output_type -> iam_pb.GetUserByAccessKeyResponse
-	35, // 53: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:output_type -> iam_pb.PutPolicyResponse
-	37, // 54: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:output_type -> iam_pb.GetPolicyResponse
-	39, // 55: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
-	41, // 56: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
-	44, // 57: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:output_type -> iam_pb.CreateServiceAccountResponse
-	46, // 58: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:output_type -> iam_pb.UpdateServiceAccountResponse
-	48, // 59: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:output_type -> iam_pb.DeleteServiceAccountResponse
-	50, // 60: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:output_type -> iam_pb.GetServiceAccountResponse
-	52, // 61: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:output_type -> iam_pb.ListServiceAccountsResponse
-	54, // 62: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:output_type -> iam_pb.GetServiceAccountByAccessKeyResponse
-	43, // [43:63] is the sub-list for method output_type
-	23, // [23:43] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	29, // 23: iam_pb.PutGroupRequest.group:type_name -> iam_pb.Group
+	0,  // 24: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:input_type -> iam_pb.GetConfigurationRequest
+	2,  // 25: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:input_type -> iam_pb.PutConfigurationRequest
+	4,  // 26: iam_pb.SeaweedIdentityAccessManagement.CreateUser:input_type -> iam_pb.CreateUserRequest
+	6,  // 27: iam_pb.SeaweedIdentityAccessManagement.GetUser:input_type -> iam_pb.GetUserRequest
+	8,  // 28: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:input_type -> iam_pb.UpdateUserRequest
+	10, // 29: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:input_type -> iam_pb.DeleteUserRequest
+	12, // 30: iam_pb.SeaweedIdentityAccessManagement.ListUsers:input_type -> iam_pb.ListUsersRequest
+	14, // 31: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:input_type -> iam_pb.CreateAccessKeyRequest
+	16, // 32: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:input_type -> iam_pb.DeleteAccessKeyRequest
+	18, // 33: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:input_type -> iam_pb.GetUserByAccessKeyRequest
+	34, // 34: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:input_type -> iam_pb.PutPolicyRequest
+	36, // 35: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:input_type -> iam_pb.GetPolicyRequest
+	38, // 36: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:input_type -> iam_pb.ListPoliciesRequest
+	40, // 37: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:input_type -> iam_pb.DeletePolicyRequest
+	43, // 38: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:input_type -> iam_pb.CreateServiceAccountRequest
+	45, // 39: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:input_type -> iam_pb.UpdateServiceAccountRequest
+	47, // 40: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:input_type -> iam_pb.DeleteServiceAccountRequest
+	49, // 41: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:input_type -> iam_pb.GetServiceAccountRequest
+	51, // 42: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:input_type -> iam_pb.ListServiceAccountsRequest
+	53, // 43: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:input_type -> iam_pb.GetServiceAccountByAccessKeyRequest
+	1,  // 44: iam_pb.SeaweedIdentityAccessManagement.GetConfiguration:output_type -> iam_pb.GetConfigurationResponse
+	3,  // 45: iam_pb.SeaweedIdentityAccessManagement.PutConfiguration:output_type -> iam_pb.PutConfigurationResponse
+	5,  // 46: iam_pb.SeaweedIdentityAccessManagement.CreateUser:output_type -> iam_pb.CreateUserResponse
+	7,  // 47: iam_pb.SeaweedIdentityAccessManagement.GetUser:output_type -> iam_pb.GetUserResponse
+	9,  // 48: iam_pb.SeaweedIdentityAccessManagement.UpdateUser:output_type -> iam_pb.UpdateUserResponse
+	11, // 49: iam_pb.SeaweedIdentityAccessManagement.DeleteUser:output_type -> iam_pb.DeleteUserResponse
+	13, // 50: iam_pb.SeaweedIdentityAccessManagement.ListUsers:output_type -> iam_pb.ListUsersResponse
+	15, // 51: iam_pb.SeaweedIdentityAccessManagement.CreateAccessKey:output_type -> iam_pb.CreateAccessKeyResponse
+	17, // 52: iam_pb.SeaweedIdentityAccessManagement.DeleteAccessKey:output_type -> iam_pb.DeleteAccessKeyResponse
+	19, // 53: iam_pb.SeaweedIdentityAccessManagement.GetUserByAccessKey:output_type -> iam_pb.GetUserByAccessKeyResponse
+	35, // 54: iam_pb.SeaweedIdentityAccessManagement.PutPolicy:output_type -> iam_pb.PutPolicyResponse
+	37, // 55: iam_pb.SeaweedIdentityAccessManagement.GetPolicy:output_type -> iam_pb.GetPolicyResponse
+	39, // 56: iam_pb.SeaweedIdentityAccessManagement.ListPolicies:output_type -> iam_pb.ListPoliciesResponse
+	41, // 57: iam_pb.SeaweedIdentityAccessManagement.DeletePolicy:output_type -> iam_pb.DeletePolicyResponse
+	44, // 58: iam_pb.SeaweedIdentityAccessManagement.CreateServiceAccount:output_type -> iam_pb.CreateServiceAccountResponse
+	46, // 59: iam_pb.SeaweedIdentityAccessManagement.UpdateServiceAccount:output_type -> iam_pb.UpdateServiceAccountResponse
+	48, // 60: iam_pb.SeaweedIdentityAccessManagement.DeleteServiceAccount:output_type -> iam_pb.DeleteServiceAccountResponse
+	50, // 61: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccount:output_type -> iam_pb.GetServiceAccountResponse
+	52, // 62: iam_pb.SeaweedIdentityAccessManagement.ListServiceAccounts:output_type -> iam_pb.ListServiceAccountsResponse
+	54, // 63: iam_pb.SeaweedIdentityAccessManagement.GetServiceAccountByAccessKey:output_type -> iam_pb.GetServiceAccountByAccessKeyResponse
+	44, // [44:64] is the sub-list for method output_type
+	24, // [24:44] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_iam_proto_init() }
@@ -3118,7 +3290,7 @@ func file_iam_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_iam_proto_rawDesc), len(file_iam_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   59,
+			NumMessages:   63,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
