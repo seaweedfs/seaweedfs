@@ -436,10 +436,13 @@ func resolveBalanceDestination(activeTopology *topology.ActiveTopology, selected
 				if node.Id != targetServer {
 					continue
 				}
-				// Find a disk matching the volume's disk type
+				// Find an available disk matching the volume's disk type
 				for diskTypeName, diskInfo := range node.DiskInfos {
 					if diskTypeName != selectedVolume.DiskType {
 						continue
+					}
+					if diskInfo.MaxVolumeCount > 0 && diskInfo.VolumeCount >= diskInfo.MaxVolumeCount {
+						continue // disk is full
 					}
 					targetAddress, err := util.ResolveServerAddress(node.Id, activeTopology)
 					if err != nil {
@@ -454,7 +457,7 @@ func resolveBalanceDestination(activeTopology *topology.ActiveTopology, selected
 						ExpectedSize:  selectedVolume.Size,
 					}, nil
 				}
-				return nil, fmt.Errorf("target server %s has no disk of type %s", targetServer, selectedVolume.DiskType)
+				return nil, fmt.Errorf("target server %s has no available disk of type %s", targetServer, selectedVolume.DiskType)
 			}
 		}
 	}
