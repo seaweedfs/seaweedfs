@@ -243,8 +243,13 @@ spec:
               {{- if $httpsPort }}
               -s3.port.https={{ $httpsPort }} \
               {{- end }}
+              {{- if .Values.s3.tlsSecret }}
+              -s3.cert.file=/usr/local/share/ca-certificates/s3/tls.crt \
+              -s3.key.file=/usr/local/share/ca-certificates/s3/tls.key \
+              {{- else }}
               -s3.cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -s3.key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- end }}
               {{- end }}
               {{- if or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/s3/seaweedfs_s3_config \
@@ -346,6 +351,11 @@ spec:
             - name: client-cert
               mountPath: /usr/local/share/ca-certificates/client/
               readOnly: true
+            {{- if .Values.s3.tlsSecret }}
+            - name: s3-tls-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/s3/
+            {{- end }}
             {{- end }}
             {{ tpl .Values.allInOne.extraVolumeMounts . | nindent 12 }}
           ports:
@@ -473,6 +483,11 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- if .Values.s3.tlsSecret }}
+        - name: s3-tls-cert
+          secret:
+            secretName: {{ .Values.s3.tlsSecret }}
+        {{- end }}
         {{- end }}
         {{ tpl .Values.allInOne.extraVolumes . | nindent 8 }}
       {{- if .Values.allInOne.nodeSelector }}

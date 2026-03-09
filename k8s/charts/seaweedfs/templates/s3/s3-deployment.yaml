@@ -127,8 +127,13 @@ spec:
               {{- if .Values.s3.httpsPort }}
               -port.https={{ .Values.s3.httpsPort }} \
               {{- end }}
+              {{- if .Values.s3.tlsSecret }}
+              -cert.file=/usr/local/share/ca-certificates/s3/tls.crt \
+              -key.file=/usr/local/share/ca-certificates/s3/tls.key \
+              {{- else }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- end }}
               {{- end }}
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
@@ -176,6 +181,11 @@ spec:
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
+            {{- if .Values.s3.tlsSecret }}
+            - name: s3-tls-cert
+              readOnly: true
+              mountPath: /usr/local/share/ca-certificates/s3/
+            {{- end }}
             {{- end }}
             {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -267,6 +277,11 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- if .Values.s3.tlsSecret }}
+        - name: s3-tls-cert
+          secret:
+            secretName: {{ .Values.s3.tlsSecret }}
+        {{- end }}
         {{- end }}
         {{ tpl .Values.s3.extraVolumes . | indent 8 | trim }}
       {{- if .Values.s3.nodeSelector }}
