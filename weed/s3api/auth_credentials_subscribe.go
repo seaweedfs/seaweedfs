@@ -19,7 +19,9 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 		message := resp.EventNotification
 
-		// For rename/move operations, NewParentPath contains the destination directory
+		// For rename/move operations, NewParentPath contains the destination directory.
+		// We process both source and destination dirs so moves out of watched
+		// directories (e.g., IAM config dirs) are not missed.
 		dir := resp.Directory
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
@@ -30,6 +32,11 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
+
+		// For moves across directories, also notify handlers about the source directory
+		if message.NewParentPath != "" && resp.Directory != message.NewParentPath {
+			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, message.NewEntry)
+		}
 
 		return nil
 	}
