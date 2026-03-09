@@ -451,12 +451,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                             <p class="text-muted small mb-2">Leave blank to auto-generate.</p>
                             <div class="mb-2">
                                 <label for="newAccessKeyInput" class="form-label form-label-sm">Access Key</label>
-                                <input type="text" class="form-control form-control-sm" id="newAccessKeyInput" placeholder="Auto-generated if empty">
+                                <input type="text" class="form-control form-control-sm" id="newAccessKeyInput" placeholder="Auto-generated if empty" minlength="4" maxlength="128">
                             </div>
                             <div class="mb-2">
                                 <label for="newSecretKeyInput" class="form-label form-label-sm">Secret Key</label>
                                 <div class="input-group input-group-sm">
-                                    <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty">
+                                    <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty" minlength="8" maxlength="128">
                                     <button class="btn btn-outline-secondary" type="button" onclick="toggleSecretKeyVisibility()" aria-label="Toggle secret key visibility">
                                         <i class="fas fa-eye" id="secretKeyToggleIcon"></i>
                                     </button>
@@ -1407,8 +1407,14 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Create new access key
         async function createAccessKey() {
             const username = document.getElementById('accessKeysUsername').textContent;
-            const accessKey = document.getElementById('newAccessKeyInput').value.trim();
-            const secretKey = document.getElementById('newSecretKeyInput').value.trim();
+            const accessKeyInput = document.getElementById('newAccessKeyInput');
+            const secretKeyInput = document.getElementById('newSecretKeyInput');
+            if ((accessKeyInput.value.trim() && !accessKeyInput.reportValidity()) ||
+                (secretKeyInput.value.trim() && !secretKeyInput.reportValidity())) {
+                return;
+            }
+            const accessKey = accessKeyInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
 
             const body = {};
             if (accessKey) body.access_key = accessKey;

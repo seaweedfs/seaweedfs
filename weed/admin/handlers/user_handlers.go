@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -156,17 +158,25 @@ func (h *UserHandlers) CreateAccessKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req dash.CreateAccessKeyRequest
-	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
-		return
+	var req *dash.CreateAccessKeyRequest
+	var body dash.CreateAccessKeyRequest
+	if err := decodeJSONBody(newJSONMaxReader(w, r), &body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request: "+err.Error())
+			return
+		}
+		// Empty body: auto-generate both keys
+	} else {
+		req = &body
 	}
 
-	accessKey, err := h.adminServer.CreateAccessKey(username, &req)
+	accessKey, err := h.adminServer.CreateAccessKey(username, req)
 	if err != nil {
 		glog.Errorf("Failed to create access key for user %s: %v", username, err)
 		if strings.Contains(err.Error(), "already in use") {
 			writeJSONError(w, http.StatusConflict, err.Error())
+		} else if strings.Contains(err.Error(), "not found") {
+			writeJSONError(w, http.StatusNotFound, err.Error())
 		} else if strings.Contains(err.Error(), "must be") {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 		} else {

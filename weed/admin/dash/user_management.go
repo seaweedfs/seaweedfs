@@ -260,7 +260,7 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 	// Verify access key is globally unique (best-effort; the store also enforces this)
 	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
 	if err == nil && existingUser != nil {
-		return nil, fmt.Errorf("access key %q is already in use", accessKey)
+		return nil, fmt.Errorf("access key already in use")
 	}
 
 	credential := &iam_pb.Credential{
