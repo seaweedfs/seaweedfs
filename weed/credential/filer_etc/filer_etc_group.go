@@ -47,7 +47,18 @@ func (store *FilerEtcStore) loadGroupsFromMultiFile(ctx context.Context, s3cfg *
 				if err := json.Unmarshal(content, g); err != nil {
 					return fmt.Errorf("failed to unmarshal group %s: %w", entry.Name, err)
 				}
-				s3cfg.Groups = append(s3cfg.Groups, g)
+				// Merge: overwrite existing group with same name or append
+				found := false
+				for i, existing := range s3cfg.Groups {
+					if existing.Name == g.Name {
+						s3cfg.Groups[i] = g
+						found = true
+						break
+					}
+				}
+				if !found {
+					s3cfg.Groups = append(s3cfg.Groups, g)
+				}
 			}
 		}
 		return nil
