@@ -279,6 +279,10 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 						delete(policies.InlinePolicies, userName)
 						policies.InlinePolicies[newUserName] = userPolicies
 						if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+							// Rollback: restore identity name and inline policies
+							ident.Name = userName
+							delete(policies.InlinePolicies, newUserName)
+							policies.InlinePolicies[userName] = userPolicies
 							return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
 						}
 					}
