@@ -33,11 +33,20 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
 
-		// For moves across directories, also notify handlers about the source directory
+		// For moves across directories, replay a delete event for the source directory
 		if message.NewParentPath != "" && resp.Directory != message.NewParentPath {
 			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
 			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
+		}
+
+		// For same-directory renames, replay a delete event for the old name
+		// so handlers can clean up stale state (e.g., old bucket names)
+		if message.OldEntry != nil && message.NewEntry != nil &&
+			(message.NewParentPath == "" || message.NewParentPath == resp.Directory) &&
+			message.OldEntry.Name != message.NewEntry.Name {
+			_ = s3a.onBucketMetadataChange(dir, message.OldEntry, nil)
+			_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, nil)
 		}
 
 		return nil
