@@ -196,7 +196,6 @@ func TestIAMGroupPolicyAttachment(t *testing.T) {
 		GroupName: aws.String(groupName),
 	})
 	require.NoError(t, err)
-	defer iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
 
 	createPolicyResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
 		PolicyName:     aws.String(policyName),
@@ -204,7 +203,16 @@ func TestIAMGroupPolicyAttachment(t *testing.T) {
 	})
 	require.NoError(t, err)
 	policyArn := createPolicyResp.Policy.Arn
-	defer iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+
+	// Cleanup in correct order: detach policy, delete group, delete policy
+	t.Cleanup(func() {
+		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+			GroupName: aws.String(groupName),
+			PolicyArn: policyArn,
+		})
+		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+	})
 
 	t.Run("attach_group_policy", func(t *testing.T) {
 		_, err := iamClient.AttachGroupPolicy(&iam.AttachGroupPolicyInput{
@@ -269,23 +277,12 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		UserName: aws.String(userName),
 	})
 	require.NoError(t, err)
-	defer func() {
-		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
-			GroupName: aws.String(groupName),
-			UserName:  aws.String(userName),
-		})
-		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
-	}()
 
 	// Create access key for the user
 	keyResp, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{
 		UserName: aws.String(userName),
 	})
 	require.NoError(t, err)
-	defer iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
-		UserName:    aws.String(userName),
-		AccessKeyId: keyResp.AccessKey.AccessKeyId,
-	})
 
 	accessKeyId := *keyResp.AccessKey.AccessKeyId
 	secretKey := *keyResp.AccessKey.SecretAccessKey
@@ -298,13 +295,6 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		GroupName: aws.String(groupName),
 	})
 	require.NoError(t, err)
-	defer func() {
-		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
-			GroupName: aws.String(groupName),
-			PolicyArn: aws.String("arn:aws:iam:::policy/" + policyName),
-		})
-		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
-	}()
 
 	// Create policy
 	createPolicyResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
@@ -313,7 +303,35 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 	})
 	require.NoError(t, err)
 	policyArn := createPolicyResp.Policy.Arn
-	defer iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+
+	// Cleanup in correct order: remove user from group, detach policy,
+	// delete access key, delete user, delete group, delete policy
+	t.Cleanup(func() {
+		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
+			GroupName: aws.String(groupName),
+			UserName:  aws.String(userName),
+		})
+		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+			GroupName: aws.String(groupName),
+			PolicyArn: policyArn,
+		})
+		iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			UserName:    aws.String(userName),
+			AccessKeyId: keyResp.AccessKey.AccessKeyId,
+		})
+		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
+		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: policyArn})
+	})
+
+	// Register bucket cleanup on parent test so it runs after all subtests
+	t.Cleanup(func() {
+		userS3Client.DeleteObject(&s3.DeleteObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String("test-key"),
+		})
+		userS3Client.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
+	})
 
 	t.Run("user_without_group_denied", func(t *testing.T) {
 		// User has no policies and is not in any group — should be denied
@@ -345,9 +363,6 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 			})
 			return err == nil
 		}, 10*time.Second, 500*time.Millisecond, "User with group policy should be allowed")
-		t.Cleanup(func() {
-			userS3Client.DeleteBucket(&s3.DeleteBucketInput{Bucket: aws.String(bucketName)})
-		})
 
 		// Should also be able to put/get objects
 		_, err = userS3Client.PutObject(&s3.PutObjectInput{
@@ -401,32 +416,35 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 	// Create user, group, policy
 	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
 	require.NoError(t, err)
-	defer iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
 
 	keyResp, err := iamClient.CreateAccessKey(&iam.CreateAccessKeyInput{UserName: aws.String(userName)})
 	require.NoError(t, err)
-	defer iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
-		UserName: aws.String(userName), AccessKeyId: keyResp.AccessKey.AccessKeyId,
-	})
 
 	_, err = iamClient.CreateGroup(&iam.CreateGroupInput{GroupName: aws.String(groupName)})
 	require.NoError(t, err)
-	defer func() {
-		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
-			GroupName: aws.String(groupName),
-			PolicyArn: aws.String("arn:aws:iam:::policy/" + policyName),
-		})
-		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
-			GroupName: aws.String(groupName), UserName: aws.String(userName),
-		})
-		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
-	}()
 
 	createPolicyResp, err := iamClient.CreatePolicy(&iam.CreatePolicyInput{
 		PolicyName: aws.String(policyName), PolicyDocument: aws.String(policyDoc),
 	})
 	require.NoError(t, err)
-	defer iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createPolicyResp.Policy.Arn})
+
+	// Cleanup in correct order: remove user from group, detach policy,
+	// delete access key, delete user, delete group, delete policy
+	t.Cleanup(func() {
+		iamClient.RemoveUserFromGroup(&iam.RemoveUserFromGroupInput{
+			GroupName: aws.String(groupName), UserName: aws.String(userName),
+		})
+		iamClient.DetachGroupPolicy(&iam.DetachGroupPolicyInput{
+			GroupName: aws.String(groupName),
+			PolicyArn: aws.String("arn:aws:iam:::policy/" + policyName),
+		})
+		iamClient.DeleteAccessKey(&iam.DeleteAccessKeyInput{
+			UserName: aws.String(userName), AccessKeyId: keyResp.AccessKey.AccessKeyId,
+		})
+		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
+		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+		iamClient.DeletePolicy(&iam.DeletePolicyInput{PolicyArn: createPolicyResp.Policy.Arn})
+	})
 
 	// Setup: attach policy, add user, create bucket with admin
 	_, err = iamClient.AttachGroupPolicy(&iam.AttachGroupPolicyInput{
