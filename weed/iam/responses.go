@@ -280,3 +280,93 @@ type UpdateServiceAccountResponse struct {
 	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateServiceAccountResponse"`
 	CommonResponse
 }
+
+// CreateGroupResponse is the response for CreateGroup action.
+type CreateGroupResponse struct {
+	XMLName           xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ CreateGroupResponse"`
+	CreateGroupResult struct {
+		Group iam.Group `xml:"Group"`
+	} `xml:"CreateGroupResult"`
+	CommonResponse
+}
+
+// DeleteGroupResponse is the response for DeleteGroup action.
+type DeleteGroupResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteGroupResponse"`
+	CommonResponse
+}
+
+// UpdateGroupResponse is the response for UpdateGroup action.
+type UpdateGroupResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ UpdateGroupResponse"`
+	CommonResponse
+}
+
+// GetGroupResponse is the response for GetGroup action.
+type GetGroupResponse struct {
+	XMLName        xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetGroupResponse"`
+	GetGroupResult struct {
+		Group       iam.Group   `xml:"Group"`
+		Users       []*iam.User `xml:"Users>member"`
+		IsTruncated bool        `xml:"IsTruncated"`
+		Marker      string      `xml:"Marker,omitempty"`
+	} `xml:"GetGroupResult"`
+	CommonResponse
+}
+
+// ListGroupsResponse is the response for ListGroups action.
+type ListGroupsResponse struct {
+	XMLName          xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupsResponse"`
+	ListGroupsResult struct {
+		Groups      []*iam.Group `xml:"Groups>member"`
+		IsTruncated bool         `xml:"IsTruncated"`
+		Marker      string       `xml:"Marker,omitempty"`
+	} `xml:"ListGroupsResult"`
+	CommonResponse
+}
+
+// AddUserToGroupResponse is the response for AddUserToGroup action.
+type AddUserToGroupResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AddUserToGroupResponse"`
+	CommonResponse
+}
+
+// RemoveUserFromGroupResponse is the response for RemoveUserFromGroup action.
+type RemoveUserFromGroupResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ RemoveUserFromGroupResponse"`
+	CommonResponse
+}
+
+// AttachGroupPolicyResponse is the response for AttachGroupPolicy action.
+type AttachGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ AttachGroupPolicyResponse"`
+	CommonResponse
+}
+
+// DetachGroupPolicyResponse is the response for DetachGroupPolicy action.
+type DetachGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DetachGroupPolicyResponse"`
+	CommonResponse
+}
+
+// ListAttachedGroupPoliciesResponse is the response for ListAttachedGroupPolicies action.
+type ListAttachedGroupPoliciesResponse struct {
+	XMLName                         xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListAttachedGroupPoliciesResponse"`
+	ListAttachedGroupPoliciesResult struct {
+		AttachedPolicies []*iam.AttachedPolicy `xml:"AttachedPolicies>member"`
+		IsTruncated      bool                  `xml:"IsTruncated"`
+		Marker           string                `xml:"Marker,omitempty"`
+	} `xml:"ListAttachedGroupPoliciesResult"`
+	CommonResponse
+}
+
+// ListGroupsForUserResponse is the response for ListGroupsForUser action.
+type ListGroupsForUserResponse struct {
+	XMLName                  xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupsForUserResponse"`
+	ListGroupsForUserResult struct {
+		Groups      []*iam.Group `xml:"Groups>member"`
+		IsTruncated bool         `xml:"IsTruncated"`
+		Marker      string       `xml:"Marker,omitempty"`
+	} `xml:"ListGroupsForUserResult"`
+	CommonResponse
+}

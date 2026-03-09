@@ -113,6 +113,18 @@ type (
 	iamListServiceAccountsResponse  = iamlib.ListServiceAccountsResponse
 	iamGetServiceAccountResponse    = iamlib.GetServiceAccountResponse
 	iamUpdateServiceAccountResponse = iamlib.UpdateServiceAccountResponse
+	// Group response types
+	iamCreateGroupResponse               = iamlib.CreateGroupResponse
+	iamDeleteGroupResponse               = iamlib.DeleteGroupResponse
+	iamUpdateGroupResponse               = iamlib.UpdateGroupResponse
+	iamGetGroupResponse                  = iamlib.GetGroupResponse
+	iamListGroupsResponse                = iamlib.ListGroupsResponse
+	iamAddUserToGroupResponse            = iamlib.AddUserToGroupResponse
+	iamRemoveUserFromGroupResponse       = iamlib.RemoveUserFromGroupResponse
+	iamAttachGroupPolicyResponse         = iamlib.AttachGroupPolicyResponse
+	iamDetachGroupPolicyResponse         = iamlib.DetachGroupPolicyResponse
+	iamListAttachedGroupPoliciesResponse = iamlib.ListAttachedGroupPoliciesResponse
+	iamListGroupsForUserResponse         = iamlib.ListGroupsForUserResponse
 )
 
 // Helper function wrappers using shared package
@@ -304,6 +316,15 @@ func (e *EmbeddedIamApi) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName s
 				}
 			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			// Remove user from all groups
+			for _, g := range s3cfg.Groups {
+				for j, m := range g.Members {
+					if m == userName {
+						g.Members = append(g.Members[:j], g.Members[j+1:]...)
+						break
+					}
+				}
+			}
 			return resp, nil
 		}
 	}
@@ -327,17 +348,51 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	resp := &iamUpdateUserResponse{}
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
-	if newUserName != "" {
-		for _, ident := range s3cfg.Identities {
-			if userName == ident.Name {
-				ident.Name = newUserName
-				return resp, nil
-			}
-		}
-	} else {
+	if newUserName == "" {
 		return resp, nil
 	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+
+	// Find the source identity first
+	var sourceIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			sourceIdent = ident
+			break
+		}
+	}
+	if sourceIdent == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
+	}
+
+	// No-op if renaming to the same name
+	if newUserName == userName {
+		return resp, nil
+	}
+
+	// Check for name collision before renaming
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == newUserName {
+			return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("user %s already exists", newUserName)}
+		}
+	}
+
+	sourceIdent.Name = newUserName
+	// Update group membership references
+	for _, g := range s3cfg.Groups {
+		for j, m := range g.Members {
+			if m == userName {
+				g.Members[j] = newUserName
+				break
+			}
+		}
+	}
+	// Update service account parent references
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.ParentUser == userName {
+			sa.ParentUser = newUserName
+		}
+	}
+	return resp, nil
 }
 
 // CreateAccessKey creates an access key for a user.
@@ -477,6 +532,28 @@ func (e *EmbeddedIamApi) DeletePolicy(ctx context.Context, values url.Values) (*
 				return resp, &iamError{
 					Code:  iam.ErrCodeDeleteConflictException,
 					Error: fmt.Errorf("policy %s is attached to user %s", policyName, user),
+				}
+			}
+		}
+	}
+	// Check if policy is attached to any group
+	groupNames, err := e.credentialManager.ListGroups(ctx)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+	for _, gn := range groupNames {
+		g, err := e.credentialManager.GetGroup(ctx, gn)
+		if err != nil {
+			if errors.Is(err, credential.ErrGroupNotFound) {
+				continue
+			}
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to get group %s: %w", gn, err)}
+		}
+		for _, pn := range g.PolicyNames {
+			if pn == policyName {
+				return resp, &iamError{
+					Code:  iam.ErrCodeDeleteConflictException,
+					Error: fmt.Errorf("policy %s is attached to group %s", policyName, gn),
 				}
 			}
 		}
@@ -1405,6 +1482,275 @@ func (e *EmbeddedIamApi) UpdateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("service account %s not found", saId)}
 }
 
+// Group Management Handlers
+
+func (e *EmbeddedIamApi) CreateGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamCreateGroupResponse, *iamError) {
+	resp := &iamCreateGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("group %s already exists", groupName)}
+		}
+	}
+	s3cfg.Groups = append(s3cfg.Groups, &iam_pb.Group{Name: groupName})
+	resp.CreateGroupResult.Group.GroupName = &groupName
+	return resp, nil
+}
+
+func (e *EmbeddedIamApi) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDeleteGroupResponse, *iamError) {
+	resp := &iamDeleteGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for i, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			if len(g.Members) > 0 {
+				return resp, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d member(s). Remove all members first", groupName, len(g.Members))}
+			}
+			if len(g.PolicyNames) > 0 {
+				return resp, &iamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d attached policy(ies). Detach all policies first", groupName, len(g.PolicyNames))}
+			}
+			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamUpdateGroupResponse, *iamError) {
+	resp := &iamUpdateGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			if disabled := values.Get("Disabled"); disabled != "" {
+				if disabled != "true" && disabled != "false" {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("Disabled must be 'true' or 'false'")}
+				}
+				g.Disabled = disabled == "true"
+			}
+			if newName := values.Get("NewGroupName"); newName != "" && newName != g.Name {
+				for _, other := range s3cfg.Groups {
+					if other.Name == newName {
+						return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("group %s already exists", newName)}
+					}
+				}
+				g.Name = newName
+			}
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) GetGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamGetGroupResponse, *iamError) {
+	resp := &iamGetGroupResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			resp.GetGroupResult.Group.GroupName = &g.Name
+			for _, member := range g.Members {
+				memberName := member
+				resp.GetGroupResult.Users = append(resp.GetGroupResult.Users, &iam.User{UserName: &memberName})
+			}
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) ListGroups(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) *iamListGroupsResponse {
+	resp := &iamListGroupsResponse{}
+	for _, g := range s3cfg.Groups {
+		name := g.Name
+		resp.ListGroupsResult.Groups = append(resp.ListGroupsResult.Groups, &iam.Group{GroupName: &name})
+	}
+	return resp
+}
+
+func (e *EmbeddedIamApi) AddUserToGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamAddUserToGroupResponse, *iamError) {
+	resp := &iamAddUserToGroupResponse{}
+	groupName := values.Get("GroupName")
+	userName := values.Get("UserName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	// Verify user exists
+	userFound := false
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			userFound = true
+			break
+		}
+	}
+	if !userFound {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s does not exist", userName)}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			// Check if already a member (idempotent)
+			for _, m := range g.Members {
+				if m == userName {
+					return resp, nil
+				}
+			}
+			g.Members = append(g.Members, userName)
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) RemoveUserFromGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamRemoveUserFromGroupResponse, *iamError) {
+	resp := &iamRemoveUserFromGroupResponse{}
+	groupName := values.Get("GroupName")
+	userName := values.Get("UserName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			for i, m := range g.Members {
+				if m == userName {
+					g.Members = append(g.Members[:i], g.Members[i+1:]...)
+					return resp, nil
+				}
+			}
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s is not a member of group %s", userName, groupName)}
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) AttachGroupPolicy(ctx context.Context, s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamAttachGroupPolicyResponse, *iamError) {
+	resp := &iamAttachGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyArn := values.Get("PolicyArn")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	// Verify policy exists via credential manager
+	if e.credentialManager == nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("credential manager not available to validate policy %s", policyName)}
+	}
+	policy, pErr := e.credentialManager.GetPolicy(ctx, policyName)
+	if pErr != nil {
+		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to look up policy %s: %w", policyName, pErr)}
+	}
+	if policy == nil {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			// Check if already attached (idempotent)
+			for _, p := range g.PolicyNames {
+				if p == policyName {
+					return resp, nil
+				}
+			}
+			g.PolicyNames = append(g.PolicyNames, policyName)
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) DetachGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDetachGroupPolicyResponse, *iamError) {
+	resp := &iamDetachGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyArn := values.Get("PolicyArn")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	policyName, err := iamPolicyNameFromArn(policyArn)
+	if err != nil {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: err}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			for i, p := range g.PolicyNames {
+				if p == policyName {
+					g.PolicyNames = append(g.PolicyNames[:i], g.PolicyNames[i+1:]...)
+					return resp, nil
+				}
+			}
+			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s is not attached to group %s", policyName, groupName)}
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) ListAttachedGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamListAttachedGroupPoliciesResponse, *iamError) {
+	resp := &iamListAttachedGroupPoliciesResponse{}
+	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			for _, policyName := range g.PolicyNames {
+				pn := policyName
+				policyArn := fmt.Sprintf("arn:aws:iam:::policy/%s", policyName)
+				resp.ListAttachedGroupPoliciesResult.AttachedPolicies = append(resp.ListAttachedGroupPoliciesResult.AttachedPolicies, &iam.AttachedPolicy{
+					PolicyName: &pn,
+					PolicyArn:  &policyArn,
+				})
+			}
+			return resp, nil
+		}
+	}
+	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+}
+
+func (e *EmbeddedIamApi) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamListGroupsForUserResponse, *iamError) {
+	resp := &iamListGroupsForUserResponse{}
+	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
+	// Verify user exists
+	userFound := false
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			userFound = true
+			break
+		}
+	}
+	if !userFound {
+		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("user %s does not exist", userName)}
+	}
+	// Build from s3cfg.Groups for consistency with freshly loaded config
+	for _, g := range s3cfg.Groups {
+		for _, m := range g.Members {
+			if m == userName {
+				name := g.Name
+				resp.ListGroupsForUserResult.Groups = append(resp.ListGroupsForUserResult.Groups, &iam.Group{GroupName: &name})
+				break
+			}
+		}
+	}
+	return resp, nil
+}
+
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.
 // According to AWS documentation: "If you do not specify a user name, IAM determines the user name
 // implicitly based on the Amazon Web Services access key ID signing the request."
@@ -1558,7 +1904,8 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 	action := values.Get("Action")
 	if e.readOnly {
 		switch action {
-		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount":
+		case "ListUsers", "ListAccessKeys", "GetUser", "GetUserPolicy", "ListAttachedUserPolicies", "ListPolicies", "GetPolicy", "ListPolicyVersions", "GetPolicyVersion", "ListServiceAccounts", "GetServiceAccount",
+			"GetGroup", "ListGroups", "ListAttachedGroupPolicies", "ListGroupsForUser":
 			// Allowed read-only actions
 		default:
 			return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrAccessDenied).Code, Error: fmt.Errorf("IAM write operations are disabled on this server")}
@@ -1745,6 +2092,73 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		if iamErr != nil {
 			return nil, iamErr
 		}
+	// Group actions
+	case "CreateGroup":
+		var iamErr *iamError
+		response, iamErr = e.CreateGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "DeleteGroup":
+		var iamErr *iamError
+		response, iamErr = e.DeleteGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "UpdateGroup":
+		var iamErr *iamError
+		response, iamErr = e.UpdateGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "GetGroup":
+		var iamErr *iamError
+		response, iamErr = e.GetGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "ListGroups":
+		response = e.ListGroups(s3cfg, values)
+		changed = false
+	case "AddUserToGroup":
+		var iamErr *iamError
+		response, iamErr = e.AddUserToGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "RemoveUserFromGroup":
+		var iamErr *iamError
+		response, iamErr = e.RemoveUserFromGroup(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "AttachGroupPolicy":
+		var iamErr *iamError
+		response, iamErr = e.AttachGroupPolicy(ctx, s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "DetachGroupPolicy":
+		var iamErr *iamError
+		response, iamErr = e.DetachGroupPolicy(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+	case "ListAttachedGroupPolicies":
+		var iamErr *iamError
+		response, iamErr = e.ListAttachedGroupPolicies(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
+	case "ListGroupsForUser":
+		var iamErr *iamError
+		response, iamErr = e.ListGroupsForUser(s3cfg, values)
+		if iamErr != nil {
+			return nil, iamErr
+		}
+		changed = false
 	default:
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: errors.New(s3err.GetAPIError(s3err.ErrNotImplemented).Description)}
 	}

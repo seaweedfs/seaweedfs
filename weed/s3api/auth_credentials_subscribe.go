@@ -19,7 +19,9 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 
 		message := resp.EventNotification
 
-		// For rename/move operations, NewParentPath contains the destination directory
+		// For rename/move operations, NewParentPath contains the destination directory.
+		// We process both source and destination dirs so moves out of watched
+		// directories (e.g., IAM config dirs) are not missed.
 		dir := resp.Directory
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
@@ -30,6 +32,22 @@ func (s3a *S3ApiServer) subscribeMetaEvents(clientName string, lastTsNs int64, p
 		_ = s3a.onBucketMetadataChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onIamConfigChange(dir, message.OldEntry, message.NewEntry)
 		_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, message.NewEntry)
+
+		// For moves across directories, replay a delete event for the source directory
+		if message.NewParentPath != "" && resp.Directory != message.NewParentPath {
+			_ = s3a.onBucketMetadataChange(resp.Directory, message.OldEntry, nil)
+			_ = s3a.onIamConfigChange(resp.Directory, message.OldEntry, nil)
+			_ = s3a.onCircuitBreakerConfigChange(resp.Directory, message.OldEntry, nil)
+		}
+
+		// For same-directory renames, replay a delete event for the old name
+		// so handlers can clean up stale state (e.g., old bucket names)
+		if message.OldEntry != nil && message.NewEntry != nil &&
+			(message.NewParentPath == "" || message.NewParentPath == resp.Directory) &&
+			message.OldEntry.Name != message.NewEntry.Name {
+			_ = s3a.onBucketMetadataChange(dir, message.OldEntry, nil)
+			_ = s3a.onCircuitBreakerConfigChange(dir, message.OldEntry, nil)
+		}
 
 		return nil
 	}
@@ -93,8 +111,9 @@ func (s3a *S3ApiServer) onIamConfigChange(dir string, oldEntry *filer_pb.Entry, 
 	isIdentityDir := dir == filer.IamConfigDirectory+"/identities" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/identities/")
 	isPolicyDir := dir == filer.IamConfigDirectory+"/policies" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/policies/")
 	isServiceAccountDir := dir == filer.IamConfigDirectory+"/service_accounts" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/service_accounts/")
+	isGroupDir := dir == filer.IamConfigDirectory+"/groups" || strings.HasPrefix(dir, filer.IamConfigDirectory+"/groups/")
 
-	if isIdentityDir || isPolicyDir || isServiceAccountDir {
+	if isIdentityDir || isPolicyDir || isServiceAccountDir || isGroupDir {
 		// For multiple-file mode, any change in these directories should trigger a full reload
 		// from the credential manager (which handles the details of loading from multiple files).
 		if err := reloadIamConfig(dir); err != nil {

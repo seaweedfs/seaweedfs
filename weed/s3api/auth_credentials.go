@@ -49,6 +49,8 @@ type IdentityAccessManagement struct {
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
 	policies          map[string]*iam_pb.Policy
+	groups            map[string]*iam_pb.Group // group name -> group
+	userGroups        map[string][]string      // user name -> group names (reverse index)
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -563,6 +565,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	for _, policy := range config.Policies {
 		policies[policy.Name] = policy
 	}
+	groups := make(map[string]*iam_pb.Group)
+	userGroupsMap := make(map[string][]string)
+	for _, g := range config.Groups {
+		groups[g.Name] = g
+		if !g.Disabled {
+			for _, member := range g.Members {
+				userGroupsMap[member] = append(userGroupsMap[member], g.Name)
+			}
+		}
+	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
@@ -663,6 +675,8 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.groups = groups
+	iam.userGroups = userGroupsMap
 	iam.rebuildIAMPolicyEngineLocked()
 
 	// Re-add environment-based identities that were preserved
@@ -699,7 +713,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.loadEnvironmentVariableCredentials()
 
 	// Log configuration summary - always log to help debugging
-	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
 		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
 	if glog.V(2) {
@@ -920,6 +934,23 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+
+	// Process groups: only replace if config.Groups is non-nil (full config reload).
+	// Partial updates (e.g., UpsertIdentity) pass nil Groups and should preserve existing state.
+	if config.Groups != nil {
+		mergedGroups := make(map[string]*iam_pb.Group)
+		mergedUserGroups := make(map[string][]string)
+		for _, g := range config.Groups {
+			mergedGroups[g.Name] = g
+			if !g.Disabled {
+				for _, member := range g.Members {
+					mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
+				}
+			}
+		}
+		iam.groups = mergedGroups
+		iam.userGroups = mergedUserGroups
+	}
 	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
@@ -1837,13 +1868,31 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 // Returns true if any matching statement explicitly allows the action.
 // Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
 func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
-	if identity == nil || len(identity.PolicyNames) == 0 {
+	if identity == nil {
 		return false
 	}
 
 	iam.m.RLock()
 	engine := iam.iamPolicyEngine
+	groupNames := iam.userGroups[identity.Name]
+	// Snapshot group policy names to avoid holding the lock during evaluation.
+	// We copy the needed data since PutGroup/RemoveGroup mutate iam.groups in-place.
+	var groupPolicies [][]string
+	for _, gName := range groupNames {
+		g, ok := iam.groups[gName]
+		if !ok || g.Disabled {
+			continue
+		}
+		policyNames := make([]string, len(g.PolicyNames))
+		copy(policyNames, g.PolicyNames)
+		groupPolicies = append(groupPolicies, policyNames)
+	}
 	iam.m.RUnlock()
+
+	// Collect all policy names: user policies + group policies
+	if len(identity.PolicyNames) == 0 && len(groupPolicies) == 0 {
+		return false
+	}
 
 	if engine == nil {
 		return false
@@ -1858,20 +1907,35 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		conditions[k] = v
 	}
 
-	for _, policyName := range identity.PolicyNames {
-		result := engine.EvaluatePolicy(policyName, &policy_engine.PolicyEvaluationArgs{
-			Action:     s3Action,
-			Resource:   resource,
-			Principal:  principal,
-			Conditions: conditions,
-			Claims:     identity.Claims,
-		})
+	evalArgs := &policy_engine.PolicyEvaluationArgs{
+		Action:     s3Action,
+		Resource:   resource,
+		Principal:  principal,
+		Conditions: conditions,
+		Claims:     identity.Claims,
+	}
 
+	// Evaluate user's own policies
+	for _, policyName := range identity.PolicyNames {
+		result := engine.EvaluatePolicy(policyName, evalArgs)
 		if result == policy_engine.PolicyResultDeny {
 			return false
 		}
 		if result == policy_engine.PolicyResultAllow {
 			explicitAllow = true
+		}
+	}
+
+	// Evaluate policies from user's groups
+	for _, policyNames := range groupPolicies {
+		for _, policyName := range policyNames {
+			result := engine.EvaluatePolicy(policyName, evalArgs)
+			if result == policy_engine.PolicyResultDeny {
+				return false
+			}
+			if result == policy_engine.PolicyResultAllow {
+				explicitAllow = true
+			}
 		}
 	}
 
@@ -1894,7 +1958,17 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
-	hasAttachedPolicies := len(identity.PolicyNames) > 0
+	iam.m.RLock()
+	userGroupNames := iam.userGroups[identity.Name]
+	groupsHavePolicies := false
+	for _, gn := range userGroupNames {
+		if g, ok := iam.groups[gn]; ok && !g.Disabled && len(g.PolicyNames) > 0 {
+			groupsHavePolicies = true
+			break
+		}
+	}
+	iam.m.RUnlock()
+	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
 
 	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
@@ -1942,11 +2016,25 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		}
 	}
 
-	// Create IAMIdentity for authorization
+	// Create IAMIdentity for authorization — copy PolicyNames to avoid mutating shared identity
+	policyNames := make([]string, len(identity.PolicyNames))
+	copy(policyNames, identity.PolicyNames)
+
+	// Include policies inherited from user's groups
+	iam.m.RLock()
+	if groupNames, ok := iam.userGroups[identity.Name]; ok {
+		for _, gn := range groupNames {
+			if g, exists := iam.groups[gn]; exists && !g.Disabled {
+				policyNames = append(policyNames, g.PolicyNames...)
+			}
+		}
+	}
+	iam.m.RUnlock()
+
 	iamIdentity := &IAMIdentity{
 		Name:        identity.Name,
 		Account:     identity.Account,
-		PolicyNames: identity.PolicyNames,
+		PolicyNames: policyNames,
 		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
@@ -2013,6 +2101,66 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
 	}
 	return nil
+}
+
+func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
+	if group == nil {
+		return fmt.Errorf("put group failed: nil group")
+	}
+	if group.Name == "" {
+		return fmt.Errorf("put group failed: empty group name")
+	}
+	glog.V(1).Infof("IAM: put group %s", group.Name)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	// Remove old reverse index entries for this group
+	if old, ok := iam.groups[group.Name]; ok && !old.Disabled {
+		for _, member := range old.Members {
+			iam.removeUserGroupLocked(member, group.Name)
+		}
+	}
+
+	iam.groups[group.Name] = group
+
+	// Add new reverse index entries if group is enabled
+	if !group.Disabled {
+		for _, member := range group.Members {
+			iam.userGroups[member] = append(iam.userGroups[member], group.Name)
+		}
+	}
+
+	return nil
+}
+
+func (iam *IdentityAccessManagement) RemoveGroup(groupName string) {
+	glog.V(1).Infof("IAM: remove group %s", groupName)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	if g, ok := iam.groups[groupName]; ok && !g.Disabled {
+		for _, member := range g.Members {
+			iam.removeUserGroupLocked(member, groupName)
+		}
+	}
+	delete(iam.groups, groupName)
+}
+
+// removeUserGroupLocked removes a group from a user's group list.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) removeUserGroupLocked(username, groupName string) {
+	groups := iam.userGroups[username]
+	for i, g := range groups {
+		if g == groupName {
+			iam.userGroups[username] = append(groups[:i], groups[i+1:]...)
+			if len(iam.userGroups[username]) == 0 {
+				delete(iam.userGroups, username)
+			}
+			return
+		}
+	}
 }
 
 // ensureIAMPolicyEngine lazily initializes the shared IAM policy engine.

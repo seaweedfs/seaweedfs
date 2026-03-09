@@ -185,6 +185,9 @@ test-context: ## Test only contextual policy enforcement
 test-presigned: ## Test only presigned URL integration
 	go test -v -run TestS3IAMPresignedURLIntegration ./...
 
+test-group: ## Run IAM group management tests
+	go test -v -run "TestIAMGroup" ./...
+
 test-sts: ## Run all STS tests
 	go test -v -run "TestSTS" ./...
 
@@ -263,7 +266,7 @@ docker-build: ## Build custom SeaweedFS image for Docker tests
 
 # All PHONY targets
 .PHONY: test test-quick run-tests setup start-services stop-services wait-for-services clean logs status debug
-.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned test-sts test-sts-assume-role test-sts-ldap  
+.PHONY: test-auth test-policy test-expiration test-multipart test-bucket-policy test-context test-presigned test-group test-sts test-sts-assume-role test-sts-ldap  
 .PHONY: benchmark ci watch install-deps docker-test docker-up docker-down docker-logs docker-build
 .PHONY: test-distributed test-performance test-stress test-versioning-stress test-keycloak-full test-all-previously-skipped setup-all-tests help-advanced
 

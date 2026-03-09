@@ -25,6 +25,29 @@ async function deleteUser(username) {
     }, 'Are you sure you want to delete this user? This action cannot be undone.');
 }
 
+// Delete group function
+async function deleteGroup(name) {
+    showDeleteConfirm(name, async function () {
+        try {
+            const encodedName = encodeURIComponent(name);
+            const response = await fetch(`/api/groups/${encodedName}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                showAlert('Group deleted successfully', 'success');
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                const error = await response.json().catch(() => ({}));
+                showAlert('Failed to delete group: ' + (error.error || 'Unknown error'), 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting group:', error);
+            showAlert('Failed to delete group: ' + error.message, 'error');
+        }
+    }, 'Are you sure you want to delete this group? This action cannot be undone.');
+}
+
 // Delete access key function
 async function deleteAccessKey(username, accessKey) {
     showDeleteConfirm(accessKey, async function () {

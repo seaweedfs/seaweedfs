@@ -28,6 +28,7 @@ type AdminHandlers struct {
 	pluginHandlers         *PluginHandlers
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
+	groupHandlers          *GroupHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -40,6 +41,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 	pluginHandlers := NewPluginHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
+	groupHandlers := NewGroupHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		sessionStore:           store,
@@ -51,6 +53,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 		pluginHandlers:         pluginHandlers,
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
+		groupHandlers:          groupHandlers,
 	}
 }
 
@@ -104,6 +107,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/object-store/buckets/{bucket}", h.ShowBucketDetails).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/users", h.userHandlers.ShowObjectStoreUsers).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/policies", h.policyHandlers.ShowPolicies).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/groups", h.groupHandlers.ShowGroups).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets", h.ShowS3TablesBuckets).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces", h.ShowS3TablesNamespaces).Methods(http.MethodGet)
@@ -184,6 +188,19 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	saApi.HandleFunc("/{id}", h.serviceAccountHandlers.GetServiceAccountDetails).Methods(http.MethodGet)
 	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.UpdateServiceAccount)).Methods(http.MethodPut)
 	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.DeleteServiceAccount)).Methods(http.MethodDelete)
+
+	groupsApi := api.PathPrefix("/groups").Subrouter()
+	groupsApi.HandleFunc("", h.groupHandlers.GetGroups).Methods(http.MethodGet)
+	groupsApi.Handle("", wrapWrite(h.groupHandlers.CreateGroup)).Methods(http.MethodPost)
+	groupsApi.HandleFunc("/{name}", h.groupHandlers.GetGroupDetails).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}", wrapWrite(h.groupHandlers.DeleteGroup)).Methods(http.MethodDelete)
+	groupsApi.Handle("/{name}/status", wrapWrite(h.groupHandlers.SetGroupStatus)).Methods(http.MethodPut)
+	groupsApi.HandleFunc("/{name}/members", h.groupHandlers.GetGroupMembers).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/members", wrapWrite(h.groupHandlers.AddGroupMember)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/members/{username}", wrapWrite(h.groupHandlers.RemoveGroupMember)).Methods(http.MethodDelete)
+	groupsApi.HandleFunc("/{name}/policies", h.groupHandlers.GetGroupPolicies).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/policies", wrapWrite(h.groupHandlers.AttachGroupPolicy)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/policies/{policyName}", wrapWrite(h.groupHandlers.DetachGroupPolicy)).Methods(http.MethodDelete)
 
 	policyApi := api.PathPrefix("/object-store/policies").Subrouter()
 	policyApi.HandleFunc("", h.policyHandlers.GetPolicies).Methods(http.MethodGet)

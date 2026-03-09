@@ -219,6 +219,8 @@ func (iama *IamApiServer) DeleteUser(s3cfg *iam_pb.S3ApiConfiguration, userName 
 				}
 			}
 			s3cfg.Identities = append(s3cfg.Identities[:i], s3cfg.Identities[i+1:]...)
+			// Remove user from all groups
+			removeUserFromAllGroups(s3cfg, userName)
 			return resp, nil
 		}
 	}
@@ -240,31 +242,74 @@ func (iama *IamApiServer) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	resp = &UpdateUserResponse{}
 	userName := values.Get("UserName")
 	newUserName := values.Get("NewUserName")
-	if newUserName != "" {
-		for _, ident := range s3cfg.Identities {
-			if userName == ident.Name {
-				ident.Name = newUserName
-				// Move any inline policies from old username to new username
-				policies := Policies{}
-				if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
-					return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
-				}
-				if policies.InlinePolicies != nil {
-					if userPolicies, exists := policies.InlinePolicies[userName]; exists {
-						delete(policies.InlinePolicies, userName)
-						policies.InlinePolicies[newUserName] = userPolicies
-						if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
-							return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
-						}
-					}
-				}
-				return resp, nil
-			}
-		}
-	} else {
+	if newUserName == "" {
 		return resp, nil
 	}
-	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+
+	// Find the source identity first
+	var sourceIdent *iam_pb.Identity
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			sourceIdent = ident
+			break
+		}
+	}
+	if sourceIdent == nil {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	}
+
+	// No-op if renaming to the same name
+	if newUserName == userName {
+		return resp, nil
+	}
+
+	// Check for name collision before renaming
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == newUserName {
+			return resp, &IamError{
+				Code:  iam.ErrCodeEntityAlreadyExistsException,
+				Error: fmt.Errorf("user %s already exists", newUserName),
+			}
+		}
+	}
+	// Check for inline policy collision
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+	if policies.InlinePolicies != nil {
+		if _, exists := policies.InlinePolicies[newUserName]; exists {
+			return resp, &IamError{
+				Code:  iam.ErrCodeEntityAlreadyExistsException,
+				Error: fmt.Errorf("inline policies already exist for user %s", newUserName),
+			}
+		}
+	}
+
+	sourceIdent.Name = newUserName
+	// Move any inline policies from old username to new username
+	if policies.InlinePolicies != nil {
+		if userPolicies, exists := policies.InlinePolicies[userName]; exists {
+			delete(policies.InlinePolicies, userName)
+			policies.InlinePolicies[newUserName] = userPolicies
+			if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+				// Rollback: restore identity name and inline policies
+				sourceIdent.Name = userName
+				delete(policies.InlinePolicies, newUserName)
+				policies.InlinePolicies[userName] = userPolicies
+				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+			}
+		}
+	}
+	// Update group membership references
+	updateUserInGroups(s3cfg, userName, newUserName)
+	// Update service account parent references
+	for _, sa := range s3cfg.ServiceAccounts {
+		if sa.ParentUser == userName {
+			sa.ParentUser = newUserName
+		}
+	}
+	return resp, nil
 }
 
 func GetPolicyDocument(policy *string) (policy_engine.PolicyDocument, error) {
@@ -537,6 +582,14 @@ func (iama *IamApiServer) DeletePolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 					Error: fmt.Errorf("policy %s is still attached to user %s", policyName, ident.Name),
 				}
 			}
+		}
+	}
+
+	// Reject deletion if the policy is attached to any group
+	if groupName, attached := isPolicyAttachedToAnyGroup(s3cfg, policyName); attached {
+		return resp, &IamError{
+			Code:  iam.ErrCodeDeleteConflictException,
+			Error: fmt.Errorf("policy %s is still attached to group %s", policyName, groupName),
 		}
 	}
 
@@ -1050,6 +1103,83 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "ListAttachedUserPolicies":
 		var err *IamError
 		response, err = iama.ListAttachedUserPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	// Group actions
+	case "CreateGroup":
+		var err *IamError
+		response, err = iama.CreateGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "DeleteGroup":
+		var err *IamError
+		response, err = iama.DeleteGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "UpdateGroup":
+		var err *IamError
+		response, err = iama.UpdateGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "GetGroup":
+		var err *IamError
+		response, err = iama.GetGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "ListGroups":
+		response = iama.ListGroups(s3cfg, values)
+		changed = false
+	case "AddUserToGroup":
+		var err *IamError
+		response, err = iama.AddUserToGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "RemoveUserFromGroup":
+		var err *IamError
+		response, err = iama.RemoveUserFromGroup(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "AttachGroupPolicy":
+		var err *IamError
+		response, err = iama.AttachGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "DetachGroupPolicy":
+		var err *IamError
+		response, err = iama.DetachGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+	case "ListAttachedGroupPolicies":
+		var err *IamError
+		response, err = iama.ListAttachedGroupPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "ListGroupsForUser":
+		var err *IamError
+		response, err = iama.ListGroupsForUser(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return

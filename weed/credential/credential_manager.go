@@ -236,3 +236,25 @@ func (cm *CredentialManager) DetachUserPolicy(ctx context.Context, username stri
 func (cm *CredentialManager) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
 	return cm.Store.ListAttachedUserPolicies(ctx, username)
 }
+
+// Group Management
+
+func (cm *CredentialManager) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	return cm.Store.CreateGroup(ctx, group)
+}
+
+func (cm *CredentialManager) GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error) {
+	return cm.Store.GetGroup(ctx, groupName)
+}
+
+func (cm *CredentialManager) DeleteGroup(ctx context.Context, groupName string) error {
+	return cm.Store.DeleteGroup(ctx, groupName)
+}
+
+func (cm *CredentialManager) ListGroups(ctx context.Context) ([]string, error) {
+	return cm.Store.ListGroups(ctx)
+}
+
+func (cm *CredentialManager) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	return cm.Store.UpdateGroup(ctx, group)
+}

@@ -18,6 +18,10 @@ var (
 	ErrPolicyNotFound         = errors.New("policy not found")
 	ErrPolicyAlreadyAttached  = errors.New("policy already attached")
 	ErrPolicyNotAttached      = errors.New("policy not attached to user")
+	ErrGroupNotFound          = errors.New("group not found")
+	ErrGroupAlreadyExists     = errors.New("group already exists")
+	ErrGroupNotEmpty          = errors.New("group is not empty")
+	ErrUserNotInGroup         = errors.New("user is not a member of the group")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
@@ -93,6 +97,13 @@ type CredentialStore interface {
 	DetachUserPolicy(ctx context.Context, username string, policyName string) error
 	// ListAttachedUserPolicies returns the list of policy names attached to a user
 	ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error)
+
+	// Group Management
+	CreateGroup(ctx context.Context, group *iam_pb.Group) error
+	GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error)
+	DeleteGroup(ctx context.Context, groupName string) error
+	ListGroups(ctx context.Context) ([]string, error)
+	UpdateGroup(ctx context.Context, group *iam_pb.Group) error
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()
