@@ -1,11 +1,13 @@
 package iamapi
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -57,7 +59,12 @@ func (iama *IamApiServer) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 			if disabled := values.Get("Disabled"); disabled != "" {
 				g.Disabled = disabled == "true"
 			}
-			if newName := values.Get("NewGroupName"); newName != "" {
+			if newName := values.Get("NewGroupName"); newName != "" && newName != g.Name {
+				for _, other := range s3cfg.Groups {
+					if other.Name == newName {
+						return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("group %s already exists", newName)}
+					}
+				}
 				g.Name = newName
 			}
 			return resp, nil
@@ -163,15 +170,12 @@ func (iama *IamApiServer) AttachGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, va
 	if iamErr != nil {
 		return resp, iamErr
 	}
-	// Verify policy exists
-	policyFound := false
-	for _, p := range s3cfg.Policies {
-		if p.Name == policyName {
-			policyFound = true
-			break
-		}
+	// Verify policy exists in the persisted policies store
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
 	}
-	if !policyFound {
+	if _, exists := policies.Policies[policyName]; !exists {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found", policyName)}
 	}
 	for _, g := range s3cfg.Groups {
