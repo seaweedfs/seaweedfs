@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -28,6 +29,9 @@ func cloneGroup(g *iam_pb.Group) *iam_pb.Group {
 }
 
 func (store *MemoryStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
@@ -71,6 +75,9 @@ func (store *MemoryStore) ListGroups(ctx context.Context) ([]string, error) {
 }
 
 func (store *MemoryStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group == nil || group.Name == "" {
+		return fmt.Errorf("group name is required")
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
