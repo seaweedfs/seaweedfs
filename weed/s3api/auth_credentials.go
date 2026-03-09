@@ -761,10 +761,6 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	for k, v := range iam.staticIdentityNames {
 		staticNames[k] = v
 	}
-	existingGroups := make(map[string]*iam_pb.Group)
-	for k, v := range iam.groups {
-		existingGroups[k] = v
-	}
 	iam.m.RUnlock()
 
 	// Process accounts from dynamic config (can add new accounts)
@@ -929,17 +925,11 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		policies[policy.Name] = policy
 	}
 
-	// Process groups: seed from existing (static) groups, then overlay dynamic config
+	// Process groups from dynamic config (groups are always dynamic, never in static s3.config)
 	mergedGroups := make(map[string]*iam_pb.Group)
-	for k, v := range existingGroups {
-		mergedGroups[k] = v
-	}
+	mergedUserGroups := make(map[string][]string)
 	for _, g := range config.Groups {
 		mergedGroups[g.Name] = g
-	}
-	// Build reverse index from final merged groups
-	mergedUserGroups := make(map[string][]string)
-	for _, g := range mergedGroups {
 		if !g.Disabled {
 			for _, member := range g.Members {
 				mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
