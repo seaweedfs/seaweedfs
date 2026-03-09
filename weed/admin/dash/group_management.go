@@ -102,6 +102,17 @@ func (s *AdminServer) DeleteGroup(ctx context.Context, name string) error {
 	if s.credentialManager == nil {
 		return fmt.Errorf("credential manager not available")
 	}
+	// Check for members and attached policies before deleting (same guards as IAM handlers)
+	g, err := s.credentialManager.GetGroup(ctx, name)
+	if err != nil {
+		return fmt.Errorf("failed to get group: %w", err)
+	}
+	if len(g.Members) > 0 {
+		return fmt.Errorf("cannot delete group %s: group has %d member(s)", name, len(g.Members))
+	}
+	if len(g.PolicyNames) > 0 {
+		return fmt.Errorf("cannot delete group %s: group has %d attached policy(ies)", name, len(g.PolicyNames))
+	}
 	if err := s.credentialManager.DeleteGroup(ctx, name); err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
