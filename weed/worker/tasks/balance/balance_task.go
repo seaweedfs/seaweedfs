@@ -90,7 +90,9 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 	sourceMarkedReadonly := true
 	defer func() {
 		if sourceMarkedReadonly {
-			if wErr := t.markVolumeWritable(context.Background(), sourceServer, volumeId); wErr != nil {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanupCancel()
+			if wErr := t.markVolumeWritable(cleanupCtx, sourceServer, volumeId); wErr != nil {
 				glog.Warningf("failed to restore volume %d writability on %s: %v", volumeId, sourceServer, wErr)
 			}
 		}

@@ -1083,6 +1083,11 @@ func buildBatchVolumeBalanceProposals(
 			if len(result.TypedParams.Targets) > 0 {
 				targetNode = result.TypedParams.Targets[0].Node
 			}
+			// Skip moves with missing required fields that would fail at execution time.
+			if result.VolumeID == 0 || sourceNode == "" || targetNode == "" {
+				glog.Warningf("Plugin worker skip invalid batch move: volume=%d source=%q target=%q", result.VolumeID, sourceNode, targetNode)
+				continue
+			}
 			moves = append(moves, &worker_pb.BalanceMoveSpec{
 				VolumeId:   uint32(result.VolumeID),
 				SourceNode: sourceNode,
@@ -1104,6 +1109,24 @@ func buildBatchVolumeBalanceProposals(
 		}
 
 		if len(moves) == 0 {
+			continue
+		}
+
+		// After filtering, if only one valid move remains, emit a single-move
+		// proposal instead of a batch to preserve the simpler execution path.
+		if len(moves) == 1 {
+			// Find the matching result for the single valid move
+			for _, result := range batch {
+				if result != nil && uint32(result.VolumeID) == moves[0].VolumeId {
+					proposal, err := buildVolumeBalanceProposal(result)
+					if err != nil {
+						glog.Warningf("Plugin worker skip invalid volume_balance proposal: %v", err)
+					} else {
+						proposals = append(proposals, proposal)
+					}
+					break
+				}
+			}
 			continue
 		}
 
