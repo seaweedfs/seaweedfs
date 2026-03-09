@@ -1505,6 +1505,9 @@ func (e *EmbeddedIamApi) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values ur
 	for _, g := range s3cfg.Groups {
 		if g.Name == groupName {
 			if disabled := values.Get("Disabled"); disabled != "" {
+				if disabled != "true" && disabled != "false" {
+					return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("Disabled must be 'true' or 'false'")}
+				}
 				g.Disabled = disabled == "true"
 			}
 			if newName := values.Get("NewGroupName"); newName != "" && newName != g.Name {
