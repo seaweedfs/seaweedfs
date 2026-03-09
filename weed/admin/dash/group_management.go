@@ -108,10 +108,10 @@ func (s *AdminServer) DeleteGroup(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
 	if len(g.Members) > 0 {
-		return fmt.Errorf("cannot delete group %s: group has %d member(s)", name, len(g.Members))
+		return fmt.Errorf("cannot delete group %s: group has %d member(s): %w", name, len(g.Members), credential.ErrGroupNotEmpty)
 	}
 	if len(g.PolicyNames) > 0 {
-		return fmt.Errorf("cannot delete group %s: group has %d attached policy(ies)", name, len(g.PolicyNames))
+		return fmt.Errorf("cannot delete group %s: group has %d attached policy(ies): %w", name, len(g.PolicyNames), credential.ErrGroupNotEmpty)
 	}
 	if err := s.credentialManager.DeleteGroup(ctx, name); err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)

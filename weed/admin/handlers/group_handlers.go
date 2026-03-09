@@ -33,6 +33,9 @@ func groupErrorToHTTPStatus(err error) int {
 	if errors.Is(err, credential.ErrPolicyNotFound) {
 		return http.StatusNotFound
 	}
+	if errors.Is(err, credential.ErrGroupNotEmpty) {
+		return http.StatusConflict
+	}
 	return http.StatusInternalServerError
 }
 

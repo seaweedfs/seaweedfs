@@ -20,6 +20,7 @@ var (
 	ErrPolicyNotAttached      = errors.New("policy not attached to user")
 	ErrGroupNotFound          = errors.New("group not found")
 	ErrGroupAlreadyExists     = errors.New("group already exists")
+	ErrGroupNotEmpty          = errors.New("group is not empty")
 	ErrUserNotInGroup         = errors.New("user is not a member of the group")
 )
 
