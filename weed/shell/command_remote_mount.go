@@ -2,11 +2,11 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -128,7 +128,7 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 			Name:      name,
 		})
 		if lookupErr != nil {
-			if strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
 				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 					Directory: parent,
 					Entry: &filer_pb.Entry{
