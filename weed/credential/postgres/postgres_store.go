@@ -184,6 +184,12 @@ func (store *PostgresStore) createTables() error {
 		return fmt.Errorf("failed to create groups disabled index: %w", err)
 	}
 
+	// Create GIN index on groups members JSONB for membership lookups
+	groupsMembersIndex := `CREATE INDEX IF NOT EXISTS idx_groups_members_gin ON groups USING GIN (members);`
+	if _, err := store.db.Exec(groupsMembersIndex); err != nil {
+		return fmt.Errorf("failed to create groups members index: %w", err)
+	}
+
 	return nil
 }
 
