@@ -31,20 +31,23 @@ pub struct NeedleValue {
     pub size: Size,
 }
 
-/// Pack an (Offset, Size) pair into 8 bytes for redb storage.
-/// Layout: [offset 4 bytes big-endian] [size 4 bytes big-endian]
-fn pack_needle_value(nv: &NeedleValue) -> [u8; 8] {
-    let mut buf = [0u8; 8];
-    nv.offset.to_bytes(&mut buf[..4]);
-    nv.size.to_bytes(&mut buf[4..8]);
+/// Packed size of a NeedleValue in redb storage: OFFSET_SIZE + SIZE_SIZE.
+const PACKED_NEEDLE_VALUE_SIZE: usize = OFFSET_SIZE + SIZE_SIZE;
+
+/// Pack an (Offset, Size) pair into bytes for redb storage.
+/// Layout: [offset OFFSET_SIZE bytes] [size 4 bytes big-endian]
+fn pack_needle_value(nv: &NeedleValue) -> [u8; PACKED_NEEDLE_VALUE_SIZE] {
+    let mut buf = [0u8; PACKED_NEEDLE_VALUE_SIZE];
+    nv.offset.to_bytes(&mut buf[..OFFSET_SIZE]);
+    nv.size.to_bytes(&mut buf[OFFSET_SIZE..]);
     buf
 }
 
-/// Unpack 8 bytes from redb storage into (Offset, Size).
-fn unpack_needle_value(bytes: &[u8; 8]) -> NeedleValue {
+/// Unpack bytes from redb storage into (Offset, Size).
+fn unpack_needle_value(bytes: &[u8; PACKED_NEEDLE_VALUE_SIZE]) -> NeedleValue {
     NeedleValue {
-        offset: Offset::from_bytes(&bytes[..4]),
-        size: Size::from_bytes(&bytes[4..8]),
+        offset: Offset::from_bytes(&bytes[..OFFSET_SIZE]),
+        size: Size::from_bytes(&bytes[OFFSET_SIZE..]),
     }
 }
 
@@ -422,8 +425,8 @@ impl RedbNeedleMap {
             })?;
             let key = NeedleId(key_guard.value());
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == 8 {
-                let mut arr = [0u8; 8];
+            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                 arr.copy_from_slice(bytes);
                 let nv = unpack_needle_value(&arr);
                 self.metric.maybe_set_max_file_key(key);
@@ -569,8 +572,8 @@ impl RedbNeedleMap {
         match table.get(key_u64) {
             Ok(Some(guard)) => {
                 let bytes: &[u8] = guard.value();
-                if bytes.len() == 8 {
-                    let mut arr = [0u8; 8];
+                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                     arr.copy_from_slice(bytes);
                     Ok(Some(unpack_needle_value(&arr)))
                 } else {
@@ -693,8 +696,8 @@ impl RedbNeedleMap {
         match table.get(key_u64) {
             Ok(Some(guard)) => {
                 let bytes: &[u8] = guard.value();
-                if bytes.len() == 8 {
-                    let mut arr = [0u8; 8];
+                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                     arr.copy_from_slice(bytes);
                     Ok(Some(unpack_needle_value(&arr)))
                 } else {
@@ -816,8 +819,8 @@ impl RedbNeedleMap {
             })?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == 8 {
-                let mut arr = [0u8; 8];
+            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                 arr.copy_from_slice(bytes);
                 let nv = unpack_needle_value(&arr);
                 if nv.size.is_valid() {
@@ -847,8 +850,8 @@ impl RedbNeedleMap {
             let (key_guard, val_guard) = entry.map_err(|e| format!("redb iter next: {}", e))?;
             let key_u64: u64 = key_guard.value();
             let bytes: &[u8] = val_guard.value();
-            if bytes.len() == 8 {
-                let mut arr = [0u8; 8];
+            if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                 arr.copy_from_slice(bytes);
                 let nv = unpack_needle_value(&arr);
                 f(NeedleId(key_u64), &nv)?;
@@ -876,8 +879,8 @@ impl RedbNeedleMap {
             if let Ok((key_guard, val_guard)) = entry {
                 let key_u64: u64 = key_guard.value();
                 let bytes: &[u8] = val_guard.value();
-                if bytes.len() == 8 {
-                    let mut arr = [0u8; 8];
+                if bytes.len() == PACKED_NEEDLE_VALUE_SIZE {
+                    let mut arr = [0u8; PACKED_NEEDLE_VALUE_SIZE];
                     arr.copy_from_slice(bytes);
                     let nv = unpack_needle_value(&arr);
                     result.push((NeedleId(key_u64), nv));

@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "SeaweedFS Volume Server — Rust implementation"
 
+[features]
+default = ["5bytes"]
+# Enable 5-byte offset mode for 8TB max volume size (matches Go production builds with -tags 5BytesOffset).
+# Without this feature, uses 4-byte offsets with 32GB max volume size.
+5bytes = []
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

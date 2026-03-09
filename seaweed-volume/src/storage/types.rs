@@ -12,18 +12,28 @@ use std::fmt;
 pub const NEEDLE_ID_SIZE: usize = 8;
 pub const NEEDLE_ID_EMPTY: u64 = 0;
 pub const COOKIE_SIZE: usize = 4;
-pub const OFFSET_SIZE: usize = 4; // 4-byte offset (32GB max volume, matching Go default build)
 pub const SIZE_SIZE: usize = 4;
 pub const NEEDLE_HEADER_SIZE: usize = COOKIE_SIZE + NEEDLE_ID_SIZE + SIZE_SIZE; // 16
 pub const DATA_SIZE_SIZE: usize = 4;
-pub const NEEDLE_MAP_ENTRY_SIZE: usize = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE; // 16
 pub const TIMESTAMP_SIZE: usize = 8;
 pub const NEEDLE_PADDING_SIZE: usize = 8;
 pub const NEEDLE_CHECKSUM_SIZE: usize = 4;
 
-/// Maximum possible volume size with 4-byte offset: 32GB
-/// Formula: 4 * 1024 * 1024 * 1024 * 8
-pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8;
+/// 5-byte offset mode (matching Go production builds with `-tags 5BytesOffset`).
+/// Max volume size: 8TB. Index entry: 17 bytes (8 + 5 + 4).
+#[cfg(feature = "5bytes")]
+pub const OFFSET_SIZE: usize = 5;
+#[cfg(feature = "5bytes")]
+pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8 * 256; // 8TB
+
+/// 4-byte offset mode (matching Go default build without `5BytesOffset`).
+/// Max volume size: 32GB. Index entry: 16 bytes (8 + 4 + 4).
+#[cfg(not(feature = "5bytes"))]
+pub const OFFSET_SIZE: usize = 4;
+#[cfg(not(feature = "5bytes"))]
+pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8; // 32GB
+
+pub const NEEDLE_MAP_ENTRY_SIZE: usize = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
 
 // ============================================================================
 // NeedleId
@@ -175,22 +185,28 @@ impl From<Size> for i32 {
 }
 
 // ============================================================================
-// Offset (5 bytes)
+// Offset
 // ============================================================================
 
-/// 4-byte offset encoding for needle positions in .dat files (matching Go default build).
+/// Offset encoding for needle positions in .dat files.
 ///
-/// The offset is stored divided by NEEDLE_PADDING_SIZE (8), so 4 bytes can
-/// address up to 32GB. The on-disk byte layout in .idx files is:
-///   [b3][b2][b1][b0]  (big-endian 4 bytes)
+/// The offset is stored divided by NEEDLE_PADDING_SIZE (8).
 ///
-/// actual_offset = stored_value * 8
+/// With `5bytes` feature (default, matching Go production builds):
+///   5 bytes can address up to 8TB.
+///   On-disk layout: [b3][b2][b1][b0][b4] (big-endian 4 bytes + 1 high byte)
+///
+/// Without `5bytes` feature (matching Go default build):
+///   4 bytes can address up to 32GB.
+///   On-disk layout: [b3][b2][b1][b0] (big-endian 4 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Offset {
     pub b0: u8,
     pub b1: u8,
     pub b2: u8,
     pub b3: u8,
+    #[cfg(feature = "5bytes")]
+    pub b4: u8,
 }
 
 impl Offset {
@@ -200,6 +216,8 @@ impl Offset {
             + (self.b1 as i64) * 256
             + (self.b2 as i64) * 65536
             + (self.b3 as i64) * 16777216;
+        #[cfg(feature = "5bytes")]
+        let stored = stored + (self.b4 as i64) * 4294967296; // 1 << 32
         stored * NEEDLE_PADDING_SIZE as i64
     }
 
@@ -211,20 +229,27 @@ impl Offset {
             b1: (smaller >> 8) as u8,
             b2: (smaller >> 16) as u8,
             b3: (smaller >> 24) as u8,
+            #[cfg(feature = "5bytes")]
+            b4: (smaller >> 32) as u8,
         }
     }
 
-    /// Serialize to 4 bytes in the .idx file format.
-    /// Layout: [b3][b2][b1][b0] (big-endian)
+    /// Serialize to bytes in the .idx file format.
+    /// 5-byte layout: [b3][b2][b1][b0][b4]
+    /// 4-byte layout: [b3][b2][b1][b0]
     pub fn to_bytes(&self, bytes: &mut [u8]) {
         assert!(bytes.len() >= OFFSET_SIZE);
         bytes[0] = self.b3;
         bytes[1] = self.b2;
         bytes[2] = self.b1;
         bytes[3] = self.b0;
+        #[cfg(feature = "5bytes")]
+        {
+            bytes[4] = self.b4;
+        }
     }
 
-    /// Deserialize from 4 bytes in the .idx file format.
+    /// Deserialize from bytes in the .idx file format.
     pub fn from_bytes(bytes: &[u8]) -> Self {
         assert!(bytes.len() >= OFFSET_SIZE);
         Offset {
@@ -232,11 +257,20 @@ impl Offset {
             b2: bytes[1],
             b1: bytes[2],
             b0: bytes[3],
+            #[cfg(feature = "5bytes")]
+            b4: bytes[4],
         }
     }
 
     pub fn is_zero(&self) -> bool {
-        self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0
+        #[cfg(feature = "5bytes")]
+        {
+            self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0 && self.b4 == 0
+        }
+        #[cfg(not(feature = "5bytes"))]
+        {
+            self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0
+        }
     }
 }
 
@@ -483,11 +517,30 @@ mod tests {
 
     #[test]
     fn test_offset_max() {
-        // Max 4-byte stored value = 2^32 - 1
-        let max_stored: i64 = (1i64 << 32) - 1;
+        // Max stored value depends on offset size
+        #[cfg(feature = "5bytes")]
+        let max_stored: i64 = (1i64 << 40) - 1; // 5-byte max
+        #[cfg(not(feature = "5bytes"))]
+        let max_stored: i64 = (1i64 << 32) - 1; // 4-byte max
         let max_actual = max_stored * NEEDLE_PADDING_SIZE as i64;
         let offset = Offset::from_actual_offset(max_actual);
         assert_eq!(offset.to_actual_offset(), max_actual);
+    }
+
+    #[test]
+    fn test_offset_size_constants() {
+        #[cfg(feature = "5bytes")]
+        {
+            assert_eq!(OFFSET_SIZE, 5);
+            assert_eq!(NEEDLE_MAP_ENTRY_SIZE, 17); // 8 + 5 + 4
+            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8 * 256); // 8TB
+        }
+        #[cfg(not(feature = "5bytes"))]
+        {
+            assert_eq!(OFFSET_SIZE, 4);
+            assert_eq!(NEEDLE_MAP_ENTRY_SIZE, 16); // 8 + 4 + 4
+            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8); // 32GB
+        }
     }
 
     #[test]

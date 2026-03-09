@@ -2,7 +2,10 @@
 
 use std::sync::OnceLock;
 
-const SIZE_LIMIT: &str = "30GB"; // Go default build (!5BytesOffset)
+#[cfg(feature = "5bytes")]
+const SIZE_LIMIT: &str = "8000GB"; // Matches Go production builds (5BytesOffset)
+#[cfg(not(feature = "5bytes"))]
+const SIZE_LIMIT: &str = "30GB"; // Matches Go default build (!5BytesOffset)
 
 pub fn size_limit() -> &'static str {
     SIZE_LIMIT

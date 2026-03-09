@@ -249,8 +249,7 @@ mod tests {
     use super::*;
 
     fn offset(v: u32) -> Offset {
-        let bytes = v.to_be_bytes();
-        Offset::from_bytes(&bytes)
+        Offset::from_actual_offset(v as i64 * NEEDLE_PADDING_SIZE as i64)
     }
 
     #[test]

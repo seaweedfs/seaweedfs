@@ -769,6 +769,30 @@ impl Volume {
         offset: i64,
         size: Size,
     ) -> Result<(), VolumeError> {
+        match self.read_needle_blob_and_parse(n, offset, size) {
+            Ok(()) => Ok(()),
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                // Double-read: in 4-byte offset mode, the actual data may be
+                // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
+                self.read_needle_blob_and_parse(
+                    n,
+                    offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                    size,
+                )
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_needle_blob_and_parse(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
         let dat_file = self.dat_file.as_ref().ok_or_else(|| {
             VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
         })?;
@@ -857,24 +881,40 @@ impl Volume {
             VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
         })?;
 
-        let offset = nv.offset.to_actual_offset();
+        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
+        let mut offset = nv.offset.to_actual_offset();
         let version = self.version();
         let actual_size = get_actual_size(read_size, version);
 
         // Read the full needle bytes (including data) for metadata parsing.
         // We use read_bytes_meta_only which skips copying the data payload.
-        let mut buf = vec![0u8; actual_size as usize];
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::FileExt;
-            dat_file.read_exact_at(&mut buf, offset as u64)?;
-        }
-        #[cfg(windows)]
-        {
-            read_exact_at(dat_file, &mut buf, offset as u64)?;
-        }
+        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
+        let mut read_and_parse = |off: i64| -> Result<(), VolumeError> {
+            let mut buf = vec![0u8; actual_size as usize];
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                dat_file.read_exact_at(&mut buf, off as u64)?;
+            }
+            #[cfg(windows)]
+            {
+                read_exact_at(dat_file, &mut buf, off as u64)?;
+            }
+            n.read_bytes_meta_only(&mut buf, off, read_size, version)?;
+            Ok(())
+        };
 
-        n.read_bytes_meta_only(&mut buf, offset, read_size, version)?;
+        match read_and_parse(offset) {
+            Ok(()) => {}
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                offset += MAX_POSSIBLE_VOLUME_SIZE as i64;
+                read_and_parse(offset)?;
+            }
+            Err(e) => return Err(e),
+        }
 
         // TTL expiry check
         if n.has_ttl() {
