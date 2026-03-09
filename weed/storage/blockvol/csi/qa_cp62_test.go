@@ -132,9 +132,16 @@ func TestQA_Node_ConcurrentStageUnstage(t *testing.T) {
 	var wg sync.WaitGroup
 	var panicked atomic.Bool
 
+	// Pre-allocate temp dirs to avoid calling t.TempDir() inside goroutines
+	// (t.TempDir() panics if called after test cleanup).
+	stagingDirs := make([]string, 20)
+	for i := range stagingDirs {
+		stagingDirs[i] = t.TempDir()
+	}
+
 	for i := 0; i < 20; i++ {
 		wg.Add(2)
-		go func() {
+		go func(dir string) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
@@ -144,10 +151,10 @@ func TestQA_Node_ConcurrentStageUnstage(t *testing.T) {
 			}()
 			ns.NodeStageVolume(context.Background(), &csi.NodeStageVolumeRequest{
 				VolumeId:          "test-vol",
-				StagingTargetPath: t.TempDir(),
+				StagingTargetPath: dir,
 				VolumeCapability:  testVolCap(),
 			})
-		}()
+		}(stagingDirs[i])
 		go func() {
 			defer wg.Done()
 			defer func() {

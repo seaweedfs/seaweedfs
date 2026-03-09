@@ -19,6 +19,8 @@ type DriverConfig struct {
 	DataDir   string // volume data directory
 	ISCSIAddr string // local iSCSI target listen address
 	IQNPrefix string // IQN prefix for volumes
+	NVMeAddr  string // local NVMe/TCP target listen address (empty = NVMe disabled)
+	NQNPrefix string // NQN prefix for NVMe subsystems
 	NodeID    string // node identifier
 	Logger    *log.Logger
 
@@ -66,7 +68,8 @@ func NewCSIDriver(cfg DriverConfig) (*CSIDriver, error) {
 	var mgr *VolumeManager
 	needsLocalMgr := cfg.Mode == "all" && cfg.MasterAddr == "" || cfg.Mode == "node"
 	if needsLocalMgr {
-		mgr = NewVolumeManager(cfg.DataDir, cfg.ISCSIAddr, cfg.IQNPrefix, cfg.Logger)
+		mgr = NewVolumeManager(cfg.DataDir, cfg.ISCSIAddr, cfg.IQNPrefix, cfg.Logger,
+			VolumeManagerOpts{NvmeAddr: cfg.NVMeAddr, NQNPrefix: cfg.NQNPrefix})
 		d.mgr = mgr
 	}
 
@@ -89,7 +92,9 @@ func NewCSIDriver(cfg DriverConfig) (*CSIDriver, error) {
 			mgr:       mgr, // may be nil in controller-only mode
 			nodeID:    cfg.NodeID,
 			iqnPrefix: cfg.IQNPrefix,
+			nqnPrefix: cfg.NQNPrefix,
 			iscsiUtil: &realISCSIUtil{},
+			nvmeUtil:  &realNVMeUtil{},
 			mountUtil: &realMountUtil{},
 			logger:    cfg.Logger,
 			staged:    make(map[string]*stagedVolumeInfo),

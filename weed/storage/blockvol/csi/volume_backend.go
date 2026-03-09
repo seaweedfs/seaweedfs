@@ -14,6 +14,8 @@ type VolumeInfo struct {
 	VolumeID      string
 	ISCSIAddr     string // iSCSI target address (ip:port)
 	IQN           string // iSCSI target IQN
+	NvmeAddr      string // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQN           string // NVMe subsystem NQN, empty if NVMe disabled
 	CapacityBytes uint64
 }
 
@@ -59,6 +61,8 @@ func (b *LocalVolumeBackend) CreateVolume(ctx context.Context, name string, size
 		VolumeID:      name,
 		ISCSIAddr:     b.mgr.ListenAddr(),
 		IQN:           b.mgr.VolumeIQN(name),
+		NvmeAddr:      b.mgr.NvmeAddr(),
+		NQN:           b.mgr.VolumeNQN(name),
 		CapacityBytes: actualSize,
 	}, nil
 }
@@ -75,6 +79,8 @@ func (b *LocalVolumeBackend) LookupVolume(ctx context.Context, name string) (*Vo
 		VolumeID:      name,
 		ISCSIAddr:     b.mgr.ListenAddr(),
 		IQN:           b.mgr.VolumeIQN(name),
+		NvmeAddr:      b.mgr.NvmeAddr(),
+		NQN:           b.mgr.VolumeNQN(name),
 		CapacityBytes: b.mgr.VolumeSizeBytes(name),
 	}, nil
 }
@@ -100,6 +106,11 @@ func (b *LocalVolumeBackend) ExpandVolume(ctx context.Context, volumeID string, 
 }
 
 // MasterVolumeClient calls master gRPC for volume operations.
+// NOTE: NvmeAddr/NQN fields in VolumeInfo are NOT populated by MasterVolumeClient
+// because the master proto (CreateBlockVolumeResponse, LookupBlockVolumeResponse)
+// does not yet have nvme_addr/nqn fields. This is deferred until proto is updated
+// in a future CP. NVMe support via master-backend path is therefore iSCSI-only
+// until that proto change lands.
 type MasterVolumeClient struct {
 	masterAddr string
 	dialOpt    grpc.DialOption

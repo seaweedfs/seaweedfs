@@ -33,13 +33,14 @@ type NVMeConfig struct {
 
 // BlockService manages block volumes and the iSCSI/NVMe target servers.
 type BlockService struct {
-	blockStore   *storage.BlockVolumeStore
-	targetServer *iscsi.TargetServer
-	nvmeServer   *nvme.Server
-	iqnPrefix    string
-	nqnPrefix    string
-	blockDir     string
-	listenAddr   string
+	blockStore     *storage.BlockVolumeStore
+	targetServer   *iscsi.TargetServer
+	nvmeServer     *nvme.Server
+	iqnPrefix      string
+	nqnPrefix      string
+	blockDir       string
+	listenAddr     string
+	nvmeListenAddr string
 
 	// Replication state (CP6-3).
 	replMu     sync.RWMutex
@@ -63,11 +64,12 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 	}
 
 	bs := &BlockService{
-		blockStore: storage.NewBlockVolumeStore(),
-		iqnPrefix:  iqnPrefix,
-		nqnPrefix:  nqnPrefix,
-		blockDir:   blockDir,
-		listenAddr: listenAddr,
+		blockStore:     storage.NewBlockVolumeStore(),
+		iqnPrefix:      iqnPrefix,
+		nqnPrefix:      nqnPrefix,
+		blockDir:       blockDir,
+		listenAddr:     listenAddr,
+		nvmeListenAddr: nvmeCfg.ListenAddr,
 	}
 
 	// iSCSI target setup.
@@ -165,7 +167,7 @@ func (bs *BlockService) registerVolume(vol *blockvol.BlockVol, name string) {
 	bs.targetServer.AddVolume(iqn, adapter)
 
 	if bs.nvmeServer != nil {
-		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
 		nvmeAdapter := nvme.NewNVMeAdapter(vol)
 		bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
 	}
@@ -186,6 +188,19 @@ func (bs *BlockService) BlockDir() string {
 // ListenAddr returns the iSCSI target listen address.
 func (bs *BlockService) ListenAddr() string {
 	return bs.listenAddr
+}
+
+// NvmeListenAddr returns the configured NVMe/TCP target listen address, or empty if NVMe is disabled.
+func (bs *BlockService) NvmeListenAddr() string {
+	if bs.nvmeServer != nil {
+		return bs.nvmeListenAddr
+	}
+	return ""
+}
+
+// NQN returns the NVMe subsystem NQN for a volume name.
+func (bs *BlockService) NQN(name string) string {
+	return blockvol.BuildNQN(bs.nqnPrefix, name)
 }
 
 // CreateBlockVol creates a new .blk file, registers it with BlockVolumeStore
@@ -209,7 +224,7 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 		adapter := blockvol.NewBlockVolAdapter(vol)
 		bs.targetServer.AddVolume(iqn, adapter)
 		if bs.nvmeServer != nil {
-			nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+			nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
 			nvmeAdapter := nvme.NewNVMeAdapter(vol)
 			bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
 		}
@@ -250,7 +265,7 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 	bs.targetServer.AddVolume(iqn, adapter)
 
 	if bs.nvmeServer != nil {
-		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
 		nvmeAdapter := nvme.NewNVMeAdapter(vol)
 		bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
 	}
@@ -273,7 +288,7 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 
 	// Remove from NVMe target.
 	if bs.nvmeServer != nil {
-		nqn := bs.nqnPrefix + blockvol.SanitizeIQN(name)
+		nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
 		bs.nvmeServer.RemoveVolume(nqn)
 	}
 

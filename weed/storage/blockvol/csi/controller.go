@@ -77,11 +77,18 @@ func (s *controllerServer) CreateVolume(_ context.Context, req *csi.CreateVolume
 		},
 	}
 
-	// Attach volume_context with iSCSI target info for NodeStageVolume.
-	if info.ISCSIAddr != "" || info.IQN != "" {
-		resp.Volume.VolumeContext = map[string]string{
-			"iscsiAddr": info.ISCSIAddr,
-			"iqn":       info.IQN,
+	// Attach volume_context with target info for NodeStageVolume.
+	hasISCSI := info.ISCSIAddr != "" || info.IQN != ""
+	hasNVMe := info.NvmeAddr != ""
+	if hasISCSI || hasNVMe {
+		resp.Volume.VolumeContext = make(map[string]string)
+		if hasISCSI {
+			resp.Volume.VolumeContext["iscsiAddr"] = info.ISCSIAddr
+			resp.Volume.VolumeContext["iqn"] = info.IQN
+		}
+		if hasNVMe {
+			resp.Volume.VolumeContext["nvmeAddr"] = info.NvmeAddr
+			resp.Volume.VolumeContext["nqn"] = info.NQN
 		}
 	}
 
@@ -114,11 +121,16 @@ func (s *controllerServer) ControllerPublishVolume(_ context.Context, req *csi.C
 		return nil, status.Errorf(codes.NotFound, "volume %q not found: %v", req.VolumeId, err)
 	}
 
+	pubCtx := map[string]string{
+		"iscsiAddr": info.ISCSIAddr,
+		"iqn":       info.IQN,
+	}
+	if info.NvmeAddr != "" {
+		pubCtx["nvmeAddr"] = info.NvmeAddr
+		pubCtx["nqn"] = info.NQN
+	}
 	return &csi.ControllerPublishVolumeResponse{
-		PublishContext: map[string]string{
-			"iscsiAddr": info.ISCSIAddr,
-			"iqn":       info.IQN,
-		},
+		PublishContext: pubCtx,
 	}, nil
 }
 

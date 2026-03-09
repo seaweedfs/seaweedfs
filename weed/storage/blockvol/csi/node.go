@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -13,10 +14,18 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const (
+	transportISCSI = "iscsi"
+	transportNVMe  = "nvme"
+)
+
 // stagedVolumeInfo tracks info needed for NodeUnstageVolume and NodeExpandVolume.
 type stagedVolumeInfo struct {
 	iqn         string
 	iscsiAddr   string
+	nqn         string // NVMe subsystem NQN
+	nvmeAddr    string // NVMe/TCP target address
+	transport   string // "iscsi" or "nvme"
 	isLocal     bool   // true if volume is served by local VolumeManager
 	fsType      string // filesystem type (ext4, xfs, etc.)
 	stagingPath string // staging mount path
@@ -27,13 +36,19 @@ type nodeServer struct {
 	mgr       *VolumeManager // may be nil in controller-only mode
 	nodeID    string
 	iqnPrefix string // for IQN derivation fallback on restart
+	nqnPrefix string // for NQN derivation fallback on restart
 	iscsiUtil ISCSIUtil
+	nvmeUtil  NVMeUtil // may be nil if NVMe not available
 	mountUtil MountUtil
 	logger    *log.Logger
 
 	stagedMu sync.Mutex
 	staged   map[string]*stagedVolumeInfo // volumeID -> staged info
 }
+
+// transportFile is the filename written inside the staging directory to persist
+// the transport type across CSI plugin restarts.
+const transportFile = ".transport"
 
 func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
 	volumeID := req.VolumeId
@@ -59,30 +74,42 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return &csi.NodeStageVolumeResponse{}, nil
 	}
 
-	// Determine iSCSI target info.
-	// Priority: publish_context (fresh from ControllerPublish, reflects failover)
-	//         > volume_context (from CreateVolume, may be stale after failover)
-	//         > local volume manager fallback.
+	// Resolve iSCSI target info.
+	// Priority: publish_context > volume_context > local volume manager fallback.
 	var iqn, portal string
 	isLocal := false
 
 	if req.PublishContext != nil && req.PublishContext["iscsiAddr"] != "" && req.PublishContext["iqn"] != "" {
-		// Fresh address from ControllerPublishVolume (reflects current primary).
 		portal = req.PublishContext["iscsiAddr"]
 		iqn = req.PublishContext["iqn"]
 	} else if req.VolumeContext != nil && req.VolumeContext["iscsiAddr"] != "" && req.VolumeContext["iqn"] != "" {
-		// Fallback: volume_context from CreateVolume (may be stale after failover).
 		portal = req.VolumeContext["iscsiAddr"]
 		iqn = req.VolumeContext["iqn"]
 	} else if s.mgr != nil {
-		// Local fallback: open volume via local VolumeManager.
 		isLocal = true
 		if err := s.mgr.OpenVolume(volumeID); err != nil {
 			return nil, status.Errorf(codes.Internal, "open volume: %v", err)
 		}
 		iqn = s.mgr.VolumeIQN(volumeID)
 		portal = s.mgr.ListenAddr()
-	} else {
+	}
+
+	// Resolve NVMe target info (same priority chain).
+	// PublishContext > VolumeContext > local VolumeManager.
+	var nqn, nvmeAddr string
+	if req.PublishContext != nil && req.PublishContext["nvmeAddr"] != "" && req.PublishContext["nqn"] != "" {
+		nvmeAddr = req.PublishContext["nvmeAddr"]
+		nqn = req.PublishContext["nqn"]
+	} else if req.VolumeContext != nil && req.VolumeContext["nvmeAddr"] != "" && req.VolumeContext["nqn"] != "" {
+		nvmeAddr = req.VolumeContext["nvmeAddr"]
+		nqn = req.VolumeContext["nqn"]
+	} else if s.mgr != nil && s.mgr.NvmeAddr() != "" {
+		nvmeAddr = s.mgr.NvmeAddr()
+		nqn = s.mgr.VolumeNQN(volumeID)
+	}
+
+	// No transport info at all (neither iSCSI nor NVMe resolved, no local mgr).
+	if iqn == "" && nqn == "" {
 		return nil, status.Error(codes.FailedPrecondition, "no volume_context and no local volume manager")
 	}
 
@@ -97,26 +124,58 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		}
 	}()
 
-	// Check if already logged in, skip login if so.
-	loggedIn, err := s.iscsiUtil.IsLoggedIn(ctx, iqn)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "check iscsi login: %v", err)
-	}
+	// Transport selection: prefer NVMe if supported, fall back to iSCSI.
+	var device, transport string
 
-	if !loggedIn {
-		// Discovery + login.
-		if err := s.iscsiUtil.Discovery(ctx, portal); err != nil {
-			return nil, status.Errorf(codes.Internal, "iscsi discovery: %v", err)
-		}
-		if err := s.iscsiUtil.Login(ctx, iqn, portal); err != nil {
-			return nil, status.Errorf(codes.Internal, "iscsi login: %v", err)
-		}
-	}
+	nvmeAvailable := nvmeAddr != "" && nqn != "" && s.nvmeUtil != nil && s.nvmeUtil.IsNVMeTCPAvailable()
+	if nvmeAvailable {
+		// NVMe path — fail fast on error, no fallback to iSCSI.
+		transport = transportNVMe
 
-	// Wait for device to appear.
-	device, err := s.iscsiUtil.GetDeviceByIQN(ctx, iqn)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "get device: %v", err)
+		connected, cerr := s.nvmeUtil.IsConnected(ctx, nqn)
+		if cerr != nil {
+			return nil, status.Errorf(codes.Internal, "check nvme connection: %v", cerr)
+		}
+		if !connected {
+			if cerr := s.nvmeUtil.Connect(ctx, nqn, nvmeAddr); cerr != nil {
+				return nil, status.Errorf(codes.Internal, "nvme connect: %v", cerr)
+			}
+		}
+
+		// Cleanup NVMe on subsequent failures.
+		defer func() {
+			if !success {
+				s.nvmeUtil.Disconnect(ctx, nqn)
+			}
+		}()
+
+		device, err = s.nvmeUtil.GetDeviceByNQN(ctx, nqn)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "nvme get device: %v", err)
+		}
+	} else if iqn != "" && portal != "" {
+		// iSCSI path (existing code).
+		transport = transportISCSI
+
+		loggedIn, lerr := s.iscsiUtil.IsLoggedIn(ctx, iqn)
+		if lerr != nil {
+			return nil, status.Errorf(codes.Internal, "check iscsi login: %v", lerr)
+		}
+		if !loggedIn {
+			if err := s.iscsiUtil.Discovery(ctx, portal); err != nil {
+				return nil, status.Errorf(codes.Internal, "iscsi discovery: %v", err)
+			}
+			if err := s.iscsiUtil.Login(ctx, iqn, portal); err != nil {
+				return nil, status.Errorf(codes.Internal, "iscsi login: %v", err)
+			}
+		}
+
+		device, err = s.iscsiUtil.GetDeviceByIQN(ctx, iqn)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "get device: %v", err)
+		}
+	} else {
+		return nil, status.Error(codes.FailedPrecondition, "no transport available")
 	}
 
 	// Ensure staging directory exists.
@@ -136,6 +195,11 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 		return nil, status.Errorf(codes.Internal, "format and mount: %v", err)
 	}
 
+	// Write transport marker for restart recovery.
+	if werr := writeTransportFile(stagingPath, transport); werr != nil {
+		s.logger.Printf("NodeStageVolume: %s: %v (non-fatal)", volumeID, werr)
+	}
+
 	// Track staged volume for unstage.
 	s.stagedMu.Lock()
 	if s.staged == nil {
@@ -144,6 +208,9 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	s.staged[volumeID] = &stagedVolumeInfo{
 		iqn:         iqn,
 		iscsiAddr:   portal,
+		nqn:         nqn,
+		nvmeAddr:    nvmeAddr,
+		transport:   transport,
 		isLocal:     isLocal,
 		fsType:      fsType,
 		stagingPath: stagingPath,
@@ -151,7 +218,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	s.stagedMu.Unlock()
 
 	success = true
-	s.logger.Printf("NodeStageVolume: %s staged at %s (device=%s, iqn=%s, local=%v)", volumeID, stagingPath, device, iqn, isLocal)
+	s.logger.Printf("NodeStageVolume: %s staged at %s (device=%s, transport=%s, local=%v)", volumeID, stagingPath, device, transport, isLocal)
 	return &csi.NodeStageVolumeResponse{}, nil
 }
 
@@ -166,26 +233,49 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
 
-	// Look up staged info. If not found (e.g. driver restarted), derive IQN.
+	// Look up staged info.
 	s.stagedMu.Lock()
 	info := s.staged[volumeID]
 	s.stagedMu.Unlock()
 
-	var iqn string
+	// Determine transport and identifiers.
+	var iqn, nqn, transport string
 	isLocal := false
+
 	if info != nil {
 		iqn = info.iqn
+		nqn = info.nqn
+		transport = info.transport
 		isLocal = info.isLocal
 	} else {
-		// Restart fallback: derive IQN from volumeID.
-		// iscsiadm -m node -T <iqn> --logout works without knowing the portal.
+		// Restart fallback: read .transport file from staging path.
+		transport = readTransportFile(stagingPath)
+
+		// Derive identifiers.
 		if s.mgr != nil {
 			iqn = s.mgr.VolumeIQN(volumeID)
+			nqn = s.mgr.VolumeNQN(volumeID)
 			isLocal = true
-		} else if s.iqnPrefix != "" {
-			iqn = s.iqnPrefix + ":" + blockvol.SanitizeIQN(volumeID)
+		} else {
+			if s.iqnPrefix != "" {
+				iqn = s.iqnPrefix + ":" + blockvol.SanitizeIQN(volumeID)
+			}
+			if s.nqnPrefix != "" {
+				nqn = blockvol.BuildNQN(s.nqnPrefix, volumeID)
+			}
 		}
-		s.logger.Printf("NodeUnstageVolume: %s not in staged map, derived iqn=%s", volumeID, iqn)
+
+		// If no .transport file, probe NVMe connection to determine transport.
+		if transport == "" && nqn != "" && s.nvmeUtil != nil {
+			if connected, _ := s.nvmeUtil.IsConnected(ctx, nqn); connected {
+				transport = transportNVMe
+			}
+		}
+		if transport == "" {
+			transport = transportISCSI // default fallback
+		}
+
+		s.logger.Printf("NodeUnstageVolume: %s not in staged map, derived transport=%s", volumeID, transport)
 	}
 
 	// Best-effort cleanup: always attempt all steps even if one fails.
@@ -197,12 +287,24 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 		firstErr = err
 	}
 
-	// iSCSI logout.
-	if iqn != "" {
-		if err := s.iscsiUtil.Logout(ctx, iqn); err != nil {
-			s.logger.Printf("NodeUnstageVolume: logout error: %v", err)
-			if firstErr == nil {
-				firstErr = err
+	// Disconnect transport.
+	switch transport {
+	case transportNVMe:
+		if nqn != "" && s.nvmeUtil != nil {
+			if err := s.nvmeUtil.Disconnect(ctx, nqn); err != nil {
+				s.logger.Printf("NodeUnstageVolume: nvme disconnect error: %v", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+	default: // iSCSI
+		if iqn != "" {
+			if err := s.iscsiUtil.Logout(ctx, iqn); err != nil {
+				s.logger.Printf("NodeUnstageVolume: logout error: %v", err)
+				if firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
 	}
@@ -218,9 +320,12 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstage
 	}
 
 	if firstErr != nil {
-		// Keep staged entry so retry has correct isLocal/iqn info.
+		// Keep staged entry so retry has correct info.
 		return nil, status.Errorf(codes.Internal, "unstage: %v", firstErr)
 	}
+
+	// Clean up transport file.
+	os.Remove(filepath.Join(stagingPath, transportFile))
 
 	// Remove from staged map only after successful cleanup.
 	s.stagedMu.Lock()
@@ -310,24 +415,38 @@ func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVo
 		return nil, status.Errorf(codes.FailedPrecondition, "volume %q not staged", req.VolumeId)
 	}
 
-	// Check that iSCSI session is active.
-	loggedIn, err := s.iscsiUtil.IsLoggedIn(ctx, info.iqn)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "check iSCSI session: %v", err)
-	}
-	if !loggedIn {
-		return nil, status.Errorf(codes.FailedPrecondition, "volume %q not staged: iSCSI session not active", req.VolumeId)
-	}
+	var device string
+	var err error
 
-	// Rescan device to pick up new size.
-	if err := s.iscsiUtil.RescanDevice(ctx, info.iqn); err != nil {
-		return nil, status.Errorf(codes.Internal, "rescan iSCSI device: %v", err)
-	}
-
-	// Find the device path.
-	device, err := s.iscsiUtil.GetDeviceByIQN(ctx, info.iqn)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "find device: %v", err)
+	switch info.transport {
+	case transportNVMe:
+		// NVMe: rescan namespace, then find device.
+		if s.nvmeUtil == nil {
+			return nil, status.Errorf(codes.Internal, "nvme util not available")
+		}
+		if err := s.nvmeUtil.Rescan(ctx, info.nqn); err != nil {
+			return nil, status.Errorf(codes.Internal, "nvme rescan: %v", err)
+		}
+		device, err = s.nvmeUtil.GetDeviceByNQN(ctx, info.nqn)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "nvme find device: %v", err)
+		}
+	default: // iSCSI
+		// Check that iSCSI session is active.
+		loggedIn, lerr := s.iscsiUtil.IsLoggedIn(ctx, info.iqn)
+		if lerr != nil {
+			return nil, status.Errorf(codes.Internal, "check iSCSI session: %v", lerr)
+		}
+		if !loggedIn {
+			return nil, status.Errorf(codes.FailedPrecondition, "volume %q not staged: iSCSI session not active", req.VolumeId)
+		}
+		if err := s.iscsiUtil.RescanDevice(ctx, info.iqn); err != nil {
+			return nil, status.Errorf(codes.Internal, "rescan iSCSI device: %v", err)
+		}
+		device, err = s.iscsiUtil.GetDeviceByIQN(ctx, info.iqn)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "find device: %v", err)
+		}
 	}
 
 	// Determine mount path and fsType.
@@ -345,7 +464,7 @@ func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVo
 		return nil, status.Errorf(codes.Internal, "resize filesystem: %v", err)
 	}
 
-	s.logger.Printf("NodeExpandVolume: %s expanded (device=%s, fs=%s)", req.VolumeId, device, fsType)
+	s.logger.Printf("NodeExpandVolume: %s expanded (device=%s, transport=%s, fs=%s)", req.VolumeId, device, info.transport, fsType)
 
 	capacity := int64(0)
 	if req.CapacityRange != nil {
@@ -383,4 +502,29 @@ func (s *nodeServer) NodeGetInfo(_ context.Context, _ *csi.NodeGetInfoRequest) (
 			},
 		},
 	}, nil
+}
+
+// writeTransportFile writes the transport type to a file inside the staging path
+// so it can be recovered after CSI plugin restart.
+func writeTransportFile(stagingPath, transport string) error {
+	path := filepath.Join(stagingPath, transportFile)
+	if err := os.WriteFile(path, []byte(transport), 0600); err != nil {
+		return fmt.Errorf("write transport file: %w", err)
+	}
+	return nil
+}
+
+// readTransportFile reads the transport type from the staging path.
+// Returns empty string if the file doesn't exist.
+func readTransportFile(stagingPath string) string {
+	path := filepath.Join(stagingPath, transportFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	t := string(data)
+	if t == transportISCSI || t == transportNVMe {
+		return t
+	}
+	return ""
 }

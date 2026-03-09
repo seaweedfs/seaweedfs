@@ -25,6 +25,7 @@ type managedVolume struct {
 	vol       *blockvol.BlockVol
 	path      string // file path to .blk file
 	iqn       string // target IQN for this volume
+	nqn       string // NVMe subsystem NQN for this volume
 	sizeBytes uint64
 }
 
@@ -45,19 +46,27 @@ type VolumeManager struct {
 	volumes   map[string]*managedVolume
 	target    *iscsi.TargetServer
 	iqnPrefix string
+	nqnPrefix string
 	config    iscsi.TargetConfig
 	logger    *log.Logger
 	state     managerState
 	iscsiAddr string
+	nvmeAddr  string
+}
+
+// VolumeManagerOpts holds optional configuration for VolumeManager.
+type VolumeManagerOpts struct {
+	NvmeAddr  string // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQNPrefix string // NQN prefix for NVMe subsystems
 }
 
 // NewVolumeManager creates a new VolumeManager.
-func NewVolumeManager(dataDir, iscsiAddr, iqnPrefix string, logger *log.Logger) *VolumeManager {
+func NewVolumeManager(dataDir, iscsiAddr, iqnPrefix string, logger *log.Logger, opts ...VolumeManagerOpts) *VolumeManager {
 	if logger == nil {
 		logger = log.Default()
 	}
 	config := iscsi.DefaultTargetConfig()
-	return &VolumeManager{
+	vm := &VolumeManager{
 		dataDir:   dataDir,
 		volumes:   make(map[string]*managedVolume),
 		iqnPrefix: iqnPrefix,
@@ -65,6 +74,11 @@ func NewVolumeManager(dataDir, iscsiAddr, iqnPrefix string, logger *log.Logger) 
 		logger:    logger,
 		iscsiAddr: iscsiAddr,
 	}
+	if len(opts) > 0 {
+		vm.nvmeAddr = opts[0].NvmeAddr
+		vm.nqnPrefix = opts[0].NQNPrefix
+	}
+	return vm
 }
 
 // Start initializes and starts the shared TargetServer.
@@ -175,6 +189,7 @@ func (m *VolumeManager) CreateVolume(name string, sizeBytes uint64) error {
 			vol:       vol,
 			path:      volPath,
 			iqn:       iqn,
+			nqn:       m.volumeNQN(name),
 			sizeBytes: info.VolumeSize,
 		}
 		m.logger.Printf("adopted existing volume %q: %s (%d bytes)", name, iqn, info.VolumeSize)
@@ -198,6 +213,7 @@ func (m *VolumeManager) CreateVolume(name string, sizeBytes uint64) error {
 		vol:       vol,
 		path:      volPath,
 		iqn:       iqn,
+		nqn:       m.volumeNQN(name),
 		sizeBytes: sizeBytes,
 	}
 
@@ -267,6 +283,7 @@ func (m *VolumeManager) OpenVolume(name string) error {
 		vol:       vol,
 		path:      volPath,
 		iqn:       iqn,
+		nqn:       m.volumeNQN(name),
 		sizeBytes: info.VolumeSize,
 	}
 
@@ -323,6 +340,23 @@ func (m *VolumeManager) ListenAddr() string {
 		return m.target.ListenAddr()
 	}
 	return ""
+}
+
+// NvmeAddr returns the NVMe/TCP target address, or empty if NVMe is disabled.
+func (m *VolumeManager) NvmeAddr() string {
+	return m.nvmeAddr
+}
+
+// VolumeNQN returns the NVMe NQN for a volume name. Returns empty if nqnPrefix is not set.
+func (m *VolumeManager) VolumeNQN(name string) string {
+	if m.nqnPrefix == "" {
+		return ""
+	}
+	return m.volumeNQN(name)
+}
+
+func (m *VolumeManager) volumeNQN(name string) string {
+	return blockvol.BuildNQN(m.nqnPrefix, name)
 }
 
 // WithVolume runs fn while holding the manager lock with a reference to the volume.
