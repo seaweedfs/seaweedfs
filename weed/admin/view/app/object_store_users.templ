@@ -442,9 +442,31 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 <div class="modal-body">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6>Access Keys for <span id="accessKeysUsername"></span></h6>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="toggleCreateKeyForm()">
                             <i class="fas fa-plus me-1"></i>Create New Key
                         </button>
+                    </div>
+                    <div id="createKeyForm" class="card mb-3" style="display: none;">
+                        <div class="card-body">
+                            <p class="text-muted small mb-2">Leave blank to auto-generate.</p>
+                            <div class="mb-2">
+                                <label for="newAccessKeyInput" class="form-label form-label-sm">Access Key</label>
+                                <input type="text" class="form-control form-control-sm" id="newAccessKeyInput" placeholder="Auto-generated if empty" minlength="4" maxlength="128">
+                            </div>
+                            <div class="mb-2">
+                                <label for="newSecretKeyInput" class="form-label form-label-sm">Secret Key</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty" minlength="8" maxlength="128">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="toggleSecretKeyVisibility()" aria-label="Toggle secret key visibility">
+                                        <i class="fas fa-eye" id="secretKeyToggleIcon"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">Create</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCreateKeyForm()">Cancel</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="accessKeysContent">
                         <!-- Content will be loaded dynamically -->
@@ -1347,10 +1369,66 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Reset and hide the create key form
+        function resetCreateKeyForm() {
+            document.getElementById('createKeyForm').style.display = 'none';
+            document.getElementById('newAccessKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').type = 'password';
+            document.getElementById('secretKeyToggleIcon').className = 'fas fa-eye';
+        }
+
+        // Toggle create key form visibility
+        function toggleCreateKeyForm() {
+            const form = document.getElementById('createKeyForm');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                resetCreateKeyForm();
+            }
+        }
+
+        // Toggle secret key input visibility
+        function toggleSecretKeyVisibility() {
+            const input = document.getElementById('newSecretKeyInput');
+            const icon = document.getElementById('secretKeyToggleIcon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                input.type = 'password';
+                icon.className = 'fas fa-eye';
+            }
+        }
+
+        // Reset form when modal is dismissed
+        document.getElementById('accessKeysModal').addEventListener('hidden.bs.modal', resetCreateKeyForm);
+
         // Create new access key
+        var isCreatingKey = false;
         async function createAccessKey() {
+            if (isCreatingKey) return;
+
             const username = document.getElementById('accessKeysUsername').textContent;
-            
+            const accessKeyInput = document.getElementById('newAccessKeyInput');
+            const secretKeyInput = document.getElementById('newSecretKeyInput');
+            if ((accessKeyInput.value.trim() && !accessKeyInput.reportValidity()) ||
+                (secretKeyInput.value.trim() && !secretKeyInput.reportValidity())) {
+                return;
+            }
+            const accessKey = accessKeyInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+
+            const body = {};
+            if (accessKey) body.access_key = accessKey;
+            if (secretKey) body.secret_key = secretKey;
+
+            isCreatingKey = true;
+            const createBtn = document.querySelector('#createKeyForm .btn-primary');
+            const cancelBtn = document.querySelector('#createKeyForm .btn-secondary');
+            if (createBtn) createBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = true;
+
             try {
                 const encodedUsername = encodeURIComponent(username);
                 const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
@@ -1358,19 +1436,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({})
+                    body: JSON.stringify(body)
                 });
-                
+
                 if (response.ok) {
                     const result = await response.json();
-                    
-                    // Show the new access key details (IMPORTANT: secret key is only shown once!)
+
+                    // Show the new access key details
                     if (result.access_key) {
                         showNewAccessKeyModal(result.access_key);
                     }
-                    
+
                     showSuccessMessage('Access key created successfully');
-                    
+                    resetCreateKeyForm();
+
                     // Refresh access keys display
                     refreshAccessKeysList(username);
                 } else {
@@ -1380,6 +1459,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             } catch (error) {
                 console.error('Error creating access key:', error);
                 showAlert('Failed to create access key: ' + error.message, 'error');
+            } finally {
+                isCreatingKey = false;
+                if (createBtn) createBtn.disabled = false;
+                if (cancelBtn) cancelBtn.disabled = false;
             }
         }
 
