@@ -713,7 +713,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.loadEnvironmentVariableCredentials()
 
 	// Log configuration summary - always log to help debugging
-	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
 		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
 	if glog.V(2) {
