@@ -245,6 +245,12 @@ func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyReque
 		secretKey = generateSecretKey()
 	}
 
+	// Verify access key is globally unique
+	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
+	if err == nil && existingUser != nil {
+		return nil, fmt.Errorf("access key %q is already in use", accessKey)
+	}
+
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
