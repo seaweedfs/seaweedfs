@@ -216,7 +216,7 @@ mod tests {
         // Encode to EC
         let data_shards = 10;
         let parity_shards = 4;
-        ec_encoder::write_ec_files(dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+        ec_encoder::write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
 
         // Delete original .dat and .idx
         std::fs::remove_file(format!("{}/1.dat", dir)).unwrap();

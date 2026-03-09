@@ -21,6 +21,7 @@ use crate::storage::volume::volume_file_name;
 /// Also creates a sorted .ecx index from the .idx file.
 pub fn write_ec_files(
     dir: &str,
+    idx_dir: &str,
     collection: &str,
     volume_id: VolumeId,
     data_shards: usize,
@@ -28,7 +29,8 @@ pub fn write_ec_files(
 ) -> io::Result<()> {
     let base = volume_file_name(dir, collection, volume_id);
     let dat_path = format!("{}.dat", base);
-    let idx_path = format!("{}.idx", base);
+    let idx_base = volume_file_name(idx_dir, collection, volume_id);
+    let idx_path = format!("{}.idx", idx_base);
 
     // Create sorted .ecx from .idx
     write_sorted_ecx_from_idx(&idx_path, &format!("{}.ecx", base))?;
@@ -481,7 +483,7 @@ mod tests {
         let data_shards = 10;
         let parity_shards = 4;
         let total_shards = data_shards + parity_shards;
-        write_ec_files(dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+        write_ec_files(dir, dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
 
         // Verify shard files exist
         for i in 0..total_shards {

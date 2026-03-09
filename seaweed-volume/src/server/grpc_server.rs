@@ -1649,7 +1649,7 @@ impl VolumeServer for VolumeGrpcService {
         let collection = &req.collection;
 
         // Find the volume's directory and validate collection
-        let (dir, vol_version, dat_file_size) = {
+        let (dir, idx_dir, vol_version, dat_file_size) = {
             let store = self.state.store.read().unwrap();
             let (loc_idx, vol) = store
                 .find_volume(vid)
@@ -1664,6 +1664,7 @@ impl VolumeServer for VolumeGrpcService {
             let dat_size = vol.dat_file_size().unwrap_or(0) as i64;
             (
                 store.locations[loc_idx].directory.clone(),
+                store.locations[loc_idx].idx_directory.clone(),
                 version,
                 dat_size,
             )
@@ -1692,6 +1693,7 @@ impl VolumeServer for VolumeGrpcService {
 
         crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
+            &idx_dir,
             collection,
             vid,
             data_shards as usize,
