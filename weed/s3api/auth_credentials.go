@@ -1875,11 +1875,22 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 	iam.m.RLock()
 	engine := iam.iamPolicyEngine
 	groupNames := iam.userGroups[identity.Name]
-	groupMap := iam.groups
+	// Snapshot group policy names to avoid holding the lock during evaluation.
+	// We copy the needed data since PutGroup/RemoveGroup mutate iam.groups in-place.
+	var groupPolicies [][]string
+	for _, gName := range groupNames {
+		g, ok := iam.groups[gName]
+		if !ok || g.Disabled {
+			continue
+		}
+		policyNames := make([]string, len(g.PolicyNames))
+		copy(policyNames, g.PolicyNames)
+		groupPolicies = append(groupPolicies, policyNames)
+	}
 	iam.m.RUnlock()
 
 	// Collect all policy names: user policies + group policies
-	if len(identity.PolicyNames) == 0 && len(groupNames) == 0 {
+	if len(identity.PolicyNames) == 0 && len(groupPolicies) == 0 {
 		return false
 	}
 
@@ -1915,13 +1926,9 @@ func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identi
 		}
 	}
 
-	// Evaluate policies from user's groups (skip disabled groups)
-	for _, gName := range groupNames {
-		g, ok := groupMap[gName]
-		if !ok || g.Disabled {
-			continue
-		}
-		for _, policyName := range g.PolicyNames {
+	// Evaluate policies from user's groups
+	for _, policyNames := range groupPolicies {
+		for _, policyName := range policyNames {
 			result := engine.EvaluatePolicy(policyName, evalArgs)
 			if result == policy_engine.PolicyResultDeny {
 				return false
