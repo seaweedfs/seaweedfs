@@ -2,12 +2,10 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -83,19 +81,21 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		}
 
 		glog.V(1).Infof("mknod: %v", request)
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
+		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
 			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
 			return err
 		}
 
-		// Only cache the entry if the parent directory is already cached.
-		// This avoids polluting the cache with partial directory data.
-		if wfs.metaCache.IsDirectoryCached(dirFullPath) {
-			wfs.inodeToPath.TouchDirectory(dirFullPath)
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("local mknod %s: %w", entryFullPath, err)
-			}
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirFullPath), newEntry)
 		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("mknod %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
 
 		return nil
 	})
@@ -143,16 +143,21 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	glog.V(3).Infof("remove file: %v", entryFullPath)
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
 	// The filer has the correct hard link count and will only delete chunks when appropriate.
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{wfs.signature})
+	resp, err := filer_pb.RemoveWithResponse(context.Background(), wfs, string(dirFullPath), name, true, false, false, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		return fuse.OK
 	}
 
-	// then, delete meta cache
-	if err = wfs.metaCache.DeleteEntry(context.Background(), entryFullPath); err != nil {
-		glog.V(3).Infof("local DeleteEntry %s: %v", entryFullPath, err)
-		return fuse.EIO
+	var event *filer_pb.SubscribeMetadataResponse
+	if resp != nil && resp.MetadataEvent != nil {
+		event = resp.MetadataEvent
+	} else {
+		event = metadataDeleteEvent(string(dirFullPath), name, false)
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("unlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 

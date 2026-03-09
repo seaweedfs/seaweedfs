@@ -23,8 +23,6 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create status request: %v", err)
 	}
-	statusReq.Header.Set(request_id.AmzRequestIDHeader, "test-request-id-1")
-
 	statusResp := framework.DoRequest(t, client, statusReq)
 	statusBody := framework.ReadAllAndClose(t, statusResp)
 
@@ -34,8 +32,8 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if got := statusResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
 		t.Fatalf("expected /status Server header to contain SeaweedFS Volume, got %q", got)
 	}
-	if got := statusResp.Header.Get(request_id.AmzRequestIDHeader); got != "test-request-id-1" {
-		t.Fatalf("expected echoed request id, got %q", got)
+	if got := statusResp.Header.Get(request_id.AmzRequestIDHeader); got == "" {
+		t.Fatal("expected server-generated request id in response header")
 	}
 
 	var payload map[string]interface{}
@@ -49,7 +47,6 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	}
 
 	healthReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/healthz")
-	healthReq.Header.Set(request_id.AmzRequestIDHeader, "test-request-id-2")
 	healthResp := framework.DoRequest(t, client, healthReq)
 	_ = framework.ReadAllAndClose(t, healthResp)
 	if healthResp.StatusCode != http.StatusOK {
@@ -58,8 +55,8 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if got := healthResp.Header.Get("Server"); !strings.Contains(got, "SeaweedFS Volume") {
 		t.Fatalf("expected /healthz Server header to contain SeaweedFS Volume, got %q", got)
 	}
-	if got := healthResp.Header.Get(request_id.AmzRequestIDHeader); got != "test-request-id-2" {
-		t.Fatalf("expected /healthz echoed request id, got %q", got)
+	if got := healthResp.Header.Get(request_id.AmzRequestIDHeader); got == "" {
+		t.Fatal("expected /healthz server-generated request id in response header")
 	}
 
 	uiResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))

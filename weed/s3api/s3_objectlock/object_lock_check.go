@@ -99,8 +99,11 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 				}
 				return fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
 			}
-			entriesReceived = true
 			entry := entryResp.Entry
+			if entry == nil {
+				continue
+			}
+			entriesReceived = true
 			lastFileName = entry.Name
 
 			// Skip invalid entry names to prevent path traversal

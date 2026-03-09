@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"syscall"
 	"time"
 
@@ -56,6 +55,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// update old file to hardlink mode
+	origHardLinkId := oldEntry.HardLinkId
+	origHardLinkCounter := oldEntry.HardLinkCounter
 	if len(oldEntry.HardLinkId) == 0 {
 		oldEntry.HardLinkId = filer.NewHardLinkId()
 		oldEntry.HardLinkCounter = 1
@@ -90,25 +91,42 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		wfs.mapPbIdFromLocalToFiler(request.Entry)
 		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		if err := filer_pb.UpdateEntry(context.Background(), client, updateOldEntryRequest); err != nil {
+		updateResp, err := filer_pb.UpdateEntryWithResponse(context.Background(), client, updateOldEntryRequest)
+		if err != nil {
 			return err
 		}
-		// Only update cache if the directory is cached
-		if wfs.metaCache.IsDirectoryCached(util.FullPath(updateOldEntryRequest.Directory)) {
-			if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry)); err != nil {
-				return fmt.Errorf("update meta cache for %s: %w", oldEntryPath, err)
-			}
+		updateEvent := updateResp.GetMetadataEvent()
+		if updateEvent == nil {
+			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
+			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
 
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
+		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
+			// Rollback: restore original HardLinkId/Counter on the source entry
+			oldEntry.HardLinkId = origHardLinkId
+			oldEntry.HardLinkCounter = origHardLinkCounter
+			rollbackReq := &filer_pb.UpdateEntryRequest{
+				Directory:  oldParentPath,
+				Entry:      oldEntry,
+				Signatures: []int32{wfs.signature},
+			}
+			if _, rollbackErr := filer_pb.UpdateEntryWithResponse(context.Background(), client, rollbackReq); rollbackErr != nil {
+				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
+			}
 			return err
 		}
 
-		// Only cache the entry if the parent directory is already cached.
-		if wfs.metaCache.IsDirectoryCached(newParentPath) {
-			if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-				return fmt.Errorf("insert meta cache for %s: %w", newParentPath.Child(name), err)
-			}
+		createEvent := createResp.GetMetadataEvent()
+		if createEvent == nil {
+			createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
+			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
 		}
 
 		return nil

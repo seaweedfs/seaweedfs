@@ -2,6 +2,7 @@ package mount
 
 import (
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -90,5 +91,45 @@ func TestInodeEntry_removeOnePath(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRecordDirectoryUpdateSwitchesDirectoryToReadThrough(t *testing.T) {
+	root := util.FullPath("/")
+	dir := util.FullPath("/data")
+
+	inodeToPath := NewInodeToPath(root, 60)
+	inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+	inodeToPath.MarkChildrenCached(dir)
+
+	now := time.Now()
+	if !inodeToPath.RecordDirectoryUpdate(dir, now, time.Second, 1) {
+		t.Fatal("expected directory to switch to read-through mode")
+	}
+	if inodeToPath.IsChildrenCached(dir) {
+		t.Fatal("directory should no longer be marked cached")
+	}
+	if !inodeToPath.ShouldReadDirectoryDirect(dir) {
+		t.Fatal("directory should be served via direct reads after hot invalidation")
+	}
+}
+
+func TestMarkChildrenCachedClearsReadThroughMode(t *testing.T) {
+	root := util.FullPath("/")
+	dir := util.FullPath("/data")
+
+	inodeToPath := NewInodeToPath(root, 60)
+	inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+
+	if !inodeToPath.MarkDirectoryReadThrough(dir, time.Now()) {
+		t.Fatal("expected read-through flag to be set")
+	}
+	inodeToPath.MarkChildrenCached(dir)
+
+	if !inodeToPath.IsChildrenCached(dir) {
+		t.Fatal("directory should be cached after MarkChildrenCached")
+	}
+	if inodeToPath.ShouldReadDirectoryDirect(dir) {
+		t.Fatal("directory should leave read-through mode after caching")
 	}
 }

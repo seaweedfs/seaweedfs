@@ -20,6 +20,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "erasure_coding",
+		Category: CategoryHeavy,
+		Aliases:  []string{"erasure-coding", "erasure.coding", "ec"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewErasureCodingHandler(opts.GrpcDialOption, opts.WorkingDir), nil
+		},
+	})
+}
+
 type erasureCodingWorkerConfig struct {
 	TaskConfig         *erasurecodingtask.Config
 	MinIntervalSeconds int
@@ -205,9 +216,9 @@ func (h *ErasureCodingHandler) Detect(
 	}
 
 	workerConfig := deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
 		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("ERASURE CODING: Detection skipped due to min interval (%s)", minInterval),
 			map[string]*plugin_pb.ConfigValue{
@@ -380,7 +391,7 @@ func emitErasureCodingDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(buildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -437,7 +448,7 @@ func emitErasureCodingDetectionDecisionTrace(
 			metric.FullnessRatio*100,
 			taskConfig.FullnessRatio*100,
 		)
-		if err := sender.SendActivity(buildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
 			},
@@ -520,7 +531,7 @@ func (h *ErasureCodingHandler) Execute(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(stage, message),
+				BuildExecutorActivity(stage, message),
 			},
 		})
 	})
@@ -533,7 +544,7 @@ func (h *ErasureCodingHandler) Execute(
 		Stage:           "assigned",
 		Message:         "erasure coding job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "erasure coding job accepted"),
+			BuildExecutorActivity("assigned", "erasure coding job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -548,7 +559,7 @@ func (h *ErasureCodingHandler) Execute(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("failed", err.Error()),
+				BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -576,7 +587,7 @@ func (h *ErasureCodingHandler) Execute(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }

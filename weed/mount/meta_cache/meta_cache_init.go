@@ -69,12 +69,43 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 
 		glog.V(4).Infof("ReadDirAllEntries %s ...", path)
 
+		// Use context.Background() for build lifecycle calls so that
+		// errgroup cancellation of ctx doesn't cause enqueueAndWait to
+		// return early, which would trigger cleanupBuild while the
+		// operation is still queued.
+		if err := mc.BeginDirectoryBuild(context.Background(), path); err != nil {
+			return nil, fmt.Errorf("begin build %s: %w", path, err)
+		}
+		cleanupDone := false
+		cleanupBuild := func(reason string) {
+			if cleanupDone {
+				return
+			}
+			cleanupDone = true
+			if deleteErr := mc.DeleteFolderChildren(context.Background(), path); deleteErr != nil {
+				glog.V(2).Infof("clear %s build %s: %v", reason, path, deleteErr)
+			}
+			if abortErr := mc.AbortDirectoryBuild(context.Background(), path); abortErr != nil {
+				glog.V(2).Infof("abort %s build %s: %v", reason, path, abortErr)
+			}
+		}
+		defer func() {
+			if !cleanupDone && ctx.Err() != nil {
+				cleanupBuild("canceled")
+			}
+		}()
+
 		// Collect entries in batches for efficient LevelDB writes
 		var batch []*filer.Entry
+		var snapshotTsNs int64
 
 		fetchErr := util.Retry("ReadDirAllEntries", func() error {
 			batch = nil // Reset batch on retry, allow GC of previous entries
-			return filer_pb.ReadDirAllEntries(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
+			if err := mc.DeleteFolderChildren(ctx, path); err != nil {
+				return fmt.Errorf("clear existing entries for %s: %w", path, err)
+			}
+			var err error
+			snapshotTsNs, err = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
 				if IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
@@ -94,19 +125,26 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 				}
 				return nil
 			})
+			return err
 		})
 
 		if fetchErr != nil {
+			cleanupBuild("failed")
 			return nil, fmt.Errorf("list %s: %w", path, fetchErr)
 		}
 
 		// Flush any remaining entries in the batch
 		if len(batch) > 0 {
 			if err := mc.doBatchInsertEntries(ctx, batch); err != nil {
+				cleanupBuild("incomplete")
 				return nil, fmt.Errorf("batch insert remaining for %s: %w", path, err)
 			}
 		}
-		mc.markCachedFn(path)
+		if err := mc.CompleteDirectoryBuild(context.Background(), path, snapshotTsNs); err != nil {
+			cleanupBuild("unreplayed")
+			return nil, fmt.Errorf("complete build for %s: %w", path, err)
+		}
+		cleanupDone = true // Prevent deferred cleanup after successful publish
 		return nil, nil
 	})
 	return err

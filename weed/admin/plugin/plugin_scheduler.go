@@ -112,7 +112,6 @@ func (r *Plugin) runSchedulerIteration() bool {
 	}
 
 	active := make(map[string]struct{}, len(jobTypes))
-	schedulerIdleSleep := r.GetSchedulerConfig().IdleSleepDuration()
 	hadJobs := false
 
 	for _, jobType := range jobTypes {
@@ -129,7 +128,7 @@ func (r *Plugin) runSchedulerIteration() bool {
 		}
 		initialDelay := time.Duration(0)
 		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
-			initialDelay = schedulerIdleSleep / 2
+			initialDelay = 5 * time.Second
 		}
 		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
 			continue

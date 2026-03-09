@@ -384,6 +384,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <!-- Options loaded dynamically -->
                             </select>
                         </div>
+                        <div class="mb-3">
+                            <label class="form-label">Groups</label>
+                            <div id="editUserGroups">
+                                <!-- Groups loaded dynamically -->
+                            </div>
+                            <div class="input-group mt-2">
+                                <select class="form-select" id="editGroupSelect">
+                                    <option value="">Add to group...</option>
+                                </select>
+                                <button class="btn btn-outline-primary" type="button" onclick="addUserToGroupFromEdit()"
+                                        aria-label="Add user to group" title="Add user to group">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
+                        </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -912,6 +927,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         }
                     }
                     
+                    // Populate groups
+                    await populateEditUserGroups(username);
+
                     // Show modal
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
                     modal.show();
@@ -1027,6 +1045,103 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         }
 
 
+        // Populate groups in the edit user modal
+        async function populateEditUserGroups(username) {
+            const container = document.getElementById('editUserGroups');
+            const groupSelect = document.getElementById('editGroupSelect');
+            container.innerHTML = '';
+            groupSelect.innerHTML = '<option value="">Add to group...</option>';
+
+            try {
+                // Fetch all groups
+                const groupsResp = await fetch('/api/groups');
+                if (!groupsResp.ok) return;
+                const groupsData = await groupsResp.json();
+                const allGroups = groupsData.groups || [];
+
+                // Fetch user details to get current groups
+                const userResp = await fetch(`/api/users/${encodeURIComponent(username)}`);
+                if (!userResp.ok) return;
+                const user = await userResp.json();
+                const userGroups = user.groups || [];
+
+                // Show current group badges with remove button
+                if (userGroups.length > 0) {
+                    userGroups.forEach(function(group) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge bg-primary me-1 mb-1';
+                        badge.textContent = group + ' ';
+                        const removeIcon = document.createElement('i');
+                        removeIcon.className = 'fas fa-times ms-1';
+                        removeIcon.style.cursor = 'pointer';
+                        removeIcon.setAttribute('aria-label', 'Remove from group ' + group);
+                        removeIcon.setAttribute('title', 'Remove from group');
+                        removeIcon.addEventListener('click', function() {
+                            removeUserFromGroupInEdit(group);
+                        });
+                        badge.appendChild(removeIcon);
+                        container.appendChild(badge);
+                    });
+                } else {
+                    container.innerHTML = '<span class="text-muted">No groups</span>';
+                }
+
+                // Populate dropdown with groups the user is NOT in
+                allGroups.forEach(function(g) {
+                    if (!userGroups.includes(g.name)) {
+                        const opt = document.createElement('option');
+                        opt.value = g.name;
+                        opt.textContent = g.name;
+                        groupSelect.appendChild(opt);
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading groups:', error);
+            }
+        }
+
+        // Add user to group from edit modal
+        async function addUserToGroupFromEdit() {
+            const username = document.getElementById('editUsername').value;
+            const groupSelect = document.getElementById('editGroupSelect');
+            const groupName = groupSelect.value;
+            if (!groupName) return;
+
+            try {
+                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username })
+                });
+                if (response.ok) {
+                    await populateEditUserGroups(username);
+                } else {
+                    const error = await response.json();
+                    showAlert('Failed to add to group: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to add to group: ' + error.message, 'error');
+            }
+        }
+
+        // Remove user from group in edit modal
+        async function removeUserFromGroupInEdit(groupName) {
+            const username = document.getElementById('editUsername').value;
+            try {
+                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    await populateEditUserGroups(username);
+                } else {
+                    const error = await response.json();
+                    showAlert('Failed to remove from group: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to remove from group: ' + error.message, 'error');
+            }
+        }
+
         // Handle update user form submission
         async function handleUpdateUser() {
             const username = document.getElementById('editUsername').value;
@@ -1113,6 +1228,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                   }).join('');
               } else {
                   detailsHtml += '<span class="text-muted">No policies attached</span>';
+              }
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Groups</h6>';
+              detailsHtml += '<div class="mb-3">';
+              if (user.groups && user.groups.length > 0) {
+                  detailsHtml += user.groups.map(function(group) {
+                      return '<span class="badge bg-primary me-1">' + escapeHtml(group) + '</span>';
+                  }).join('');
+              } else {
+                  detailsHtml += '<span class="text-muted">No groups</span>';
               }
               detailsHtml += '</div>';
               detailsHtml += '<h6 class="text-muted">Access Keys</h6>';

@@ -30,6 +30,7 @@ type LookupResult struct {
 	Locations      []Location `json:"locations,omitempty"`
 	Jwt            string     `json:"jwt,omitempty"`
 	Error          string     `json:"error,omitempty"`
+	NotFound       bool       `json:"-"`
 }
 
 func (lr *LookupResult) String() string {

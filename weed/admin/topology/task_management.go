@@ -272,6 +272,40 @@ func (at *ActiveTopology) HasAnyTask(volumeID uint32) bool {
 	return at.HasTask(volumeID, TaskTypeNone)
 }
 
+// GetTaskServerAdjustments returns per-server volume count adjustments for
+// pending and assigned tasks of the given type. For each task, source servers
+// are decremented and destination servers are incremented, reflecting the
+// projected volume distribution once in-flight tasks complete.
+func (at *ActiveTopology) GetTaskServerAdjustments(taskType TaskType) map[string]int {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	adjustments := make(map[string]int)
+	for _, task := range at.pendingTasks {
+		if task.TaskType != taskType {
+			continue
+		}
+		for _, src := range task.Sources {
+			adjustments[src.SourceServer]--
+		}
+		for _, dst := range task.Destinations {
+			adjustments[dst.TargetServer]++
+		}
+	}
+	for _, task := range at.assignedTasks {
+		if task.TaskType != taskType {
+			continue
+		}
+		for _, src := range task.Sources {
+			adjustments[src.SourceServer]--
+		}
+		for _, dst := range task.Destinations {
+			adjustments[dst.TargetServer]++
+		}
+	}
+	return adjustments
+}
+
 // calculateSourceStorageImpact calculates storage impact for sources based on task type and cleanup type
 func (at *ActiveTopology) calculateSourceStorageImpact(taskType TaskType, cleanupType SourceCleanupType, volumeSize int64) StorageSlotChange {
 	switch taskType {

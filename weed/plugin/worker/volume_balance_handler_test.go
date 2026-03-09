@@ -228,7 +228,7 @@ func TestEmitVolumeBalanceDetectionDecisionTraceNoTasks(t *testing.T) {
 		{VolumeID: 4, Server: "server-b", DiskType: "hdd"},
 	}
 
-	if err := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, config, nil); err != nil {
+	if err := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, nil, config, nil); err != nil {
 		t.Fatalf("emitVolumeBalanceDetectionDecisionTrace error: %v", err)
 	}
 	if len(sender.events) < 2 {

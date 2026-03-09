@@ -3,14 +3,19 @@ package operation
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type VolumeAssignRequest struct {
@@ -106,13 +111,21 @@ func (ap *singleThreadAssignProxy) doAssign(grpcConnection *grpc.ClientConn, pri
 			WritableVolumeCount: request.WritableVolumeCount,
 		}
 		if err = ap.assignClient.Send(req); err != nil {
+			ap.assignClient = nil
 			return nil, fmt.Errorf("StreamAssignSend: %w", err)
 		}
 		resp, grpcErr := ap.assignClient.Recv()
 		if grpcErr != nil {
+			ap.assignClient = nil
 			return nil, grpcErr
 		}
 		if resp.Error != "" {
+			// StreamAssign returns transient warmup errors as in-band responses.
+			// Wrap them as codes.Unavailable so the caller's retry logic can
+			// classify them as retriable.
+			if strings.Contains(resp.Error, "warming up") {
+				return nil, status.Errorf(codes.Unavailable, "StreamAssignRecv: %s", resp.Error)
+			}
 			return nil, fmt.Errorf("StreamAssignRecv: %v", resp.Error)
 		}
 
@@ -149,50 +162,73 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 	var lastError error
 	ret := &AssignResult{}
 
+	// Compute a single deadline so all request entries (primary + fallback)
+	// share one 30s retry budget instead of each getting its own.
+	// Use a deadline-aware context so both RetryWithBackoff and per-attempt
+	// timeouts are bounded by the shared budget.
+	deadline := time.Now().Add(30 * time.Second)
+	deadlineCtx, deadlineCancel := context.WithDeadline(ctx, deadline)
+	defer deadlineCancel()
+
 	for i, request := range requests {
 		if request == nil {
 			continue
 		}
 
-		lastError = WithMasterServerClient(false, masterFn(ctx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
-			req := &master_pb.AssignRequest{
-				Count:               request.Count,
-				Replication:         request.Replication,
-				Collection:          request.Collection,
-				Ttl:                 request.Ttl,
-				DiskType:            request.DiskType,
-				DataCenter:          request.DataCenter,
-				Rack:                request.Rack,
-				DataNode:            request.DataNode,
-				WritableVolumeCount: request.WritableVolumeCount,
-			}
-			resp, grpcErr := masterClient.Assign(ctx, req)
-			if grpcErr != nil {
-				return grpcErr
-			}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
 
-			if resp.Error != "" {
-				return fmt.Errorf("assignRequest: %v", resp.Error)
-			}
+		lastError = util.RetryWithBackoff(deadlineCtx, "assign", remaining,
+			func(err error) bool {
+				st, ok := status.FromError(err)
+				return ok && st.Code() == codes.Unavailable
+			},
+			func() error {
+				// Per-attempt timeout to prevent a single slow RPC from consuming the entire retry budget
+				attemptCtx, attemptCancel := context.WithTimeout(deadlineCtx, 10*time.Second)
+				defer attemptCancel()
+				return WithMasterServerClient(false, masterFn(attemptCtx), grpcDialOption, func(masterClient master_pb.SeaweedClient) error {
+					req := &master_pb.AssignRequest{
+						Count:               request.Count,
+						Replication:         request.Replication,
+						Collection:          request.Collection,
+						Ttl:                 request.Ttl,
+						DiskType:            request.DiskType,
+						DataCenter:          request.DataCenter,
+						Rack:                request.Rack,
+						DataNode:            request.DataNode,
+						WritableVolumeCount: request.WritableVolumeCount,
+					}
+					resp, grpcErr := masterClient.Assign(attemptCtx, req)
+					if grpcErr != nil {
+						return grpcErr
+					}
 
-			ret.Count = resp.Count
-			ret.Fid = resp.Fid
-			ret.Url = resp.Location.Url
-			ret.PublicUrl = resp.Location.PublicUrl
-			ret.GrpcPort = int(resp.Location.GrpcPort)
-			ret.Error = resp.Error
-			ret.Auth = security.EncodedJwt(resp.Auth)
-			for _, r := range resp.Replicas {
-				ret.Replicas = append(ret.Replicas, Location{
-					Url:        r.Url,
-					PublicUrl:  r.PublicUrl,
-					DataCenter: r.DataCenter,
+					if resp.Error != "" {
+						return fmt.Errorf("assignRequest: %v", resp.Error)
+					}
+
+					ret.Count = resp.Count
+					ret.Fid = resp.Fid
+					ret.Url = resp.Location.Url
+					ret.PublicUrl = resp.Location.PublicUrl
+					ret.GrpcPort = int(resp.Location.GrpcPort)
+					ret.Error = resp.Error
+					ret.Auth = security.EncodedJwt(resp.Auth)
+					ret.Replicas = nil
+					for _, r := range resp.Replicas {
+						ret.Replicas = append(ret.Replicas, Location{
+							Url:        r.Url,
+							PublicUrl:  r.PublicUrl,
+							DataCenter: r.DataCenter,
+						})
+					}
+
+					return nil
 				})
-			}
-
-			return nil
-
-		})
+			})
 
 		if lastError != nil {
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorChunkAssign).Inc()

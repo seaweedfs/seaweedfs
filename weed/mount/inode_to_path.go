@@ -21,18 +21,18 @@ type InodeEntry struct {
 	nlookup           uint64
 	isDirectory       bool
 	isChildrenCached  bool
+	readDirDirect     bool
 	cachedExpiresTime time.Time
 	lastAccess        time.Time
 	lastRefresh       time.Time
 	updateWindowStart time.Time
 	updateCount       int
-	needsRefresh      bool
 }
 
 func (ie *InodeEntry) resetCacheState() {
 	ie.isChildrenCached = false
+	ie.readDirDirect = false
 	ie.cachedExpiresTime = time.Time{}
-	ie.needsRefresh = false
 	ie.updateCount = 0
 	ie.updateWindowStart = time.Time{}
 }
@@ -188,11 +188,11 @@ func (i *InodeToPath) MarkChildrenCached(fullpath util.FullPath) {
 		return
 	}
 	path.isChildrenCached = true
+	path.readDirDirect = false
 	now := time.Now()
 	path.lastAccess = now
 	path.lastRefresh = now
 	path.updateCount = 0
-	path.needsRefresh = false
 	path.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		path.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)
@@ -264,6 +264,27 @@ func (i *InodeToPath) TouchDirectory(fullpath util.FullPath) {
 	entry.lastAccess = time.Now()
 }
 
+func (i *InodeToPath) MarkDirectoryReadThrough(fullpath util.FullPath, now time.Time) bool {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[fullpath]
+	if !found {
+		return false
+	}
+	entry, found := i.inode2path[inode]
+	if !found || !entry.isDirectory {
+		return false
+	}
+	entry.isChildrenCached = false
+	entry.readDirDirect = true
+	entry.cachedExpiresTime = time.Time{}
+	entry.lastAccess = now
+	entry.lastRefresh = time.Time{}
+	entry.updateCount = 0
+	entry.updateWindowStart = time.Time{}
+	return true
+}
+
 func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Time, window time.Duration, threshold int) bool {
 	if threshold <= 0 || window <= 0 {
 		return false
@@ -284,13 +305,19 @@ func (i *InodeToPath) RecordDirectoryUpdate(fullpath util.FullPath, now time.Tim
 	}
 	entry.updateCount++
 	if entry.updateCount >= threshold {
-		entry.needsRefresh = true
+		entry.isChildrenCached = false
+		entry.readDirDirect = true
+		entry.cachedExpiresTime = time.Time{}
+		entry.lastAccess = now
+		entry.lastRefresh = time.Time{}
+		entry.updateCount = 0
+		entry.updateWindowStart = time.Time{}
 		return true
 	}
 	return false
 }
 
-func (i *InodeToPath) NeedsRefresh(fullpath util.FullPath) bool {
+func (i *InodeToPath) ShouldReadDirectoryDirect(fullpath util.FullPath) bool {
 	i.RLock()
 	defer i.RUnlock()
 	inode, found := i.path2inode[fullpath]
@@ -301,7 +328,7 @@ func (i *InodeToPath) NeedsRefresh(fullpath util.FullPath) bool {
 	if !found || !entry.isDirectory {
 		return false
 	}
-	return entry.isChildrenCached && entry.needsRefresh
+	return entry.readDirDirect
 }
 
 func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Time) {
@@ -317,8 +344,8 @@ func (i *InodeToPath) MarkDirectoryRefreshed(fullpath util.FullPath, now time.Ti
 	}
 	entry.lastRefresh = now
 	entry.lastAccess = now
+	entry.readDirDirect = false
 	entry.updateCount = 0
-	entry.needsRefresh = false
 	entry.updateWindowStart = time.Time{}
 	if i.cacheMetaTtlSec > 0 {
 		entry.cachedExpiresTime = now.Add(i.cacheMetaTtlSec)

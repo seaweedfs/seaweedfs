@@ -8,20 +8,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-func newErrorResponse(errCode string, errMsg string) ErrorResponse {
+func newErrorResponse(errCode string, errMsg string, requestID string) ErrorResponse {
 	errorResp := ErrorResponse{}
 	errorResp.Error.Type = "Sender"
 	errorResp.Error.Code = &errCode
 	errorResp.Error.Message = &errMsg
-	errorResp.SetRequestId()
+	errorResp.SetRequestId(requestID)
 	return errorResp
 }
 
-func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *IamError) {
-
+func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, reqID string, iamError *IamError) {
 	if iamError == nil {
-		// Do nothing if there is no error
-		glog.Errorf("No error found")
+		glog.Errorf("writeIamErrorResponse called with nil error")
+		internalResp := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
+		s3err.WriteXMLResponse(w, r, http.StatusInternalServerError, internalResp)
 		return
 	}
 
@@ -29,8 +29,8 @@ func writeIamErrorResponse(w http.ResponseWriter, r *http.Request, iamError *Iam
 	errMsg := iamError.Error.Error()
 	glog.Errorf("Response %+v", errMsg)
 
-	errorResp := newErrorResponse(errCode, errMsg)
-	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error")
+	errorResp := newErrorResponse(errCode, errMsg, reqID)
+	internalErrorResponse := newErrorResponse(iam.ErrCodeServiceFailureException, "Internal server error", reqID)
 
 	switch errCode {
 	case iam.ErrCodeNoSuchEntityException:

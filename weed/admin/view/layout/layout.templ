@@ -60,8 +60,11 @@ templ Layout(view ViewContext, content templ.Component) {
                     SeaweedFS Admin
                 </a>
                 
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation menu">
                     <span class="navbar-toggler-icon"></span>
+                </button>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="User menu">
+                    <i class="fas fa-user"></i>
                 </button>
                 
                 <div class="collapse navbar-collapse" id="navbarNav">
@@ -83,7 +86,7 @@ templ Layout(view ViewContext, content templ.Component) {
 
         <div class="row g-0">
             <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
+            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse" id="sidebarMenu">
                 <div class="position-sticky pt-3">
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
                         <span>MAIN</span>
@@ -163,6 +166,11 @@ templ Layout(view ViewContext, content templ.Component) {
                         <li class="nav-item">
                             <a class="nav-link" href="/object-store/users">
                                 <i class="fas fa-users me-2"></i>Users
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/object-store/groups">
+                                <i class="fas fa-users-cog me-2"></i>Groups
                             </a>
                         </li>
                         <li class="nav-item">
@@ -308,6 +316,9 @@ templ Layout(view ViewContext, content templ.Component) {
                     </ul>
                 </div>
             </div>
+
+            <!-- Sidebar backdrop for mobile -->
+            <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
             <!-- Main content -->
             <main class="col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4">

@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +54,17 @@ func (ms *MasterServer) dirLookupHandler(w http.ResponseWriter, r *http.Request)
 	location := ms.findVolumeLocation(collection, vid)
 	httpStatus := http.StatusOK
 	if location.Error != "" || location.Locations == nil {
-		httpStatus = http.StatusNotFound
+		if location.NotFound && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+			httpStatus = http.StatusServiceUnavailable
+			remaining := ms.Topo.RemainingWarmupDuration()
+			if remaining < time.Second {
+				remaining = time.Second
+			}
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
+			location.Error = "service warming up, please retry"
+		} else {
+			httpStatus = http.StatusNotFound
+		}
 	} else {
 		forRead := r.FormValue("read")
 		isRead := forRead == "yes"
@@ -94,12 +105,15 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 		}
 		err = getVidLocationsErr
 	}
+	notFound := false
 	if len(locations) == 0 && err == nil {
 		err = fmt.Errorf("volume id %s not found", vid)
+		notFound = true
 	}
 	ret := operation.LookupResult{
 		VolumeOrFileId: vid,
 		Locations:      locations,
+		NotFound:       notFound,
 	}
 	if err != nil {
 		ret.Error = err.Error()
@@ -108,6 +122,17 @@ func (ms *MasterServer) findVolumeLocation(collection, vid string) operation.Loo
 }
 
 func (ms *MasterServer) dirAssignHandler(w http.ResponseWriter, r *http.Request) {
+	if ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		remaining := ms.Topo.RemainingWarmupDuration()
+		if remaining < time.Second {
+			remaining = time.Second
+		}
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", int(math.Ceil(remaining.Seconds()))))
+		writeJsonQuiet(w, r, http.StatusServiceUnavailable, operation.AssignResult{
+			Error: "master is warming up, topology is still loading",
+		})
+		return
+	}
 	stats.AssignRequest()
 	requestedCount, e := strconv.ParseUint(r.FormValue("count"), 10, 64)
 	if e != nil || requestedCount == 0 {

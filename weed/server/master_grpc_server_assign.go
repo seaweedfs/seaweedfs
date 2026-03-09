@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer) error {
@@ -28,8 +30,15 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 		}
 		resp, err := ms.Assign(context.Background(), req)
 		if err != nil {
-			glog.Errorf("StreamAssign failed to assign: %v", err)
-			return err
+			// Return transient errors (e.g. warmup) as in-band error responses
+			// instead of killing the stream, so pooled connections survive.
+			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+				glog.V(1).Infof("StreamAssign transient error: %v", err)
+				resp = &master_pb.AssignResponse{Error: st.Message()}
+			} else {
+				glog.Errorf("StreamAssign failed to assign: %v", err)
+				return err
+			}
 		}
 		if err = server.Send(resp); err != nil {
 			glog.Errorf("StreamAssign failed to send: %v", err)
@@ -57,6 +66,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	ttl, err := needle.ReadTTL(req.Ttl)
 	if err != nil {
 		return nil, err
+	}
+
+	if ms.Topo.IsWarmingUp() {
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 	diskType := types.ToDiskType(req.DiskType)
 

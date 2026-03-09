@@ -589,6 +589,30 @@ type UpdateServiceAccountRequest struct {
 	Expiration  string `json:"expiration,omitempty"`
 }
 
+// Group management structures
+type GroupData struct {
+	Name        string   `json:"name"`
+	MemberCount int      `json:"member_count"`
+	PolicyCount int      `json:"policy_count"`
+	Status      string   `json:"status"` // "enabled" or "disabled"
+	Members     []string `json:"members"`
+	PolicyNames []string `json:"policy_names"`
+}
+
+type GroupsPageData struct {
+	Username          string      `json:"username"`
+	Groups            []GroupData `json:"groups"`
+	TotalGroups       int         `json:"total_groups"`
+	ActiveGroups      int         `json:"active_groups"`
+	AvailableUsers    []string    `json:"available_users"`
+	AvailablePolicies []string    `json:"available_policies"`
+	LastUpdated       time.Time   `json:"last_updated"`
+}
+
+type CreateGroupRequest struct {
+	Name string `json:"name"`
+}
+
 // STS Configuration display types
 type STSConfigData struct {
 	Enabled       bool      `json:"enabled"`

@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 // STS API constants matching AWS STS specification
@@ -97,6 +98,7 @@ func (h *STSHandlers) getAccountID() string {
 // HandleSTSRequest is the main entry point for STS requests
 // It routes requests based on the Action parameter
 func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
+	r, _ = request_id.Ensure(r)
 	if err := r.ParseForm(); err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue, err)
 		return
@@ -224,7 +226,7 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 			SubjectFromWebIdentityToken: response.AssumedRoleUser.Subject,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
@@ -354,7 +356,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			AssumedRoleUser: assumedUser,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
@@ -495,7 +497,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			AssumedRoleUser: assumedUser,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
@@ -731,7 +733,7 @@ func (h *STSHandlers) writeSTSErrorResponse(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := STSErrorResponse{
-		RequestId: fmt.Sprintf("%d", time.Now().UnixNano()),
+		RequestId: request_id.GetFromRequest(r),
 	}
 
 	// Server-side errors use "Receiver" type per AWS spec

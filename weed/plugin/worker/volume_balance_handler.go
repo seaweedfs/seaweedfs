@@ -21,6 +21,17 @@ const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 )
 
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "volume_balance",
+		Category: CategoryDefault,
+		Aliases:  []string{"balance", "volume.balance", "volume-balance"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewVolumeBalanceHandler(opts.GrpcDialOption), nil
+		},
+	})
+}
+
 type volumeBalanceWorkerConfig struct {
 	TaskConfig         *balancetask.Config
 	MinIntervalSeconds int
@@ -176,9 +187,9 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
 		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("VOLUME BALANCE: Detection skipped due to min interval (%s)", minInterval),
 			map[string]*plugin_pb.ConfigValue{
@@ -213,19 +224,14 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
-	results, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig)
+	maxResults := int(request.MaxResults)
+	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
 		return err
 	}
-	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, workerConfig.TaskConfig, results); traceErr != nil {
-		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
-	}
 
-	maxResults := int(request.MaxResults)
-	hasMore := false
-	if maxResults > 0 && len(results) > maxResults {
-		hasMore = true
-		results = results[:maxResults]
+	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
+		glog.Warningf("Plugin worker failed to emit volume_balance detection trace: %v", traceErr)
 	}
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(results))
@@ -256,6 +262,7 @@ func (h *VolumeBalanceHandler) Detect(
 func emitVolumeBalanceDetectionDecisionTrace(
 	sender DetectionSender,
 	metrics []*workertypes.VolumeHealthMetrics,
+	activeTopology *topology.ActiveTopology,
 	taskConfig *balancetask.Config,
 	results []*workertypes.TaskDetectionResult,
 ) error {
@@ -284,7 +291,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(buildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(BuildDetectorActivity("decision_summary", summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -331,7 +338,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				volumeCount,
 				minVolumeCount,
 			)
-			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -351,7 +358,25 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			continue
 		}
 
+		// Seed server counts from topology so zero-volume servers are included,
+		// matching the same logic used in balancetask.Detection.
 		serverVolumeCounts := make(map[string]int)
+		if activeTopology != nil {
+			topologyInfo := activeTopology.GetTopologyInfo()
+			if topologyInfo != nil {
+				for _, dc := range topologyInfo.DataCenterInfos {
+					for _, rack := range dc.RackInfos {
+						for _, node := range rack.DataNodeInfos {
+							for diskTypeName := range node.DiskInfos {
+								if diskTypeName == diskType {
+									serverVolumeCounts[node.Id] = 0
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, metric := range diskMetrics {
 			serverVolumeCounts[metric.Server]++
 		}
@@ -362,7 +387,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 				len(serverVolumeCounts),
 				taskConfig.MinServerCount,
 			)
-			if err := sender.SendActivity(buildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
+			if err := sender.SendActivity(BuildDetectorActivity("decision_disk_type", message, map[string]*plugin_pb.ConfigValue{
 				"disk_type": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 				},
@@ -433,7 +458,7 @@ func emitVolumeBalanceDetectionDecisionTrace(
 			)
 		}
 
-		if err := sender.SendActivity(buildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(BuildDetectorActivity(stage, message, map[string]*plugin_pb.ConfigValue{
 			"disk_type": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: diskType},
 			},
@@ -534,7 +559,7 @@ func (h *VolumeBalanceHandler) Execute(
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(stage, message),
+				BuildExecutorActivity(stage, message),
 			},
 		})
 	})
@@ -547,7 +572,7 @@ func (h *VolumeBalanceHandler) Execute(
 		Stage:           "assigned",
 		Message:         "volume balance job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "volume balance job accepted"),
+			BuildExecutorActivity("assigned", "volume balance job accepted"),
 		},
 	}); err != nil {
 		return err
@@ -562,7 +587,7 @@ func (h *VolumeBalanceHandler) Execute(
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("failed", err.Error()),
+				BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -591,7 +616,7 @@ func (h *VolumeBalanceHandler) Execute(
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }

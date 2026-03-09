@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -71,6 +72,21 @@ func TestListUsers(t *testing.T) {
 	response, err := executeRequest(req.HTTPRequest, out)
 	assert.Equal(t, nil, err)
 	assert.Equal(t, http.StatusOK, response.Code)
+}
+
+func TestListUsersRequestIdMatchesResponseHeader(t *testing.T) {
+	params := &iam.ListUsersInput{}
+	req, _ := iam.New(session.New()).ListUsersRequest(params)
+	_ = req.Build()
+
+	out := ListUsersResponse{}
+	response, err := executeRequest(req.HTTPRequest, out)
+	assert.Equal(t, nil, err)
+	assert.Equal(t, http.StatusOK, response.Code)
+
+	headerRequestID := response.Header().Get(request_id.AmzRequestIDHeader)
+	assert.NotEmpty(t, headerRequestID)
+	assert.Equal(t, headerRequestID, extractRequestID(response))
 }
 
 func TestListAccessKeys(t *testing.T) {
@@ -246,6 +262,7 @@ func TestPutUserPolicyError(t *testing.T) {
 	assert.Equal(t, expectedCode, code)
 	assert.Contains(t, response.Body.String(), "<RequestId>")
 	assert.NotContains(t, response.Body.String(), "<ResponseMetadata>")
+	assert.Equal(t, response.Header().Get(request_id.AmzRequestIDHeader), extractRequestID(response))
 }
 
 func extractErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, string) {
@@ -255,6 +272,15 @@ func extractErrorCodeAndMessage(response *httptest.ResponseRecorder) (string, st
 	code := re.FindStringSubmatch(response.Body.String())[1]
 	message := re.FindStringSubmatch(response.Body.String())[2]
 	return code, message
+}
+
+func extractRequestID(response *httptest.ResponseRecorder) string {
+	re := regexp.MustCompile(`<RequestId>([^<]+)</RequestId>`)
+	matches := re.FindStringSubmatch(response.Body.String())
+	if len(matches) < 2 {
+		return ""
+	}
+	return matches[1]
 }
 
 func TestGetUserPolicy(t *testing.T) {

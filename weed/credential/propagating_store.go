@@ -385,3 +385,51 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 	})
 	return nil
 }
+
+func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.CreateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error) {
+	return s.CredentialStore.GetGroup(ctx, groupName)
+}
+
+func (s *PropagatingCredentialStore) DeleteGroup(ctx context.Context, groupName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeleteGroup %s", groupName)
+	if err := s.CredentialStore.DeleteGroup(ctx, groupName); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.RemoveGroup(tx, &iam_pb.RemoveGroupRequest{GroupName: groupName})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListGroups(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListGroups(ctx)
+}
+
+func (s *PropagatingCredentialStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.UpdateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
+		return err
+	})
+	return nil
+}
