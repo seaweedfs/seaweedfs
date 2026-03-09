@@ -152,6 +152,18 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         let _ = state.write_queue.set(wq);
     }
 
+    // Set initial metric gauges for concurrent limits and max volumes
+    metrics::CONCURRENT_UPLOAD_LIMIT.set(state.concurrent_upload_limit);
+    metrics::CONCURRENT_DOWNLOAD_LIMIT.set(state.concurrent_download_limit);
+    {
+        let store = state.store.read().unwrap();
+        let mut max_vols: i64 = 0;
+        for loc in &store.locations {
+            max_vols += loc.max_volume_count.load(std::sync::atomic::Ordering::Relaxed) as i64;
+        }
+        metrics::MAX_VOLUMES.set(max_vols);
+    }
+
     // Run initial disk space check
     {
         let store = state.store.read().unwrap();

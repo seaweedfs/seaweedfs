@@ -175,6 +175,9 @@ impl DiskLocation {
                 Version::current(),
             ) {
                 Ok(v) => {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[&collection, "volume"])
+                        .inc();
                     self.volumes.insert(vid, v);
                 }
                 Err(e) => {
@@ -303,7 +306,11 @@ impl DiskLocation {
 
     /// Add a volume to this location.
     pub fn set_volume(&mut self, vid: VolumeId, volume: Volume) {
+        let collection = volume.collection.clone();
         self.volumes.insert(vid, volume);
+        crate::metrics::VOLUME_GAUGE
+            .with_label_values(&[&collection, "volume"])
+            .inc();
     }
 
     /// Create a new volume in this location.
@@ -328,6 +335,9 @@ impl DiskLocation {
             preallocate,
             version,
         )?;
+        crate::metrics::VOLUME_GAUGE
+            .with_label_values(&[collection, "volume"])
+            .inc();
         self.volumes.insert(vid, v);
         Ok(())
     }
@@ -335,6 +345,9 @@ impl DiskLocation {
     /// Remove and close a volume.
     pub fn unload_volume(&mut self, vid: VolumeId) -> Option<Volume> {
         if let Some(mut v) = self.volumes.remove(&vid) {
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&v.collection, "volume"])
+                .dec();
             v.close();
             Some(v)
         } else {
@@ -345,6 +358,9 @@ impl DiskLocation {
     /// Remove, close, and delete all files for a volume.
     pub fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
         if let Some(mut v) = self.volumes.remove(&vid) {
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[&v.collection, "volume"])
+                .dec();
             v.destroy()?;
             Ok(())
         } else {
@@ -414,6 +430,7 @@ impl DiskLocation {
         if total == 0 {
             return;
         }
+        let used = total.saturating_sub(free);
         let is_low = match &self.min_free_space {
             MinFreeSpace::Percent(pct) => {
                 let free_pct = (free as f64 / total as f64) * 100.0;
@@ -423,6 +440,21 @@ impl DiskLocation {
         };
         self.is_disk_space_low.store(is_low, Ordering::Relaxed);
         self.available_space.store(free, Ordering::Relaxed);
+
+        // Update resource gauges
+        crate::metrics::RESOURCE_GAUGE
+            .with_label_values(&[&self.directory, "all"])
+            .set(total as f64);
+        crate::metrics::RESOURCE_GAUGE
+            .with_label_values(&[&self.directory, "used"])
+            .set(used as f64);
+        crate::metrics::RESOURCE_GAUGE
+            .with_label_values(&[&self.directory, "free"])
+            .set(free as f64);
+        // "avail" is same as "free" for us (Go subtracts reserved blocks but we use statvfs f_bavail)
+        crate::metrics::RESOURCE_GAUGE
+            .with_label_values(&[&self.directory, "avail"])
+            .set(free as f64);
     }
 
     /// Close all volumes.

@@ -137,7 +137,12 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 /// Matches Go's privateStoreHandler: GET/HEAD → read, POST/PUT → write,
 /// DELETE → delete, OPTIONS → CORS headers, anything else → 400.
 async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
-    match request.method().clone() {
+    let start = std::time::Instant::now();
+    let method_str = request.method().as_str().to_string();
+    crate::metrics::INFLIGHT_REQUESTS_GAUGE
+        .with_label_values(&[&method_str])
+        .inc();
+    let response = match request.method().clone() {
         Method::GET | Method::HEAD => {
             handlers::get_or_head_handler_from_request(state, request).await
         }
@@ -149,20 +154,45 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
             format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
         )
             .into_response(),
-    }
+    };
+    crate::metrics::INFLIGHT_REQUESTS_GAUGE
+        .with_label_values(&[&method_str])
+        .dec();
+    crate::metrics::REQUEST_COUNTER
+        .with_label_values(&[&method_str, response.status().as_str()])
+        .inc();
+    crate::metrics::REQUEST_DURATION
+        .with_label_values(&[&method_str])
+        .observe(start.elapsed().as_secs_f64());
+    response
 }
 
 /// Public store handler — dispatches based on HTTP method.
 /// Matches Go's publicReadOnlyHandler: GET/HEAD → read, OPTIONS → CORS,
 /// anything else → 200 (passthrough no-op).
 async fn public_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
-    match request.method().clone() {
+    let start = std::time::Instant::now();
+    let method_str = request.method().as_str().to_string();
+    crate::metrics::INFLIGHT_REQUESTS_GAUGE
+        .with_label_values(&[&method_str])
+        .inc();
+    let response = match request.method().clone() {
         Method::GET | Method::HEAD => {
             handlers::get_or_head_handler_from_request(state, request).await
         }
         Method::OPTIONS => public_options_response(),
         _ => StatusCode::OK.into_response(),
-    }
+    };
+    crate::metrics::INFLIGHT_REQUESTS_GAUGE
+        .with_label_values(&[&method_str])
+        .dec();
+    crate::metrics::REQUEST_COUNTER
+        .with_label_values(&[&method_str, response.status().as_str()])
+        .inc();
+    crate::metrics::REQUEST_DURATION
+        .with_label_values(&[&method_str])
+        .observe(start.elapsed().as_secs_f64());
+    response
 }
 
 /// Build OPTIONS response for admin port.

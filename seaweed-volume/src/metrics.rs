@@ -3,8 +3,8 @@
 //! Mirrors the Go SeaweedFS volume server metrics.
 
 use prometheus::{
-    self, Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts,
-    Registry, TextEncoder,
+    self, Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec,
+    Opts, Registry, TextEncoder,
 };
 use std::sync::Once;
 
@@ -17,28 +17,128 @@ pub struct PushGatewayConfig {
 lazy_static::lazy_static! {
     pub static ref REGISTRY: Registry = Registry::new();
 
-    /// Request counter with label `type` = read | write | delete.
+    // ---- Request metrics (Go: VolumeServerRequestCounter, VolumeServerRequestHistogram) ----
+
+    /// Request counter with labels `type` (HTTP method) and `code` (HTTP status).
     pub static ref REQUEST_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("volume_server_request_counter", "Volume server request counter"),
-        &["type"],
+        Opts::new("SeaweedFS_volumeServer_request_total", "Volume server requests"),
+        &["type", "code"],
     ).expect("metric can be created");
 
-    /// Request duration histogram with label `type` = read | write | delete.
+    /// Request duration histogram with label `type` (HTTP method).
     pub static ref REQUEST_DURATION: HistogramVec = HistogramVec::new(
-        HistogramOpts::new("volume_server_request_duration", "Volume server request duration in seconds"),
+        HistogramOpts::new(
+            "SeaweedFS_volumeServer_request_seconds",
+            "Volume server request duration in seconds",
+        ).buckets(exponential_buckets(0.0001, 2.0, 24)),
         &["type"],
     ).expect("metric can be created");
 
-    /// Total number of volumes on this server.
-    pub static ref VOLUMES_TOTAL: IntGauge = IntGauge::new(
-        "volume_server_volumes_total",
-        "Total number of volumes",
+    // ---- Handler counters (Go: VolumeServerHandlerCounter) ----
+
+    /// Handler-level operation counter with label `type`.
+    pub static ref HANDLER_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("SeaweedFS_volumeServer_handler_total", "Volume server handler counters"),
+        &["type"],
+    ).expect("metric can be created");
+
+    // ---- Vacuuming metrics (Go: VolumeServerVacuuming*) ----
+
+    /// Vacuuming compact counter with label `success` (true/false).
+    pub static ref VACUUMING_COMPACT_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("SeaweedFS_volumeServer_vacuuming_compact_total", "Volume vacuuming compact operations"),
+        &["success"],
+    ).expect("metric can be created");
+
+    /// Vacuuming commit counter with label `success` (true/false).
+    pub static ref VACUUMING_COMMIT_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("SeaweedFS_volumeServer_vacuuming_commit_total", "Volume vacuuming commit operations"),
+        &["success"],
+    ).expect("metric can be created");
+
+    /// Vacuuming duration histogram with label `type` (compact/commit).
+    pub static ref VACUUMING_HISTOGRAM: HistogramVec = HistogramVec::new(
+        HistogramOpts::new(
+            "SeaweedFS_volumeServer_vacuuming_seconds",
+            "Volume vacuuming duration in seconds",
+        ).buckets(exponential_buckets(0.0001, 2.0, 24)),
+        &["type"],
+    ).expect("metric can be created");
+
+    // ---- Volume gauges (Go: VolumeServerVolumeGauge, VolumeServerReadOnlyVolumeGauge) ----
+
+    /// Volumes per collection and type (volume/ec_shards).
+    pub static ref VOLUME_GAUGE: GaugeVec = GaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_volumes", "Number of volumes"),
+        &["collection", "type"],
+    ).expect("metric can be created");
+
+    /// Read-only volumes per collection and type.
+    pub static ref READ_ONLY_VOLUME_GAUGE: GaugeVec = GaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_readOnly_volumes", "Number of read-only volumes"),
+        &["collection", "type"],
     ).expect("metric can be created");
 
     /// Maximum number of volumes this server can hold.
     pub static ref MAX_VOLUMES: IntGauge = IntGauge::new(
-        "volume_server_max_volumes",
+        "SeaweedFS_volumeServer_max_volumes",
         "Maximum number of volumes",
+    ).expect("metric can be created");
+
+    // ---- Disk size gauges (Go: VolumeServerDiskSizeGauge) ----
+
+    /// Actual disk size used by volumes per collection and type (normal/deleted_bytes/ec).
+    pub static ref DISK_SIZE_GAUGE: GaugeVec = GaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_total_disk_size", "Actual disk size used by volumes"),
+        &["collection", "type"],
+    ).expect("metric can be created");
+
+    // ---- Resource gauges (Go: VolumeServerResourceGauge) ----
+
+    /// Disk resource usage per directory and type (all/used/free/avail).
+    pub static ref RESOURCE_GAUGE: GaugeVec = GaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_resource", "Server resource usage"),
+        &["name", "type"],
+    ).expect("metric can be created");
+
+    // ---- In-flight gauges (Go: VolumeServerInFlightRequestsGauge, InFlightDownload/UploadSize) ----
+
+    /// In-flight requests per HTTP method.
+    pub static ref INFLIGHT_REQUESTS_GAUGE: IntGaugeVec = IntGaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_inFlight_requests", "In-flight requests by type"),
+        &["type"],
+    ).expect("metric can be created");
+
+    /// Concurrent download limit in bytes.
+    pub static ref CONCURRENT_DOWNLOAD_LIMIT: IntGauge = IntGauge::new(
+        "SeaweedFS_volumeServer_concurrent_download_limit",
+        "Limit for total concurrent download size in bytes",
+    ).expect("metric can be created");
+
+    /// Concurrent upload limit in bytes.
+    pub static ref CONCURRENT_UPLOAD_LIMIT: IntGauge = IntGauge::new(
+        "SeaweedFS_volumeServer_concurrent_upload_limit",
+        "Limit for total concurrent upload size in bytes",
+    ).expect("metric can be created");
+
+    /// Current in-flight download bytes.
+    pub static ref INFLIGHT_DOWNLOAD_SIZE: IntGauge = IntGauge::new(
+        "SeaweedFS_volumeServer_inFlight_download_size",
+        "Current in-flight total download size in bytes",
+    ).expect("metric can be created");
+
+    /// Current in-flight upload bytes.
+    pub static ref INFLIGHT_UPLOAD_SIZE: IntGauge = IntGauge::new(
+        "SeaweedFS_volumeServer_inFlight_upload_size",
+        "Current in-flight total upload size in bytes",
+    ).expect("metric can be created");
+
+    // ---- Legacy aliases for backward compat with existing code ----
+
+    /// Total number of volumes on this server (flat gauge).
+    pub static ref VOLUMES_TOTAL: IntGauge = IntGauge::new(
+        "volume_server_volumes_total",
+        "Total number of volumes",
     ).expect("metric can be created");
 
     /// Disk size in bytes per directory.
@@ -53,7 +153,7 @@ lazy_static::lazy_static! {
         &["dir"],
     ).expect("metric can be created");
 
-    /// Current number of in-flight requests.
+    /// Current number of in-flight requests (flat gauge).
     pub static ref INFLIGHT_REQUESTS: IntGauge = IntGauge::new(
         "volume_server_inflight_requests",
         "Current number of in-flight requests",
@@ -66,36 +166,63 @@ lazy_static::lazy_static! {
     ).expect("metric can be created");
 }
 
+/// Generate exponential bucket boundaries for histograms.
+fn exponential_buckets(start: f64, factor: f64, count: usize) -> Vec<f64> {
+    let mut buckets = Vec::with_capacity(count);
+    let mut val = start;
+    for _ in 0..count {
+        buckets.push(val);
+        val *= factor;
+    }
+    buckets
+}
+
+// Handler counter type constants (matches Go's metrics_names.go).
+pub const WRITE_TO_LOCAL_DISK: &str = "writeToLocalDisk";
+pub const ERROR_WRITE_TO_LOCAL_DISK: &str = "errorWriteToLocalDisk";
+pub const ERROR_WRITE_TO_REPLICAS: &str = "errorWriteToReplicas";
+pub const ERROR_GET_NOT_FOUND: &str = "errorGetNotFound";
+pub const ERROR_GET_INTERNAL: &str = "errorGetInternal";
+pub const ERROR_CRC: &str = "errorCRC";
+pub const ERROR_SIZE_MISMATCH: &str = "errorSizeMismatch";
+pub const ERROR_INDEX_OUT_OF_RANGE: &str = "errorIndexOutOfRange";
+pub const DOWNLOAD_LIMIT_COND: &str = "downloadLimitCondition";
+pub const UPLOAD_LIMIT_COND: &str = "uploadLimitCondition";
+
 static REGISTER_METRICS: Once = Once::new();
 
 /// Register all metrics with the custom registry.
 /// Call this once at startup.
 pub fn register_metrics() {
     REGISTER_METRICS.call_once(|| {
-        REGISTRY
-            .register(Box::new(REQUEST_COUNTER.clone()))
-            .expect("REQUEST_COUNTER registered");
-        REGISTRY
-            .register(Box::new(REQUEST_DURATION.clone()))
-            .expect("REQUEST_DURATION registered");
-        REGISTRY
-            .register(Box::new(VOLUMES_TOTAL.clone()))
-            .expect("VOLUMES_TOTAL registered");
-        REGISTRY
-            .register(Box::new(MAX_VOLUMES.clone()))
-            .expect("MAX_VOLUMES registered");
-        REGISTRY
-            .register(Box::new(DISK_SIZE_BYTES.clone()))
-            .expect("DISK_SIZE_BYTES registered");
-        REGISTRY
-            .register(Box::new(DISK_FREE_BYTES.clone()))
-            .expect("DISK_FREE_BYTES registered");
-        REGISTRY
-            .register(Box::new(INFLIGHT_REQUESTS.clone()))
-            .expect("INFLIGHT_REQUESTS registered");
-        REGISTRY
-            .register(Box::new(VOLUME_FILE_COUNT.clone()))
-            .expect("VOLUME_FILE_COUNT registered");
+        let metrics: Vec<Box<dyn prometheus::core::Collector>> = vec![
+            // New Go-compatible metrics
+            Box::new(REQUEST_COUNTER.clone()),
+            Box::new(REQUEST_DURATION.clone()),
+            Box::new(HANDLER_COUNTER.clone()),
+            Box::new(VACUUMING_COMPACT_COUNTER.clone()),
+            Box::new(VACUUMING_COMMIT_COUNTER.clone()),
+            Box::new(VACUUMING_HISTOGRAM.clone()),
+            Box::new(VOLUME_GAUGE.clone()),
+            Box::new(READ_ONLY_VOLUME_GAUGE.clone()),
+            Box::new(MAX_VOLUMES.clone()),
+            Box::new(DISK_SIZE_GAUGE.clone()),
+            Box::new(RESOURCE_GAUGE.clone()),
+            Box::new(INFLIGHT_REQUESTS_GAUGE.clone()),
+            Box::new(CONCURRENT_DOWNLOAD_LIMIT.clone()),
+            Box::new(CONCURRENT_UPLOAD_LIMIT.clone()),
+            Box::new(INFLIGHT_DOWNLOAD_SIZE.clone()),
+            Box::new(INFLIGHT_UPLOAD_SIZE.clone()),
+            // Legacy metrics
+            Box::new(VOLUMES_TOTAL.clone()),
+            Box::new(DISK_SIZE_BYTES.clone()),
+            Box::new(DISK_FREE_BYTES.clone()),
+            Box::new(INFLIGHT_REQUESTS.clone()),
+            Box::new(VOLUME_FILE_COUNT.clone()),
+        ];
+        for m in metrics {
+            REGISTRY.register(m).expect("metric registered");
+        }
     });
 }
 
@@ -157,9 +284,9 @@ mod tests {
     #[test]
     fn test_gather_metrics_returns_text() {
         register_metrics();
-        REQUEST_COUNTER.with_label_values(&["read"]).inc();
+        REQUEST_COUNTER.with_label_values(&["GET", "200"]).inc();
         let output = gather_metrics();
-        assert!(output.contains("volume_server_request_counter"));
+        assert!(output.contains("SeaweedFS_volumeServer_request_total"));
     }
 
     #[test]
@@ -209,7 +336,7 @@ mod tests {
         .unwrap();
 
         let body = captured.lock().unwrap().clone().unwrap();
-        assert!(body.contains("volume_server_request_counter"));
+        assert!(body.contains("SeaweedFS_volumeServer_request_total"));
 
         server.abort();
     }

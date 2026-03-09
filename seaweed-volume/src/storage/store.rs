@@ -418,6 +418,9 @@ impl Store {
         for &shard_id in shard_ids {
             let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
             ec_vol.add_shard(shard).map_err(|e| VolumeError::Io(e))?;
+            crate::metrics::VOLUME_GAUGE
+                .with_label_values(&[collection, "ec_shards"])
+                .inc();
         }
 
         Ok(())
@@ -426,8 +429,12 @@ impl Store {
     /// Unmount EC shards for a volume.
     pub fn unmount_ec_shards(&mut self, vid: VolumeId, shard_ids: &[u32]) {
         if let Some(ec_vol) = self.ec_volumes.get_mut(&vid) {
+            let collection = ec_vol.collection.clone();
             for &shard_id in shard_ids {
                 ec_vol.remove_shard(shard_id as u8);
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&collection, "ec_shards"])
+                    .dec();
             }
             if ec_vol.shard_count() == 0 {
                 let mut vol = self.ec_volumes.remove(&vid).unwrap();

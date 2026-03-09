@@ -422,6 +422,10 @@ fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartb
     let mut max_file_key = NeedleId(0);
     let mut max_volume_counts: HashMap<String, u32> = HashMap::new();
 
+    // Collect per-collection disk size and read-only counts for metrics
+    let mut disk_sizes: HashMap<String, (u64, u64)> = HashMap::new(); // (normal, deleted)
+    let mut ro_counts: HashMap<String, u32> = HashMap::new();
+
     for loc in &store.locations {
         let disk_type_str = loc.disk_type.to_string();
         let max_count = loc
@@ -433,6 +437,16 @@ fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartb
             let cur_max = vol.max_file_key();
             if cur_max > max_file_key {
                 max_file_key = cur_max;
+            }
+
+            // Track disk size by collection
+            let entry = disk_sizes.entry(vol.collection.clone()).or_insert((0, 0));
+            entry.0 += vol.content_size();
+            entry.1 += vol.deleted_size();
+
+            // Track read-only count by collection
+            if vol.is_read_only() {
+                *ro_counts.entry(vol.collection.clone()).or_insert(0) += 1;
             }
 
             volumes.push(master_pb::VolumeInformationMessage {
@@ -453,6 +467,25 @@ fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartb
             });
         }
     }
+
+    // Update disk size and read-only gauges
+    for (col, (normal, deleted)) in &disk_sizes {
+        crate::metrics::DISK_SIZE_GAUGE
+            .with_label_values(&[col, "normal"])
+            .set(*normal as f64);
+        crate::metrics::DISK_SIZE_GAUGE
+            .with_label_values(&[col, "deleted_bytes"])
+            .set(*deleted as f64);
+    }
+    for (col, count) in &ro_counts {
+        crate::metrics::READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&[col, "volume"])
+            .set(*count as f64);
+    }
+    // Update max volumes gauge
+    let total_max: i64 = max_volume_counts.values().map(|v| *v as i64).sum();
+    crate::metrics::MAX_VOLUMES.set(total_max);
+
     let has_no_volumes = volumes.is_empty();
     let (location_uuids, disk_tags) = collect_location_metadata(store);
 

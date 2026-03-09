@@ -314,6 +314,7 @@ impl VolumeServer for VolumeGrpcService {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
 
         tokio::task::spawn_blocking(move || {
+            let compact_start = std::time::Instant::now();
             let report_interval: i64 = 128 * 1024 * 1024;
             let next_report = std::sync::atomic::AtomicI64::new(report_interval);
 
@@ -337,6 +338,14 @@ impl VolumeServer for VolumeGrpcService {
                 })
             };
 
+            let success = result.is_ok();
+            crate::metrics::VACUUMING_HISTOGRAM
+                .with_label_values(&["compact"])
+                .observe(compact_start.elapsed().as_secs_f64());
+            crate::metrics::VACUUMING_COMPACT_COUNTER
+                .with_label_values(&[if success { "true" } else { "false" }])
+                .inc();
+
             if let Err(e) = result {
                 let _ = tx.blocking_send(Err(Status::internal(e)));
             }
@@ -354,8 +363,16 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
         self.state.check_maintenance()?;
         let vid = VolumeId(request.into_inner().volume_id);
+        let commit_start = std::time::Instant::now();
         let mut store = self.state.store.write().unwrap();
-        match store.commit_compact_volume(vid) {
+        let result = store.commit_compact_volume(vid);
+        crate::metrics::VACUUMING_HISTOGRAM
+            .with_label_values(&["commit"])
+            .observe(commit_start.elapsed().as_secs_f64());
+        crate::metrics::VACUUMING_COMMIT_COUNTER
+            .with_label_values(&[if result.is_ok() { "true" } else { "false" }])
+            .inc();
+        match result {
             Ok((is_read_only, volume_size)) => Ok(Response::new(
                 volume_server_pb::VacuumVolumeCommitResponse {
                     is_read_only,

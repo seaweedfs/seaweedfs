@@ -29,11 +29,13 @@ struct InflightGuard<'a> {
     counter: &'a std::sync::atomic::AtomicI64,
     bytes: i64,
     notify: &'a tokio::sync::Notify,
+    metric: &'a prometheus::IntGauge,
 }
 
 impl<'a> Drop for InflightGuard<'a> {
     fn drop(&mut self) {
-        self.counter.fetch_sub(self.bytes, Ordering::Relaxed);
+        let new_val = self.counter.fetch_sub(self.bytes, Ordering::Relaxed) - self.bytes;
+        self.metric.set(new_val);
         self.notify.notify_waiters();
     }
 }
@@ -63,9 +65,12 @@ impl http_body::Body for TrackedBody {
 
 impl Drop for TrackedBody {
     fn drop(&mut self) {
-        self.state
+        let new_val = self
+            .state
             .inflight_download_bytes
-            .fetch_sub(self.bytes, Ordering::Relaxed);
+            .fetch_sub(self.bytes, Ordering::Relaxed)
+            - self.bytes;
+        metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
         self.state.download_notify.notify_waiters();
     }
 }
@@ -177,8 +182,11 @@ impl http_body::Body for StreamingBody {
 impl Drop for StreamingBody {
     fn drop(&mut self) {
         if let Some(ref st) = self.state {
-            st.inflight_download_bytes
-                .fetch_sub(self.tracked_bytes, Ordering::Relaxed);
+            let new_val = st
+                .inflight_download_bytes
+                .fetch_sub(self.tracked_bytes, Ordering::Relaxed)
+                - self.tracked_bytes;
+            metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
             st.download_notify.notify_waiters();
         }
     }
@@ -606,9 +614,6 @@ async fn get_or_head_handler_inner(
     query: ReadQueryParams,
     request: Request<Body>,
 ) -> Response {
-    let start = std::time::Instant::now();
-    metrics::REQUEST_COUNTER.with_label_values(&["read"]).inc();
-
     let path = request.uri().path().to_string();
     let method = request.method().clone();
 
@@ -699,6 +704,9 @@ async fn get_or_head_handler_inner(
                 .await
                 .is_err()
             {
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::DOWNLOAD_LIMIT_COND])
+                    .inc();
                 return (StatusCode::TOO_MANY_REQUESTS, "download limit exceeded").into_response();
             }
         }
@@ -730,12 +738,21 @@ async fn get_or_head_handler_inner(
     let stream_info = match stream_info {
         Ok(info) => Some(info),
         Err(crate::storage::volume::VolumeError::NotFound) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                .inc();
             return StatusCode::NOT_FOUND.into_response();
         }
         Err(crate::storage::volume::VolumeError::Deleted) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])
+                .inc();
             return StatusCode::NOT_FOUND.into_response();
         }
         Err(e) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_GET_INTERNAL])
+                .inc();
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("read error: {}", e),
@@ -990,15 +1007,13 @@ async fn get_or_head_handler_inner(
                 info.data_size.to_string().parse().unwrap(),
             );
 
-            metrics::REQUEST_DURATION
-                .with_label_values(&["read"])
-                .observe(start.elapsed().as_secs_f64());
-
             let tracked_bytes = info.data_size as i64;
             let tracking_state = if download_guard.is_some() {
-                state
+                let new_val = state
                     .inflight_download_bytes
-                    .fetch_add(tracked_bytes, Ordering::Relaxed);
+                    .fetch_add(tracked_bytes, Ordering::Relaxed)
+                    + tracked_bytes;
+                metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
                 Some(state.clone())
             } else {
                 None
@@ -1097,16 +1112,14 @@ async fn get_or_head_handler_inner(
         return (StatusCode::OK, response_headers).into_response();
     }
 
-    metrics::REQUEST_DURATION
-        .with_label_values(&["read"])
-        .observe(start.elapsed().as_secs_f64());
-
     // If download throttling is active, wrap the body so we track when it's fully sent
     if download_guard.is_some() {
         let data_len = data.len() as i64;
-        state
+        let new_val = state
             .inflight_download_bytes
-            .fetch_add(data_len, Ordering::Relaxed);
+            .fetch_add(data_len, Ordering::Relaxed)
+            + data_len;
+        metrics::INFLIGHT_DOWNLOAD_SIZE.set(new_val);
         let tracked_body = TrackedBody {
             data,
             state: state.clone(),
@@ -1364,9 +1377,6 @@ pub async fn post_handler(
     State(state): State<Arc<VolumeServerState>>,
     request: Request<Body>,
 ) -> Response {
-    let start = std::time::Instant::now();
-    metrics::REQUEST_COUNTER.with_label_values(&["write"]).inc();
-
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = request.headers().clone();
@@ -1419,6 +1429,9 @@ pub async fn post_handler(
                 .await
                 .is_err()
             {
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
+                    .inc();
                 return json_error_with_query(
                     StatusCode::TOO_MANY_REQUESTS,
                     "upload limit exceeded",
@@ -1426,9 +1439,11 @@ pub async fn post_handler(
                 );
             }
         }
-        state
+        let new_val = state
             .inflight_upload_bytes
-            .fetch_add(content_length, Ordering::Relaxed);
+            .fetch_add(content_length, Ordering::Relaxed)
+            + content_length;
+        metrics::INFLIGHT_UPLOAD_SIZE.set(new_val);
     }
 
     // RAII guard to release upload throttle on any exit path
@@ -1437,6 +1452,7 @@ pub async fn post_handler(
             counter: &state.inflight_upload_bytes,
             bytes: content_length,
             notify: &state.upload_notify,
+            metric: &metrics::INFLIGHT_UPLOAD_SIZE,
         })
     } else {
         None
@@ -1797,9 +1813,6 @@ pub async fn post_handler(
                     },
                     content_md5: Some(content_md5_value.clone()),
                 };
-                metrics::REQUEST_DURATION
-                    .with_label_values(&["write"])
-                    .observe(start.elapsed().as_secs_f64());
                 let etag = n.etag();
                 let etag_header = if etag.starts_with('"') {
                     etag.clone()
@@ -1820,11 +1833,16 @@ pub async fn post_handler(
         Err(crate::storage::volume::VolumeError::ReadOnly) => {
             json_error_with_query(StatusCode::FORBIDDEN, "volume is read-only", Some(&query))
         }
-        Err(e) => json_error_with_query(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("write error: {}", e),
-            Some(&query),
-        ),
+        Err(e) => {
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::ERROR_WRITE_TO_LOCAL_DISK])
+                .inc();
+            json_error_with_query(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("write error: {}", e),
+                Some(&query),
+            )
+        }
     };
 
     // _upload_guard drops here, releasing inflight bytes
@@ -1844,11 +1862,6 @@ pub async fn delete_handler(
     State(state): State<Arc<VolumeServerState>>,
     request: Request<Body>,
 ) -> Response {
-    let start = std::time::Instant::now();
-    metrics::REQUEST_COUNTER
-        .with_label_values(&["delete"])
-        .inc();
-
     let path = request.uri().path().to_string();
     let del_query = request.uri().query().unwrap_or("").to_string();
     let headers = request.headers().clone();
@@ -1991,9 +2004,6 @@ pub async fn delete_handler(
                     Some(&del_query),
                 );
             }
-            metrics::REQUEST_DURATION
-                .with_label_values(&["delete"])
-                .observe(start.elapsed().as_secs_f64());
             // Return the manifest's declared size (matches Go behavior)
             let result = DeleteResult {
                 size: manifest.size as i64,
@@ -2039,9 +2049,6 @@ pub async fn delete_handler(
 
     match delete_result {
         Ok(size) => {
-            metrics::REQUEST_DURATION
-                .with_label_values(&["delete"])
-                .observe(start.elapsed().as_secs_f64());
             let result = DeleteResult {
                 size: size.0 as i64,
             };
