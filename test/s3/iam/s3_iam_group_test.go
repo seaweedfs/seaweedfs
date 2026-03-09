@@ -567,6 +567,10 @@ func TestIAMGroupUserDeletionSideEffect(t *testing.T) {
 
 	_, err = iamClient.CreateUser(&iam.CreateUserInput{UserName: aws.String(userName)})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		// Best-effort: user may already be deleted by the test
+		iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
+	})
 
 	// Add user to group
 	_, err = iamClient.AddUserToGroup(&iam.AddUserToGroupInput{
