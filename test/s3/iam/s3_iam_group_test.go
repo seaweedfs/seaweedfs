@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/iam"
@@ -363,7 +364,10 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		_, err := userS3Client.CreateBucket(&s3.CreateBucketInput{
 			Bucket: aws.String(bucketName),
 		})
-		assert.Error(t, err, "User without any policies should be denied")
+		require.Error(t, err, "User without any policies should be denied")
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok, "Expected awserr.Error")
+		assert.Equal(t, "AccessDenied", awsErr.Code())
 	})
 
 	t.Run("user_with_group_policy_allowed", func(t *testing.T) {
@@ -407,12 +411,16 @@ func TestIAMGroupPolicyEnforcement(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for policy propagation — user should now be denied
+		var lastErr error
 		require.Eventually(t, func() bool {
-			_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
+			_, lastErr = userS3Client.ListObjects(&s3.ListObjectsInput{
 				Bucket: aws.String(bucketName),
 			})
-			return err != nil
+			return lastErr != nil
 		}, 10*time.Second, 500*time.Millisecond, "User removed from group should be denied")
+		awsErr, ok := lastErr.(awserr.Error)
+		require.True(t, ok, "Expected awserr.Error")
+		assert.Equal(t, "AccessDenied", awsErr.Code())
 	})
 }
 
@@ -523,12 +531,16 @@ func TestIAMGroupDisabledPolicyEnforcement(t *testing.T) {
 		require.Equal(t, http.StatusOK, resp.StatusCode, "UpdateGroup (disable) should return 200")
 
 		// Wait for propagation — user should be denied
+		var lastErr error
 		require.Eventually(t, func() bool {
-			_, err = userS3Client.ListObjects(&s3.ListObjectsInput{
+			_, lastErr = userS3Client.ListObjects(&s3.ListObjectsInput{
 				Bucket: aws.String(bucketName),
 			})
-			return err != nil
+			return lastErr != nil
 		}, 10*time.Second, 500*time.Millisecond, "User in disabled group should be denied access")
+		awsErr, ok := lastErr.(awserr.Error)
+		require.True(t, ok, "Expected awserr.Error")
+		assert.Equal(t, "AccessDenied", awsErr.Code())
 	})
 
 	t.Run("re_enabled_group_restores_access", func(t *testing.T) {
