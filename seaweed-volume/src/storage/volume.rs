@@ -1800,6 +1800,14 @@ impl Volume {
     where
         F: Fn(i64) -> bool,
     {
+        // Guard against nil needle map (matches Go's nil check before compaction sync)
+        if self.nm.is_none() {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!("volume {} needle map is nil", self.id),
+            )));
+        }
+
         // Record state before compaction for makeupDiff
         self.last_compact_index_offset = self.nm.as_ref().map_or(0, |nm| nm.index_file_size());
         self.last_compact_revision = self.super_block.compaction_revision;
