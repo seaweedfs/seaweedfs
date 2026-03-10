@@ -2,7 +2,9 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -493,7 +495,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
-					if err.Error() == "EOF" {
+					if errors.Is(err, io.EOF) {
 						break
 					}
 					return err
