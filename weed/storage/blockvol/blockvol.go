@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/batchio"
 )
 
 // CreateOptions configures a new block volume.
@@ -157,6 +159,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		DirtyMap: dm,
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
+		BatchIO:  newBatchIO(cfg.UseIOUring),
 	})
 	go v.flusher.Run()
 	v.walAdmission = NewWALAdmission(WALAdmissionConfig{
@@ -242,6 +245,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		DirtyMap: dirtyMap,
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
+		BatchIO:  newBatchIO(cfg.UseIOUring),
 	})
 	go v.flusher.Run()
 
@@ -1140,4 +1144,17 @@ func (v *BlockVol) Close() error {
 		return flushErr
 	}
 	return closeErr
+}
+
+// newBatchIO creates a BatchIO backend based on config.
+// When useIOUring is true, attempts io_uring with silent fallback to standard.
+func newBatchIO(useIOUring bool) batchio.BatchIO {
+	if useIOUring {
+		bio, err := batchio.NewIOUring(256)
+		if err != nil {
+			return batchio.NewStandard()
+		}
+		return bio
+	}
+	return batchio.NewStandard()
 }

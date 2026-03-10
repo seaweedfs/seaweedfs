@@ -216,3 +216,30 @@ func TestStandard_PwriteBatch_ErrorOnReadOnly(t *testing.T) {
 		t.Error("expected error writing to read-only file")
 	}
 }
+
+func TestNewIOUring_Fallback(t *testing.T) {
+	// On non-Linux (or without io_uring support), NewIOUring returns
+	// a working BatchIO (standard fallback).
+	bio, err := NewIOUring(256)
+	if err != nil {
+		t.Fatalf("NewIOUring: %v", err)
+	}
+	defer bio.Close()
+
+	// Verify it works by doing a write+read cycle.
+	f := tempFile(t)
+	data := []byte("iouring fallback test")
+	if err := bio.PwriteBatch(f, []Op{{Buf: data, Offset: 0}}); err != nil {
+		t.Fatalf("PwriteBatch: %v", err)
+	}
+	if err := bio.Fsync(f); err != nil {
+		t.Fatalf("Fsync: %v", err)
+	}
+	got := make([]byte, len(data))
+	if err := bio.PreadBatch(f, []Op{{Buf: got, Offset: 0}}); err != nil {
+		t.Fatalf("PreadBatch: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Errorf("got %q, want %q", got, data)
+	}
+}
