@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/batchio"
 )
 
 // Flusher copies WAL entries to the extent region and frees WAL space.
@@ -35,6 +37,7 @@ type Flusher struct {
 	snapMu    sync.RWMutex
 	snapshots []*activeSnapshot
 
+	bio     batchio.BatchIO // batch I/O backend (default: standard sequential)
 	logger  *log.Logger
 	lastErr bool // true if last FlushOnce returned error
 	metrics *EngineMetrics
@@ -55,6 +58,7 @@ type FlusherConfig struct {
 	Interval    time.Duration    // default 100ms
 	Logger      *log.Logger      // optional; defaults to log.Default()
 	Metrics     *EngineMetrics   // optional; if nil, no metrics recorded
+	BatchIO     batchio.BatchIO  // optional; defaults to batchio.NewStandard()
 }
 
 // NewFlusher creates a flusher. Call Run() in a goroutine.
@@ -65,6 +69,9 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 	if cfg.Logger == nil {
 		cfg.Logger = log.Default()
 	}
+	if cfg.BatchIO == nil {
+		cfg.BatchIO = batchio.NewStandard()
+	}
 	return &Flusher{
 		fd:             cfg.FD,
 		super:          cfg.Super,
@@ -74,6 +81,7 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 		walSize:        cfg.Super.WALSize,
 		blockSize:      cfg.Super.BlockSize,
 		extentStart:    cfg.Super.WALOffset + cfg.Super.WALSize,
+		bio:            cfg.BatchIO,
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		checkpointLSN:  cfg.Super.WALCheckpointLSN,
@@ -248,69 +256,53 @@ func (f *Flusher) flushOnceLocked() error {
 		}
 	}
 
-	// --- Phase 2: Extent writes (existing, unchanged) ---
+	// --- Phase 2: Extent writes via BatchIO ---
 	var maxLSN uint64
 	var maxWALEnd uint64
 
-	for _, e := range entries {
-		// Read the WAL entry and copy data to extent region.
-		headerBuf := make([]byte, walEntryHeaderSize)
-		absWALOff := int64(f.walOffset + e.WalOffset)
-		if _, err := f.fd.ReadAt(headerBuf, absWALOff); err != nil {
-			return fmt.Errorf("flusher: read WAL header at %d: %w", absWALOff, err)
+	// Step 2a: Batch-read WAL headers.
+	headerOps := make([]batchio.Op, len(entries))
+	for i, e := range entries {
+		headerOps[i] = batchio.Op{
+			Buf:    make([]byte, walEntryHeaderSize),
+			Offset: int64(f.walOffset + e.WalOffset),
 		}
+	}
+	if err := f.bio.PreadBatch(f.fd, headerOps); err != nil {
+		return fmt.Errorf("flusher: batch read WAL headers: %w", err)
+	}
 
-		// WAL reuse guard: validate LSN before trusting the entry.
-		entryLSN := binary.LittleEndian.Uint64(headerBuf[0:8])
+	// Step 2b: Identify entries needing full WAL read, batch-read them.
+	type pendingEntry struct {
+		idx       int    // index into entries
+		entryType uint8
+		entryLen  int
+	}
+	var pending []pendingEntry
+
+	for i, e := range entries {
+		hdr := headerOps[i].Buf
+		entryLSN := binary.LittleEndian.Uint64(hdr[0:8])
 		if entryLSN != e.Lsn {
-			continue // stale --WAL slot reused, skip this entry
+			continue // stale — WAL slot reused
 		}
 
-		// Parse entry type and length.
-		entryType := headerBuf[16] // Type at LSN(8)+Epoch(8)=16
-		dataLen := parseLength(headerBuf)
-
-		if entryType == EntryTypeWrite && dataLen > 0 {
-			// Read full entry.
-			entryLen := walEntryHeaderSize + int(dataLen)
-			fullBuf := make([]byte, entryLen)
-			if _, err := f.fd.ReadAt(fullBuf, absWALOff); err != nil {
-				return fmt.Errorf("flusher: read WAL entry at %d: %w", absWALOff, err)
-			}
-
-			entry, err := DecodeWALEntry(fullBuf)
-			if err != nil {
-				continue // corrupt or partially overwritten --skip
-			}
-
-			if e.Lba < entry.LBA {
-				continue // LBA mismatch --stale entry
-			}
-			blockIdx := e.Lba - entry.LBA
-			dataStart := blockIdx * uint64(f.blockSize)
-			if dataStart+uint64(f.blockSize) <= uint64(len(entry.Data)) {
-				extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
-				blockData := entry.Data[dataStart : dataStart+uint64(f.blockSize)]
-				if _, err := f.fd.WriteAt(blockData, extentOff); err != nil {
-					return fmt.Errorf("flusher: write extent at LBA %d: %w", e.Lba, err)
-				}
-			}
-
-			walEnd := e.WalOffset + uint64(entryLen)
-			if walEnd > maxWALEnd {
-				maxWALEnd = walEnd
+		entryType := hdr[16]
+		if entryType == EntryTypeWrite {
+			dataLen := parseLength(hdr)
+			if dataLen > 0 {
+				pending = append(pending, pendingEntry{
+					idx:       i,
+					entryType: entryType,
+					entryLen:  walEntryHeaderSize + int(dataLen),
+				})
 			}
 		} else if entryType == EntryTypeTrim {
-			zeroBlock := make([]byte, f.blockSize)
-			extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
-			if _, err := f.fd.WriteAt(zeroBlock, extentOff); err != nil {
-				return fmt.Errorf("flusher: zero extent at LBA %d: %w", e.Lba, err)
-			}
-
-			walEnd := e.WalOffset + uint64(walEntryHeaderSize)
-			if walEnd > maxWALEnd {
-				maxWALEnd = walEnd
-			}
+			pending = append(pending, pendingEntry{
+				idx:       i,
+				entryType: entryType,
+				entryLen:  walEntryHeaderSize,
+			})
 		}
 
 		if e.Lsn > maxLSN {
@@ -318,8 +310,76 @@ func (f *Flusher) flushOnceLocked() error {
 		}
 	}
 
-	// Fsync extent writes.
-	if err := f.fd.Sync(); err != nil {
+	// Batch-read full WAL entries for write ops.
+	var walReadOps []batchio.Op
+	for _, p := range pending {
+		if p.entryType == EntryTypeWrite {
+			walReadOps = append(walReadOps, batchio.Op{
+				Buf:    make([]byte, p.entryLen),
+				Offset: int64(f.walOffset + entries[p.idx].WalOffset),
+			})
+		}
+	}
+	if len(walReadOps) > 0 {
+		if err := f.bio.PreadBatch(f.fd, walReadOps); err != nil {
+			return fmt.Errorf("flusher: batch read WAL entries: %w", err)
+		}
+	}
+
+	// Step 2c: Decode entries and build extent write ops.
+	var extentWriteOps []batchio.Op
+	walReadI := 0
+
+	for _, p := range pending {
+		e := entries[p.idx]
+		if p.entryType == EntryTypeWrite {
+			fullBuf := walReadOps[walReadI].Buf
+			walReadI++
+
+			entry, err := DecodeWALEntry(fullBuf)
+			if err != nil {
+				continue
+			}
+			if e.Lba < entry.LBA {
+				continue
+			}
+			blockIdx := e.Lba - entry.LBA
+			dataStart := blockIdx * uint64(f.blockSize)
+			if dataStart+uint64(f.blockSize) <= uint64(len(entry.Data)) {
+				extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
+				blockData := entry.Data[dataStart : dataStart+uint64(f.blockSize)]
+				extentWriteOps = append(extentWriteOps, batchio.Op{
+					Buf:    blockData,
+					Offset: extentOff,
+				})
+			}
+
+			walEnd := e.WalOffset + uint64(p.entryLen)
+			if walEnd > maxWALEnd {
+				maxWALEnd = walEnd
+			}
+		} else if p.entryType == EntryTypeTrim {
+			zeroBlock := make([]byte, f.blockSize)
+			extentOff := int64(f.extentStart + e.Lba*uint64(f.blockSize))
+			extentWriteOps = append(extentWriteOps, batchio.Op{
+				Buf:    zeroBlock,
+				Offset: extentOff,
+			})
+
+			walEnd := e.WalOffset + uint64(walEntryHeaderSize)
+			if walEnd > maxWALEnd {
+				maxWALEnd = walEnd
+			}
+		}
+	}
+
+	// Step 2d: Batch-write extents + fsync.
+	if len(extentWriteOps) > 0 {
+		if err := f.bio.PwriteBatch(f.fd, extentWriteOps); err != nil {
+			return fmt.Errorf("flusher: batch write extents: %w", err)
+		}
+	}
+	if err := f.bio.Fsync(f.fd); err != nil {
 		return fmt.Errorf("flusher: fsync extent: %w", err)
 	}
 

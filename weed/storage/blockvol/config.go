@@ -19,6 +19,7 @@ type BlockVolConfig struct {
 	WALSoftWatermark       float64       // WAL fraction above which writes begin throttling (default 0.7)
 	WALHardWatermark       float64       // WAL fraction above which writes block until drain (default 0.9)
 	WALMaxConcurrentWrites int           // max concurrent writers in WAL append path (default 16)
+	UseIOUring             bool          // opt-in: use io_uring for batch flusher I/O (Linux 5.6+ only)
 }
 
 // DefaultConfig returns a BlockVolConfig with production defaults.
