@@ -406,28 +406,42 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the buckets directory
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          filerConfig.BucketsPath,
-			Prefix:             "",
-			StartFromFileName:  "",
-			InclusiveStartFrom: false,
-			Limit:              1000,
-		})
-		if err != nil {
-			return err
-		}
-
+		// Paginate through all buckets in the buckets directory
+		const listPageSize = 1000
+		startFrom := ""
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          filerConfig.BucketsPath,
+				Prefix:             "",
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+				Limit:              listPageSize,
+			})
 			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
 				return err
 			}
 
-			if resp.Entry != nil && resp.Entry.IsDirectory {
+			pageCount := 0
+			lastName := ""
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if err.Error() == "EOF" {
+						break
+					}
+					return err
+				}
+
+				if resp.Entry == nil {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+
+				if !resp.Entry.IsDirectory {
+					continue
+				}
+
 				bucketName := resp.Entry.Name
 				if strings.HasPrefix(bucketName, ".") {
 					// Skip internal/system directories from Object Store bucket listing.
@@ -502,6 +516,12 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				}
 				buckets = append(buckets, bucket)
 			}
+
+			// If we received fewer entries than the page size, we've listed everything
+			if pageCount < listPageSize {
+				break
+			}
+			startFrom = lastName
 		}
 
 		return nil
