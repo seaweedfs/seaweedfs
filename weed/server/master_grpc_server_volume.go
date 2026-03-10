@@ -381,10 +381,6 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 		return nil, fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(&volumeGrowOption), replicaCount)
 	}
 
-	if !ms.Topo.DataCenterExists(volumeGrowOption.DataCenter) {
-		err = fmt.Errorf("data center %v not found in topology", volumeGrowOption.DataCenter)
-	}
-
 	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)
 
 	return &master_pb.VolumeGrowResponse{}, nil
