@@ -550,14 +550,21 @@ impl Store {
         // Also unmount if mounted
         self.unmount_ec_shards(vid, shard_ids);
 
-        // If all shards are gone, remove .ecx and .ecj files
+        // If all shards are gone, remove .ecx and .ecj files from both idx and data dirs
         let all_gone = self.check_all_ec_shards_deleted(vid, collection);
         if all_gone {
             for loc in &self.locations {
-                let base =
-                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
-                let _ = std::fs::remove_file(format!("{}.ecx", base));
-                let _ = std::fs::remove_file(format!("{}.ecj", base));
+                let idx_base =
+                    crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+                let _ = std::fs::remove_file(format!("{}.ecx", idx_base));
+                let _ = std::fs::remove_file(format!("{}.ecj", idx_base));
+                // Also try data directory in case .ecx/.ecj were created before -dir.idx
+                if loc.idx_directory != loc.directory {
+                    let data_base =
+                        crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+                    let _ = std::fs::remove_file(format!("{}.ecx", data_base));
+                    let _ = std::fs::remove_file(format!("{}.ecj", data_base));
+                }
             }
         }
     }
@@ -578,10 +585,17 @@ impl Store {
     /// Find the directory containing EC files for a volume.
     pub fn find_ec_dir(&self, vid: VolumeId, collection: &str) -> Option<String> {
         for loc in &self.locations {
-            let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
-            let ecx_path = format!("{}.ecx", base);
-            if std::path::Path::new(&ecx_path).exists() {
+            // Check idx directory first
+            let idx_base = crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+            if std::path::Path::new(&format!("{}.ecx", idx_base)).exists() {
                 return Some(loc.directory.clone());
+            }
+            // Fall back to data directory if .ecx was created before -dir.idx was configured
+            if loc.idx_directory != loc.directory {
+                let data_base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+                if std::path::Path::new(&format!("{}.ecx", data_base)).exists() {
+                    return Some(loc.directory.clone());
+                }
             }
         }
         None

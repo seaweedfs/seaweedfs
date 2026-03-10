@@ -136,7 +136,16 @@ impl DiskLocation {
 
             // If valid EC shards exist (.ecx file present), skip loading .dat
             let ecx_path = format!("{}.ecx", idx_name);
-            if std::path::Path::new(&ecx_path).exists() {
+            let ecx_exists = if std::path::Path::new(&ecx_path).exists() {
+                true
+            } else if self.idx_directory != self.directory {
+                // .ecx may have been created before -dir.idx was configured
+                let fallback = format!("{}.ecx", volume_name);
+                std::path::Path::new(&fallback).exists()
+            } else {
+                false
+            };
+            if ecx_exists {
                 if self.validate_ec_volume(&collection, vid) {
                     // Valid EC volume — don't load .dat
                     continue;
@@ -288,9 +297,14 @@ impl DiskLocation {
         let idx_base = volume_file_name(&self.idx_directory, collection, vid);
         const MAX_SHARD_COUNT: usize = 32;
 
-        // Remove index files first (.ecx, .ecj)
+        // Remove index files from idx directory (.ecx, .ecj)
         let _ = fs::remove_file(format!("{}.ecx", idx_base));
         let _ = fs::remove_file(format!("{}.ecj", idx_base));
+        // Also try data directory in case .ecx/.ecj were created before -dir.idx was configured
+        if self.idx_directory != self.directory {
+            let _ = fs::remove_file(format!("{}.ecx", base));
+            let _ = fs::remove_file(format!("{}.ecj", base));
+        }
 
         // Remove all EC shard files (.ec00 ~ .ec31)
         for i in 0..MAX_SHARD_COUNT {

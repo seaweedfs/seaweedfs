@@ -26,6 +26,8 @@ pub struct EcVolume {
     ecx_file_size: i64,
     ecj_file: Option<File>,
     pub disk_type: DiskType,
+    /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
+    ecx_actual_dir: String,
     /// Maps shard ID -> list of server addresses where that shard exists.
     /// Used for distributed EC reads across the cluster.
     pub shard_locations: HashMap<ShardId, Vec<String>>,
@@ -100,20 +102,38 @@ impl EcVolume {
             ecx_file_size: 0,
             ecj_file: None,
             disk_type: DiskType::default(),
+            ecx_actual_dir: dir_idx.to_string(),
             shard_locations: HashMap::new(),
             expire_at_sec,
         };
 
-        // Open .ecx file (sorted index)
+        // Open .ecx file (sorted index), with fallback to data dir
         let ecx_path = vol.ecx_file_name();
         if std::path::Path::new(&ecx_path).exists() {
             let file = File::open(&ecx_path)?;
             vol.ecx_file_size = file.metadata()?.len() as i64;
             vol.ecx_file = Some(file);
+        } else if dir_idx != dir {
+            // Fall back to data directory if .ecx was created before -dir.idx was configured
+            let data_base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
+            let fallback_ecx = format!("{}.ecx", data_base);
+            if std::path::Path::new(&fallback_ecx).exists() {
+                tracing::info!(
+                    volume_id = volume_id.0,
+                    "ecx file not found in idx dir, falling back to data dir"
+                );
+                let file = File::open(&fallback_ecx)?;
+                vol.ecx_file_size = file.metadata()?.len() as i64;
+                vol.ecx_file = Some(file);
+                vol.ecx_actual_dir = dir.to_string();
+            }
         }
 
-        // Open .ecj file (deletion journal)
-        let ecj_path = vol.ecj_file_name();
+        // Open .ecj file (deletion journal) — use ecx_actual_dir for consistency
+        let ecj_base = crate::storage::volume::volume_file_name(
+            &vol.ecx_actual_dir, collection, volume_id,
+        );
+        let ecj_path = format!("{}.ecj", ecj_base);
         let ecj_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -377,8 +397,24 @@ impl EcVolume {
             }
             *shard = None;
         }
-        let _ = fs::remove_file(self.ecx_file_name());
-        let _ = fs::remove_file(self.ecj_file_name());
+        // Remove .ecx/.ecj from ecx_actual_dir (where they were found)
+        let actual_base = crate::storage::volume::volume_file_name(
+            &self.ecx_actual_dir, &self.collection, self.volume_id,
+        );
+        let _ = fs::remove_file(format!("{}.ecx", actual_base));
+        let _ = fs::remove_file(format!("{}.ecj", actual_base));
+        // Also try the configured idx dir and data dir in case files exist in either
+        if self.ecx_actual_dir != self.dir_idx {
+            let _ = fs::remove_file(self.ecx_file_name());
+            let _ = fs::remove_file(self.ecj_file_name());
+        }
+        if self.ecx_actual_dir != self.dir && self.dir_idx != self.dir {
+            let data_base = crate::storage::volume::volume_file_name(
+                &self.dir, &self.collection, self.volume_id,
+            );
+            let _ = fs::remove_file(format!("{}.ecx", data_base));
+            let _ = fs::remove_file(format!("{}.ecj", data_base));
+        }
         self.ecx_file = None;
         self.ecj_file = None;
     }
