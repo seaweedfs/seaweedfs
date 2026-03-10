@@ -137,6 +137,10 @@ func (t *BalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParams)
 		return fmt.Errorf("aborting: volume %d file count mismatch — source %d, target %d",
 			volumeId, sourceStatus.FileCount, targetStatus.FileCount)
 	}
+	if targetStatus.IdxFileSize != sourceStatus.IdxFileSize {
+		return fmt.Errorf("aborting: volume %d .idx size mismatch — source %d bytes, target %d bytes",
+			volumeId, sourceStatus.IdxFileSize, targetStatus.IdxFileSize)
+	}
 
 	// Step 6: Delete from source — after this, the move is committed.
 	// Clear the readonly flag so the defer doesn't try to restore writability.
