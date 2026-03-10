@@ -70,7 +70,7 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 			return
 		}
 	}
-	if v.isCompacting.Load() || v.isCommitCompacting.Load() {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}

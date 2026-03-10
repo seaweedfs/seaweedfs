@@ -64,19 +64,26 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
-	if v.isCommitCompacting.Load() || !v.isCompacting.CompareAndSwap(false, true) {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
 		return nil
 	}
-	defer v.isCompacting.Store(false)
+	defer v.isCompactionInProgress.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
+	if v.DataBackend == nil {
+		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
+	}
+	nm := v.nm
+	if nm == nil {
+		return fmt.Errorf("volume %d needle map is nil", v.Id)
+	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact failed to sync volume %d", v.Id)
 	}
-	if err := v.nm.Sync(); err != nil {
+	if err := nm.Sync(); err != nil {
 		glog.V(0).Infof("compact failed to sync volume idx %d", v.Id)
 	}
 
@@ -99,11 +106,11 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
-	if v.isCommitCompacting.Load() || !v.isCompacting.CompareAndSwap(false, true) {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
 		return nil
 	}
-	defer v.isCompacting.Store(false)
+	defer v.isCompactionInProgress.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
@@ -111,10 +118,6 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	if v.DataBackend == nil {
 		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
 	}
-	// Capture v.nm locally: CommitCompact can set v.nm = nil without holding
-	// dataFileAccessLock, so a bare nil check followed by v.nm.Sync() has a
-	// TOCTOU race. The atomic isCompacting/isCommitCompacting flags are
-	// advisory and do not fully prevent overlap.
 	nm := v.nm
 	if nm == nil {
 		return fmt.Errorf("volume %d needle map is nil", v.Id)
@@ -141,11 +144,11 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	if !v.isCommitCompacting.CompareAndSwap(false, true) {
-		glog.V(0).Infof("Volume %d is already commit compacting ...", v.Id)
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
+		glog.V(0).Infof("Volume %d is already compacting ...", v.Id)
 		return nil
 	}
-	defer v.isCommitCompacting.Store(false)
+	defer v.isCompactionInProgress.Store(false)
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()

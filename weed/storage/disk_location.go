@@ -300,9 +300,13 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		for _, v := range delVolsMap {
+		for k, v := range delVolsMap {
 			if err := v.Destroy(false); err != nil {
 				errChain <- err
+			} else {
+				l.volumesLock.Lock()
+				delete(l.volumes, k)
+				l.volumesLock.Unlock()
 			}
 		}
 		wg.Done()
@@ -383,13 +387,9 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
 	deltaVols := make(map[needle.VolumeId]*Volume, 0)
 	for k, v := range l.volumes {
-		if v.Collection == collectionName && !v.isCompacting.Load() && !v.isCommitCompacting.Load() {
+		if v.Collection == collectionName && !v.isCompactionInProgress.Load() {
 			deltaVols[k] = v
 		}
-	}
-
-	for k := range deltaVols {
-		delete(l.volumes, k)
 	}
 	return deltaVols
 }

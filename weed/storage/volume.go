@@ -46,8 +46,7 @@ type Volume struct {
 	lastCompactRevision    uint16
 	ldbTimeout             int64
 
-	isCompacting       atomic.Bool
-	isCommitCompacting atomic.Bool
+	isCompactionInProgress atomic.Bool
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
@@ -225,6 +224,16 @@ func (v *Volume) SyncToDisk() {
 
 // Close cleanly shuts down this volume
 func (v *Volume) Close() {
+	// Wait for any in-progress compaction to finish and claim the flag so no
+	// new compaction can start. This must happen BEFORE acquiring
+	// dataFileAccessLock to avoid deadlocking with CommitCompact which holds
+	// the flag while waiting for the lock.
+	for !v.isCompactionInProgress.CompareAndSwap(false, true) {
+		time.Sleep(521 * time.Millisecond)
+		glog.Warningf("Volume Close wait for compaction %d", v.Id)
+	}
+	defer v.isCompactionInProgress.Store(false)
+
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
 
@@ -232,11 +241,6 @@ func (v *Volume) Close() {
 }
 
 func (v *Volume) doClose() {
-	for v.isCommitCompacting.Load() {
-		time.Sleep(521 * time.Millisecond)
-		glog.Warningf("Volume Close wait for compaction %d", v.Id)
-	}
-
 	if v.nm != nil {
 		if err := v.nm.Sync(); err != nil {
 			glog.Warningf("Volume Close fail to sync volume idx %d", v.Id)
