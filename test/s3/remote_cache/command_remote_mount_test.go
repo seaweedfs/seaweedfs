@@ -10,6 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func isWeedShellBannerLine(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "master:") ||
+		t == ">" || strings.TrimLeft(t, "> ") == ""
+}
+
 // TestRemoteMountBasic tests mounting a remote bucket to a local directory
 func TestRemoteMountBasic(t *testing.T) {
 	checkServersRunning(t)
@@ -87,9 +93,14 @@ func TestRemoteMountNoSync(t *testing.T) {
 	listLines := strings.Split(strings.TrimSpace(listOutput), "\n")
 	nonEmptyLines := 0
 	for _, line := range listLines {
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "total ") {
-			nonEmptyLines++
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "total ") {
+			continue
 		}
+		if isWeedShellBannerLine(trimmed) {
+			continue
+		}
+		nonEmptyLines++
 	}
 	assert.Zero(t, nonEmptyLines, "expected no upfront metadata (empty dir listing) after -noSync mount, got %d entries: %s", nonEmptyLines, listOutput)
 
