@@ -937,7 +937,21 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 		if parent == nil {
 			parent = context.Background()
 		}
-		execCtx, cancel := context.WithTimeout(parent, policy.ExecutionTimeout)
+		// Use the job's estimated runtime if provided and larger than the
+		// default execution timeout. This lets handlers like vacuum scale
+		// the timeout based on volume size so large volumes are not killed.
+		timeout := policy.ExecutionTimeout
+		if job.Parameters != nil {
+			if est, ok := job.Parameters["estimated_runtime_seconds"]; ok {
+				if v := est.GetInt64Value(); v > 0 {
+					estimated := time.Duration(v) * time.Second
+					if estimated > timeout {
+						timeout = estimated
+					}
+				}
+			}
+		}
+		execCtx, cancel := context.WithTimeout(parent, timeout)
 		_, err := r.executeJobWithExecutor(execCtx, executor, job, clusterContext, int32(attempt))
 		cancel()
 		if err == nil {

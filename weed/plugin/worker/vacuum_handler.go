@@ -544,6 +544,13 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 		summary = summary + " on " + result.Server
 	}
 
+	// Estimate runtime: 5 min/GB (compact + commit + overhead), minimum 3 minutes
+	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
+	estimatedRuntimeSeconds := volumeSizeGB * 5 * 60
+	if estimatedRuntimeSeconds < 180 {
+		estimatedRuntimeSeconds = 180
+	}
+
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
@@ -563,6 +570,9 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},
+			},
+			"estimated_runtime_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 			},
 		},
 		Labels: map[string]string{

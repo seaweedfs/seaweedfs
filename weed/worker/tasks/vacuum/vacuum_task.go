@@ -64,7 +64,7 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 	// Step 1: Check volume status and garbage ratio
 	t.ReportProgress(10.0)
 	t.GetLogger().Info("Checking volume status")
-	eligible, currentGarbageRatio, err := t.checkVacuumEligibility()
+	eligible, currentGarbageRatio, err := t.checkVacuumEligibility(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check vacuum eligibility: %v", err)
 	}
@@ -85,14 +85,14 @@ func (t *VacuumTask) Execute(ctx context.Context, params *worker_pb.TaskParams) 
 		"threshold":     t.garbageThreshold,
 	}).Info("Performing vacuum operation")
 
-	if err := t.performVacuum(); err != nil {
+	if err := t.performVacuum(ctx); err != nil {
 		return fmt.Errorf("failed to perform vacuum: %v", err)
 	}
 
 	// Step 3: Verify vacuum results
 	t.ReportProgress(90.0)
 	t.GetLogger().Info("Verifying vacuum results")
-	if err := t.verifyVacuumResults(); err != nil {
+	if err := t.verifyVacuumResults(ctx); err != nil {
 		glog.Warningf("Vacuum verification failed: %v", err)
 		// Don't fail the task - vacuum operation itself succeeded
 	}
@@ -159,14 +159,14 @@ func (t *VacuumTask) vacuumTimeout(base time.Duration) time.Duration {
 // Helper methods for real vacuum operations
 
 // checkVacuumEligibility checks if the volume meets vacuum criteria
-func (t *VacuumTask) checkVacuumEligibility() (bool, float64, error) {
+func (t *VacuumTask) checkVacuumEligibility(ctx context.Context) (bool, float64, error) {
 	var garbageRatio float64
 
 	err := operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
-			ctx, cancel := context.WithTimeout(context.Background(), t.vacuumTimeout(time.Minute))
+			checkCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
-			resp, err := client.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
+			resp, err := client.VacuumVolumeCheck(checkCtx, &volume_server_pb.VacuumVolumeCheckRequest{
 				VolumeId: t.volumeID,
 			})
 			if err != nil {
@@ -190,12 +190,12 @@ func (t *VacuumTask) checkVacuumEligibility() (bool, float64, error) {
 }
 
 // performVacuum executes the actual vacuum operation
-func (t *VacuumTask) performVacuum() error {
+func (t *VacuumTask) performVacuum(ctx context.Context) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			// Step 1: Compact the volume (3 min per GB, matching topology vacuum)
 			t.GetLogger().Info("Compacting volume")
-			compactCtx, compactCancel := context.WithTimeout(context.Background(), t.vacuumTimeout(3*time.Minute))
+			compactCtx, compactCancel := context.WithTimeout(ctx, t.vacuumTimeout(3*time.Minute))
 			defer compactCancel()
 			stream, err := client.VacuumVolumeCompact(compactCtx, &volume_server_pb.VacuumVolumeCompactRequest{
 				VolumeId: t.volumeID,
@@ -218,7 +218,7 @@ func (t *VacuumTask) performVacuum() error {
 
 			// Step 2: Commit the vacuum (1 min per GB)
 			t.GetLogger().Info("Committing vacuum operation")
-			commitCtx, commitCancel := context.WithTimeout(context.Background(), t.vacuumTimeout(time.Minute))
+			commitCtx, commitCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer commitCancel()
 			_, err = client.VacuumVolumeCommit(commitCtx, &volume_server_pb.VacuumVolumeCommitRequest{
 				VolumeId: t.volumeID,
@@ -229,7 +229,7 @@ func (t *VacuumTask) performVacuum() error {
 
 			// Step 3: Cleanup old files (1 min per GB)
 			t.GetLogger().Info("Cleaning up vacuum files")
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), t.vacuumTimeout(time.Minute))
+			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cleanupCancel()
 			_, err = client.VacuumVolumeCleanup(cleanupCtx, &volume_server_pb.VacuumVolumeCleanupRequest{
 				VolumeId: t.volumeID,
@@ -244,12 +244,12 @@ func (t *VacuumTask) performVacuum() error {
 }
 
 // verifyVacuumResults checks the volume status after vacuum
-func (t *VacuumTask) verifyVacuumResults() error {
+func (t *VacuumTask) verifyVacuumResults(ctx context.Context) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
-			ctx, cancel := context.WithTimeout(context.Background(), t.vacuumTimeout(time.Minute))
+			verifyCtx, cancel := context.WithTimeout(ctx, t.vacuumTimeout(time.Minute))
 			defer cancel()
-			resp, err := client.VacuumVolumeCheck(ctx, &volume_server_pb.VacuumVolumeCheckRequest{
+			resp, err := client.VacuumVolumeCheck(verifyCtx, &volume_server_pb.VacuumVolumeCheckRequest{
 				VolumeId: t.volumeID,
 			})
 			if err != nil {
