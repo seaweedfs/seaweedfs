@@ -111,13 +111,18 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	if v.DataBackend == nil {
 		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
 	}
-	if v.nm == nil {
+	// Capture v.nm locally: CommitCompact can set v.nm = nil without holding
+	// dataFileAccessLock, so a bare nil check followed by v.nm.Sync() has a
+	// TOCTOU race. The atomic isCompacting/isCommitCompacting flags are
+	// advisory and do not fully prevent overlap.
+	nm := v.nm
+	if nm == nil {
 		return fmt.Errorf("volume %d needle map is nil", v.Id)
 	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact2 failed to sync volume dat %d: %v", v.Id, err)
 	}
-	if err := v.nm.Sync(); err != nil {
+	if err := nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 failed to sync volume idx %d: %v", v.Id, err)
 	}
 
