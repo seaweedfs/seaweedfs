@@ -3528,7 +3528,8 @@ fn get_disk_usage(path: &str) -> (u64, u64) {
 
 /// Build memory status info similar to Go's stats.MemStat().
 fn get_mem_status() -> volume_server_pb::MemStatus {
-    let mem = volume_server_pb::MemStatus {
+    #[allow(unused_mut)]
+    let mut mem = volume_server_pb::MemStatus {
         goroutines: 1,
         ..Default::default()
     };
