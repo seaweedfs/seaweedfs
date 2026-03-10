@@ -1,11 +1,12 @@
 package nvme
 
 // handleRead processes an NVMe Read command.
-func (c *Controller) handleRead(req *Request) error {
+func (c *Controller) handleRead(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	dev := sub.Dev
@@ -18,31 +19,37 @@ func (c *Controller) handleRead(req *Request) error {
 	nsze := dev.VolumeSize() / uint64(blockSize)
 	if lba+uint64(nlb) > nsze {
 		req.resp.Status = uint16(StatusLBAOutOfRange)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	data, err := dev.ReadAt(lba, totalBytes)
 	if err != nil {
 		req.resp.Status = uint16(mapBlockError(err))
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	req.c2hData = data
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // handleWrite processes an NVMe Write command with inline or R2T data.
-func (c *Controller) handleWrite(req *Request) error {
+// By the time this handler runs, req.payload always contains the write data:
+// either inline from the CapsuleCmd PDU, or collected via R2T by collectR2TData.
+func (c *Controller) handleWrite(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	// Check ANA state (write-gating)
 	if !c.isWriteAllowed() {
 		req.resp.Status = uint16(StatusNSNotReady)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	dev := sub.Dev
@@ -55,72 +62,63 @@ func (c *Controller) handleWrite(req *Request) error {
 	nsze := dev.VolumeSize() / uint64(blockSize)
 	if lba+uint64(nlb) > nsze {
 		req.resp.Status = uint16(StatusLBAOutOfRange)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
-	var writeData []byte
-
-	if len(req.payload) > 0 {
-		// Inline data path: data was in the CapsuleCmd PDU.
-		if uint32(len(req.payload)) != expectedBytes {
-			req.resp.Status = uint16(StatusInvalidField)
-			return c.sendResponse(req)
-		}
-		writeData = req.payload
-	} else {
-		// R2T flow: send Ready-to-Transfer, then receive H2C Data PDUs.
-		if err := c.sendR2T(req.capsule.CID, 0, 0, expectedBytes); err != nil {
-			return err
-		}
-		data, err := c.recvH2CData(expectedBytes)
-		if err != nil {
-			return err
-		}
-		writeData = data
-		defer putBuffer(data)
+	if uint32(len(req.payload)) != expectedBytes {
+		req.resp.Status = uint16(StatusInvalidField)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	throttleOnWALPressure(dev)
-	if err := writeWithRetry(dev, lba, writeData); err != nil {
+	if err := writeWithRetry(dev, lba, req.payload); err != nil {
 		req.resp.Status = uint16(mapBlockError(err))
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handleFlush processes an NVMe Flush command.
-func (c *Controller) handleFlush(req *Request) error {
+func (c *Controller) handleFlush(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	if !c.isWriteAllowed() {
 		req.resp.Status = uint16(StatusNSNotReady)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	if err := sub.Dev.SyncCache(); err != nil {
 		req.resp.Status = uint16(mapBlockError(err))
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handleWriteZeros processes an NVMe Write Zeroes command.
-func (c *Controller) handleWriteZeros(req *Request) error {
+func (c *Controller) handleWriteZeros(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	if !c.isWriteAllowed() {
 		req.resp.Status = uint16(StatusNSNotReady)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	dev := sub.Dev
@@ -133,14 +131,16 @@ func (c *Controller) handleWriteZeros(req *Request) error {
 	nsze := dev.VolumeSize() / uint64(blockSize)
 	if lba+uint64(nlb) > nsze {
 		req.resp.Status = uint16(StatusLBAOutOfRange)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	// D12 bit 25: DEALLOC — if set, use Trim instead of writing zeros
 	if req.capsule.D12&commandBitDeallocate != 0 {
 		if err := dev.Trim(lba, totalBytes); err != nil {
 			req.resp.Status = uint16(mapBlockError(err))
-			return c.sendResponse(req)
+			c.enqueueResponse(&response{resp: req.resp})
+			return
 		}
 	} else {
 		zeroBuf := getBuffer(int(totalBytes))
@@ -152,11 +152,12 @@ func (c *Controller) handleWriteZeros(req *Request) error {
 		putBuffer(zeroBuf)
 		if err != nil {
 			req.resp.Status = uint16(mapBlockError(err))
-			return c.sendResponse(req)
+			c.enqueueResponse(&response{resp: req.resp})
+			return
 		}
 	}
 
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // isWriteAllowed checks if the current ANA state allows writes.

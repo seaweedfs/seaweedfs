@@ -16,9 +16,9 @@ targets:
     node: server
     vol_size: "1073741824"
     wal_size: "536870912"
-    iscsi_port: 3263
-    nvme_port: 4420
-    admin_port: 8083
+    iscsi_port: 3270
+    nvme_port: 4430
+    admin_port: 8090
     iqn_suffix: "bench-25g"
     nqn_suffix: "bench-25g"
 

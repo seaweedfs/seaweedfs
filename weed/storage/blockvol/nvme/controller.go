@@ -1,6 +1,7 @@
 package nvme
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// errDisconnect is a sentinel returned by handleDisconnect to signal
+// the rxLoop to exit gracefully after enqueuing the disconnect response.
+var errDisconnect = errors.New("disconnect")
 
 // controllerState tracks the lifecycle of an NVMe controller session.
 type controllerState int
@@ -31,7 +36,27 @@ type Request struct {
 	status  StatusWord
 }
 
+// response represents a pending response to be written by the txLoop.
+// Either a standard CapsuleResp (with optional C2H data), or an R2T PDU.
+type response struct {
+	// Standard response fields
+	resp    CapsuleResponse
+	c2hData []byte // non-nil for read responses
+
+	// R2T variant (when r2t is non-nil, resp/c2hData are ignored)
+	r2t     *R2THeader
+	r2tDone chan struct{} // closed after R2T is flushed to wire
+}
+
 // Controller handles one NVMe/TCP connection (one queue per connection).
+//
+// After the IC handshake, the connection is split into two goroutines:
+//   - rxLoop: reads PDUs from the wire, dispatches commands
+//   - txLoop: drains the response channel, writes responses to the wire
+//
+// IO commands are dispatched to goroutines for concurrent processing.
+// Admin commands run synchronously in the rxLoop (infrequent, state-changing).
+// All responses flow through respCh — only txLoop writes to c.out.
 type Controller struct {
 	mu sync.Mutex
 
@@ -45,8 +70,9 @@ type Controller struct {
 	// Queue state (one queue per TCP connection)
 	queueID    uint16
 	queueSize  uint16
-	sqhd       uint16 // Submission Queue Head pointer
-	flowCtlOff bool   // CATTR bit2: SQ flow control disabled
+	rxSQHD     uint16        // Submission Queue Head (updated by rxLoop only)
+	sqhdVal    atomic.Uint32 // Latest SQHD for txLoop (lower 16 bits)
+	flowCtlOff bool          // CATTR bit2: SQ flow control disabled
 
 	// Controller identity
 	cntlID uint16
@@ -63,9 +89,10 @@ type Controller struct {
 	katoTimer *time.Timer
 	katoMu    sync.Mutex
 
-	// Async completion (IO queues)
-	waiting     chan *Request // pre-allocated request pool
-	completions chan *Request // completed requests to send
+	// RX/TX split
+	respCh chan *response // responses from handlers → txLoop
+	done   chan struct{}  // closed when connection is shutting down
+	cmdWg  sync.WaitGroup // tracks in-flight IO command goroutines
 
 	// Backend
 	subsystem *Subsystem
@@ -78,11 +105,11 @@ type Controller struct {
 	maxDataLen    uint32 // C2H/H2C data chunk size (from Config)
 
 	// Command interleaving: capsules received during R2T H2CData collection.
-	// Drained by Serve() before reading the next PDU from the wire.
+	// Drained by rxLoop before reading the next PDU from the wire.
 	pendingCapsules []*Request
 
 	// Lifecycle
-	wg     sync.WaitGroup
+	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
@@ -94,7 +121,7 @@ func newController(conn net.Conn, server *Server) *Controller {
 	}
 	c := &Controller{
 		conn:   conn,
-		in:     NewReader(conn),
+		in:     NewReaderSize(conn, int(maxData)+maxHeaderSize),
 		out:    NewWriterSize(conn, int(maxData)+maxHeaderSize),
 		state:  stateConnected,
 		server: server,
@@ -108,63 +135,56 @@ func newController(conn net.Conn, server *Server) *Controller {
 }
 
 // Serve is the main event loop for this controller connection.
+//
+// Phase 1: IC handshake (synchronous, direct c.out access).
+// Phase 2: Start txLoop goroutine, enter rxLoop.
 func (c *Controller) Serve() error {
 	defer c.shutdown()
 
-	// IC handshake timeout
+	// Phase 1: IC handshake with timeout (synchronous).
 	if err := c.conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return err
 	}
-
-	for {
-		if c.closed.Load() {
-			return nil
-		}
-
-		// Drain capsules that arrived during a prior R2T data collection.
-		for len(c.pendingCapsules) > 0 {
-			req := c.pendingCapsules[0]
-			c.pendingCapsules = c.pendingCapsules[1:]
-			if err := c.dispatchPending(req); err != nil {
-				return fmt.Errorf("pending capsule: %w", err)
-			}
-		}
-
-		hdr, err := c.in.Dequeue()
-		if err != nil {
-			if err == io.EOF || c.closed.Load() {
-				return nil
-			}
-			return fmt.Errorf("read header: %w", err)
-		}
-
-		switch hdr.Type {
-		case pduICReq:
-			if err := c.handleIC(); err != nil {
-				return fmt.Errorf("IC handshake: %w", err)
-			}
-			// Clear read deadline after successful IC
-			if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
-				return err
-			}
-
-		case pduCapsuleCmd:
-			if err := c.handleCapsule(); err != nil {
-				return fmt.Errorf("capsule: %w", err)
-			}
-
-		case pduH2CData:
-			// H2CData PDUs are only expected after R2T, handled inline
-			// by recvH2CData. If we see one here, it's unexpected.
-			return fmt.Errorf("unexpected H2CData PDU outside R2T flow")
-
-		case pduH2CTermReq:
-			return nil // host terminated
-
-		default:
-			return fmt.Errorf("unexpected PDU type: 0x%x", hdr.Type)
-		}
+	hdr, err := c.in.Dequeue()
+	if err != nil {
+		return fmt.Errorf("IC handshake: %w", err)
 	}
+	if hdr.Type != pduICReq {
+		return fmt.Errorf("expected ICReq (0x%x), got 0x%x", pduICReq, hdr.Type)
+	}
+	if err := c.handleIC(); err != nil {
+		return fmt.Errorf("IC handshake: %w", err)
+	}
+	if err := c.conn.SetReadDeadline(time.Time{}); err != nil {
+		return err
+	}
+
+	// Phase 2: Start TX loop, enter RX loop.
+	c.respCh = make(chan *response, 128)
+	c.done = make(chan struct{})
+
+	txErrCh := make(chan error, 1)
+	go func() {
+		txErrCh <- c.txLoop()
+	}()
+
+	rxErr := c.rxLoop()
+
+	// Wait for in-flight IO command goroutines to finish and enqueue responses.
+	c.cmdWg.Wait()
+
+	// Signal txLoop to drain remaining responses and exit.
+	close(c.done)
+	txErr := <-txErrCh
+
+	// errDisconnect is a graceful exit, not an error.
+	if errors.Is(rxErr, errDisconnect) {
+		rxErr = nil
+	}
+	if rxErr != nil {
+		return rxErr
+	}
+	return txErr
 }
 
 // handleIC processes the IC handshake.
@@ -186,32 +206,107 @@ func (c *Controller) handleIC() error {
 	return nil
 }
 
-// handleCapsule dispatches a CapsuleCmd PDU.
-func (c *Controller) handleCapsule() error {
-	// Reject capsule commands before IC handshake is complete.
-	if c.state < stateICComplete {
-		return fmt.Errorf("capsule command before IC handshake")
-	}
+// rxLoop reads PDUs from the wire and dispatches commands.
+// Admin commands (QID=0) run synchronously. IO commands dispatch to goroutines.
+func (c *Controller) rxLoop() error {
+	for {
+		if c.closed.Load() {
+			return nil
+		}
 
+		// Drain capsules that arrived during a prior R2T data collection.
+		for len(c.pendingCapsules) > 0 {
+			req := c.pendingCapsules[0]
+			c.pendingCapsules = c.pendingCapsules[1:]
+			c.advanceSQHD()
+			if err := c.dispatchFromRx(req); err != nil {
+				return err
+			}
+		}
+
+		hdr, err := c.in.Dequeue()
+		if err != nil {
+			if err == io.EOF || c.closed.Load() {
+				return nil
+			}
+			return fmt.Errorf("read header: %w", err)
+		}
+
+		switch hdr.Type {
+		case pduCapsuleCmd:
+			if c.state < stateICComplete {
+				return fmt.Errorf("capsule command before IC handshake")
+			}
+			req, err := c.parseCapsule()
+			if err != nil {
+				return fmt.Errorf("capsule: %w", err)
+			}
+			c.advanceSQHD()
+			if err := c.dispatchFromRx(req); err != nil {
+				return err
+			}
+
+		case pduH2CData:
+			return fmt.Errorf("unexpected H2CData PDU outside R2T flow")
+
+		case pduH2CTermReq:
+			return nil
+
+		default:
+			return fmt.Errorf("unexpected PDU type: 0x%x", hdr.Type)
+		}
+	}
+}
+
+// txLoop drains the response channel and writes responses to the wire.
+// Only txLoop touches c.out after the IC handshake.
+func (c *Controller) txLoop() error {
+	var firstErr error
+	for {
+		select {
+		case resp := <-c.respCh:
+			if firstErr != nil {
+				completeWaiters(resp)
+				continue // discard — connection already failed
+			}
+			if err := c.writeResponse(resp); err != nil {
+				firstErr = err
+				c.conn.Close() // force rxLoop EOF
+			}
+		case <-c.done:
+			// Drain remaining responses.
+			for {
+				select {
+				case resp := <-c.respCh:
+					if firstErr == nil {
+						if err := c.writeResponse(resp); err != nil {
+							firstErr = err
+						}
+					} else {
+						completeWaiters(resp)
+					}
+				default:
+					return firstErr
+				}
+			}
+		}
+	}
+}
+
+// parseCapsule reads a CapsuleCmd PDU (specific header + optional inline data).
+func (c *Controller) parseCapsule() (*Request, error) {
 	var capsule CapsuleCommand
 	if err := c.in.Receive(&capsule); err != nil {
-		return err
+		return nil, err
 	}
 
-	// Read optional inline data
 	var payload []byte
 	if dataLen := c.in.Length(); dataLen > 0 {
 		payload = getBuffer(int(dataLen))
 		if err := c.in.ReceiveData(payload); err != nil {
 			putBuffer(payload)
-			return err
+			return nil, err
 		}
-	}
-
-	// Advance SQHD
-	c.sqhd++
-	if c.sqhd >= c.queueSize && c.queueSize > 0 {
-		c.sqhd = 0
 	}
 
 	req := &Request{
@@ -220,32 +315,88 @@ func (c *Controller) handleCapsule() error {
 	}
 	req.resp.CID = capsule.CID
 	req.resp.QueueID = c.queueID
-	// SQHD is set in sendResponse/sendC2HDataAndResponse using the
-	// latest c.flowCtlOff value, so Connect responses correctly get
-	// SQHD=0xFFFF when the host requests flowCtlOff via CATTR.
 	req.resp.Status = uint16(StatusSuccess)
+	return req, nil
+}
 
+// advanceSQHD increments the submission queue head pointer (rxLoop only).
+func (c *Controller) advanceSQHD() {
+	sqhd := c.rxSQHD + 1
+	if sqhd >= c.queueSize && c.queueSize > 0 {
+		sqhd = 0
+	}
+	c.rxSQHD = sqhd
+	c.sqhdVal.Store(uint32(sqhd))
+}
+
+// dispatchFromRx routes a parsed capsule to the appropriate handler.
+// Admin queue: synchronous in rxLoop. IO queue: concurrent goroutine.
+func (c *Controller) dispatchFromRx(req *Request) error {
 	if c.queueID == 0 {
 		return c.dispatchAdmin(req)
 	}
-	return c.dispatchIO(req)
+
+	// For Write commands without inline data, collect R2T data in rxLoop
+	// before dispatching to the goroutine.
+	if req.capsule.OpCode == ioWrite && len(req.payload) == 0 {
+		if err := c.collectR2TData(req); err != nil {
+			return err
+		}
+	}
+
+	c.cmdWg.Add(1)
+	go func() {
+		defer c.cmdWg.Done()
+		c.dispatchIO(req)
+	}()
+	return nil
 }
 
-// dispatchPending processes a capsule that was buffered during R2T data
-// collection. The capsule and payload are already fully read — only
-// SQHD advance and command dispatch remain.
-func (c *Controller) dispatchPending(req *Request) error {
-	c.sqhd++
-	if c.sqhd >= c.queueSize && c.queueSize > 0 {
-		c.sqhd = 0
+// collectR2TData handles the R2T/H2C flow in the rxLoop for Write commands
+// that don't carry inline data. Sends R2T through the txLoop, then reads
+// H2C Data PDUs inline. Sets req.payload with the collected data.
+func (c *Controller) collectR2TData(req *Request) error {
+	sub := c.subsystem
+	if sub == nil {
+		// Let handleWrite deal with the nil subsystem.
+		return nil
 	}
-	if c.queueID == 0 {
-		return c.dispatchAdmin(req)
+
+	nlb := req.capsule.LbaLength()
+	expectedBytes := uint32(nlb) * sub.Dev.BlockSize()
+
+	// Send R2T through txLoop and wait for it to be flushed.
+	r2tDone := make(chan struct{})
+	select {
+	case c.respCh <- &response{
+		r2t: &R2THeader{
+			CCCID: req.capsule.CID,
+			TAG:   0,
+			DATAO: 0,
+			DATAL: expectedBytes,
+		},
+		r2tDone: r2tDone,
+	}:
+	case <-c.done:
+		return nil
 	}
-	return c.dispatchIO(req)
+
+	select {
+	case <-r2tDone:
+	case <-c.done:
+		return nil
+	}
+
+	// Read H2C Data PDUs from the wire.
+	data, err := c.recvH2CData(expectedBytes)
+	if err != nil {
+		return err
+	}
+	req.payload = data
+	return nil
 }
 
-// dispatchAdmin handles admin queue commands synchronously.
+// dispatchAdmin handles admin queue commands synchronously in the rxLoop.
 func (c *Controller) dispatchAdmin(req *Request) error {
 	defer func() {
 		if req.payload != nil {
@@ -261,26 +412,26 @@ func (c *Controller) dispatchAdmin(req *Request) error {
 
 	switch capsule.OpCode {
 	case adminIdentify:
-		return c.handleIdentify(req)
+		c.handleIdentify(req)
 	case adminSetFeatures:
-		return c.handleSetFeatures(req)
+		c.handleSetFeatures(req)
 	case adminGetFeatures:
-		return c.handleGetFeatures(req)
+		c.handleGetFeatures(req)
 	case adminGetLogPage:
-		return c.handleGetLogPage(req)
+		c.handleGetLogPage(req)
 	case adminKeepAlive:
-		return c.handleKeepAlive(req)
+		c.handleKeepAlive(req)
 	case adminAsyncEvent:
-		// Stub: just succeed (don't deliver events in CP10-1)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
 	default:
 		req.resp.Status = uint16(StatusInvalidOpcode)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
 	}
+	return nil
 }
 
-// dispatchIO handles IO queue commands.
-func (c *Controller) dispatchIO(req *Request) error {
+// dispatchIO handles IO queue commands (runs in a goroutine).
+func (c *Controller) dispatchIO(req *Request) {
 	defer func() {
 		if req.payload != nil {
 			putBuffer(req.payload)
@@ -291,94 +442,100 @@ func (c *Controller) dispatchIO(req *Request) error {
 
 	switch capsule.OpCode {
 	case ioRead:
-		return c.handleRead(req)
+		c.handleRead(req)
 	case ioWrite:
-		return c.handleWrite(req)
+		c.handleWrite(req)
 	case ioFlush:
-		return c.handleFlush(req)
+		c.handleFlush(req)
 	case ioWriteZeros:
-		return c.handleWriteZeros(req)
+		c.handleWriteZeros(req)
 	default:
 		req.resp.Status = uint16(StatusInvalidOpcode)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
 	}
 }
 
-// sendC2HDataAndResponse sends C2HData PDUs followed by a CapsuleResp.
-// All chunks and the final response are batched in the bufio buffer,
-// then flushed to the wire in a single FlushBuf() call.
-func (c *Controller) sendC2HDataAndResponse(req *Request) error {
-	if len(req.c2hData) > 0 {
-		data := req.c2hData
-		offset := uint32(0)
-		chunkSize := c.maxDataLen
+// completeWaiters closes any synchronization channels on a discarded response.
+// Must be called when txLoop drops a response after a write error, so that
+// senders blocked on r2tDone (e.g. collectR2TData) are unblocked.
+func completeWaiters(resp *response) {
+	if resp.r2tDone != nil {
+		close(resp.r2tDone)
+	}
+}
 
-		for offset < uint32(len(data)) {
-			end := offset + chunkSize
-			if end > uint32(len(data)) {
-				end = uint32(len(data))
-			}
-			chunk := data[offset:end]
+// enqueueResponse sends a response to the txLoop for writing.
+// Safe to call from any goroutine. If the connection is shutting down,
+// the response is silently discarded.
+func (c *Controller) enqueueResponse(resp *response) {
+	select {
+	case c.respCh <- resp:
+	case <-c.done:
+	}
+}
 
-			hdr := C2HDataHeader{
-				CCCID: req.capsule.CID,
-				DATAO: offset,
-				DATAL: uint32(len(chunk)),
-			}
-
-			flags := uint8(0)
-			if end >= uint32(len(data)) {
-				flags = c2hFlagLast
-			}
-
-			if err := c.out.writeHeaderAndData(pduC2HData, flags, &hdr, c2hDataHdrSize, chunk); err != nil {
-				return err
-			}
-			offset = end
+// writeResponse writes a single response to the wire (txLoop only).
+func (c *Controller) writeResponse(resp *response) error {
+	// R2T variant: write R2T header and signal caller.
+	if resp.r2t != nil {
+		err := c.out.SendHeaderOnly(pduR2T, resp.r2t, r2tHdrSize)
+		if resp.r2tDone != nil {
+			close(resp.r2tDone)
 		}
-	}
-
-	// Write CapsuleResp to bufio buffer
-	if c.flowCtlOff {
-		req.resp.SQHD = 0xFFFF
-	} else {
-		req.resp.SQHD = c.sqhd
-	}
-	c.resetKATO()
-	if err := c.out.writeHeaderAndData(pduCapsuleResp, 0, &req.resp, capsuleRespSize, nil); err != nil {
 		return err
 	}
 
-	// Single flush: all C2H chunks + CapsuleResp in one syscall
+	// Standard response: set SQHD from latest value.
+	if c.flowCtlOff {
+		resp.resp.SQHD = 0xFFFF
+	} else {
+		resp.resp.SQHD = uint16(c.sqhdVal.Load())
+	}
+	c.resetKATO()
+
+	if len(resp.c2hData) > 0 {
+		return c.writeC2HAndResp(resp)
+	}
+	return c.out.SendHeaderOnly(pduCapsuleResp, &resp.resp, capsuleRespSize)
+}
+
+// writeC2HAndResp writes C2H data chunks followed by CapsuleResp, batched.
+func (c *Controller) writeC2HAndResp(resp *response) error {
+	data := resp.c2hData
+	offset := uint32(0)
+	chunkSize := c.maxDataLen
+
+	for offset < uint32(len(data)) {
+		end := offset + chunkSize
+		if end > uint32(len(data)) {
+			end = uint32(len(data))
+		}
+		chunk := data[offset:end]
+
+		hdr := C2HDataHeader{
+			CCCID: resp.resp.CID,
+			DATAO: offset,
+			DATAL: uint32(len(chunk)),
+		}
+
+		flags := uint8(0)
+		if end >= uint32(len(data)) {
+			flags = c2hFlagLast
+		}
+
+		if err := c.out.writeHeaderAndData(pduC2HData, flags, &hdr, c2hDataHdrSize, chunk); err != nil {
+			return err
+		}
+		offset = end
+	}
+
+	if err := c.out.writeHeaderAndData(pduCapsuleResp, 0, &resp.resp, capsuleRespSize, nil); err != nil {
+		return err
+	}
 	return c.out.FlushBuf()
 }
 
-// sendResponse sends a CapsuleResp PDU.
-// SQHD is set here (not in handleCapsule) so that flowCtlOff changes
-// made during command dispatch (e.g. Fabric Connect) take effect
-// on the same response.
-func (c *Controller) sendResponse(req *Request) error {
-	if c.flowCtlOff {
-		req.resp.SQHD = 0xFFFF
-	} else {
-		req.resp.SQHD = c.sqhd
-	}
-	c.resetKATO()
-	return c.out.SendHeaderOnly(pduCapsuleResp, &req.resp, capsuleRespSize)
-}
-
 // ---------- R2T / H2C Data ----------
-
-// sendR2T sends a Ready-to-Transfer PDU requesting data from the host.
-func (c *Controller) sendR2T(cid uint16, tag uint16, offset, length uint32) error {
-	r2t := R2THeader{
-		CCCID: cid,
-		TAG:   tag,
-		DATAO: offset,
-		DATAL: length,
-	}
-	return c.out.SendHeaderOnly(pduR2T, &r2t, r2tHdrSize)
-}
 
 // recvH2CData reads H2CData PDU(s) from the wire and returns the accumulated data.
 // Reads exactly `totalBytes` of data, potentially across multiple H2C PDUs.
@@ -511,6 +668,16 @@ func (c *Controller) shutdown() {
 		c.stopKATO()
 		c.state = stateClosed
 		c.conn.Close()
+
+		// Release pooled buffers from interleaved capsules that were never dispatched.
+		for _, req := range c.pendingCapsules {
+			if req.payload != nil {
+				putBuffer(req.payload)
+				req.payload = nil
+			}
+		}
+		c.pendingCapsules = nil
+
 		if c.server != nil {
 			if c.isAdmin && c.cntlID != 0 {
 				c.server.unregisterAdmin(c.cntlID)

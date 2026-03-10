@@ -736,10 +736,10 @@ func TestIdentify_Controller(t *testing.T) {
 	if subNQN != nqn {
 		t.Fatalf("SubNQN = %q, want %q", subNQN, nqn)
 	}
-	// IOCCSZ
+	// IOCCSZ: (64 + maxDataLen) / 16 = (64 + 32768) / 16 = 2052
 	ioccsz := binary.LittleEndian.Uint32(data[1792:])
-	if ioccsz != 4 {
-		t.Fatalf("IOCCSZ = %d, want 4", ioccsz)
+	if ioccsz != 2052 {
+		t.Fatalf("IOCCSZ = %d, want 2052", ioccsz)
 	}
 	// IORCSZ
 	iorcsz := binary.LittleEndian.Uint32(data[1796:])
@@ -3438,4 +3438,118 @@ func TestWriteWithRetry_SharedTransientConcurrency(t *testing.T) {
 			t.Fatalf("goroutine %d: expected success after shared transient pressure, got: %v", i, err)
 		}
 	}
+}
+
+// TestTxLoop_R2TDoneClosedOnError verifies that when txLoop has already
+// encountered a write error, a subsequently enqueued R2T response has its
+// r2tDone channel closed (not leaked), so collectR2TData does not deadlock.
+func TestTxLoop_R2TDoneClosedOnError(t *testing.T) {
+	done := make(chan struct{})
+
+	r2tDone := make(chan struct{})
+	resp := &response{
+		r2t:     &R2THeader{CCCID: 1, DATAL: 4096},
+		r2tDone: r2tDone,
+	}
+
+	// completeWaiters must close r2tDone — this is what txLoop calls
+	// when it discards a response after a write error.
+	completeWaiters(resp)
+
+	// r2tDone must be closed and selectable without blocking.
+	select {
+	case <-r2tDone:
+		// OK — channel was closed.
+	case <-time.After(time.Second):
+		t.Fatal("r2tDone was not closed by completeWaiters — would deadlock collectR2TData")
+	}
+	_ = done
+}
+
+// TestTxLoop_R2TDoneClosedOnError_Integration tests the full txLoop path:
+// a prior write error causes a queued R2T to be discarded with r2tDone closed.
+func TestTxLoop_R2TDoneClosedOnError_Integration(t *testing.T) {
+	// Create a controller with a broken writer (always errors).
+	failWriter := &failingWriter{}
+	serverConn, clientConn := net.Pipe()
+	defer serverConn.Close()
+	defer clientConn.Close()
+	c := &Controller{
+		conn:   serverConn,
+		out:    NewWriter(failWriter),
+		respCh: make(chan *response, 16),
+		done:   make(chan struct{}),
+	}
+
+	// Enqueue a normal response that will fail to write.
+	c.respCh <- &response{resp: CapsuleResponse{CID: 1}}
+
+	// Enqueue an R2T with a done channel.
+	r2tDone := make(chan struct{})
+	c.respCh <- &response{
+		r2t:     &R2THeader{CCCID: 2, DATAL: 4096},
+		r2tDone: r2tDone,
+	}
+
+	// Signal txLoop to exit after draining.
+	close(c.done)
+
+	// Run txLoop — it should exit without hanging.
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- c.txLoop()
+	}()
+
+	select {
+	case <-errCh:
+		// txLoop exited.
+	case <-time.After(3 * time.Second):
+		t.Fatal("txLoop hung — r2tDone was not closed on discarded R2T")
+	}
+
+	// Verify r2tDone was closed.
+	select {
+	case <-r2tDone:
+		// OK
+	default:
+		t.Fatal("r2tDone was not closed")
+	}
+}
+
+// failingWriter is an io.Writer that always returns an error.
+type failingWriter struct{}
+
+func (f *failingWriter) Write(p []byte) (int, error) {
+	return 0, errors.New("injected write failure")
+}
+
+// TestShutdown_ReleasePendingCapsuleBuffers verifies that shutdown() releases
+// pooled payload buffers from interleaved capsules that were never dispatched.
+func TestShutdown_ReleasePendingCapsuleBuffers(t *testing.T) {
+	c := &Controller{
+		conn: &net.TCPConn{}, // dummy, Close() will fail but closeOnce still runs
+	}
+
+	// Simulate buffered interleaved capsules with pooled payloads.
+	buf1 := getBuffer(4096)
+	buf2 := getBuffer(65536)
+	c.pendingCapsules = []*Request{
+		{payload: buf1},
+		{payload: buf2},
+		{payload: nil}, // no payload — should not panic
+	}
+
+	c.shutdown()
+
+	// After shutdown, pendingCapsules should be nil and payloads released.
+	if c.pendingCapsules != nil {
+		t.Fatal("pendingCapsules not cleared after shutdown")
+	}
+}
+
+// TestCompleteWaiters_NilR2TDone verifies completeWaiters does not panic
+// when r2tDone is nil (standard non-R2T response).
+func TestCompleteWaiters_NilR2TDone(t *testing.T) {
+	resp := &response{resp: CapsuleResponse{CID: 1}}
+	completeWaiters(resp) // must not panic
 }

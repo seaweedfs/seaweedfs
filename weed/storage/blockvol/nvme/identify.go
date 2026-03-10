@@ -8,32 +8,33 @@ import (
 const identifySize = 4096
 
 // handleIdentify dispatches Identify commands by CNS type.
-func (c *Controller) handleIdentify(req *Request) error {
+func (c *Controller) handleIdentify(req *Request) {
 	cns := uint8(req.capsule.D10 & 0xFF)
 
 	switch cns {
 	case cnsIdentifyController:
-		return c.identifyController(req)
+		c.identifyController(req)
 	case cnsIdentifyNamespace:
-		return c.identifyNamespace(req)
+		c.identifyNamespace(req)
 	case cnsActiveNSList:
-		return c.identifyActiveNSList(req)
+		c.identifyActiveNSList(req)
 	case cnsNSDescriptorList:
-		return c.identifyNSDescriptors(req)
+		c.identifyNSDescriptors(req)
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
 	}
 }
 
 // identifyController returns the 4096-byte Identify Controller data structure.
-func (c *Controller) identifyController(req *Request) error {
+func (c *Controller) identifyController(req *Request) {
 	buf := make([]byte, identifySize)
 
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	// VID (PCI Vendor ID) - use 0 for software target
@@ -135,8 +136,11 @@ func (c *Controller) identifyController(req *Request) error {
 	copy(buf[768:1024], sub.NQN) // buf is already zeroed → NUL-terminated
 
 	// IOCCSZ (I/O Queue Command Capsule Supported Size) - offset 1792-1795
-	// In 16-byte units: 64/16 = 4
-	binary.LittleEndian.PutUint32(buf[1792:], 4)
+	// In 16-byte units: (SQE + max inline data) / 16
+	// Allows host to send write data inline in the command capsule,
+	// avoiding R2T round-trip for small writes (e.g. 4K).
+	ioccsz := (64 + c.maxDataLen) / 16
+	binary.LittleEndian.PutUint32(buf[1792:], ioccsz)
 
 	// IORCSZ (I/O Queue Response Capsule Supported Size) - offset 1796-1799
 	// In 16-byte units: 16/16 = 1
@@ -158,15 +162,16 @@ func (c *Controller) identifyController(req *Request) error {
 	binary.LittleEndian.PutUint16(buf[1804:], 0x01)
 
 	req.c2hData = buf
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // identifyNamespace returns the 4096-byte Identify Namespace data for NSID=1.
-func (c *Controller) identifyNamespace(req *Request) error {
+func (c *Controller) identifyNamespace(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	dev := sub.Dev
@@ -214,25 +219,26 @@ func (c *Controller) identifyNamespace(req *Request) error {
 	binary.LittleEndian.PutUint32(buf[92:], 1)
 
 	req.c2hData = buf
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // identifyActiveNSList returns the list of active namespace IDs (just NSID=1).
-func (c *Controller) identifyActiveNSList(req *Request) error {
+func (c *Controller) identifyActiveNSList(req *Request) {
 	buf := make([]byte, identifySize)
 	// Single namespace: NSID=1
 	binary.LittleEndian.PutUint32(buf[0:], 1)
 
 	req.c2hData = buf
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // identifyNSDescriptors returns namespace descriptor list for NSID=1.
-func (c *Controller) identifyNSDescriptors(req *Request) error {
+func (c *Controller) identifyNSDescriptors(req *Request) {
 	sub := c.subsystem
 	if sub == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	buf := make([]byte, identifySize)
@@ -247,7 +253,7 @@ func (c *Controller) identifyNSDescriptors(req *Request) error {
 	copy(buf[off:off+16], sub.NGUID[:])
 
 	req.c2hData = buf
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // copyPadded copies src into dst, padding remaining bytes with spaces.

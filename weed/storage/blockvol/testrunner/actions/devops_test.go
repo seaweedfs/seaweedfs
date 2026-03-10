@@ -80,8 +80,8 @@ func TestAllActions_Registration(t *testing.T) {
 	if n := len(byTier[tr.TierCore]); n != 11 {
 		t.Errorf("core: %d, want 11", n)
 	}
-	if n := len(byTier[tr.TierBlock]); n != 52 {
-		t.Errorf("block: %d, want 52", n)
+	if n := len(byTier[tr.TierBlock]); n != 55 {
+		t.Errorf("block: %d, want 55", n)
 	}
 	if n := len(byTier[tr.TierDevOps]); n != 7 {
 		t.Errorf("devops: %d, want 7", n)
@@ -93,13 +93,13 @@ func TestAllActions_Registration(t *testing.T) {
 		t.Errorf("k8s: %d, want 14", n)
 	}
 
-	// Total should be 89 (85 existing + 3 pgbench + 1 bench_stats).
+	// Total should be 92 (89 existing + 3 profiling: pprof_capture, vmstat_capture, iostat_capture).
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 89 {
-		t.Errorf("total actions: %d, want 89", total)
+	if total != 92 {
+		t.Errorf("total actions: %d, want 92", total)
 	}
 }
 

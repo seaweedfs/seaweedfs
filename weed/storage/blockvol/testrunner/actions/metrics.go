@@ -19,6 +19,9 @@ func RegisterMetricsActions(r *tr.Registry) {
 	r.RegisterFunc("assert_metric_gt", tr.TierBlock, assertMetricGT)
 	r.RegisterFunc("assert_metric_eq", tr.TierBlock, assertMetricEQ)
 	r.RegisterFunc("assert_metric_lt", tr.TierBlock, assertMetricLT)
+	r.RegisterFunc("pprof_capture", tr.TierBlock, pprofCapture)
+	r.RegisterFunc("vmstat_capture", tr.TierBlock, vmstatCapture)
+	r.RegisterFunc("iostat_capture", tr.TierBlock, iostatCapture)
 }
 
 // scrapeMetrics fetches /metrics from a target's admin port via SSH curl.
@@ -151,6 +154,158 @@ func assertMetricLT(ctx context.Context, actx *tr.ActionContext, act tr.Action) 
 		return nil, fmt.Errorf("assert_metric_lt: %s = %g >= %g", act.Params["metric"], val, threshold)
 	}
 	return map[string]string{"value": strconv.FormatFloat(val, 'g', -1, 64)}, nil
+}
+
+// pprofCapture fetches a Go pprof profile from a target's admin port and saves
+// it to a file on the target node. The profile is fetched via SSH curl to the
+// admin server's /debug/pprof/ endpoint.
+//
+// Params:
+//   - target (required): target name
+//   - profile: pprof profile type (default: "profile" = CPU)
+//     Supported: "profile" (CPU), "heap", "allocs", "block", "mutex", "goroutine"
+//   - seconds: duration for CPU profile (default: "30")
+//   - output_dir: directory to save profile on target node (default: "/tmp/pprof")
+//   - label: filename label (default: profile type)
+//
+// Returns: value = remote file path of saved profile
+func pprofCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	tgt, err := getHATarget(actx, act.Target)
+	if err != nil {
+		return nil, err
+	}
+
+	profile := paramDefault(act.Params, "profile", "profile")
+	seconds := paramDefault(act.Params, "seconds", "30")
+	outputDir := paramDefault(act.Params, "output_dir", "/tmp/pprof")
+	label := paramDefault(act.Params, "label", profile)
+
+	// Validate profile type.
+	switch profile {
+	case "profile", "heap", "allocs", "block", "mutex", "goroutine":
+		// OK
+	default:
+		return nil, fmt.Errorf("pprof_capture: unsupported profile type %q", profile)
+	}
+
+	// Create output directory.
+	if _, _, _, err := tgt.Node.RunRoot(ctx, "mkdir -p "+outputDir); err != nil {
+		return nil, fmt.Errorf("pprof_capture: mkdir: %w", err)
+	}
+
+	outFile := fmt.Sprintf("%s/%s.pb.gz", outputDir, label)
+
+	// Build URL. CPU profile uses ?seconds= parameter.
+	url := fmt.Sprintf("http://127.0.0.1:%d/debug/pprof/%s", tgt.AdminPort, profile)
+	if profile == "profile" {
+		url += "?seconds=" + seconds
+	}
+
+	actx.Log("  pprof %s → %s (%ss)", profile, outFile, seconds)
+
+	cmd := fmt.Sprintf("curl -s -o %s '%s'", outFile, url)
+	// CPU profile can take a while — extend timeout.
+	_, stderr, code, err := tgt.Node.Run(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("pprof_capture: curl failed: code=%d stderr=%s err=%v", code, stderr, err)
+	}
+
+	return map[string]string{"value": outFile}, nil
+}
+
+// vmstatCapture runs vmstat on a node for a duration and saves the output.
+// Params:
+//   - node (required): node to run on
+//   - seconds: duration (default: "30")
+//   - interval: vmstat interval (default: "1")
+//   - output_dir: directory for output (default: "/tmp/pprof")
+//   - label: filename label (default: "vmstat")
+//
+// Returns: value = remote file path
+func vmstatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	seconds := paramDefault(act.Params, "seconds", "30")
+	interval := paramDefault(act.Params, "interval", "1")
+	outputDir := paramDefault(act.Params, "output_dir", "/tmp/pprof")
+	label := paramDefault(act.Params, "label", "vmstat")
+
+	if _, _, _, err := node.RunRoot(ctx, "mkdir -p "+outputDir); err != nil {
+		return nil, fmt.Errorf("vmstat_capture: mkdir: %w", err)
+	}
+
+	outFile := fmt.Sprintf("%s/%s.txt", outputDir, label)
+
+	// vmstat <interval> <count>
+	count, _ := strconv.Atoi(seconds)
+	intv, _ := strconv.Atoi(interval)
+	if intv < 1 {
+		intv = 1
+	}
+	iterations := count / intv
+	if iterations < 1 {
+		iterations = 1
+	}
+
+	cmd := fmt.Sprintf("vmstat %s %d > %s 2>&1", interval, iterations, outFile)
+	actx.Log("  vmstat %s×%d → %s", interval, iterations, outFile)
+
+	_, _, code, err := node.Run(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("vmstat_capture: code=%d err=%v", code, err)
+	}
+
+	return map[string]string{"value": outFile}, nil
+}
+
+// iostatCapture runs iostat -x on a node for a duration and saves the output.
+// Params:
+//   - node (required): node to run on
+//   - seconds: duration (default: "30")
+//   - interval: iostat interval (default: "1")
+//   - output_dir: directory for output (default: "/tmp/pprof")
+//   - label: filename label (default: "iostat")
+//
+// Returns: value = remote file path
+func iostatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	node, err := getNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+
+	seconds := paramDefault(act.Params, "seconds", "30")
+	interval := paramDefault(act.Params, "interval", "1")
+	outputDir := paramDefault(act.Params, "output_dir", "/tmp/pprof")
+	label := paramDefault(act.Params, "label", "iostat")
+
+	if _, _, _, err := node.RunRoot(ctx, "mkdir -p "+outputDir); err != nil {
+		return nil, fmt.Errorf("iostat_capture: mkdir: %w", err)
+	}
+
+	outFile := fmt.Sprintf("%s/%s.txt", outputDir, label)
+
+	count, _ := strconv.Atoi(seconds)
+	intv, _ := strconv.Atoi(interval)
+	if intv < 1 {
+		intv = 1
+	}
+	iterations := count / intv
+	if iterations < 1 {
+		iterations = 1
+	}
+
+	cmd := fmt.Sprintf("iostat -x %s %d > %s 2>&1", interval, iterations, outFile)
+	actx.Log("  iostat -x %s×%d → %s", interval, iterations, outFile)
+
+	_, _, code, err := node.Run(ctx, cmd)
+	if err != nil || code != 0 {
+		return nil, fmt.Errorf("iostat_capture: code=%d err=%v", code, err)
+	}
+
+	return map[string]string{"value": outFile}, nil
 }
 
 // collectArtifactsAction explicitly collects artifacts from targets.

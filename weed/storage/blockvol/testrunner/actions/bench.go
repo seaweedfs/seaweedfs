@@ -225,13 +225,31 @@ type fioLatency struct {
 	Percentile map[string]float64 `json:"percentile"`
 }
 
-// ParseFioMetric extracts a named metric from fio JSON.
+// ParseFioMetric extracts a named metric from fio JSON or returns a plain
+// numeric value directly. This allows bench_compare to accept either raw fio
+// JSON output or pre-aggregated scalar values (e.g. from bench_stats or
+// phase repeat/aggregate).
+//
 // direction: "read", "write", or "" (auto-detect: use whichever has IOPS > 0).
 // Supported metrics: "iops", "bw_bytes", "bw_mb", "lat_mean_us", "lat_p50_us", "lat_p99_us", "lat_p999_us"
-func ParseFioMetric(jsonStr, metric, direction string) (float64, error) {
+func ParseFioMetric(input, metric, direction string) (float64, error) {
+	// Try plain numeric value first (from aggregation or bench_stats).
+	trimmed := strings.TrimSpace(input)
+	if v, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		return v, nil
+	}
+
+	// Try quoted numeric string (e.g. "15322.00").
+	if len(trimmed) >= 2 && trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"' {
+		if v, err := strconv.ParseFloat(trimmed[1:len(trimmed)-1], 64); err == nil {
+			return v, nil
+		}
+	}
+
+	// Parse as fio JSON.
 	var output fioOutput
-	if err := json.Unmarshal([]byte(jsonStr), &output); err != nil {
-		return 0, fmt.Errorf("parse fio JSON: %w", err)
+	if err := json.Unmarshal([]byte(input), &output); err != nil {
+		return 0, fmt.Errorf("parse fio metric: input is neither a number nor valid fio JSON: %w", err)
 	}
 	if len(output.Jobs) == 0 {
 		return 0, fmt.Errorf("fio JSON has no jobs")

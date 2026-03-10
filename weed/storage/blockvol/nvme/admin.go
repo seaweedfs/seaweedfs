@@ -5,7 +5,7 @@ import (
 )
 
 // handleSetFeatures processes SetFeatures admin commands.
-func (c *Controller) handleSetFeatures(req *Request) error {
+func (c *Controller) handleSetFeatures(req *Request) {
 	fid := uint8(req.capsule.D10 & 0xFF)
 
 	switch fid {
@@ -31,25 +31,23 @@ func (c *Controller) handleSetFeatures(req *Request) error {
 
 		// Response DW0: (NCQR-1) | ((NSQR-1) << 16)
 		req.resp.DW0 = uint32(ncqr-1) | (uint32(nsqr-1) << 16)
-		return c.sendResponse(req)
 
 	case fidKeepAliveTimer:
 		// D11 contains KATO in milliseconds
 		c.katoMs = req.capsule.D11
-		return c.sendResponse(req)
 
 	case fidAsyncEventConfig:
 		// Stub: accept but don't deliver events
-		return c.sendResponse(req)
 
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
 	}
+
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handleGetFeatures returns stored feature values.
-func (c *Controller) handleGetFeatures(req *Request) error {
+func (c *Controller) handleGetFeatures(req *Request) {
 	fid := uint8(req.capsule.D10 & 0xFF)
 
 	switch fid {
@@ -59,24 +57,22 @@ func (c *Controller) handleGetFeatures(req *Request) error {
 			n = c.maxIOQueues
 		}
 		req.resp.DW0 = uint32(n-1) | (uint32(n-1) << 16)
-		return c.sendResponse(req)
 
 	case fidKeepAliveTimer:
 		req.resp.DW0 = c.katoMs
-		return c.sendResponse(req)
 
 	case fidAsyncEventConfig:
 		req.resp.DW0 = 0
-		return c.sendResponse(req)
 
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
 	}
+
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handleGetLogPage returns log page data.
-func (c *Controller) handleGetLogPage(req *Request) error {
+func (c *Controller) handleGetLogPage(req *Request) {
 	// D10 bits 7:0 = Log Page Identifier
 	// D10 bits 27:16 and D11 bits 15:0 = Number of Dwords (NUMD)
 	lid := uint8(req.capsule.D10 & 0xFF)
@@ -87,28 +83,28 @@ func (c *Controller) handleGetLogPage(req *Request) error {
 
 	switch lid {
 	case logPageError:
-		return c.logPageError(req, length)
+		c.logPageError(req, length)
 	case logPageSMART:
-		return c.logPageSMART(req, length)
+		c.logPageSMART(req, length)
 	case logPageANA:
-		return c.logPageANA(req, length)
+		c.logPageANA(req, length)
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
 	}
 }
 
 // logPageError returns an empty error log page.
-func (c *Controller) logPageError(req *Request, length uint32) error {
+func (c *Controller) logPageError(req *Request, length uint32) {
 	if length > 64 {
 		length = 64
 	}
 	req.c2hData = make([]byte, length)
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // logPageSMART returns a 512-byte SMART/Health log.
-func (c *Controller) logPageSMART(req *Request, length uint32) error {
+func (c *Controller) logPageSMART(req *Request, length uint32) {
 	if length > 512 {
 		length = 512
 	}
@@ -130,11 +126,11 @@ func (c *Controller) logPageSMART(req *Request, length uint32) error {
 	buf[5] = 0
 
 	req.c2hData = buf[:length]
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // logPageANA returns the ANA log page with a single group.
-func (c *Controller) logPageANA(req *Request, length uint32) error {
+func (c *Controller) logPageANA(req *Request, length uint32) {
 	// ANA log page format (32 bytes for single group):
 	// [0:8]   CHGCNT (uint64)
 	// [8:10]  NGRPS = 1 (uint16)
@@ -167,7 +163,7 @@ func (c *Controller) logPageANA(req *Request, length uint32) error {
 		length = anaLogSize
 	}
 	req.c2hData = buf[:length]
-	return c.sendC2HDataAndResponse(req)
+	c.enqueueResponse(&response{resp: req.resp, c2hData: req.c2hData})
 }
 
 // anaState returns the current ANA state based on the subsystem's device.
@@ -192,7 +188,7 @@ func (c *Controller) anaChangeCount() uint64 {
 }
 
 // handleKeepAlive resets the KATO timer and returns success.
-func (c *Controller) handleKeepAlive(req *Request) error {
+func (c *Controller) handleKeepAlive(req *Request) {
 	c.resetKATO()
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }

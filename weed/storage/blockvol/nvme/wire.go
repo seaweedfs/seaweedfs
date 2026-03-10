@@ -9,7 +9,7 @@ import (
 
 // ---------- Reader ----------
 
-// Reader decodes NVMe/TCP PDUs from a stream.
+// Reader decodes NVMe/TCP PDUs from a buffered stream.
 //
 // Usage:
 //
@@ -26,9 +26,14 @@ type Reader struct {
 	padBuf [maxHeaderSize]byte // reuse for padding skip
 }
 
-// NewReader wraps an io.Reader for NVMe/TCP PDU decoding.
+// NewReader wraps an io.Reader with a default-sized bufio.Reader.
 func NewReader(r io.Reader) *Reader {
-	return &Reader{rd: r}
+	return &Reader{rd: bufio.NewReader(r)}
+}
+
+// NewReaderSize wraps an io.Reader with a specified buffer size.
+func NewReaderSize(r io.Reader, size int) *Reader {
+	return &Reader{rd: bufio.NewReaderSize(r, size)}
 }
 
 // Dequeue reads the 8-byte CommonHeader, validates bounds, and returns it.

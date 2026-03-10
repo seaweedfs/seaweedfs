@@ -5,24 +5,29 @@ import (
 )
 
 // handleFabricCommand dispatches Fabric-specific commands by FCType.
+// Returns errDisconnect on Disconnect to signal the rxLoop to exit gracefully.
 func (c *Controller) handleFabricCommand(req *Request) error {
 	switch req.capsule.FCType {
 	case fcConnect:
-		return c.handleConnect(req)
+		c.handleConnect(req)
+		return nil
 	case fcPropertyGet:
-		return c.handlePropertyGet(req)
+		c.handlePropertyGet(req)
+		return nil
 	case fcPropertySet:
-		return c.handlePropertySet(req)
+		c.handlePropertySet(req)
+		return nil
 	case fcDisconnect:
 		return c.handleDisconnect(req)
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return nil
 	}
 }
 
 // handleConnect processes a Fabric Connect command.
-func (c *Controller) handleConnect(req *Request) error {
+func (c *Controller) handleConnect(req *Request) {
 	capsule := &req.capsule
 
 	// Parse QueueID, QueueSize, KATO, CATTR from capsule dwords.
@@ -38,7 +43,8 @@ func (c *Controller) handleConnect(req *Request) error {
 	// Parse ConnectData from payload
 	if len(req.payload) < connectDataSize {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 	var cd ConnectData
 	cd.Unmarshal(req.payload)
@@ -48,7 +54,8 @@ func (c *Controller) handleConnect(req *Request) error {
 		sub := c.server.findSubsystem(cd.SubNQN)
 		if sub == nil {
 			req.resp.Status = uint16(StatusInvalidField)
-			return c.sendResponse(req)
+			c.enqueueResponse(&response{resp: req.resp})
+			return
 		}
 
 		c.subsystem = sub
@@ -76,7 +83,8 @@ func (c *Controller) handleConnect(req *Request) error {
 
 		// Return CNTLID in DW0
 		req.resp.DW0 = uint32(c.cntlID)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	// IO queue connect — look up admin session from server registry.
@@ -85,17 +93,20 @@ func (c *Controller) handleConnect(req *Request) error {
 	admin := c.server.lookupAdmin(cd.CNTLID)
 	if admin == nil {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	// Validate SubNQN and HostNQN match the admin session.
 	if cd.SubNQN != admin.subNQN {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 	if cd.HostNQN != admin.hostNQN {
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	c.cntlID = cd.CNTLID
@@ -107,11 +118,11 @@ func (c *Controller) handleConnect(req *Request) error {
 	c.state = stateIOActive
 
 	req.resp.DW0 = uint32(c.cntlID)
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handlePropertyGet returns a controller register value.
-func (c *Controller) handlePropertyGet(req *Request) error {
+func (c *Controller) handlePropertyGet(req *Request) {
 	// Per NVMe-oF spec: CDW10 bits 2:0 = ATTRIB (size), CDW11 = OFST (offset)
 	size8 := (req.capsule.D10 & 1) != 0
 	offset := req.capsule.D11
@@ -128,7 +139,8 @@ func (c *Controller) handlePropertyGet(req *Request) error {
 		val = uint64(c.regCSTS)
 	default:
 		req.resp.Status = uint16(StatusInvalidField)
-		return c.sendResponse(req)
+		c.enqueueResponse(&response{resp: req.resp})
+		return
 	}
 
 	if size8 {
@@ -138,11 +150,11 @@ func (c *Controller) handlePropertyGet(req *Request) error {
 	} else {
 		req.resp.DW0 = uint32(val)
 	}
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handlePropertySet handles controller register writes.
-func (c *Controller) handlePropertySet(req *Request) error {
+func (c *Controller) handlePropertySet(req *Request) {
 	// Per NVMe-oF spec: CDW10 = ATTRIB (size), CDW11 = OFST (offset), CDW12-CDW13 = VALUE
 	offset := req.capsule.D11
 	value := uint64(req.capsule.D12) | uint64(req.capsule.D13)<<32
@@ -163,16 +175,14 @@ func (c *Controller) handlePropertySet(req *Request) error {
 	default:
 		// Ignore writes to other registers
 	}
-	return c.sendResponse(req)
+	c.enqueueResponse(&response{resp: req.resp})
 }
 
 // handleDisconnect processes a Fabric Disconnect.
+// Enqueues the response and returns errDisconnect to signal rxLoop exit.
 func (c *Controller) handleDisconnect(req *Request) error {
-	if err := c.sendResponse(req); err != nil {
-		return err
-	}
-	c.shutdown()
-	return nil
+	c.enqueueResponse(&response{resp: req.resp})
+	return errDisconnect
 }
 
 // ---------- Subsystem ----------
@@ -241,7 +251,7 @@ func propertySetValue(capsule *CapsuleCommand) uint64 {
 	return uint64(capsule.D12) | uint64(capsule.D13)<<32
 }
 
-// propertyGetSize returns true if the PropertyGet requests an 8-byte value.
+// propertyGetSize8 returns true if the PropertyGet requests an 8-byte value.
 func propertyGetSize8(capsule *CapsuleCommand) bool {
 	return (capsule.D10 & 1) != 0
 }

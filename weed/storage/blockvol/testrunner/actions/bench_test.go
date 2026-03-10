@@ -183,8 +183,55 @@ func TestParseFioMetric_UnknownMetric(t *testing.T) {
 	}
 }
 
+func TestParseFioMetric_PlainNumber(t *testing.T) {
+	val, err := ParseFioMetric("15322.00", "iops", "")
+	if err != nil {
+		t.Fatalf("parse plain number: %v", err)
+	}
+	if val != 15322.00 {
+		t.Fatalf("got %f, want 15322.00", val)
+	}
+}
+
+func TestParseFioMetric_PlainInteger(t *testing.T) {
+	val, err := ParseFioMetric("36853", "iops", "")
+	if err != nil {
+		t.Fatalf("parse plain integer: %v", err)
+	}
+	if val != 36853 {
+		t.Fatalf("got %f, want 36853", val)
+	}
+}
+
+func TestParseFioMetric_QuotedNumber(t *testing.T) {
+	val, err := ParseFioMetric(`"15322.00"`, "iops", "")
+	if err != nil {
+		t.Fatalf("parse quoted number: %v", err)
+	}
+	if val != 15322.00 {
+		t.Fatalf("got %f, want 15322.00", val)
+	}
+}
+
+func TestParseFioMetric_NumberWithWhitespace(t *testing.T) {
+	val, err := ParseFioMetric("  42000.50  \n", "iops", "")
+	if err != nil {
+		t.Fatalf("parse number with whitespace: %v", err)
+	}
+	if val != 42000.50 {
+		t.Fatalf("got %f, want 42000.50", val)
+	}
+}
+
+func TestParseFioMetric_InvalidInput(t *testing.T) {
+	_, err := ParseFioMetric("not a number or json", "iops", "")
+	if err == nil {
+		t.Fatal("expected error for invalid input")
+	}
+}
+
 func TestParseFioMetric_InvalidJSON(t *testing.T) {
-	_, err := ParseFioMetric("not json", "iops", "")
+	_, err := ParseFioMetric("{invalid json}", "iops", "")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
