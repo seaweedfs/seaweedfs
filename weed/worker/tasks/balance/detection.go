@@ -80,16 +80,19 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	// Analyze volume distribution across servers.
 	// Seed from ActiveTopology so servers with matching disk type but zero
 	// volumes are included in the count and imbalance calculation.
+	// Also collect MaxVolumeCount per server to compute utilization ratios.
 	serverVolumeCounts := make(map[string]int)
+	serverMaxVolumes := make(map[string]int64)
 	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
 			for _, dc := range topologyInfo.DataCenterInfos {
 				for _, rack := range dc.RackInfos {
 					for _, node := range rack.DataNodeInfos {
-						for diskTypeName := range node.DiskInfos {
+						for diskTypeName, diskInfo := range node.DiskInfos {
 							if diskTypeName == diskType {
 								serverVolumeCounts[node.Id] = 0
+								serverMaxVolumes[node.Id] += diskInfo.MaxVolumeCount
 							}
 						}
 					}
@@ -141,38 +144,62 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	var results []*types.TaskDetectionResult
 	balanced := false
 
+	// Decide upfront whether all servers have MaxVolumeCount info.
+	// If any server is missing it, fall back to raw counts for ALL servers
+	// to avoid mixing utilization ratios (0.0–1.0) with raw counts.
+	allServersHaveMaxInfo := true
+	for _, server := range sortedServers {
+		if maxVol, ok := serverMaxVolumes[server]; !ok || maxVol <= 0 {
+			allServersHaveMaxInfo = false
+			glog.V(1).Infof("BALANCE [%s]: Server %s is missing MaxVolumeCount info, falling back to raw volume counts for balancing", diskType, server)
+			break
+		}
+	}
+
+	var serverUtilization func(server string, effectiveCount int) float64
+	if allServersHaveMaxInfo {
+		serverUtilization = func(server string, effectiveCount int) float64 {
+			return float64(effectiveCount) / float64(serverMaxVolumes[server])
+		}
+	} else {
+		serverUtilization = func(_ string, effectiveCount int) float64 {
+			return float64(effectiveCount)
+		}
+	}
+
 	for len(results) < maxResults {
 		// Compute effective volume counts with adjustments from planned moves
 		effectiveCounts := make(map[string]int, len(serverVolumeCounts))
-		totalVolumes := 0
 		for server, count := range serverVolumeCounts {
 			effective := count + adjustments[server]
 			if effective < 0 {
 				effective = 0
 			}
 			effectiveCounts[server] = effective
-			totalVolumes += effective
 		}
-		avgVolumesPerServer := float64(totalVolumes) / float64(len(effectiveCounts))
 
-		maxVolumes := 0
-		minVolumes := totalVolumes
+		// Find the most and least utilized servers using utilization ratio
+		// (volumes / maxVolumes) so that servers with higher capacity are
+		// expected to hold proportionally more volumes.
+		maxUtilization := -1.0
+		minUtilization := math.Inf(1)
 		maxServer := ""
 		minServer := ""
 
 		for _, server := range sortedServers {
 			count := effectiveCounts[server]
+			util := serverUtilization(server, count)
 			// Min is calculated across all servers for an accurate imbalance ratio
-			if count < minVolumes {
-				minVolumes = count
+			if util < minUtilization {
+				minUtilization = util
 				minServer = server
 			}
 			// Max is only among non-exhausted servers since we can only move from them
 			if exhaustedServers[server] {
 				continue
 			}
-			if count > maxVolumes {
-				maxVolumes = count
+			if util > maxUtilization {
+				maxUtilization = util
 				maxServer = server
 			}
 		}
@@ -183,12 +210,18 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			break
 		}
 
-		// Check if imbalance exceeds threshold
-		imbalanceRatio := float64(maxVolumes-minVolumes) / avgVolumesPerServer
+		// Check if utilization imbalance exceeds threshold.
+		// imbalanceRatio is the difference between the most and least utilized
+		// servers, expressed as a fraction of mean utilization.
+		avgUtilization := (maxUtilization + minUtilization) / 2.0
+		var imbalanceRatio float64
+		if avgUtilization > 0 {
+			imbalanceRatio = (maxUtilization - minUtilization) / avgUtilization
+		}
 		if imbalanceRatio <= balanceConfig.ImbalanceThreshold {
 			if len(results) == 0 {
-				glog.Infof("BALANCE [%s]: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). Max=%d volumes on %s, Min=%d on %s, Avg=%.1f",
-					diskType, imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes, maxServer, minVolumes, minServer, avgVolumesPerServer)
+				glog.Infof("BALANCE [%s]: No tasks created - cluster well balanced. Imbalance=%.1f%% (threshold=%.1f%%). MaxUtil=%.1f%% on %s, MinUtil=%.1f%% on %s",
+					diskType, imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxUtilization*100, maxServer, minUtilization*100, minServer)
 			} else {
 				glog.Infof("BALANCE [%s]: Created %d task(s), cluster now balanced. Imbalance=%.1f%% (threshold=%.1f%%)",
 					diskType, len(results), imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100)

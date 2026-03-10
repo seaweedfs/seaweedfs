@@ -852,3 +852,68 @@ func TestDetection_ExhaustedServerFallsThrough(t *testing.T) {
 	assertNoDuplicateVolumes(t, tasks)
 	t.Logf("Created %d tasks from node-b after node-a exhausted", len(tasks))
 }
+
+// TestDetection_HeterogeneousCapacity verifies that the balancer uses
+// utilization ratio (volumes/maxVolumes) rather than raw volume counts.
+// A server with more volumes but proportionally lower utilization should
+// NOT be picked as the source over a server with fewer volumes but higher
+// utilization.
+func TestDetection_HeterogeneousCapacity(t *testing.T) {
+	// Simulate a cluster like:
+	//   server-1: 600 volumes, max 700  → utilization 85.7%
+	//   server-2: 690 volumes, max 700  → utilization 98.6%  ← most utilized
+	//   server-3: 695 volumes, max 700  → utilization 99.3%  ← most utilized
+	//   server-4: 900 volumes, max 1260 → utilization 71.4%  ← least utilized
+	//
+	// The old algorithm (raw counts) would pick server-4 as source (900 > 695).
+	// The correct behavior is to pick server-3 (or server-2) as source since
+	// they have the highest utilization ratio.
+	servers := []serverSpec{
+		{id: "server-1", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-2", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-3", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-4", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1260},
+	}
+
+	volCounts := map[string]int{
+		"server-1": 600,
+		"server-2": 690,
+		"server-3": 695,
+		"server-4": 900,
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	vid := uint32(1)
+	for _, server := range []string{"server-1", "server-2", "server-3", "server-4"} {
+		count := volCounts[server]
+		metrics = append(metrics, makeVolumes(server, "hdd", "dc1", "rack1", "", vid, count)...)
+		vid += uint32(count)
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	cfg := &Config{
+		BaseConfig:         base.BaseConfig{Enabled: true},
+		ImbalanceThreshold: 0.20,
+		MinServerCount:     2,
+	}
+
+	tasks, _, err := Detection(metrics, clusterInfo, cfg, 5)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks but got none")
+	}
+
+	// The source of the first task should be the most utilized server
+	// (server-3 at 99.3% or server-2 at 98.6%), NOT server-4.
+	firstSource := tasks[0].Server
+	if firstSource == "server-4" {
+		t.Errorf("Balancer incorrectly picked server-4 (lowest utilization 71.4%%) as source; should pick server-3 (99.3%%) or server-2 (98.6%%)")
+	}
+	if firstSource != "server-3" && firstSource != "server-2" {
+		t.Errorf("Expected server-3 or server-2 as first source, got %s", firstSource)
+	}
+	t.Logf("First balance task: move from %s (correct: highest utilization)", firstSource)
+}
