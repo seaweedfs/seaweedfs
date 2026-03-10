@@ -108,7 +108,7 @@ pub fn build_metrics_router() -> Router {
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.
 async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let origin = request.headers().get("origin").cloned();
-    let request_id = request.headers().get("x-amz-request-id").cloned();
+    let _request_id = request.headers().get("x-amz-request-id").cloned();
 
     let mut response = next.run(request).await;
 

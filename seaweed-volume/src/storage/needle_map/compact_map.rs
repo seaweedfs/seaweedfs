@@ -176,7 +176,7 @@ impl CompactMap {
         }
     }
 
-    fn segment_for_key(&mut self, id: NeedleId) -> &mut Segment {
+    fn _segment_for_key(&mut self, id: NeedleId) -> &mut Segment {
         let chunk = id.0 / SEGMENT_CHUNK_SIZE;
         self.segments
             .entry(chunk)
