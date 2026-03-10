@@ -137,7 +137,7 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 						Attributes: &filer_pb.FuseAttributes{
 							Mtime:    time.Now().Unix(),
 							Crtime:   time.Now().Unix(),
-							FileMode: uint32(0644 | os.ModeDir),
+							FileMode: uint32(0755 | os.ModeDir),
 						},
 						RemoteEntry: &filer_pb.RemoteEntry{
 							StorageName: remoteConf.Name,
@@ -175,6 +175,7 @@ func validateMountRoot(remoteConf *remote_pb.RemoteConf, remote *remote_pb.Remot
 		return err
 	}
 	if remote.Bucket == "" {
+		// Bucket-less storage (e.g. local); no bucket existence check needed.
 		return nil
 	}
 	buckets, err := client.ListBuckets()
