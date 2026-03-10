@@ -293,6 +293,23 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 
 	r.setSchedulerLoopState(jobType, "executing")
 
+	// Scan proposals for the maximum estimated_runtime_seconds so the
+	// execution phase gets enough time for large jobs (e.g. vacuum on
+	// big volumes). If any proposal needs more time than the remaining
+	// JobTypeMaxRuntime, extend the execution context accordingly.
+	var maxEstimatedRuntime time.Duration
+	for _, p := range filtered {
+		if p.Parameters != nil {
+			if est, ok := p.Parameters["estimated_runtime_seconds"]; ok {
+				if v := est.GetInt64Value(); v > 0 {
+					if d := time.Duration(v) * time.Second; d > maxEstimatedRuntime {
+						maxEstimatedRuntime = d
+					}
+				}
+			}
+		}
+	}
+
 	remaining = time.Until(start.Add(maxRuntime))
 	if remaining <= 0 {
 		r.appendActivity(JobActivity{
@@ -306,6 +323,17 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return detected
 	}
 
+	// If the longest estimated job exceeds the remaining JobTypeMaxRuntime,
+	// create a new execution context with enough headroom instead of using
+	// jobCtx which would cancel too early.
+	execCtx := jobCtx
+	execCancel := context.CancelFunc(func() {})
+	if maxEstimatedRuntime > 0 && maxEstimatedRuntime > remaining {
+		execCtx, execCancel = context.WithTimeout(context.Background(), maxEstimatedRuntime)
+		remaining = maxEstimatedRuntime
+	}
+	defer execCancel()
+
 	execPolicy := policy
 	if execPolicy.ExecutionTimeout <= 0 {
 		execPolicy.ExecutionTimeout = defaultScheduledExecutionTimeout
@@ -314,7 +342,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		execPolicy.ExecutionTimeout = remaining
 	}
 
-	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(jobCtx, jobType, filtered, clusterContext, execPolicy)
+	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(execCtx, jobType, filtered, clusterContext, execPolicy)
 
 	status := "success"
 	if jobCtx.Err() != nil {
