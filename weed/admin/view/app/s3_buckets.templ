@@ -12,12 +12,17 @@ templ S3Buckets(data dash.S3BucketsData) {
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
-                <button type="button" class="btn btn-sm btn-primary" 
-                        data-bs-toggle="modal" 
+                <select class="form-select form-select-sm me-2" id="pageSizeSelect" onchange="changePageSize()" style="width: auto;">
+                    <option value="50" if data.PageSize == 50 { selected="selected" }>50 per page</option>
+                    <option value="100" if data.PageSize == 100 { selected="selected" }>100 per page</option>
+                    <option value="200" if data.PageSize == 200 { selected="selected" }>200 per page</option>
+                    <option value="500" if data.PageSize == 500 { selected="selected" }>500 per page</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-primary"
+                        data-bs-toggle="modal"
                         data-bs-target="#createBucketModal">
                     <i class="fas fa-plus me-1"></i>Create Bucket
                 </button>
-
             </div>
         </div>
     </div>
@@ -112,12 +117,42 @@ templ S3Buckets(data dash.S3BucketsData) {
                             <table class="table table-hover" width="100%" cellspacing="0" id="bucketsTable">
                                 <thead>
                                     <tr>
-                                        <th>Name</th>
-                                        <th>Owner</th>
-                                        <th>Created</th>
-                                        <th>Objects</th>
-                                        <th>Logical Size</th>
-                                        <th>Physical Size</th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('name')" class="text-decoration-none text-dark">
+                                                Name
+                                                @getSortIcon("name", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('owner')" class="text-decoration-none text-dark">
+                                                Owner
+                                                @getSortIcon("owner", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('created')" class="text-decoration-none text-dark">
+                                                Created
+                                                @getSortIcon("created", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('objects')" class="text-decoration-none text-dark">
+                                                Objects
+                                                @getSortIcon("objects", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('logical_size')" class="text-decoration-none text-dark">
+                                                Logical Size
+                                                @getSortIcon("logical_size", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="#" onclick="sortTable('physical_size')" class="text-decoration-none text-dark">
+                                                Physical Size
+                                                @getSortIcon("physical_size", data.SortBy, data.SortOrder)
+                                            </a>
+                                        </th>
                                         <th>Quota</th>
                                         <th>Versioning</th>
                                         <th>Object Lock</th>
@@ -256,6 +291,61 @@ templ S3Buckets(data dash.S3BucketsData) {
                                 </tbody>
                             </table>
                         </div>
+
+                        <!-- Pagination Controls -->
+                        if data.TotalPages > 1 {
+                            <div class="d-flex justify-content-between align-items-center mt-3">
+                                <small class="text-muted">
+                                    Showing { fmt.Sprintf("%d", (data.CurrentPage-1)*data.PageSize+1) } to { fmt.Sprintf("%d", minInt(data.CurrentPage*data.PageSize, data.TotalBuckets)) } of { fmt.Sprintf("%d", data.TotalBuckets) } buckets
+                                </small>
+                                <nav aria-label="Buckets pagination">
+                                    <ul class="pagination pagination-sm mb-0">
+                                        <!-- Previous Button -->
+                                        if data.CurrentPage > 1 {
+                                            <li class="page-item">
+                                                <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage-1)}>
+                                                    <i class="fas fa-chevron-left"></i>
+                                                </a>
+                                            </li>
+                                        } else {
+                                            <li class="page-item disabled">
+                                                <span class="page-link">
+                                                    <i class="fas fa-chevron-left"></i>
+                                                </span>
+                                            </li>
+                                        }
+
+                                        <!-- Page Numbers -->
+                                        for i := maxInt(1, data.CurrentPage-2); i <= minInt(data.TotalPages, data.CurrentPage+2); i++ {
+                                            if i == data.CurrentPage {
+                                                <li class="page-item active">
+                                                    <span class="page-link">{fmt.Sprintf("%d", i)}</span>
+                                                </li>
+                                            } else {
+                                                <li class="page-item">
+                                                    <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", i)}>{fmt.Sprintf("%d", i)}</a>
+                                                </li>
+                                            }
+                                        }
+
+                                        <!-- Next Button -->
+                                        if data.CurrentPage < data.TotalPages {
+                                            <li class="page-item">
+                                                <a class="page-link pagination-link" href="#" data-page={fmt.Sprintf("%d", data.CurrentPage+1)}>
+                                                    <i class="fas fa-chevron-right"></i>
+                                                </a>
+                                            </li>
+                                        } else {
+                                            <li class="page-item disabled">
+                                                <span class="page-link">
+                                                    <i class="fas fa-chevron-right"></i>
+                                                </span>
+                                            </li>
+                                        }
+                                    </ul>
+                                </nav>
+                            </div>
+                        }
                     </div>
                 </div>
             </div>
@@ -574,6 +664,15 @@ templ S3Buckets(data dash.S3BucketsData) {
     let cachedUsers = null;
 
     document.addEventListener('DOMContentLoaded', function() {
+        // Add click handlers to pagination links
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const page = this.getAttribute('data-page');
+                goToPage(page);
+            });
+        });
+
         // Initialize modal instances once (reuse with show/hide)
         deleteModalInstance = new bootstrap.Modal(document.getElementById('deleteBucketModal'));
         quotaModalInstance = new bootstrap.Modal(document.getElementById('manageQuotaModal'));
@@ -1032,57 +1131,90 @@ function displayBucketDetails(data) {
     document.getElementById('bucketDetailsContent').innerHTML = rows.join('');
 }
 
+    function goToPage(page) {
+        const url = new URL(window.location);
+        url.searchParams.set('page', page);
+        window.location.href = url.toString();
+    }
+
+    function changePageSize() {
+        const pageSize = document.getElementById('pageSizeSelect').value;
+        const url = new URL(window.location);
+        url.searchParams.set('pageSize', pageSize);
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    }
+
+    function sortTable(column) {
+        const url = new URL(window.location);
+        const currentSort = url.searchParams.get('sortBy');
+        const currentOrder = url.searchParams.get('sortOrder') || 'asc';
+
+        let newOrder = 'asc';
+        if (currentSort === column && currentOrder === 'asc') {
+            newOrder = 'desc';
+        }
+
+        url.searchParams.set('sortBy', column);
+        url.searchParams.set('sortOrder', newOrder);
+        url.searchParams.set('page', '1');
+        window.location.href = url.toString();
+    }
+
     function exportBucketList() {
         // RFC 4180 compliant CSV escaping: escape double quotes by doubling them
         function escapeCsvField(value) {
             const str = String(value ?? '');
-            // If the field contains comma, double quote, or newline, wrap in quotes and escape internal quotes
             if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
                 return '"' + str.replace(/"/g, '""') + '"';
             }
             return '"' + str + '"';
         }
 
-        const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
-            const cells = row.querySelectorAll('td');
-            if (cells.length > 1) {
-                return {
-                    name: cells[0].textContent.trim(),
-                    owner: cells[1].textContent.trim(),
-                    created: cells[2].textContent.trim(),
-                    objects: cells[3].textContent.trim(),
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
 
-                    logicalSize: cells[4].textContent.trim(),
-                    physicalSize: cells[5].textContent.trim(),
-                    quota: cells[6].textContent.trim(),
-                    versioning: cells[7].textContent.trim(),
-                    objectLock: cells[8].textContent.trim()
-                };
-            }
-            return null;
-        }).filter(bucket => bucket !== null);
+        // Fetch all buckets from the API (not just the current page)
+        fetch('/api/s3/buckets')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error exporting buckets: ' + data.error);
+                    return;
+                }
 
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => [
-                escapeCsvField(b.name),
-                escapeCsvField(b.owner),
-                escapeCsvField(b.logicalSize),
-                escapeCsvField(b.physicalSize),
-                escapeCsvField(b.objects),
-                escapeCsvField(b.created),
-                escapeCsvField(b.quota),
-                escapeCsvField(b.versioning),
-                escapeCsvField(b.objectLock)
-            ].join(',')).join("\n");
+                const buckets = data.buckets || [];
+                const csvContent = "data:text/csv;charset=utf-8," +
+                    "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
+                    buckets.map(b => [
+                        escapeCsvField(b.name),
+                        escapeCsvField(b.owner),
+                        escapeCsvField(formatBytes(b.logical_size)),
+                        escapeCsvField(formatBytes(b.physical_size)),
+                        escapeCsvField(b.object_count),
+                        escapeCsvField(b.created_at),
+                        escapeCsvField(b.quota_enabled ? formatBytes(b.quota) : 'No quota'),
+                        escapeCsvField(b.versioning_status || 'Not configured'),
+                        escapeCsvField(b.object_lock_enabled ? 'Enabled' : 'Not configured')
+                    ].join(',')).join("\n");
 
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "buckets.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "buckets.csv");
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error exporting buckets: ' + error.message);
+            });
     }
     </script>
 }
