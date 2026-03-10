@@ -64,7 +64,7 @@ func (r *Plugin) schedulerLoop() {
 		}
 
 		r.setSchedulerLoopState("", "sleeping")
-		idleSleep := r.GetSchedulerConfig().IdleSleepDuration()
+		idleSleep := defaultSchedulerIdleSleep
 		if nextRun := r.earliestNextDetectionAt(); !nextRun.IsZero() {
 			if until := time.Until(nextRun); until <= 0 {
 				idleSleep = 0
@@ -1132,22 +1132,6 @@ func secondsFromDuration(duration time.Duration) int32 {
 		return 0
 	}
 	return int32(duration / time.Second)
-}
-
-func waitForShutdownOrTimer(shutdown <-chan struct{}, duration time.Duration) bool {
-	if duration <= 0 {
-		return true
-	}
-
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-
-	select {
-	case <-shutdown:
-		return false
-	case <-timer.C:
-		return true
-	}
 }
 
 func waitForShutdownOrTimerWithContext(shutdown <-chan struct{}, ctx context.Context, duration time.Duration) bool {
