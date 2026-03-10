@@ -153,6 +153,20 @@ func (v *VolumeServer) MarkReadonlyCount() int {
 	return v.markReadonlyCalls
 }
 
+// MarkWritableCount returns the number of writable calls.
+func (v *VolumeServer) MarkWritableCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.markWritableCalls
+}
+
+// ReadFileStatusCount returns the number of ReadVolumeFileStatus calls.
+func (v *VolumeServer) ReadFileStatusCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.readFileStatusCalls
+}
+
 // Shutdown stops the volume server.
 func (v *VolumeServer) Shutdown() {
 	if v.server != nil {
