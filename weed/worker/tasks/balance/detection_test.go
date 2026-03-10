@@ -917,3 +917,86 @@ func TestDetection_HeterogeneousCapacity(t *testing.T) {
 	}
 	t.Logf("First balance task: move from %s (correct: highest utilization)", firstSource)
 }
+
+// TestDetection_ZeroVolumeServerIncludedInBalance verifies that a server
+// with zero volumes (seeded from topology with a matching disk type) is
+// correctly included in the balance calculation and receives moves to
+// equalize the distribution.
+func TestDetection_ZeroVolumeServerIncludedInBalance(t *testing.T) {
+	// 4 servers total, but only 3 have volumes.
+	// node-d has a disk of the same type but zero volumes, so it appears in the
+	// topology and is seeded into serverVolumeCounts with count=0.
+
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-d", diskType: "hdd", diskID: 4, dc: "dc1", rack: "rack1", maxVolumes: 20},
+	}
+
+	// node-a: 8 volumes, node-b: 2, node-c: 1, node-d: 0
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "", 1, 8)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "", 20, 2)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "", 30, 1)...)
+	// node-d has 0 volumes — no metrics
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 8/2/1/0 distribution, got 0")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+
+	// With 11 volumes across 4 servers, the best achievable is 3/3/3/2
+	// (imbalance=36.4%), which exceeds the 20% threshold. The algorithm should
+	// stop when max-min<=1 rather than oscillating endlessly.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	total := 0
+	maxC, minC := 0, len(metrics)
+	for _, c := range effective {
+		total += c
+		if c > maxC {
+			maxC = c
+		}
+		if c < minC {
+			minC = c
+		}
+	}
+
+	// The diff between max and min should be at most 1 (as balanced as possible)
+	if maxC-minC > 1 {
+		t.Errorf("After %d moves, distribution not optimally balanced: effective=%v, max-min=%d (want ≤1)",
+			len(tasks), effective, maxC-minC)
+	}
+
+	// Count destinations — moves should spread, not pile onto one server
+	destCounts := make(map[string]int)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			destCounts[task.TypedParams.Targets[0].Node]++
+		}
+	}
+
+	// Moves should go to at least 2 different destinations
+	if len(destCounts) < 2 {
+		t.Errorf("Expected moves to spread across destinations, but got: %v", destCounts)
+	}
+
+	// Should need only ~5 moves for 8/2/1/0 → 3/3/3/2, not 8+ (oscillation)
+	if len(tasks) > 8 {
+		t.Errorf("Too many moves (%d) — likely oscillating; expected ≤8 for this distribution", len(tasks))
+	}
+
+	avg := float64(total) / float64(len(effective))
+	imbalance := float64(maxC-minC) / avg
+	t.Logf("Distribution 8/2/1/0 → %v after %d moves (imbalance=%.1f%%)",
+		effective, len(tasks), imbalance*100)
+}

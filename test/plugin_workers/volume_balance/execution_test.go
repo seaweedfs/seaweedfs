@@ -8,10 +8,12 @@ import (
 
 	pluginworkers "github.com/seaweedfs/seaweedfs/test/plugin_workers"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestVolumeBalanceExecutionIntegration(t *testing.T) {
@@ -60,8 +62,85 @@ func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 	require.GreaterOrEqual(t, source.MarkReadonlyCount(), 1)
 	require.GreaterOrEqual(t, len(source.DeleteRequests()), 1)
 
-	copyCalls, mountCalls, tailCalls := target.BalanceStats()
+	copyCalls, _, tailCalls := target.BalanceStats()
 	require.GreaterOrEqual(t, copyCalls, 1)
-	require.GreaterOrEqual(t, mountCalls, 1)
 	require.GreaterOrEqual(t, tailCalls, 1)
+}
+
+func TestVolumeBalanceBatchExecutionIntegration(t *testing.T) {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	handler := pluginworker.NewVolumeBalanceHandler(dialOption)
+	harness := pluginworkers.NewHarness(t, pluginworkers.HarnessConfig{
+		WorkerOptions: pluginworker.WorkerOptions{
+			GrpcDialOption: dialOption,
+		},
+		Handlers: []pluginworker.JobHandler{handler},
+	})
+	harness.WaitForJobType("volume_balance")
+
+	// Create one source and one target fake volume server.
+	source := pluginworkers.NewVolumeServer(t, "")
+	target := pluginworkers.NewVolumeServer(t, "")
+
+	// Build a batch job with 3 volume moves from source → target.
+	volumeIDs := []uint32{401, 402, 403}
+	moves := make([]*worker_pb.BalanceMoveSpec, len(volumeIDs))
+	for i, vid := range volumeIDs {
+		moves[i] = &worker_pb.BalanceMoveSpec{
+			VolumeId:   vid,
+			SourceNode: source.Address(),
+			TargetNode: target.Address(),
+			Collection: "batch-test",
+		}
+	}
+
+	params := &worker_pb.TaskParams{
+		TaskId: "batch-balance-test",
+		TaskParams: &worker_pb.TaskParams_BalanceParams{
+			BalanceParams: &worker_pb.BalanceTaskParams{
+				MaxConcurrentMoves: 2,
+				Moves:              moves,
+			},
+		},
+	}
+	paramBytes, err := proto.Marshal(params)
+	require.NoError(t, err)
+
+	job := &plugin_pb.JobSpec{
+		JobId:   "batch-balance-test",
+		JobType: "volume_balance",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"task_params_pb": {
+				Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: paramBytes},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := harness.Plugin().ExecuteJob(ctx, job, nil, 1)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Success, "batch balance job should succeed; result: %+v", result)
+
+	// Each of the 3 moves should have marked the source readonly and deleted.
+	require.Equal(t, len(volumeIDs), source.MarkReadonlyCount(),
+		"each move should mark source volume readonly")
+	require.Equal(t, len(volumeIDs), len(source.DeleteRequests()),
+		"each move should delete the source volume")
+
+	// Verify delete requests reference the expected volume IDs.
+	deletedVols := make(map[uint32]bool)
+	for _, req := range source.DeleteRequests() {
+		deletedVols[req.VolumeId] = true
+	}
+	for _, vid := range volumeIDs {
+		require.True(t, deletedVols[vid], "volume %d should have been deleted from source", vid)
+	}
+
+	// Target should have received copy and tail calls for all 3 volumes.
+	copyCalls, _, tailCalls := target.BalanceStats()
+	require.Equal(t, len(volumeIDs), copyCalls, "target should receive one copy per volume")
+	require.Equal(t, len(volumeIDs), tailCalls, "target should receive one tail per volume")
 }

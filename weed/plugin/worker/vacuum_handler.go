@@ -427,12 +427,14 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		params.Collection,
 		h.grpcDialOption,
 	)
+	execCtx, execCancel := context.WithCancel(ctx)
+	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
 		message := fmt.Sprintf("vacuum progress %.0f%%", progress)
 		if strings.TrimSpace(stage) != "" {
 			message = stage
 		}
-		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
@@ -442,7 +444,9 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Activities: []*plugin_pb.ActivityEvent{
 				BuildExecutorActivity(stage, message),
 			},
-		})
+		}); err != nil {
+			execCancel()
+		}
 	})
 
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -459,7 +463,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		return err
 	}
 
-	if err := task.Execute(ctx, params); err != nil {
+	if err := task.Execute(execCtx, params); err != nil {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
