@@ -230,17 +230,28 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			break
 		}
 
-		// When max and min differ by at most 1, no single move can improve the
-		// balance — it would just swap which server is min vs max. Stop here to
-		// avoid infinite oscillation when the threshold is unachievable (e.g.,
-		// 11 volumes across 4 servers: best is 3/3/3/2, imbalance=36%).
-		if maxVolumes-minVolumes <= 1 {
+		// When the global max and min effective counts differ by at most 1,
+		// no single move can improve balance — it would just swap which server
+		// is min vs max. Stop here to avoid infinite oscillation when the
+		// threshold is unachievable (e.g., 11 vols across 4 servers: best is
+		// 3/3/3/2, imbalance=36%). We scan ALL servers' effective counts so the
+		// check works regardless of whether utilization or raw counts are used.
+		globalMaxCount, globalMinCount := 0, math.MaxInt
+		for _, c := range effectiveCounts {
+			if c > globalMaxCount {
+				globalMaxCount = c
+			}
+			if c < globalMinCount {
+				globalMinCount = c
+			}
+		}
+		if globalMaxCount-globalMinCount <= 1 {
 			if len(results) == 0 {
 				glog.Infof("BALANCE [%s]: No tasks created - cluster as balanced as possible. Imbalance=%.1f%% (threshold=%.1f%%), but max-min diff is %d",
-					diskType, imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes-minVolumes)
+					diskType, imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, globalMaxCount-globalMinCount)
 			} else {
 				glog.Infof("BALANCE [%s]: Created %d task(s), cluster as balanced as possible. Imbalance=%.1f%% (threshold=%.1f%%), max-min diff=%d",
-					diskType, len(results), imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, maxVolumes-minVolumes)
+					diskType, len(results), imbalanceRatio*100, balanceConfig.ImbalanceThreshold*100, globalMaxCount-globalMinCount)
 			}
 			balanced = true
 			break
