@@ -41,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ^1.24
+          go-version: ^1.25
           cache: true
       
       - name: Set up Python ${{ matrix.python-version }}
@@ -148,7 +148,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ^1.24
+          go-version: ^1.25
           cache: true
       
       - name: Run Go unit tests

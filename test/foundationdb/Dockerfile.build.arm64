@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile to build SeaweedFS with FoundationDB support for ARM64
-FROM --platform=linux/arm64 golang:1.24-bookworm AS builder
+FROM --platform=linux/arm64 golang:1.25-bookworm AS builder
 
 ARG FOUNDATIONDB_VERSION=7.4.5
 ENV FOUNDATIONDB_VERSION=${FOUNDATIONDB_VERSION}
