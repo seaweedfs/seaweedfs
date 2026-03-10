@@ -72,6 +72,20 @@ case "$1" in
   	exec /usr/bin/weed -logtostderr=true volume $ARGS $@
 	;;
 
+  'volume-rust')
+  	ARGS="-dir /data -max 0"
+  	if isArgPassed "-max" "$@"; then
+  	  ARGS="-dir /data"
+  	fi
+  	shift
+  	if [ ! -s /usr/bin/weed-volume ]; then
+  	  echo "Error: Rust volume server is not available on this platform ($(uname -m))." >&2
+  	  echo "Use 'volume' for the Go volume server instead." >&2
+  	  exit 1
+  	fi
+  	exec /usr/bin/weed-volume $ARGS $@
+	;;
+
   'server')
   	ARGS="-dir=/data -volume.max=0 -master.volumeSizeLimitMB=1024"
   	if isArgPassed "-volume.max" "$@"; then
