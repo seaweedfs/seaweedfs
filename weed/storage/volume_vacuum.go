@@ -64,14 +64,11 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
-	if v.isCompacting || v.isCommitCompacting {
+	if v.isCommitCompacting.Load() || !v.isCompacting.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
 		return nil
 	}
-	v.isCompacting = true
-	defer func() {
-		v.isCompacting = false
-	}()
+	defer v.isCompacting.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
@@ -102,14 +99,11 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
-	if v.isCompacting || v.isCommitCompacting {
+	if v.isCommitCompacting.Load() || !v.isCompacting.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
 		return nil
 	}
-	v.isCompacting = true
-	defer func() {
-		v.isCompacting = false
-	}()
+	defer v.isCompacting.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
@@ -142,14 +136,11 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	if v.isCommitCompacting {
+	if !v.isCommitCompacting.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already commit compacting ...", v.Id)
 		return nil
 	}
-	v.isCommitCompacting = true
-	defer func() {
-		v.isCommitCompacting = false
-	}()
+	defer v.isCommitCompacting.Store(false)
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()

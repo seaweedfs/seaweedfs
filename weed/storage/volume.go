@@ -5,6 +5,7 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -45,8 +46,8 @@ type Volume struct {
 	lastCompactRevision    uint16
 	ldbTimeout             int64
 
-	isCompacting       bool
-	isCommitCompacting bool
+	isCompacting       atomic.Bool
+	isCommitCompacting atomic.Bool
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
@@ -231,7 +232,7 @@ func (v *Volume) Close() {
 }
 
 func (v *Volume) doClose() {
-	for v.isCommitCompacting {
+	for v.isCommitCompacting.Load() {
 		time.Sleep(521 * time.Millisecond)
 		glog.Warningf("Volume Close wait for compaction %d", v.Id)
 	}
