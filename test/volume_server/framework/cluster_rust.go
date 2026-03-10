@@ -225,20 +225,20 @@ func FindOrBuildRustBinary() (string, error) {
 	rustCrateDir := ""
 	if _, file, _, ok := runtime.Caller(0); ok {
 		repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-		rustCrateDir = filepath.Join(repoRoot, "seaweed-volume")
+		rustCrateDir = filepath.Join(repoRoot, "weed-volume")
 	}
 	if rustCrateDir == "" {
 		return "", fmt.Errorf("unable to detect seaweed-volume crate directory")
 	}
 
 	// Check for a pre-built release binary.
-	releaseBin := filepath.Join(rustCrateDir, "target", "release", "seaweed-volume")
+	releaseBin := filepath.Join(rustCrateDir, "target", "release", "weed-volume")
 	if isExecutableFile(releaseBin) {
 		return releaseBin, nil
 	}
 
 	// Check for a pre-built debug binary.
-	debugBin := filepath.Join(rustCrateDir, "target", "debug", "seaweed-volume")
+	debugBin := filepath.Join(rustCrateDir, "target", "debug", "weed-volume")
 	if isExecutableFile(debugBin) {
 		return debugBin, nil
 	}

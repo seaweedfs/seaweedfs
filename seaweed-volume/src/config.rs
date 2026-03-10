@@ -5,7 +5,7 @@ use std::net::UdpSocket;
 ///
 /// Start a volume server to provide storage spaces.
 #[derive(Parser, Debug)]
-#[command(name = "seaweed-volume", version, about)]
+#[command(name = "weed-volume", version, about)]
 pub struct Cli {
     /// HTTP listen port
     #[arg(long = "port", default_value_t = 8080)]

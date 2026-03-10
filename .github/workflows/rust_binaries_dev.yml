@@ -24,7 +24,7 @@ jobs:
           tag: dev
           fail-if-no-assets: false
           assets: |
-            seaweed-volume-*
+            weed-volume-*
 
   build-rust-volume-dev-linux:
     permissions:
@@ -67,9 +67,9 @@ jobs:
 
       - name: Package large disk binary
         run: |
-          cp seaweed-volume/target/release/seaweed-volume seaweed-volume-large-disk
-          tar czf "seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-large-disk
-          rm seaweed-volume-large-disk
+          cp seaweed-volume/target/release/weed-volume weed-volume-large-disk
+          tar czf "weed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" weed-volume-large-disk
+          rm weed-volume-large-disk
 
       - name: Build Rust volume server (normal)
         env:
@@ -78,9 +78,9 @@ jobs:
 
       - name: Package normal binary
         run: |
-          cp seaweed-volume/target/release/seaweed-volume seaweed-volume-normal
-          tar czf "seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-normal
-          rm seaweed-volume-normal
+          cp seaweed-volume/target/release/weed-volume weed-volume-normal
+          tar czf "weed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" weed-volume-normal
+          rm weed-volume-normal
 
       - name: Upload dev release assets
         uses: softprops/action-gh-release@v2
@@ -88,8 +88,8 @@ jobs:
           tag_name: dev
           prerelease: true
           files: |
-            seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
-            seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            weed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            weed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -138,9 +138,9 @@ jobs:
 
       - name: Package large disk binary
         run: |
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-large-disk
-          tar czf "seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-large-disk
-          rm seaweed-volume-large-disk
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          tar czf "weed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" weed-volume-large-disk
+          rm weed-volume-large-disk
 
       - name: Build Rust volume server (normal)
         env:
@@ -149,9 +149,9 @@ jobs:
 
       - name: Package normal binary
         run: |
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-normal
-          tar czf "seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" seaweed-volume-normal
-          rm seaweed-volume-normal
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          tar czf "weed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz" weed-volume-normal
+          rm weed-volume-normal
 
       - name: Upload dev release assets
         uses: softprops/action-gh-release@v2
@@ -159,7 +159,7 @@ jobs:
           tag_name: dev
           prerelease: true
           files: |
-            seaweed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
-            seaweed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            weed-volume-large-disk-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
+            weed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

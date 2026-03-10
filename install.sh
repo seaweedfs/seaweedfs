@@ -114,11 +114,11 @@ go_asset_name() {
 # Build Rust volume server asset name
 rust_asset_name() {
     local os="$1" arch="$2"
-    local prefix="seaweed-volume"
+    local prefix="weed-volume"
     if [ "$LARGE_DISK" = true ]; then
-        prefix="seaweed-volume_large_disk"
+        prefix="weed-volume_large_disk"
     else
-        prefix="seaweed-volume"
+        prefix="weed-volume"
     fi
     local suffix="${os}_${arch}"
     if [ "$os" = "windows" ]; then
@@ -184,24 +184,24 @@ install_component() {
 
             local rust_bin
             if [ "$LARGE_DISK" = true ]; then
-                rust_bin="$(find "$tmpdir" -name 'seaweed-volume-large-disk*' -type f | head -1)"
+                rust_bin="$(find "$tmpdir" -name 'weed-volume-large-disk*' -type f | head -1)"
             else
-                rust_bin="$(find "$tmpdir" -name 'seaweed-volume-normal*' -type f | head -1)"
+                rust_bin="$(find "$tmpdir" -name 'weed-volume-normal*' -type f | head -1)"
             fi
             if [ -z "$rust_bin" ]; then
-                rust_bin="$(find "$tmpdir" -name 'seaweed-volume*' -type f | head -1)"
+                rust_bin="$(find "$tmpdir" -name 'weed-volume*' -type f | head -1)"
             fi
             if [ -z "$rust_bin" ]; then
-                error "Could not find seaweed-volume binary in archive"
+                error "Could not find weed-volume binary in archive"
             fi
 
             chmod +x "$rust_bin"
-            local dest_name="seaweed-volume"
+            local dest_name="weed-volume"
             if [ "$os" = "windows" ]; then
-                dest_name="seaweed-volume.exe"
+                dest_name="weed-volume.exe"
             fi
             install_binary "$rust_bin" "$dest_name"
-            ok "Installed seaweed-volume to ${INSTALL_DIR}/${dest_name}"
+            ok "Installed weed-volume to ${INSTALL_DIR}/${dest_name}"
             ;;
 
         *)
@@ -263,13 +263,13 @@ main() {
         info "  weed:            ${INSTALL_DIR}/weed"
     fi
     if [ "$COMPONENT" = "volume-rust" ] || [ "$COMPONENT" = "all" ]; then
-        info "  seaweed-volume:  ${INSTALL_DIR}/seaweed-volume"
+        info "  weed-volume:  ${INSTALL_DIR}/weed-volume"
     fi
     echo ""
     info "Quick start:"
     info "  weed master                          # Start master server"
     info "  weed volume -mserver=localhost:9333   # Start Go volume server"
-    info "  seaweed-volume -mserver localhost:9333 # Start Rust volume server"
+    info "  weed-volume -mserver localhost:9333 # Start Rust volume server"
 }
 
 main

@@ -1,8 +1,15 @@
 [package]
-name = "seaweed-volume"
+name = "weed-volume"
 version = "0.1.0"
 edition = "2021"
 description = "SeaweedFS Volume Server — Rust implementation"
+
+[lib]
+name = "seaweed_volume"
+
+[[bin]]
+name = "weed-volume"
+path = "src/main.rs"
 
 [features]
 default = ["5bytes"]

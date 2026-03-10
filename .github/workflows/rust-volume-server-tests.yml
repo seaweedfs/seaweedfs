@@ -103,7 +103,7 @@ jobs:
       - name: Run integration tests
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
-          RUST_VOLUME_BINARY: ${{ github.workspace }}/seaweed-volume/target/release/seaweed-volume
+          RUST_VOLUME_BINARY: ${{ github.workspace }}/seaweed-volume/target/release/weed-volume
         run: |
           echo "Running Rust volume server integration tests..."
           go test -v -count=1 -timeout=15m ./test/volume_server/rust/...
@@ -179,7 +179,7 @@ jobs:
       - name: Run volume server integration tests with Rust volume
         env:
           WEED_BINARY: ${{ github.workspace }}/weed/weed
-          RUST_VOLUME_BINARY: ${{ github.workspace }}/seaweed-volume/target/release/seaweed-volume
+          RUST_VOLUME_BINARY: ${{ github.workspace }}/seaweed-volume/target/release/weed-volume
           VOLUME_SERVER_IMPL: rust
         run: |
           if [ "${{ matrix.test-type }}" == "grpc" ]; then

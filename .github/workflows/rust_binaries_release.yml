@@ -70,21 +70,21 @@ jobs:
       - name: Package binaries
         run: |
           # Large disk (default, 5bytes feature)
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-large-disk
-          tar czf seaweed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz seaweed-volume-large-disk
-          rm seaweed-volume-large-disk
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
+          rm weed-volume-large-disk
 
           # Normal volume size
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-normal
-          tar czf seaweed-volume_${{ matrix.asset_suffix }}.tar.gz seaweed-volume-normal
-          rm seaweed-volume-normal
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
+          rm weed-volume-normal
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            seaweed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
-            seaweed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -138,20 +138,20 @@ jobs:
 
       - name: Package binaries
         run: |
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-large-disk
-          tar czf seaweed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz seaweed-volume-large-disk
-          rm seaweed-volume-large-disk
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
+          rm weed-volume-large-disk
 
-          cp seaweed-volume/target/${{ matrix.target }}/release/seaweed-volume seaweed-volume-normal
-          tar czf seaweed-volume_${{ matrix.asset_suffix }}.tar.gz seaweed-volume-normal
-          rm seaweed-volume-normal
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
+          rm weed-volume-normal
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            seaweed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
-            seaweed-volume_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -197,19 +197,19 @@ jobs:
       - name: Package binaries
         shell: bash
         run: |
-          cp seaweed-volume/target/release/seaweed-volume.exe seaweed-volume-large-disk.exe
-          7z a seaweed-volume_large_disk_windows_amd64.zip seaweed-volume-large-disk.exe
-          rm seaweed-volume-large-disk.exe
+          cp seaweed-volume/target/release/weed-volume.exe weed-volume-large-disk.exe
+          7z a weed-volume_large_disk_windows_amd64.zip weed-volume-large-disk.exe
+          rm weed-volume-large-disk.exe
 
-          cp seaweed-volume/target/release/seaweed-volume.exe seaweed-volume-normal.exe
-          7z a seaweed-volume_windows_amd64.zip seaweed-volume-normal.exe
-          rm seaweed-volume-normal.exe
+          cp seaweed-volume/target/release/weed-volume.exe weed-volume-normal.exe
+          7z a weed-volume_windows_amd64.zip weed-volume-normal.exe
+          rm weed-volume-normal.exe
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            seaweed-volume_large_disk_windows_amd64.zip
-            seaweed-volume_windows_amd64.zip
+            weed-volume_large_disk_windows_amd64.zip
+            weed-volume_windows_amd64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
