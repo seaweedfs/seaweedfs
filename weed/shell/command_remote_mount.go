@@ -123,7 +123,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
-		_, lookupErr := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
+		_, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: parent,
 			Name:      name,
 		})
