@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -295,8 +296,26 @@ func (h *AdminHandlers) ShowDashboard(w http.ResponseWriter, r *http.Request) {
 
 // ShowS3Buckets renders the Object Store buckets management page
 func (h *AdminHandlers) ShowS3Buckets(w http.ResponseWriter, r *http.Request) {
-	// Get Object Store buckets data from the server
-	s3Data := h.getS3BucketsData(r)
+	// Get pagination and sorting parameters from query string
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	pageSize := 100
+	if ps := r.URL.Query().Get("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 1000 {
+			pageSize = parsed
+		}
+	}
+
+	sortBy := defaultQuery(r.URL.Query().Get("sortBy"), "name")
+	sortOrder := defaultQuery(r.URL.Query().Get("sortOrder"), "asc")
+
+	// Get Object Store buckets data with pagination
+	s3Data := h.getS3BucketsData(r, page, pageSize, sortBy, sortOrder)
 	username := h.getUsername(r)
 
 	// Render HTML template
@@ -463,15 +482,15 @@ func (h *AdminHandlers) ShowBucketDetails(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, details)
 }
 
-// getS3BucketsData retrieves Object Store buckets data from the server
-func (h *AdminHandlers) getS3BucketsData(r *http.Request) dash.S3BucketsData {
+// getS3BucketsData retrieves Object Store buckets data from the server with pagination
+func (h *AdminHandlers) getS3BucketsData(r *http.Request, page, pageSize int, sortBy, sortOrder string) dash.S3BucketsData {
 	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
 	}
 
 	// Get Object Store buckets data
-	data, err := h.adminServer.GetS3BucketsData()
+	data, err := h.adminServer.GetS3BucketsData(page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		// Return empty data on error
 		return dash.S3BucketsData{
@@ -480,6 +499,11 @@ func (h *AdminHandlers) getS3BucketsData(r *http.Request) dash.S3BucketsData {
 			TotalBuckets: 0,
 			TotalSize:    0,
 			LastUpdated:  time.Now(),
+			CurrentPage:  1,
+			TotalPages:   1,
+			PageSize:     pageSize,
+			SortBy:       sortBy,
+			SortOrder:    sortOrder,
 		}
 	}
 

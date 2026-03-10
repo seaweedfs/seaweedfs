@@ -371,8 +371,21 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // InvalidateCache method moved to cluster_topology.go
 
-// GetS3BucketsData retrieves all Object Store buckets and aggregates total storage metrics
-func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
+// GetS3BucketsData retrieves Object Store buckets with pagination and sorting
+func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder string) (S3BucketsData, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "name"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
 	buckets, err := s.GetS3Buckets()
 	if err != nil {
 		return S3BucketsData{}, err
@@ -383,12 +396,66 @@ func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
 		totalSize += bucket.PhysicalSize
 	}
 
+	totalBuckets := len(buckets)
+
+	// Sort buckets
+	s.sortBuckets(buckets, sortBy, sortOrder)
+
+	// Calculate pagination
+	totalPages := (totalBuckets + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if startIndex >= totalBuckets {
+		buckets = []S3Bucket{}
+	} else {
+		if endIndex > totalBuckets {
+			endIndex = totalBuckets
+		}
+		buckets = buckets[startIndex:endIndex]
+	}
+
 	return S3BucketsData{
 		Buckets:      buckets,
-		TotalBuckets: len(buckets),
+		TotalBuckets: totalBuckets,
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+		CurrentPage:  page,
+		TotalPages:   totalPages,
+		PageSize:     pageSize,
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
 	}, nil
+}
+
+// sortBuckets sorts the bucket slice in place by the given field and order
+func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) {
+	sort.Slice(buckets, func(i, j int) bool {
+		var less bool
+		switch sortBy {
+		case "name":
+			less = buckets[i].Name < buckets[j].Name
+		case "owner":
+			less = buckets[i].Owner < buckets[j].Owner
+		case "created":
+			less = buckets[i].CreatedAt.Before(buckets[j].CreatedAt)
+		case "objects":
+			less = buckets[i].ObjectCount < buckets[j].ObjectCount
+		case "logical_size":
+			less = buckets[i].LogicalSize < buckets[j].LogicalSize
+		case "physical_size":
+			less = buckets[i].PhysicalSize < buckets[j].PhysicalSize
+		default:
+			less = buckets[i].Name < buckets[j].Name
+		}
+		if sortOrder == "desc" {
+			return !less
+		}
+		return less
+	})
 }
 
 // GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
