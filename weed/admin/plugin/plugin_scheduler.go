@@ -32,6 +32,7 @@ const (
 	defaultClusterContextTimeout               = 10 * time.Second
 	defaultWaitingBacklogFloor                 = 8
 	defaultWaitingBacklogMultiplier            = 4
+	maxEstimatedRuntimeCap                     = 8 * time.Hour
 )
 
 type schedulerPolicy struct {
@@ -309,6 +310,9 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 			}
 		}
 	}
+	if maxEstimatedRuntime > maxEstimatedRuntimeCap {
+		maxEstimatedRuntime = maxEstimatedRuntimeCap
+	}
 
 	remaining = time.Until(start.Add(maxRuntime))
 	if remaining <= 0 {
@@ -345,7 +349,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 	successCount, errorCount, canceledCount := r.dispatchScheduledProposals(execCtx, jobType, filtered, clusterContext, execPolicy)
 
 	status := "success"
-	if jobCtx.Err() != nil {
+	if execCtx.Err() != nil {
 		status = "timeout"
 	} else if errorCount > 0 || canceledCount > 0 {
 		status = "error"
@@ -973,6 +977,9 @@ func (r *Plugin) executeScheduledJobWithExecutor(
 			if est, ok := job.Parameters["estimated_runtime_seconds"]; ok {
 				if v := est.GetInt64Value(); v > 0 {
 					estimated := time.Duration(v) * time.Second
+					if estimated > maxEstimatedRuntimeCap {
+						estimated = maxEstimatedRuntimeCap
+					}
 					if estimated > timeout {
 						timeout = estimated
 					}
