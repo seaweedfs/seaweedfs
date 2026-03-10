@@ -17,6 +17,9 @@ metadata:
 spec:
   type: {{ .Values.allInOne.service.type | default "ClusterIP" }}
   internalTrafficPolicy: {{ .Values.allInOne.service.internalTrafficPolicy | default "Cluster" }}
+  {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) .Values.allInOne.s3.trafficDistribution }}
+  trafficDistribution: {{ include "seaweedfs.trafficDistribution" (dict "value" .Values.allInOne.s3.trafficDistribution "Capabilities" .Capabilities) }}
+  {{- end }}
   ports:
   # Master ports
   - name: "swfs-master"

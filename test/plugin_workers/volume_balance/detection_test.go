@@ -37,19 +37,25 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 		MasterGrpcAddresses: []string{master.Address()},
 	}, 10)
 	require.NoError(t, err)
-	// With 10 volumes on one server and 1 on the other (avg=5.5),
-	// multiple balance moves should be detected until imbalance is within threshold.
-	require.Greater(t, len(proposals), 1, "expected multiple balance proposals")
+	// With default batch_size=20 and 10 overloaded volumes vs 1 underloaded,
+	// all moves are grouped into a single batch proposal.
+	require.Len(t, proposals, 1, "expected exactly one batch proposal")
 
-	for _, proposal := range proposals {
-		require.Equal(t, "volume_balance", proposal.JobType)
-		paramsValue := proposal.Parameters["task_params_pb"]
-		require.NotNil(t, paramsValue)
+	proposal := proposals[0]
+	require.Equal(t, "volume_balance", proposal.JobType)
+	paramsValue := proposal.Parameters["task_params_pb"]
+	require.NotNil(t, paramsValue)
 
-		params := &worker_pb.TaskParams{}
-		require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
-		require.NotEmpty(t, params.Sources)
-		require.NotEmpty(t, params.Targets)
+	params := &worker_pb.TaskParams{}
+	require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
+
+	bp := params.GetBalanceParams()
+	require.NotNil(t, bp, "expected BalanceParams in batch proposal")
+	require.Greater(t, len(bp.Moves), 1, "batch proposal should contain multiple moves")
+	for _, move := range bp.Moves {
+		require.NotZero(t, move.VolumeId)
+		require.NotEmpty(t, move.SourceNode)
+		require.NotEmpty(t, move.TargetNode)
 	}
 }
 

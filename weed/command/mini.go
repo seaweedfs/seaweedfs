@@ -114,7 +114,7 @@ Admin UI (http://localhost:23646) to manage users and policies.
 
 var (
 	miniIp                          = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
-	miniBindIp                      = cmdMini.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	miniBindIp                      = cmdMini.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to. If empty, default to same as -ip option.")
 	miniTimeout                     = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	miniDataCenter                  = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
 	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")

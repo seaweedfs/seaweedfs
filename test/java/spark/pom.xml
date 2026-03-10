@@ -123,7 +123,7 @@
             <dependency>
                 <groupId>org.apache.zookeeper</groupId>
                 <artifactId>zookeeper</artifactId>
-                <version>3.9.4</version>
+                <version>3.9.5</version>
             </dependency>
 
             <!-- Apache Commons - Fix CVEs -->

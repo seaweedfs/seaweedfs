@@ -78,9 +78,7 @@ type Plugin struct {
 	schedulerRun              map[string]*schedulerRunInfo
 	schedulerLoopMu           sync.Mutex
 	schedulerLoopState        schedulerLoopState
-	schedulerConfigMu         sync.RWMutex
-	schedulerConfig           SchedulerConfig
-	schedulerWakeCh           chan struct{}
+	schedulerWakeCh chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -187,21 +185,6 @@ func New(options Options) (*Plugin, error) {
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
-
-	if cfg, err := plugin.store.LoadSchedulerConfig(); err != nil {
-		glog.Warningf("Plugin failed to load scheduler config: %v", err)
-		plugin.schedulerConfig = DefaultSchedulerConfig()
-	} else if cfg == nil {
-		defaults := DefaultSchedulerConfig()
-		plugin.schedulerConfig = defaults
-		if plugin.store.IsConfigured() {
-			if err := plugin.store.SaveSchedulerConfig(&defaults); err != nil {
-				glog.Warningf("Plugin failed to persist scheduler defaults: %v", err)
-			}
-		}
-	} else {
-		plugin.schedulerConfig = normalizeSchedulerConfig(*cfg)
-	}
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
@@ -424,31 +407,6 @@ func (r *Plugin) IsConfigured() bool {
 
 func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
-}
-
-func (r *Plugin) GetSchedulerConfig() SchedulerConfig {
-	if r == nil {
-		return DefaultSchedulerConfig()
-	}
-	r.schedulerConfigMu.RLock()
-	cfg := r.schedulerConfig
-	r.schedulerConfigMu.RUnlock()
-	return normalizeSchedulerConfig(cfg)
-}
-
-func (r *Plugin) UpdateSchedulerConfig(cfg SchedulerConfig) (SchedulerConfig, error) {
-	if r == nil {
-		return DefaultSchedulerConfig(), fmt.Errorf("plugin is not initialized")
-	}
-	normalized := normalizeSchedulerConfig(cfg)
-	if err := r.store.SaveSchedulerConfig(&normalized); err != nil {
-		return SchedulerConfig{}, err
-	}
-	r.schedulerConfigMu.Lock()
-	r.schedulerConfig = normalized
-	r.schedulerConfigMu.Unlock()
-	r.wakeScheduler()
-	return normalized, nil
 }
 
 func (r *Plugin) acquireAdminLock(reason string) (func(), error) {

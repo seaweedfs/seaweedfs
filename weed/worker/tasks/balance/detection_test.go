@@ -852,3 +852,151 @@ func TestDetection_ExhaustedServerFallsThrough(t *testing.T) {
 	assertNoDuplicateVolumes(t, tasks)
 	t.Logf("Created %d tasks from node-b after node-a exhausted", len(tasks))
 }
+
+// TestDetection_HeterogeneousCapacity verifies that the balancer uses
+// utilization ratio (volumes/maxVolumes) rather than raw volume counts.
+// A server with more volumes but proportionally lower utilization should
+// NOT be picked as the source over a server with fewer volumes but higher
+// utilization.
+func TestDetection_HeterogeneousCapacity(t *testing.T) {
+	// Simulate a cluster like:
+	//   server-1: 600 volumes, max 700  → utilization 85.7%
+	//   server-2: 690 volumes, max 700  → utilization 98.6%  ← most utilized
+	//   server-3: 695 volumes, max 700  → utilization 99.3%  ← most utilized
+	//   server-4: 900 volumes, max 1260 → utilization 71.4%  ← least utilized
+	//
+	// The old algorithm (raw counts) would pick server-4 as source (900 > 695).
+	// The correct behavior is to pick server-3 (or server-2) as source since
+	// they have the highest utilization ratio.
+	servers := []serverSpec{
+		{id: "server-1", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-2", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-3", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 700},
+		{id: "server-4", diskType: "hdd", dc: "dc1", rack: "rack1", maxVolumes: 1260},
+	}
+
+	volCounts := map[string]int{
+		"server-1": 600,
+		"server-2": 690,
+		"server-3": 695,
+		"server-4": 900,
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	vid := uint32(1)
+	for _, server := range []string{"server-1", "server-2", "server-3", "server-4"} {
+		count := volCounts[server]
+		metrics = append(metrics, makeVolumes(server, "hdd", "dc1", "rack1", "", vid, count)...)
+		vid += uint32(count)
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+	cfg := &Config{
+		BaseConfig:         base.BaseConfig{Enabled: true},
+		ImbalanceThreshold: 0.20,
+		MinServerCount:     2,
+	}
+
+	tasks, _, err := Detection(metrics, clusterInfo, cfg, 5)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks but got none")
+	}
+
+	// The source of the first task should be the most utilized server
+	// (server-3 at 99.3% or server-2 at 98.6%), NOT server-4.
+	firstSource := tasks[0].Server
+	if firstSource == "server-4" {
+		t.Errorf("Balancer incorrectly picked server-4 (lowest utilization 71.4%%) as source; should pick server-3 (99.3%%) or server-2 (98.6%%)")
+	}
+	if firstSource != "server-3" && firstSource != "server-2" {
+		t.Errorf("Expected server-3 or server-2 as first source, got %s", firstSource)
+	}
+	t.Logf("First balance task: move from %s (correct: highest utilization)", firstSource)
+}
+
+// TestDetection_ZeroVolumeServerIncludedInBalance verifies that a server
+// with zero volumes (seeded from topology with a matching disk type) is
+// correctly included in the balance calculation and receives moves to
+// equalize the distribution.
+func TestDetection_ZeroVolumeServerIncludedInBalance(t *testing.T) {
+	// 4 servers total, but only 3 have volumes.
+	// node-d has a disk of the same type but zero volumes, so it appears in the
+	// topology and is seeded into serverVolumeCounts with count=0.
+
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-d", diskType: "hdd", diskID: 4, dc: "dc1", rack: "rack1", maxVolumes: 20},
+	}
+
+	// node-a: 8 volumes, node-b: 2, node-c: 1, node-d: 0
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "", 1, 8)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "", 20, 2)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "", 30, 1)...)
+	// node-d has 0 volumes — no metrics
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 8/2/1/0 distribution, got 0")
+	}
+
+	assertNoDuplicateVolumes(t, tasks)
+
+	// With 11 volumes across 4 servers, the best achievable is 3/3/3/2
+	// (imbalance=36.4%), which exceeds the 20% threshold. The algorithm should
+	// stop when max-min<=1 rather than oscillating endlessly.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	total := 0
+	maxC, minC := 0, len(metrics)
+	for _, c := range effective {
+		total += c
+		if c > maxC {
+			maxC = c
+		}
+		if c < minC {
+			minC = c
+		}
+	}
+
+	// The diff between max and min should be at most 1 (as balanced as possible)
+	if maxC-minC > 1 {
+		t.Errorf("After %d moves, distribution not optimally balanced: effective=%v, max-min=%d (want ≤1)",
+			len(tasks), effective, maxC-minC)
+	}
+
+	// Count destinations — moves should spread, not pile onto one server
+	destCounts := make(map[string]int)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			destCounts[task.TypedParams.Targets[0].Node]++
+		}
+	}
+
+	// Moves should go to at least 2 different destinations
+	if len(destCounts) < 2 {
+		t.Errorf("Expected moves to spread across destinations, but got: %v", destCounts)
+	}
+
+	// Should need only ~5 moves for 8/2/1/0 → 3/3/3/2, not 8+ (oscillation)
+	if len(tasks) > 8 {
+		t.Errorf("Too many moves (%d) — likely oscillating; expected ≤8 for this distribution", len(tasks))
+	}
+
+	avg := float64(total) / float64(len(effective))
+	imbalance := float64(maxC-minC) / avg
+	t.Logf("Distribution 8/2/1/0 → %v after %d moves (imbalance=%.1f%%)",
+		effective, len(tasks), imbalance*100)
+}

@@ -2,7 +2,9 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -371,8 +373,21 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // InvalidateCache method moved to cluster_topology.go
 
-// GetS3BucketsData retrieves all Object Store buckets and aggregates total storage metrics
-func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
+// GetS3BucketsData retrieves Object Store buckets with pagination and sorting
+func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder string) (S3BucketsData, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "name"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
 	buckets, err := s.GetS3Buckets()
 	if err != nil {
 		return S3BucketsData{}, err
@@ -383,12 +398,95 @@ func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
 		totalSize += bucket.PhysicalSize
 	}
 
+	totalBuckets := len(buckets)
+
+	// Sort buckets
+	s.sortBuckets(buckets, sortBy, sortOrder)
+
+	// Calculate pagination
+	totalPages := (totalBuckets + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if startIndex >= totalBuckets {
+		buckets = []S3Bucket{}
+	} else {
+		if endIndex > totalBuckets {
+			endIndex = totalBuckets
+		}
+		buckets = buckets[startIndex:endIndex]
+	}
+
 	return S3BucketsData{
 		Buckets:      buckets,
-		TotalBuckets: len(buckets),
+		TotalBuckets: totalBuckets,
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+		CurrentPage:  page,
+		TotalPages:   totalPages,
+		PageSize:     pageSize,
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
 	}, nil
+}
+
+// sortBuckets sorts the bucket slice in place by the given field and order
+func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) {
+	desc := sortOrder == "desc"
+	sort.Slice(buckets, func(i, j int) bool {
+		a, b := buckets[i], buckets[j]
+		switch sortBy {
+		case "owner":
+			if a.Owner != b.Owner {
+				if desc {
+					return a.Owner > b.Owner
+				}
+				return a.Owner < b.Owner
+			}
+		case "created":
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				if desc {
+					return a.CreatedAt.After(b.CreatedAt)
+				}
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+		case "objects":
+			if a.ObjectCount != b.ObjectCount {
+				if desc {
+					return a.ObjectCount > b.ObjectCount
+				}
+				return a.ObjectCount < b.ObjectCount
+			}
+		case "logical_size":
+			if a.LogicalSize != b.LogicalSize {
+				if desc {
+					return a.LogicalSize > b.LogicalSize
+				}
+				return a.LogicalSize < b.LogicalSize
+			}
+		case "physical_size":
+			if a.PhysicalSize != b.PhysicalSize {
+				if desc {
+					return a.PhysicalSize > b.PhysicalSize
+				}
+				return a.PhysicalSize < b.PhysicalSize
+			}
+		}
+		// Tie-breaker: sort by name (also the default/primary for sortBy=="name")
+		if a.Name != b.Name {
+			if desc {
+				return a.Name > b.Name
+			}
+			return a.Name < b.Name
+		}
+		return false
+	})
 }
 
 // GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
@@ -406,28 +504,48 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the buckets directory
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          filerConfig.BucketsPath,
-			Prefix:             "",
-			StartFromFileName:  "",
-			InclusiveStartFrom: false,
-			Limit:              1000,
-		})
-		if err != nil {
-			return err
-		}
-
+		// Paginate through all buckets in the buckets directory
+		const listPageSize = 1000
+		startFrom := ""
+		var snapshotTsNs int64
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          filerConfig.BucketsPath,
+				Prefix:             "",
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+				Limit:              listPageSize,
+				SnapshotTsNs:       snapshotTsNs,
+			})
 			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
 				return err
 			}
 
-			if resp.Entry != nil && resp.Entry.IsDirectory {
+			pageCount := 0
+			lastName := ""
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					return err
+				}
+
+				if snapshotTsNs == 0 && resp.SnapshotTsNs != 0 {
+					snapshotTsNs = resp.SnapshotTsNs
+				}
+
+				if resp.Entry == nil {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+
+				if !resp.Entry.IsDirectory {
+					continue
+				}
+
 				bucketName := resp.Entry.Name
 				if strings.HasPrefix(bucketName, ".") {
 					// Skip internal/system directories from Object Store bucket listing.
@@ -502,6 +620,12 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				}
 				buckets = append(buckets, bucket)
 			}
+
+			// If we received fewer entries than the page size, we've listed everything
+			if pageCount < listPageSize {
+				break
+			}
+			startFrom = lastName
 		}
 
 		return nil

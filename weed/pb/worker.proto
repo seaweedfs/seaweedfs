@@ -157,10 +157,21 @@ message TaskTarget {
 
 
 
+// BalanceMoveSpec describes a single volume move within a batch balance job
+message BalanceMoveSpec {
+  uint32 volume_id = 1;                   // Volume to move
+  string source_node = 2;                 // Source server address (host:port)
+  string target_node = 3;                 // Destination server address (host:port)
+  string collection = 4;                  // Collection name
+  uint64 volume_size = 5;                 // Volume size in bytes (informational)
+}
+
 // BalanceTaskParams for volume balancing operations
 message BalanceTaskParams {
   bool force_move = 1;                    // Force move even with conflicts
   int32 timeout_seconds = 2;              // Operation timeout
+  int32 max_concurrent_moves = 3;         // Max concurrent moves in a batch job (0 = default 5)
+  repeated BalanceMoveSpec moves = 4;     // Batch: multiple volume moves in one job
 }
 
 // ReplicationTaskParams for adding replicas
