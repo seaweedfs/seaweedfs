@@ -615,12 +615,14 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		params.Collection,
 		h.grpcDialOption,
 	)
+	execCtx, execCancel := context.WithCancel(ctx)
+	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
 		message := fmt.Sprintf("balance progress %.0f%%", progress)
 		if strings.TrimSpace(stage) != "" {
 			message = stage
 		}
-		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
@@ -630,7 +632,9 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 			Activities: []*plugin_pb.ActivityEvent{
 				BuildExecutorActivity(stage, message),
 			},
-		})
+		}); err != nil {
+			execCancel()
+		}
 	})
 
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -647,7 +651,7 @@ func (h *VolumeBalanceHandler) executeSingleMove(
 		return err
 	}
 
-	if err := task.Execute(ctx, params); err != nil {
+	if err := task.Execute(execCtx, params); err != nil {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,

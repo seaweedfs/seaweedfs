@@ -292,7 +292,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 			if err := command.Do(cmd.Args, commandEnv, output); err != nil {
 				msg := fmt.Sprintf("%s: %v", cmd.Name, err)
 				errorMessages = append(errorMessages, msg)
-				_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+				if sendErr := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 					State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 					ProgressPercent: percentProgress(executed+1, len(execCommands)),
 					Stage:           "error",
@@ -300,7 +300,9 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 					Activities: []*plugin_pb.ActivityEvent{
 						BuildExecutorActivity("error", msg),
 					},
-				})
+				}); sendErr != nil {
+					break
+				}
 			}
 			break
 		}
@@ -308,7 +310,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 		if !found {
 			msg := fmt.Sprintf("unknown admin command: %s", cmd.Name)
 			errorMessages = append(errorMessages, msg)
-			_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			if sendErr := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 				State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 				ProgressPercent: percentProgress(executed+1, len(execCommands)),
 				Stage:           "error",
@@ -316,12 +318,14 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 				Activities: []*plugin_pb.ActivityEvent{
 					BuildExecutorActivity("error", msg),
 				},
-			})
+			}); sendErr != nil {
+				break
+			}
 		}
 
 		executed++
 		progress := percentProgress(executed, len(execCommands))
-		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		if sendErr := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 			ProgressPercent: progress,
 			Stage:           "running",
@@ -329,7 +333,9 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 			Activities: []*plugin_pb.ActivityEvent{
 				BuildExecutorActivity("running", commandLine),
 			},
-		})
+		}); sendErr != nil {
+			break
+		}
 	}
 
 	scriptHash := hashAdminScript(script)
