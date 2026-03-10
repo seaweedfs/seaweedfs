@@ -408,6 +408,9 @@ func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder str
 	if totalPages == 0 {
 		totalPages = 1
 	}
+	if page > totalPages {
+		page = totalPages
+	}
 
 	startIndex := (page - 1) * pageSize
 	endIndex := startIndex + pageSize
@@ -435,28 +438,54 @@ func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder str
 
 // sortBuckets sorts the bucket slice in place by the given field and order
 func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) {
+	desc := sortOrder == "desc"
 	sort.Slice(buckets, func(i, j int) bool {
-		var less bool
+		a, b := buckets[i], buckets[j]
 		switch sortBy {
-		case "name":
-			less = buckets[i].Name < buckets[j].Name
 		case "owner":
-			less = buckets[i].Owner < buckets[j].Owner
+			if a.Owner != b.Owner {
+				if desc {
+					return a.Owner > b.Owner
+				}
+				return a.Owner < b.Owner
+			}
 		case "created":
-			less = buckets[i].CreatedAt.Before(buckets[j].CreatedAt)
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				if desc {
+					return a.CreatedAt.After(b.CreatedAt)
+				}
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
 		case "objects":
-			less = buckets[i].ObjectCount < buckets[j].ObjectCount
+			if a.ObjectCount != b.ObjectCount {
+				if desc {
+					return a.ObjectCount > b.ObjectCount
+				}
+				return a.ObjectCount < b.ObjectCount
+			}
 		case "logical_size":
-			less = buckets[i].LogicalSize < buckets[j].LogicalSize
+			if a.LogicalSize != b.LogicalSize {
+				if desc {
+					return a.LogicalSize > b.LogicalSize
+				}
+				return a.LogicalSize < b.LogicalSize
+			}
 		case "physical_size":
-			less = buckets[i].PhysicalSize < buckets[j].PhysicalSize
-		default:
-			less = buckets[i].Name < buckets[j].Name
+			if a.PhysicalSize != b.PhysicalSize {
+				if desc {
+					return a.PhysicalSize > b.PhysicalSize
+				}
+				return a.PhysicalSize < b.PhysicalSize
+			}
 		}
-		if sortOrder == "desc" {
-			return !less
+		// Tie-breaker: sort by name (also the default/primary for sortBy=="name")
+		if a.Name != b.Name {
+			if desc {
+				return a.Name > b.Name
+			}
+			return a.Name < b.Name
 		}
-		return less
+		return false
 	})
 }
 
@@ -478,6 +507,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 		// Paginate through all buckets in the buckets directory
 		const listPageSize = 1000
 		startFrom := ""
+		var snapshotTsNs int64
 		for {
 			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
 				Directory:          filerConfig.BucketsPath,
@@ -485,6 +515,7 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				StartFromFileName:  startFrom,
 				InclusiveStartFrom: false,
 				Limit:              listPageSize,
+				SnapshotTsNs:       snapshotTsNs,
 			})
 			if err != nil {
 				return err
@@ -499,6 +530,10 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 						break
 					}
 					return err
+				}
+
+				if snapshotTsNs == 0 && resp.SnapshotTsNs != 0 {
+					snapshotTsNs = resp.SnapshotTsNs
 				}
 
 				if resp.Entry == nil {

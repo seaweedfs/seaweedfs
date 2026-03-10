@@ -117,77 +117,41 @@ templ S3Buckets(data dash.S3BucketsData) {
                             <table class="table table-hover" width="100%" cellspacing="0" id="bucketsTable">
                                 <thead>
                                     <tr>
-                                        <th style="cursor: pointer;" onclick="sortTable('name')">
-                                            Name
-                                            if data.SortBy == "name" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('name')" class="text-decoration-none text-dark">
+                                                Name
+                                                @getSortIcon("name", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
-                                        <th style="cursor: pointer;" onclick="sortTable('owner')">
-                                            Owner
-                                            if data.SortBy == "owner" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('owner')" class="text-decoration-none text-dark">
+                                                Owner
+                                                @getSortIcon("owner", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
-                                        <th style="cursor: pointer;" onclick="sortTable('created')">
-                                            Created
-                                            if data.SortBy == "created" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('created')" class="text-decoration-none text-dark">
+                                                Created
+                                                @getSortIcon("created", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
-                                        <th style="cursor: pointer;" onclick="sortTable('objects')">
-                                            Objects
-                                            if data.SortBy == "objects" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('objects')" class="text-decoration-none text-dark">
+                                                Objects
+                                                @getSortIcon("objects", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
-                                        <th style="cursor: pointer;" onclick="sortTable('logical_size')">
-                                            Logical Size
-                                            if data.SortBy == "logical_size" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('logical_size')" class="text-decoration-none text-dark">
+                                                Logical Size
+                                                @getSortIcon("logical_size", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
-                                        <th style="cursor: pointer;" onclick="sortTable('physical_size')">
-                                            Physical Size
-                                            if data.SortBy == "physical_size" {
-                                                if data.SortOrder == "asc" {
-                                                    <i class="fas fa-sort-up ms-1"></i>
-                                                } else {
-                                                    <i class="fas fa-sort-down ms-1"></i>
-                                                }
-                                            } else {
-                                                <i class="fas fa-sort ms-1 text-muted"></i>
-                                            }
+                                        <th>
+                                            <a href="#" onclick="sortTable('physical_size')" class="text-decoration-none text-dark">
+                                                Physical Size
+                                                @getSortIcon("physical_size", data.SortBy, data.SortOrder)
+                                            </a>
                                         </th>
                                         <th>Quota</th>
                                         <th>Versioning</th>
@@ -1201,53 +1165,56 @@ function displayBucketDetails(data) {
         // RFC 4180 compliant CSV escaping: escape double quotes by doubling them
         function escapeCsvField(value) {
             const str = String(value ?? '');
-            // If the field contains comma, double quote, or newline, wrap in quotes and escape internal quotes
             if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
                 return '"' + str.replace(/"/g, '""') + '"';
             }
             return '"' + str + '"';
         }
 
-        const buckets = Array.from(document.querySelectorAll('#bucketsTable tbody tr')).map(row => {
-            const cells = row.querySelectorAll('td');
-            if (cells.length > 1) {
-                return {
-                    name: cells[0].textContent.trim(),
-                    owner: cells[1].textContent.trim(),
-                    created: cells[2].textContent.trim(),
-                    objects: cells[3].textContent.trim(),
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
 
-                    logicalSize: cells[4].textContent.trim(),
-                    physicalSize: cells[5].textContent.trim(),
-                    quota: cells[6].textContent.trim(),
-                    versioning: cells[7].textContent.trim(),
-                    objectLock: cells[8].textContent.trim()
-                };
-            }
-            return null;
-        }).filter(bucket => bucket !== null);
+        // Fetch all buckets from the API (not just the current page)
+        fetch('/api/s3/buckets')
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error exporting buckets: ' + data.error);
+                    return;
+                }
 
-        const csvContent = "data:text/csv;charset=utf-8," + 
-            "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
-            buckets.map(b => [
-                escapeCsvField(b.name),
-                escapeCsvField(b.owner),
-                escapeCsvField(b.logicalSize),
-                escapeCsvField(b.physicalSize),
-                escapeCsvField(b.objects),
-                escapeCsvField(b.created),
-                escapeCsvField(b.quota),
-                escapeCsvField(b.versioning),
-                escapeCsvField(b.objectLock)
-            ].join(',')).join("\n");
+                const buckets = data.buckets || [];
+                const csvContent = "data:text/csv;charset=utf-8," +
+                    "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
+                    buckets.map(b => [
+                        escapeCsvField(b.name),
+                        escapeCsvField(b.owner),
+                        escapeCsvField(formatBytes(b.logical_size)),
+                        escapeCsvField(formatBytes(b.physical_size)),
+                        escapeCsvField(b.object_count),
+                        escapeCsvField(b.created_at),
+                        escapeCsvField(b.quota_enabled ? formatBytes(b.quota) : 'No quota'),
+                        escapeCsvField(b.versioning_status || 'Not configured'),
+                        escapeCsvField(b.object_lock_enabled ? 'Enabled' : 'Not configured')
+                    ].join(',')).join("\n");
 
-        const encodedUri = encodeURI(csvContent);
-        const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", "buckets.csv");
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", "buckets.csv");
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error exporting buckets: ' + error.message);
+            });
     }
     </script>
 }
