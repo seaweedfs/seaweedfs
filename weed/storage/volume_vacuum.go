@@ -533,7 +533,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
-	if v.Ttl.String() == "" {
+	if v.Ttl.String() == "" && v.nm != nil {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
 			return err
