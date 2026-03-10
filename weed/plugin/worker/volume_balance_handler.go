@@ -562,6 +562,7 @@ func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
 const (
 	defaultMaxConcurrentMoves = 5
 	maxConcurrentMovesLimit   = 50
+	maxBatchMoves             = 100
 )
 
 func (h *VolumeBalanceHandler) Execute(
@@ -702,7 +703,30 @@ func (h *VolumeBalanceHandler) executeBatchMoves(
 	sender ExecutionSender,
 ) error {
 	bp := params.GetBalanceParams()
-	moves := bp.Moves
+	if len(bp.Moves) == 0 {
+		return fmt.Errorf("batch balance job has no moves")
+	}
+	if len(bp.Moves) > maxBatchMoves {
+		return fmt.Errorf("batch balance job has %d moves, exceeding limit of %d", len(bp.Moves), maxBatchMoves)
+	}
+
+	// Filter out nil or incomplete moves before scheduling.
+	validMoves := make([]*worker_pb.BalanceMoveSpec, 0, len(bp.Moves))
+	for _, m := range bp.Moves {
+		if m == nil {
+			continue
+		}
+		if strings.TrimSpace(m.SourceNode) == "" || strings.TrimSpace(m.TargetNode) == "" || m.VolumeId == 0 {
+			glog.Warningf("batch balance: skipping invalid move (vol:%d src:%q tgt:%q)", m.VolumeId, m.SourceNode, m.TargetNode)
+			continue
+		}
+		validMoves = append(validMoves, m)
+	}
+	if len(validMoves) == 0 {
+		return fmt.Errorf("batch balance job has no valid moves after validation")
+	}
+	moves := validMoves
+
 	maxConcurrent := int(bp.MaxConcurrentMoves)
 	if maxConcurrent <= 0 {
 		maxConcurrent = defaultMaxConcurrentMoves
