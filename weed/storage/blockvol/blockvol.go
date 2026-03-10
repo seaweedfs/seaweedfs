@@ -152,6 +152,12 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		Metrics:        v.Metrics,
 	})
 	go v.groupCommit.Run()
+	bio, _, err := newBatchIO(cfg.IOBackend, log.Default())
+	if err != nil {
+		fd.Close()
+		os.Remove(path)
+		return nil, fmt.Errorf("blockvol: %w", err)
+	}
 	v.flusher = NewFlusher(FlusherConfig{
 		FD:       fd,
 		Super:    &v.super,
@@ -159,7 +165,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		DirtyMap: dm,
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
-		BatchIO:  newBatchIO(cfg.UseIOUring),
+		BatchIO:  bio,
 	})
 	go v.flusher.Run()
 	v.walAdmission = NewWALAdmission(WALAdmissionConfig{
@@ -238,6 +244,11 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		Metrics:        v.Metrics,
 	})
 	go v.groupCommit.Run()
+	bio, _, err := newBatchIO(cfg.IOBackend, log.Default())
+	if err != nil {
+		fd.Close()
+		return nil, fmt.Errorf("blockvol: %w", err)
+	}
 	v.flusher = NewFlusher(FlusherConfig{
 		FD:       fd,
 		Super:    &v.super,
@@ -245,7 +256,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		DirtyMap: dirtyMap,
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
-		BatchIO:  newBatchIO(cfg.UseIOUring),
+		BatchIO:  bio,
 	})
 	go v.flusher.Run()
 
@@ -1147,15 +1158,32 @@ func (v *BlockVol) Close() error {
 	return closeErr
 }
 
-// newBatchIO creates a BatchIO backend based on config.
-// When useIOUring is true, attempts io_uring with silent fallback to standard.
-func newBatchIO(useIOUring bool) batchio.BatchIO {
-	if useIOUring {
+// newBatchIO creates a BatchIO backend based on the IOBackend config mode.
+//
+// Returns (backend, selectedName, error):
+//   - "standard": always succeeds
+//   - "auto": tries io_uring, falls back to standard with warning
+//   - "io_uring": requires io_uring, returns error if unavailable
+func newBatchIO(mode IOBackendMode, logger *log.Logger) (batchio.BatchIO, string, error) {
+	switch mode {
+	case IOBackendIOUring:
 		bio, err := batchio.NewIOUring(256)
 		if err != nil {
-			return batchio.NewStandard()
+			return nil, "", fmt.Errorf("io_uring requested but unavailable: %w", err)
 		}
-		return bio
+		logger.Printf("io backend: requested=io_uring selected=io_uring")
+		return bio, "io_uring", nil
+
+	case IOBackendAuto:
+		bio, err := batchio.NewIOUring(256)
+		if err != nil {
+			logger.Printf("io backend: requested=auto selected=standard reason=%v", err)
+			return batchio.NewStandard(), "standard", nil
+		}
+		logger.Printf("io backend: requested=auto selected=io_uring")
+		return bio, "io_uring", nil
+
+	default: // IOBackendStandard or empty
+		return batchio.NewStandard(), "standard", nil
 	}
-	return batchio.NewStandard()
 }

@@ -2,6 +2,7 @@ package batchio
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -217,29 +218,16 @@ func TestStandard_PwriteBatch_ErrorOnReadOnly(t *testing.T) {
 	}
 }
 
-func TestNewIOUring_Fallback(t *testing.T) {
+func TestNewIOUring_Unavailable(t *testing.T) {
 	// On non-Linux (or without io_uring support), NewIOUring returns
-	// a working BatchIO (standard fallback).
-	bio, err := NewIOUring(256)
-	if err != nil {
-		t.Fatalf("NewIOUring: %v", err)
+	// ErrIOUringUnavailable instead of silently falling back.
+	_, err := NewIOUring(256)
+	if err == nil {
+		// io_uring is actually available (Linux with kernel 5.6+).
+		// This test validates the error path, so skip on supported systems.
+		t.Skip("io_uring is available on this system")
 	}
-	defer bio.Close()
-
-	// Verify it works by doing a write+read cycle.
-	f := tempFile(t)
-	data := []byte("iouring fallback test")
-	if err := bio.PwriteBatch(f, []Op{{Buf: data, Offset: 0}}); err != nil {
-		t.Fatalf("PwriteBatch: %v", err)
-	}
-	if err := bio.Fsync(f); err != nil {
-		t.Fatalf("Fsync: %v", err)
-	}
-	got := make([]byte, len(data))
-	if err := bio.PreadBatch(f, []Op{{Buf: got, Offset: 0}}); err != nil {
-		t.Fatalf("PreadBatch: %v", err)
-	}
-	if !bytes.Equal(got, data) {
-		t.Errorf("got %q, want %q", got, data)
+	if !errors.Is(err, ErrIOUringUnavailable) {
+		t.Fatalf("expected ErrIOUringUnavailable, got: %v", err)
 	}
 }

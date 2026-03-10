@@ -43,6 +43,7 @@ func main() {
 	nqn := flag.String("nqn", "", "NVMe NQN (defaults to nqn.2024-01.com.seaweedfs:vol.<sanitized iqn suffix>)")
 	walMaxCW := flag.Int("wal-max-concurrent-writes", 0, "max concurrent writers in WAL append path (0 = use default 16)")
 	nvmeIOQueues := flag.Int("nvme-io-queues", 0, "max NVMe IO queues (0 = use default 4)")
+	ioBackend := flag.String("io-backend", "standard", "flusher I/O backend: standard, auto, io_uring")
 	flag.Parse()
 
 	if *volPath == "" {
@@ -59,14 +60,14 @@ func main() {
 
 	logger := log.New(os.Stdout, "[iscsi] ", log.LstdFlags)
 
-	// Build config with optional WAL concurrency override.
-	var cfgs []blockvol.BlockVolConfig
+	// Build config.
+	cfg := blockvol.DefaultConfig()
+	cfg.IOBackend = blockvol.IOBackendMode(*ioBackend)
 	if *walMaxCW > 0 {
-		cfg := blockvol.DefaultConfig()
 		cfg.WALMaxConcurrentWrites = *walMaxCW
-		cfgs = append(cfgs, cfg)
 		logger.Printf("WALMaxConcurrentWrites = %d", *walMaxCW)
 	}
+	cfgs := []blockvol.BlockVolConfig{cfg}
 
 	var vol *blockvol.BlockVol
 	var err error

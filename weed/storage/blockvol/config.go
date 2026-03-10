@@ -19,8 +19,24 @@ type BlockVolConfig struct {
 	WALSoftWatermark       float64       // WAL fraction above which writes begin throttling (default 0.7)
 	WALHardWatermark       float64       // WAL fraction above which writes block until drain (default 0.9)
 	WALMaxConcurrentWrites int           // max concurrent writers in WAL append path (default 16)
-	UseIOUring             bool          // opt-in: use io_uring for batch flusher I/O (Linux 5.6+ only)
+	IOBackend              IOBackendMode // flusher I/O backend: "auto", "standard", "io_uring" (default "standard")
 }
+
+// IOBackendMode selects the batch I/O backend for the flusher.
+type IOBackendMode string
+
+const (
+	// IOBackendStandard uses sequential pread/pwrite/fdatasync (default).
+	IOBackendStandard IOBackendMode = "standard"
+
+	// IOBackendAuto uses io_uring if available, falls back to standard.
+	// Logs which backend was selected.
+	IOBackendAuto IOBackendMode = "auto"
+
+	// IOBackendIOUring requires io_uring. Fails volume open/create if unavailable.
+	// Use for benchmarking to guarantee the io_uring path is active.
+	IOBackendIOUring IOBackendMode = "io_uring"
+)
 
 // DefaultConfig returns a BlockVolConfig with production defaults.
 func DefaultConfig() BlockVolConfig {

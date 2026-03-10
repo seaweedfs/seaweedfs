@@ -13,7 +13,15 @@
 //	bio.Fsync(fd)
 package batchio
 
-import "os"
+import (
+	"errors"
+	"os"
+)
+
+// ErrIOUringUnavailable is returned by NewIOUring when io_uring cannot be
+// initialized (unsupported kernel, seccomp, non-Linux platform, etc.).
+// Callers decide whether to fall back to standard or fail.
+var ErrIOUringUnavailable = errors.New("batchio: io_uring unavailable")
 
 // Op represents a single I/O operation: read or write buf at offset.
 type Op struct {

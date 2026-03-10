@@ -17,13 +17,11 @@ type ioUringBatchIO struct {
 }
 
 // NewIOUring creates a BatchIO backed by io_uring with the given ring size.
-// If io_uring is unavailable (kernel too old, seccomp, etc.), returns
-// NewStandard() with a nil error — silent fallback.
+// Returns ErrIOUringUnavailable if io_uring cannot be initialized.
 func NewIOUring(ringSize uint) (BatchIO, error) {
 	ring, err := iouring.New(ringSize)
 	if err != nil {
-		// Kernel doesn't support io_uring — fall back silently.
-		return NewStandard(), nil
+		return nil, fmt.Errorf("%w: %v", ErrIOUringUnavailable, err)
 	}
 	return &ioUringBatchIO{ring: ring, ringSize: int(ringSize)}, nil
 }
