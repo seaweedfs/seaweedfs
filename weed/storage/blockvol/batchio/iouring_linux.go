@@ -51,14 +51,15 @@ func (u *ioUringBatchIO) preadChunk(fd *os.File, ops []Op) error {
 		requests[i] = iouring.Pread(fdInt, ops[i].Buf, uint64(ops[i].Offset))
 	}
 
-	results, err := u.ring.SubmitRequests(requests, nil)
+	resultSet, err := u.ring.SubmitRequests(requests, nil)
 	if err != nil {
 		return fmt.Errorf("iouring PreadBatch submit: %w", err)
 	}
 
-	for i, res := range results {
-		<-res.Done()
-		n, err := res.ReturnInt()
+	// Wait for all completions before checking individual results.
+	<-resultSet.Done()
+	for i, req := range resultSet.Requests() {
+		n, err := req.ReturnInt()
 		if err != nil {
 			return fmt.Errorf("iouring PreadBatch op[%d]: %w", i, err)
 		}
@@ -93,14 +94,15 @@ func (u *ioUringBatchIO) pwriteChunk(fd *os.File, ops []Op) error {
 		requests[i] = iouring.Pwrite(fdInt, ops[i].Buf, uint64(ops[i].Offset))
 	}
 
-	results, err := u.ring.SubmitRequests(requests, nil)
+	resultSet, err := u.ring.SubmitRequests(requests, nil)
 	if err != nil {
 		return fmt.Errorf("iouring PwriteBatch submit: %w", err)
 	}
 
-	for i, res := range results {
-		<-res.Done()
-		n, err := res.ReturnInt()
+	// Wait for all completions before checking individual results.
+	<-resultSet.Done()
+	for i, req := range resultSet.Requests() {
+		n, err := req.ReturnInt()
 		if err != nil {
 			return fmt.Errorf("iouring PwriteBatch op[%d]: %w", i, err)
 		}
@@ -139,7 +141,7 @@ func (u *ioUringBatchIO) LinkedWriteFsync(fd *os.File, buf []byte, offset int64)
 
 	// SubmitLinkRequests sets IOSQE_IO_LINK on all SQEs except the last,
 	// ensuring the fdatasync executes only after the pwrite completes.
-	results, err := u.ring.SubmitLinkRequests(
+	resultSet, err := u.ring.SubmitLinkRequests(
 		[]iouring.PrepRequest{writeReq, fsyncReq},
 		nil,
 	)
@@ -151,9 +153,10 @@ func (u *ioUringBatchIO) LinkedWriteFsync(fd *os.File, buf []byte, offset int64)
 		return fdatasync(fd)
 	}
 
-	for i, res := range results {
-		<-res.Done()
-		_, rerr := res.ReturnInt()
+	// Wait for all linked ops to complete, then check results.
+	<-resultSet.Done()
+	for i, req := range resultSet.Requests() {
+		_, rerr := req.ReturnInt()
 		if rerr != nil {
 			return fmt.Errorf("iouring LinkedWriteFsync op[%d]: %w", i, rerr)
 		}
