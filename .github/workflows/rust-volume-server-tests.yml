@@ -200,7 +200,7 @@ jobs:
             fi
           fi
           echo "Running Go volume server tests with Rust volume for ${{ matrix.test-type }} (Shard ${{ matrix.shard }}, pattern: ${TEST_PATTERN})..."
-          go test -v -count=1 -timeout=30m ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
+          go test -v -count=1 -tags 5BytesOffset -timeout=30m ./test/volume_server/${{ matrix.test-type }}/... -run "${TEST_PATTERN}"
 
       - name: Collect logs on failure
         if: failure()
