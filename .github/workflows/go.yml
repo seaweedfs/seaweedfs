@@ -19,13 +19,12 @@ jobs:
     name: Go Vet
     runs-on: ubuntu-latest
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v6
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
     - name: Get dependencies
       run: |
         cd weed; go get -v -t -d ./...
@@ -42,13 +41,12 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v6
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
     - name: Build
       run: cd weed; go build -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v .
 
@@ -56,12 +54,11 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@a5f9b05d2d216f63e13859e0d847461041025775 # v2
-      with:
-        go-version: ^1.13
-      id: go
     - name: Check out code into the Go module directory
-      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v2
+      uses: actions/checkout@v6
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
     - name: Test
       run: cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...
