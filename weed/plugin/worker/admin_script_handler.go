@@ -284,6 +284,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 		_, _ = fmt.Fprintf(output, "$ %s\n", commandLine)
 
 		found := false
+		sendBroken := false
 		for _, command := range shell.Commands {
 			if command.Name() != cmd.Name {
 				continue
@@ -301,9 +302,12 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 						BuildExecutorActivity("error", msg),
 					},
 				}); sendErr != nil {
-					break
+					sendBroken = true
 				}
 			}
+			break
+		}
+		if sendBroken {
 			break
 		}
 
