@@ -1,0 +1,236 @@
+name: "CP10-3 NVMe IO Queues Sweep (1 vs 4) — Contention Theory"
+timeout: "30m"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: "testdev"
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  ioq1:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3270
+    nvme_port: 4430
+    admin_port: 8090
+    iqn_suffix: "ioq1"
+    nqn_suffix: "ioq1"
+    nvme_io_queues: 1
+  ioq4:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3271
+    nvme_port: 4431
+    admin_port: 8091
+    iqn_suffix: "ioq4"
+    nqn_suffix: "ioq4"
+    nvme_io_queues: 4
+
+phases:
+  - name: cleanup-stale
+    actions:
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+
+  # =============================================
+  # IOQ=1 (single connection, like iSCSI)
+  # =============================================
+  - name: ioq1-start
+    actions:
+      - action: start_target
+        target: ioq1
+        create: "true"
+
+  - name: ioq1-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: ioq1
+        node: client
+        save_as: nvme_nqn_1
+      - action: nvme_get_device
+        target: ioq1
+        node: client
+        save_as: nvme_dev_1
+
+  - name: ioq1-4k-rw-qd1
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_1}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq1-4k-rw-qd1"
+        save_as: _fio_ioq1_rw1
+      - action: fio_parse
+        json_var: _fio_ioq1_rw1
+        metric: iops
+        save_as: ioq1_rw_qd1
+
+  - name: ioq1-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_1}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq1-4k-rw-qd32"
+        save_as: _fio_ioq1_rw32
+      - action: fio_parse
+        json_var: _fio_ioq1_rw32
+        metric: iops
+        save_as: ioq1_rw_qd32
+
+  - name: ioq1-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_1}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq1-4k-rd-qd32"
+        save_as: _fio_ioq1_rd32
+      - action: fio_parse
+        json_var: _fio_ioq1_rd32
+        metric: iops
+        save_as: ioq1_rd_qd32
+
+  - name: ioq1-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: ioq1
+        node: client
+      - action: stop_target
+        target: ioq1
+
+  # =============================================
+  # IOQ=4 (default, 4 connections)
+  # =============================================
+  - name: ioq4-start
+    actions:
+      - action: start_target
+        target: ioq4
+        create: "true"
+
+  - name: ioq4-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: ioq4
+        node: client
+        save_as: nvme_nqn_4
+      - action: nvme_get_device
+        target: ioq4
+        node: client
+        save_as: nvme_dev_4
+
+  - name: ioq4-4k-rw-qd1
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_4}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq4-4k-rw-qd1"
+        save_as: _fio_ioq4_rw1
+      - action: fio_parse
+        json_var: _fio_ioq4_rw1
+        metric: iops
+        save_as: ioq4_rw_qd1
+
+  - name: ioq4-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_4}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq4-4k-rw-qd32"
+        save_as: _fio_ioq4_rw32
+      - action: fio_parse
+        json_var: _fio_ioq4_rw32
+        metric: iops
+        save_as: ioq4_rw_qd32
+
+  - name: ioq4-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_4}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "ioq4-4k-rd-qd32"
+        save_as: _fio_ioq4_rd32
+      - action: fio_parse
+        json_var: _fio_ioq4_rd32
+        metric: iops
+        save_as: ioq4_rd_qd32
+
+  - name: ioq4-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: ioq4
+        node: client
+      - action: stop_target
+        target: ioq4
+
+  # =============================================
+  # Cleanup
+  # =============================================
+  - name: cleanup
+    always: true
+    actions:
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

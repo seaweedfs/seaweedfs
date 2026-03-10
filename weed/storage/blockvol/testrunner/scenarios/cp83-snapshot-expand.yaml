@@ -18,8 +18,8 @@ targets:
   primary:
     node: target_node
     vol_size: 50M
-    iscsi_port: 3262
-    admin_port: 8082
+    iscsi_port: 3266
+    admin_port: 8086
     iqn_suffix: cp83-snap
 
 phases:

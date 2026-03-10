@@ -17,6 +17,10 @@ type HATarget struct {
 	ReplicaCtrl int // replica receiver ctrl port
 	RebuildPort int
 	TPGID       int // ALUA target port group ID (0 = omit flag)
+	NvmePort             int // NVMe/TCP listen port (0 = disabled)
+	NQN                  string // NVMe NQN (auto-derived from IQN if empty)
+	MaxConcurrentWrites  int // WAL max concurrent writes (0 = default 16)
+	NvmeIOQueues         int // NVMe max IO queues (0 = default 4)
 }
 
 // StatusResp matches the JSON returned by GET /status.
@@ -60,7 +64,11 @@ type HATargetSpec struct {
 	ReplicaDataPort int
 	ReplicaCtrlPort int
 	RebuildPort     int
-	TPGID           int
+	TPGID                int
+	NvmePort             int
+	NQN                  string
+	MaxConcurrentWrites  int
+	NvmeIOQueues         int
 }
 
 // NewHATargetFromSpec creates an HATarget from an HATargetSpec and Node.
@@ -83,6 +91,10 @@ func NewHATargetFromSpec(node *Node, name string, spec HATargetSpec) *HATarget {
 
 	ht := NewHATarget(node, cfg, spec.AdminPort, spec.ReplicaDataPort, spec.ReplicaCtrlPort, spec.RebuildPort)
 	ht.TPGID = spec.TPGID
+	ht.NvmePort = spec.NvmePort
+	ht.NQN = spec.NQN
+	ht.MaxConcurrentWrites = spec.MaxConcurrentWrites
+	ht.NvmeIOQueues = spec.NvmeIOQueues
 
 	// Use unique file paths per target name.
 	ht.BinPath = "/tmp/iscsi-target-test"
@@ -93,6 +105,11 @@ func NewHATargetFromSpec(node *Node, name string, spec HATargetSpec) *HATarget {
 
 // Start overrides Target.Start to add HA-specific flags.
 func (h *HATarget) Start(ctx context.Context, create bool) error {
+	// Pre-flight: check if ports are already in use by another process.
+	if err := h.checkPortsFree(ctx); err != nil {
+		return err
+	}
+
 	// Remove old log
 	h.Node.Run(ctx, fmt.Sprintf("rm -f %s", h.LogFile))
 
@@ -100,8 +117,14 @@ func (h *HATarget) Start(ctx context.Context, create bool) error {
 		h.VolFile, h.Config.Port, h.Config.IQN)
 
 	if create {
+		if err := h.checkDiskSpace(ctx); err != nil {
+			return err
+		}
 		h.Node.Run(ctx, fmt.Sprintf("rm -f %s %s.wal", h.VolFile, h.VolFile))
 		args += fmt.Sprintf(" -create -size %s", h.Config.VolSize)
+		if h.Config.WALSize != "" {
+			args += fmt.Sprintf(" -wal-size %s", h.Config.WALSize)
+		}
 	}
 
 	if h.AdminPort > 0 {
@@ -116,6 +139,18 @@ func (h *HATarget) Start(ctx context.Context, create bool) error {
 	if h.TPGID > 0 {
 		args += fmt.Sprintf(" -tpg-id %d", h.TPGID)
 	}
+	if h.NvmePort > 0 {
+		args += fmt.Sprintf(" -nvme-addr :%d", h.NvmePort)
+		if h.NQN != "" {
+			args += fmt.Sprintf(" -nqn %s", h.NQN)
+		}
+	}
+	if h.MaxConcurrentWrites > 0 {
+		args += fmt.Sprintf(" -wal-max-concurrent-writes %d", h.MaxConcurrentWrites)
+	}
+	if h.NvmeIOQueues > 0 {
+		args += fmt.Sprintf(" -nvme-io-queues %d", h.NvmeIOQueues)
+	}
 
 	cmd := fmt.Sprintf("setsid -f %s %s >%s 2>&1", h.BinPath, args, h.LogFile)
 	_, stderr, code, err := h.Node.Run(ctx, cmd)
@@ -127,13 +162,7 @@ func (h *HATarget) Start(ctx context.Context, create bool) error {
 		return err
 	}
 
-	if h.AdminPort > 0 {
-		if err := h.waitForAdminPort(ctx); err != nil {
-			return err
-		}
-	}
-
-	// Discover PID by matching the unique volume file path.
+	// Discover PID early — needed for liveness check in waitForAdminPort.
 	stdout, _, _, _ := h.Node.Run(ctx, fmt.Sprintf("ps -eo pid,args | grep '%s' | grep -v grep | awk '{print $1}'", h.VolFile))
 	pidStr := strings.TrimSpace(stdout)
 	if idx := strings.IndexByte(pidStr, '\n'); idx > 0 {
@@ -145,6 +174,12 @@ func (h *HATarget) Start(ctx context.Context, create bool) error {
 		return fmt.Errorf("find ha target PID: %q", pidStr)
 	}
 	h.Pid = pid
+
+	if h.AdminPort > 0 {
+		if err := h.waitForAdminPort(ctx); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -152,15 +187,87 @@ func (h *HATarget) waitForAdminPort(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("wait for admin port %d: %w", h.AdminPort, ctx.Err())
+			// Collect last 20 lines of log for diagnostics.
+			logTail, _, _, _ := h.Node.Run(context.Background(),
+				fmt.Sprintf("tail -20 %s 2>/dev/null", h.LogFile))
+			return fmt.Errorf("wait for admin port %d: %w\nlast log:\n%s", h.AdminPort, ctx.Err(), logTail)
 		default:
 		}
+
+		// Check if our process is still alive — fail fast if it crashed.
+		if h.Pid > 0 {
+			_, _, code, _ := h.Node.Run(ctx, fmt.Sprintf("kill -0 %d 2>/dev/null", h.Pid))
+			if code != 0 {
+				logTail, _, _, _ := h.Node.Run(context.Background(),
+					fmt.Sprintf("tail -20 %s 2>/dev/null", h.LogFile))
+				return fmt.Errorf("target process %d died before admin port %d was ready\nlast log:\n%s",
+					h.Pid, h.AdminPort, logTail)
+			}
+		}
+
 		stdout, _, code, _ := h.Node.Run(ctx, fmt.Sprintf("ss -tln | grep :%d", h.AdminPort))
 		if code == 0 && strings.Contains(stdout, fmt.Sprintf(":%d", h.AdminPort)) {
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// checkPortsFree verifies required ports are not already in use by another process.
+func (h *HATarget) checkPortsFree(ctx context.Context) error {
+	ports := []struct {
+		port int
+		name string
+	}{
+		{h.Config.Port, "iSCSI"},
+	}
+	if h.AdminPort > 0 {
+		ports = append(ports, struct {
+			port int
+			name string
+		}{h.AdminPort, "admin"})
+	}
+	if h.ReplicaData > 0 {
+		ports = append(ports, struct {
+			port int
+			name string
+		}{h.ReplicaData, "replica-data"})
+	}
+	if h.ReplicaCtrl > 0 {
+		ports = append(ports, struct {
+			port int
+			name string
+		}{h.ReplicaCtrl, "replica-ctrl"})
+	}
+	if h.RebuildPort > 0 {
+		ports = append(ports, struct {
+			port int
+			name string
+		}{h.RebuildPort, "rebuild"})
+	}
+	if h.NvmePort > 0 {
+		ports = append(ports, struct {
+			port int
+			name string
+		}{h.NvmePort, "nvme"})
+	}
+
+	for _, p := range ports {
+		stdout, _, code, _ := h.Node.Run(ctx, fmt.Sprintf("ss -tln | grep ':%d '", p.port))
+		if code == 0 && strings.TrimSpace(stdout) != "" {
+			// Port is in use — find what owns it.
+			owner, _, _, _ := h.Node.Run(ctx, fmt.Sprintf(
+				"ss -tlnp | grep ':%d ' | head -1", p.port))
+			return fmt.Errorf("port %d (%s) already in use on %s: %s",
+				p.port, p.name, h.Node.Host, strings.TrimSpace(owner))
+		}
+	}
+	return nil
+}
+
+// checkDiskSpace verifies the target node has enough disk space for the volume + WAL.
+func (h *HATarget) checkDiskSpace(ctx context.Context) error {
+	return CheckDiskSpace(ctx, h.Node, h.VolFile, h.Config.VolSize, h.Config.WALSize)
 }
 
 // curlPost executes a POST via curl on the node.

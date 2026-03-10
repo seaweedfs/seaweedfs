@@ -16,6 +16,9 @@ type BlockVolConfig struct {
 	WALFullTimeout         time.Duration // max retry time when WAL is full (default 5s)
 	FlushInterval          time.Duration // flusher periodic interval (default 100ms)
 	DirtyMapShards         int           // number of dirty map shards, must be power-of-2 (default 256)
+	WALSoftWatermark       float64       // WAL fraction above which writes begin throttling (default 0.7)
+	WALHardWatermark       float64       // WAL fraction above which writes block until drain (default 0.9)
+	WALMaxConcurrentWrites int           // max concurrent writers in WAL append path (default 16)
 }
 
 // DefaultConfig returns a BlockVolConfig with production defaults.
@@ -28,6 +31,9 @@ func DefaultConfig() BlockVolConfig {
 		WALFullTimeout:         5 * time.Second,
 		FlushInterval:          100 * time.Millisecond,
 		DirtyMapShards:         256,
+		WALSoftWatermark:       0.7,
+		WALHardWatermark:       0.9,
+		WALMaxConcurrentWrites: 16,
 	}
 }
 
@@ -55,6 +61,15 @@ func (c *BlockVolConfig) applyDefaults() {
 	if c.DirtyMapShards == 0 {
 		c.DirtyMapShards = d.DirtyMapShards
 	}
+	if c.WALSoftWatermark == 0 {
+		c.WALSoftWatermark = d.WALSoftWatermark
+	}
+	if c.WALHardWatermark == 0 {
+		c.WALHardWatermark = d.WALHardWatermark
+	}
+	if c.WALMaxConcurrentWrites == 0 {
+		c.WALMaxConcurrentWrites = d.WALMaxConcurrentWrites
+	}
 }
 
 var errInvalidConfig = errors.New("blockvol: invalid config")
@@ -81,6 +96,15 @@ func (c *BlockVolConfig) Validate() error {
 	}
 	if c.FlushInterval <= 0 {
 		return fmt.Errorf("%w: FlushInterval must be positive, got %v", errInvalidConfig, c.FlushInterval)
+	}
+	if c.WALSoftWatermark <= 0 || c.WALSoftWatermark >= 1 {
+		return fmt.Errorf("%w: WALSoftWatermark must be in (0,1), got %f", errInvalidConfig, c.WALSoftWatermark)
+	}
+	if c.WALHardWatermark <= c.WALSoftWatermark || c.WALHardWatermark > 1 {
+		return fmt.Errorf("%w: WALHardWatermark must be in (SoftWatermark,1], got %f", errInvalidConfig, c.WALHardWatermark)
+	}
+	if c.WALMaxConcurrentWrites <= 0 {
+		return fmt.Errorf("%w: WALMaxConcurrentWrites must be positive, got %d", errInvalidConfig, c.WALMaxConcurrentWrites)
 	}
 	return nil
 }

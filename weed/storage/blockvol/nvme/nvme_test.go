@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -19,15 +20,16 @@ import (
 // ============================================================
 
 type mockBlockDevice struct {
-	mu        sync.Mutex
-	data      []byte
-	blockSize uint32
-	healthy   bool
-	anaState  uint8
-	readErr   error
-	writeErr  error
-	syncErr   error
-	trimErr   error
+	mu          sync.Mutex
+	data        []byte
+	blockSize   uint32
+	healthy     bool
+	anaState    uint8
+	readErr     error
+	writeErr    error
+	syncErr     error
+	trimErr     error
+	walPressure float64
 }
 
 func newMockDevice(blocks int, blockSize uint32) *mockBlockDevice {
@@ -96,6 +98,11 @@ func (m *mockBlockDevice) IsHealthy() bool      { return m.healthy }
 func (m *mockBlockDevice) ANAState() uint8      { return m.anaState }
 func (m *mockBlockDevice) ANAGroupID() uint16   { return 1 }
 func (m *mockBlockDevice) DeviceNGUID() [16]byte { return [16]byte{0x60, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} }
+func (m *mockBlockDevice) WALPressure() float64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.walPressure
+}
 
 // ============================================================
 // Protocol Marshal/Unmarshal Tests
@@ -616,13 +623,13 @@ func TestController_PropertyGetCAP(t *testing.T) {
 	client, r, w, _, _ := setupAdminSession(t, nqn)
 	defer client.Close()
 
-	// PropertyGet CAP (8 bytes)
+	// PropertyGet CAP (8 bytes) — CDW10=ATTRIB(size8), CDW11=OFST
 	cmd := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertyGet,
 		CID:    1,
-		D10:    propCAP,
-		D11:    1, // 8-byte
+		D10:    1, // ATTRIB: 8-byte
+		D11:    propCAP,
 	}
 	w.SendWithData(pduCapsuleCmd, 0, &cmd, capsuleCmdSize, nil)
 	resp := recvCapsuleResp(t, r)
@@ -643,13 +650,13 @@ func TestController_PropertySetCC_EN(t *testing.T) {
 	client, r, w, ctrl, _ := setupAdminSession(t, nqn)
 	defer client.Close()
 
-	// PropertySet CC.EN=1
+	// PropertySet CC.EN=1 — CDW11=OFST, CDW12=VALUE
 	cmd := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertySet,
 		CID:    2,
-		D10:    propCC,
-		D14:    1, // CC.EN=1
+		D11:    propCC,
+		D12:    1, // CC.EN=1
 	}
 	w.SendWithData(pduCapsuleCmd, 0, &cmd, capsuleCmdSize, nil)
 	resp := recvCapsuleResp(t, r)
@@ -657,12 +664,12 @@ func TestController_PropertySetCC_EN(t *testing.T) {
 		t.Fatalf("PropertySet CC failed: 0x%04x", resp.Status)
 	}
 
-	// Verify CSTS.RDY via PropertyGet
+	// Verify CSTS.RDY via PropertyGet — CDW11=OFST
 	cmd2 := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertyGet,
 		CID:    3,
-		D10:    propCSTS,
+		D11:    propCSTS,
 	}
 	w.SendWithData(pduCapsuleCmd, 0, &cmd2, capsuleCmdSize, nil)
 	resp2 := recvCapsuleResp(t, r)
@@ -724,8 +731,8 @@ func TestIdentify_Controller(t *testing.T) {
 	if data[77] != 3 {
 		t.Fatalf("MDTS = %d, want 3", data[77])
 	}
-	// SubNQN check
-	subNQN := string(bytes.TrimRight(data[768:1024], " "))
+	// SubNQN check (NUL-terminated, not space-padded)
+	subNQN := string(bytes.TrimRight(data[768:1024], "\x00"))
 	if subNQN != nqn {
 		t.Fatalf("SubNQN = %q, want %q", subNQN, nqn)
 	}
@@ -1339,8 +1346,8 @@ func TestIO_ReadOutOfBounds(t *testing.T) {
 	clientConn.Close()
 }
 
-func TestIO_WriteNoInlineData(t *testing.T) {
-	nqn := "nqn.test:io-noinline"
+func TestIO_WriteR2TFlow(t *testing.T) {
+	nqn := "nqn.test:io-r2t"
 	dev := newMockDevice(256, 512)
 
 	srv := NewServer(Config{Enabled: true, ListenAddr: "127.0.0.1:0", MaxIOQueues: 4})
@@ -1361,23 +1368,59 @@ func TestIO_WriteNoInlineData(t *testing.T) {
 	sendICReq(w)
 	recvICResp(t, r)
 
-	// Write with no inline data (DataOffset=0)
+	// Write 1 block (512 bytes) with no inline data → triggers R2T flow
 	writeCmd := CapsuleCommand{
 		OpCode: ioWrite,
 		CID:    205,
-		D10:    0,
-		D12:    0,
+		NSID:   1,
+		D10:    0, // LBA 0
+		D12:    0, // NLB = 0 means 1 block
 	}
-	// Send header-only (no data)
 	w.SendWithData(pduCapsuleCmd, 0, &writeCmd, capsuleCmdSize, nil)
 
-	resp := recvCapsuleResp(t, r)
-	status := StatusWord(resp.Status)
-	if status != StatusInvalidField {
-		t.Fatalf("expected InvalidField for R2T write, got 0x%04x", resp.Status)
+	// Expect R2T from controller
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !status.DNR() {
-		t.Fatal("InvalidField should have DNR=1")
+	if hdr.Type != pduR2T {
+		t.Fatalf("expected R2T (0x9), got 0x%x", hdr.Type)
+	}
+	var r2t R2THeader
+	r.Receive(&r2t)
+	if r2t.CCCID != 205 {
+		t.Fatalf("R2T CCCID = %d, want 205", r2t.CCCID)
+	}
+	if r2t.DATAL != 512 {
+		t.Fatalf("R2T DATAL = %d, want 512", r2t.DATAL)
+	}
+
+	// Send H2C Data with the write payload
+	writeData := make([]byte, 512)
+	for i := range writeData {
+		writeData[i] = 0xAB
+	}
+	h2c := H2CDataHeader{
+		CCCID: 205,
+		TAG:   r2t.TAG,
+		DATAO: 0,
+		DATAL: 512,
+	}
+	w.SendWithData(pduH2CData, 0x04, &h2c, h2cDataHdrSize, writeData) // flag 0x04 = LAST
+
+	// Expect CapsuleResp (success)
+	resp := recvCapsuleResp(t, r)
+	if StatusWord(resp.Status).IsError() {
+		t.Fatalf("write via R2T failed: 0x%04x", resp.Status)
+	}
+
+	// Verify data was written by reading it back
+	readBack, err := dev.ReadAt(0, 512)
+	if err != nil {
+		t.Fatalf("ReadAt: %v", err)
+	}
+	if readBack[0] != 0xAB {
+		t.Fatalf("data not written: got 0x%02x, want 0xAB", readBack[0])
 	}
 
 	clientConn.Close()
@@ -1729,13 +1772,13 @@ func TestController_KATOTimeout(t *testing.T) {
 	sendConnect(w, 0, 64, 100, nqn, "host", 0xFFFF)
 	recvCapsuleResp(t, r)
 
-	// Enable controller (which starts KATO timer)
+	// Enable controller (which starts KATO timer) — CDW11=OFST, CDW12=VALUE
 	propSet := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertySet,
 		CID:    1,
-		D10:    propCC,
-		D14:    1, // CC.EN=1
+		D11:    propCC,
+		D12:    1, // CC.EN=1
 	}
 	w.SendWithData(pduCapsuleCmd, 0, &propSet, capsuleCmdSize, nil)
 	recvCapsuleResp(t, r)
@@ -1796,13 +1839,13 @@ func TestFullSequence_ICConnectIdentifyReadWrite(t *testing.T) {
 		t.Fatalf("SetFeatures NumQueues failed: 0x%04x", resp.Status)
 	}
 
-	// 4. PropertySet CC.EN=1
+	// 4. PropertySet CC.EN=1 — CDW11=OFST, CDW12=VALUE
 	propCmd := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertySet,
 		CID:    6,
-		D10:    propCC,
-		D14:    1,
+		D11:    propCC,
+		D12:    1,
 	}
 	w.SendWithData(pduCapsuleCmd, 0, &propCmd, capsuleCmdSize, nil)
 	resp = recvCapsuleResp(t, r)
@@ -2374,4 +2417,1025 @@ func TestDisconnect_NoError(t *testing.T) {
 	}
 
 	client.Close()
+}
+
+// TestReader_LargePadding verifies that padding > maxHeaderSize (128) is handled
+// without panic. DataOffset is uint8 (max 255), HeaderLength for CapsuleCmd is 72,
+// so pad can be up to 183.
+func TestReader_LargePadding(t *testing.T) {
+	// Build a PDU with HeaderLength=72 (CapsuleCmd), DataOffset=250 → pad=178 > 128
+	headerLen := uint8(capsuleCmdHdrLen) // 72
+	dataOffset := uint8(250)
+	pad := int(dataOffset) - int(headerLen) // 178
+	dataPayload := []byte{0xDE, 0xAD}
+	totalDataLen := uint32(dataOffset) + uint32(len(dataPayload))
+
+	var wireBuf bytes.Buffer
+
+	ch := CommonHeader{
+		Type:         pduCapsuleCmd,
+		HeaderLength: headerLen,
+		DataOffset:   dataOffset,
+		DataLength:   totalDataLen,
+	}
+	chBytes := make([]byte, commonHeaderSize)
+	ch.Marshal(chBytes)
+	wireBuf.Write(chBytes)
+
+	// Specific header (72 - 8 = 64 bytes for CapsuleCommand)
+	specificBuf := make([]byte, int(headerLen)-commonHeaderSize)
+	wireBuf.Write(specificBuf)
+
+	// Padding (178 bytes)
+	padBytes := make([]byte, pad)
+	wireBuf.Write(padBytes)
+
+	// Payload
+	wireBuf.Write(dataPayload)
+
+	r := NewReader(&wireBuf)
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if hdr.DataOffset != dataOffset {
+		t.Fatalf("DataOffset = %d, want %d", hdr.DataOffset, dataOffset)
+	}
+
+	var capsule CapsuleCommand
+	if err := r.Receive(&capsule); err != nil {
+		t.Fatalf("Receive with large padding (%d bytes) should not panic: %v", pad, err)
+	}
+
+	// Verify payload is readable after padding skip
+	dataLen := r.Length()
+	if dataLen != uint32(len(dataPayload)) {
+		t.Fatalf("Length() = %d, want %d", dataLen, len(dataPayload))
+	}
+	got := make([]byte, dataLen)
+	if err := r.ReceiveData(got); err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != 0xDE || got[1] != 0xAD {
+		t.Fatalf("payload = %x, want DEAD", got)
+	}
+}
+
+// ============================================================
+// CP10-3: Performance Optimization Tests
+// ============================================================
+
+// TestTuneConn_NoError verifies tuneConn does not error on a real TCP connection.
+func TestTuneConn_NoError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			tuneConn(conn) // must not panic or error
+			conn.Close()
+		}
+		close(done)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	<-done
+}
+
+// TestTuneConn_NonTCP verifies tuneConn is a no-op for non-TCP connections.
+func TestTuneConn_NonTCP(t *testing.T) {
+	c, _ := pipeConn()
+	defer c.Close()
+	tuneConn(c) // must not panic on net.Pipe (not *net.TCPConn)
+}
+
+// TestWriterBatchedFlush verifies writeHeaderAndData + FlushBuf produces
+// identical wire bytes as SendWithData.
+func TestWriterBatchedFlush(t *testing.T) {
+	payload := make([]byte, 4096)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+
+	// Reference: SendWithData
+	var ref bytes.Buffer
+	w1 := NewWriter(&ref)
+	c2h := C2HDataHeader{CCCID: 10, DATAO: 0, DATAL: 4096}
+	if err := w1.SendWithData(pduC2HData, c2hFlagLast, &c2h, c2hDataHdrSize, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	// Batched: writeHeaderAndData + FlushBuf
+	var batched bytes.Buffer
+	w2 := NewWriter(&batched)
+	c2h2 := C2HDataHeader{CCCID: 10, DATAO: 0, DATAL: 4096}
+	if err := w2.writeHeaderAndData(pduC2HData, c2hFlagLast, &c2h2, c2hDataHdrSize, payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := w2.FlushBuf(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(ref.Bytes(), batched.Bytes()) {
+		t.Fatalf("batched output (%d bytes) differs from reference (%d bytes)",
+			batched.Len(), ref.Len())
+	}
+}
+
+// TestSendWithData_UsesSharedEncode ensures SendWithData/SendHeaderOnly produce
+// correct wire output after the refactor (regression test).
+func TestSendWithData_UsesSharedEncode(t *testing.T) {
+	// HeaderOnly
+	var buf1 bytes.Buffer
+	w := NewWriter(&buf1)
+	resp := CapsuleResponse{CID: 42, SQHD: 5, Status: uint16(StatusSuccess)}
+	if err := w.SendHeaderOnly(pduCapsuleResp, &resp, capsuleRespSize); err != nil {
+		t.Fatal(err)
+	}
+	r := NewReader(&buf1)
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Type != pduCapsuleResp {
+		t.Fatalf("type = 0x%x, want 0x%x", hdr.Type, pduCapsuleResp)
+	}
+	if hdr.DataOffset != 0 {
+		t.Fatalf("DataOffset = %d, want 0 for header-only", hdr.DataOffset)
+	}
+
+	// WithData
+	var buf2 bytes.Buffer
+	w2 := NewWriter(&buf2)
+	c2h := C2HDataHeader{CCCID: 1, DATAO: 0, DATAL: 512}
+	data := make([]byte, 512)
+	data[0] = 0xAB
+	if err := w2.SendWithData(pduC2HData, c2hFlagLast, &c2h, c2hDataHdrSize, data); err != nil {
+		t.Fatal(err)
+	}
+	r2 := NewReader(&buf2)
+	hdr2, err := r2.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr2.Type != pduC2HData {
+		t.Fatalf("type = 0x%x", hdr2.Type)
+	}
+	if hdr2.Flags != c2hFlagLast {
+		t.Fatalf("flags = 0x%x", hdr2.Flags)
+	}
+	var gotHdr C2HDataHeader
+	if err := r2.Receive(&gotHdr); err != nil {
+		t.Fatal(err)
+	}
+	gotData := make([]byte, r2.Length())
+	if err := r2.ReceiveData(gotData); err != nil {
+		t.Fatal(err)
+	}
+	if gotData[0] != 0xAB {
+		t.Fatalf("data[0] = 0x%x, want 0xAB", gotData[0])
+	}
+}
+
+// TestNewWriterSize verifies NewWriterSize creates a writer with larger buffer.
+func TestNewWriterSize(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriterSize(&buf, 65536)
+	resp := ICResponse{MaxH2CDataLength: 65536}
+	if err := w.SendHeaderOnly(pduICResp, &resp, icBodySize); err != nil {
+		t.Fatal(err)
+	}
+	r := NewReader(&buf)
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Type != pduICResp {
+		t.Fatalf("type = 0x%x", hdr.Type)
+	}
+}
+
+// TestBufPool_GetPut tests buffer pool get/put cycle.
+func TestBufPool_GetPut(t *testing.T) {
+	tests := []struct {
+		size    int
+		wantCap int
+	}{
+		{512, 4096},
+		{4096, 4096},
+		{4097, 65536},
+		{65536, 65536},
+		{65537, 262144},
+		{262144, 262144},
+		{262145, 262145}, // oversized: exact allocation
+	}
+	for _, tt := range tests {
+		buf := getBuffer(tt.size)
+		if len(buf) != tt.size {
+			t.Errorf("getBuffer(%d): len = %d, want %d", tt.size, len(buf), tt.size)
+		}
+		if cap(buf) != tt.wantCap {
+			t.Errorf("getBuffer(%d): cap = %d, want %d", tt.size, cap(buf), tt.wantCap)
+		}
+		putBuffer(buf) // must not panic
+	}
+}
+
+// TestBufPool_WriteReuse verifies write correctness across pool reuse cycles.
+func TestBufPool_WriteReuse(t *testing.T) {
+	nqn := "nqn.test:pool-reuse"
+	dev := newMockDevice(256, 512)
+
+	srv := NewServer(Config{Enabled: true, ListenAddr: "127.0.0.1:0", MaxIOQueues: 4})
+	srv.AddVolume(nqn, dev, dev.DeviceNGUID())
+
+	clientConn, serverConn := pipeConn()
+	defer clientConn.Close()
+
+	ctrl := newController(serverConn, srv)
+	ctrl.subsystem = srv.findSubsystem(nqn)
+	ctrl.queueID = 1
+	ctrl.queueSize = 64
+	go ctrl.Serve()
+
+	r := NewReader(clientConn)
+	w := NewWriter(clientConn)
+
+	sendICReq(w)
+	recvICResp(t, r)
+
+	// Do multiple write+read cycles to exercise pool reuse
+	for cycle := 0; cycle < 5; cycle++ {
+		pattern := byte(0xA0 + cycle)
+		writeData := make([]byte, 512)
+		for i := range writeData {
+			writeData[i] = pattern
+		}
+
+		writeCmd := CapsuleCommand{
+			OpCode: ioWrite,
+			CID:    uint16(100 + cycle),
+			D10:    0, // LBA 0
+			D12:    0, // 1 block
+		}
+		w.SendWithData(pduCapsuleCmd, 0, &writeCmd, capsuleCmdSize, writeData)
+
+		resp2 := recvCapsuleResp(t, r)
+		if StatusWord(resp2.Status).IsError() {
+			t.Fatalf("cycle %d: write failed: 0x%04x", cycle, resp2.Status)
+		}
+
+		// Read back
+		readCmd := CapsuleCommand{
+			OpCode: ioRead,
+			CID:    uint16(200 + cycle),
+			D10:    0,
+			D12:    0,
+		}
+		w.SendWithData(pduCapsuleCmd, 0, &readCmd, capsuleCmdSize, nil)
+
+		// Expect C2HData + CapsuleResp
+		hdr, err := r.Dequeue()
+		if err != nil {
+			t.Fatalf("cycle %d: read dequeue: %v", cycle, err)
+		}
+		if hdr.Type != pduC2HData {
+			t.Fatalf("cycle %d: expected C2HData, got 0x%x", cycle, hdr.Type)
+		}
+		var c2h C2HDataHeader
+		if err := r.Receive(&c2h); err != nil {
+			t.Fatal(err)
+		}
+		readBuf := make([]byte, r.Length())
+		if err := r.ReceiveData(readBuf); err != nil {
+			t.Fatal(err)
+		}
+		for i, b := range readBuf {
+			if b != pattern {
+				t.Fatalf("cycle %d: byte[%d] = 0x%x, want 0x%x", cycle, i, b, pattern)
+			}
+		}
+
+		// Consume CapsuleResp
+		recvCapsuleResp(t, r)
+	}
+
+	clientConn.Close()
+}
+
+// TestMaxH2CDataLen_Config verifies IC response uses Config value.
+func TestMaxH2CDataLen_Config(t *testing.T) {
+	customLen := uint32(65536)
+	srv := NewServer(Config{
+		Enabled:          true,
+		ListenAddr:       "127.0.0.1:0",
+		MaxH2CDataLength: customLen,
+	})
+
+	clientConn, serverConn := pipeConn()
+	defer clientConn.Close()
+
+	ctrl := newController(serverConn, srv)
+	go ctrl.Serve()
+
+	r := NewReader(clientConn)
+	w := NewWriter(clientConn)
+
+	sendICReq(w)
+
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Type != pduICResp {
+		t.Fatalf("type = 0x%x", hdr.Type)
+	}
+	var icResp ICResponse
+	if err := r.Receive(&icResp); err != nil {
+		t.Fatal(err)
+	}
+	if icResp.MaxH2CDataLength != customLen {
+		t.Fatalf("MaxH2CDataLength = %d, want %d", icResp.MaxH2CDataLength, customLen)
+	}
+
+	clientConn.Close()
+}
+
+// TestMaxH2CDataLen_Default verifies default IC response uses the standard constant.
+func TestMaxH2CDataLen_Default(t *testing.T) {
+	srv := NewServer(DefaultConfig())
+	clientConn, serverConn := pipeConn()
+	defer clientConn.Close()
+
+	ctrl := newController(serverConn, srv)
+	go ctrl.Serve()
+
+	r := NewReader(clientConn)
+	w := NewWriter(clientConn)
+
+	sendICReq(w)
+
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Type != pduICResp {
+		t.Fatalf("type = 0x%x", hdr.Type)
+	}
+	var icResp ICResponse
+	if err := r.Receive(&icResp); err != nil {
+		t.Fatal(err)
+	}
+	if icResp.MaxH2CDataLength != maxH2CDataLen {
+		t.Fatalf("MaxH2CDataLength = %d, want %d", icResp.MaxH2CDataLength, maxH2CDataLen)
+	}
+
+	clientConn.Close()
+}
+
+// TestC2HChunking_ConfigurableMaxDataLen verifies configurable MaxH2CDataLen
+// controls the chunk count in C2H responses.
+func TestC2HChunking_ConfigurableMaxDataLen(t *testing.T) {
+	customChunk := uint32(16384) // 16KB
+	nqn := "nqn.test:chunking"
+	dev := newMockDevice(256, 512)
+
+	for i := range dev.data {
+		dev.data[i] = 0xCC
+	}
+
+	srv := NewServer(Config{
+		Enabled:          true,
+		ListenAddr:       "127.0.0.1:0",
+		MaxIOQueues:      4,
+		MaxH2CDataLength: customChunk,
+	})
+	srv.AddVolume(nqn, dev, dev.DeviceNGUID())
+
+	clientConn, serverConn := pipeConn()
+	defer clientConn.Close()
+
+	ctrl := newController(serverConn, srv)
+	ctrl.subsystem = srv.findSubsystem(nqn)
+	ctrl.queueID = 1
+	ctrl.queueSize = 64
+	go ctrl.Serve()
+
+	r := NewReader(clientConn)
+	w := NewWriter(clientConn)
+
+	// Manual IC exchange (custom MaxH2CDataLength != default)
+	sendICReq(w)
+	hdr, err := r.Dequeue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr.Type != pduICResp {
+		t.Fatalf("expected ICResp, got 0x%x", hdr.Type)
+	}
+	var icResp ICResponse
+	if err := r.Receive(&icResp); err != nil {
+		t.Fatal(err)
+	}
+	if icResp.MaxH2CDataLength != customChunk {
+		t.Fatalf("MaxH2CDataLength = %d, want %d", icResp.MaxH2CDataLength, customChunk)
+	}
+
+	// Read 64KB = 128 blocks of 512B
+	readCmd := CapsuleCommand{
+		OpCode: ioRead,
+		CID:    1,
+		D10:    0,
+		D12:    127, // 128 blocks (0-based)
+	}
+	w.SendWithData(pduCapsuleCmd, 0, &readCmd, capsuleCmdSize, nil)
+
+	// Expect 4 C2HData chunks (64KB / 16KB) + 1 CapsuleResp
+	chunkCount := 0
+	totalData := 0
+	for {
+		hdr, err := r.Dequeue()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Type == pduCapsuleResp {
+			var capsResp CapsuleResponse
+			r.Receive(&capsResp)
+			if StatusWord(capsResp.Status).IsError() {
+				t.Fatalf("read failed: 0x%04x", capsResp.Status)
+			}
+			break
+		}
+		if hdr.Type == pduC2HData {
+			chunkCount++
+			var c2h C2HDataHeader
+			r.Receive(&c2h)
+			dataBuf := make([]byte, r.Length())
+			r.ReceiveData(dataBuf)
+			totalData += len(dataBuf)
+		}
+	}
+
+	if chunkCount != 4 {
+		t.Fatalf("expected 4 chunks (64KB/16KB), got %d", chunkCount)
+	}
+	if totalData != 65536 {
+		t.Fatalf("total data = %d, want 65536", totalData)
+	}
+
+	clientConn.Close()
+}
+
+// TestDataOffset_LargePadding verifies that a PDU with DataOffset > maxHeaderSize
+// is handled safely via chunked discard (no padBuf overflow).
+func TestDataOffset_LargePadding(t *testing.T) {
+	// Craft a PDU with DataOffset=200, HeaderLength=8.
+	// Padding = 192 bytes, which exceeds padBuf (128).
+	// The chunked discard in Receive() should handle this safely.
+	dataOffset := uint8(200)
+	totalPad := int(dataOffset) - commonHeaderSize // 192
+	payloadSize := 4
+	dataLength := uint32(dataOffset) + uint32(payloadSize) // 204
+
+	var hdr [commonHeaderSize]byte
+	ch := CommonHeader{
+		Type:         pduCapsuleCmd,
+		HeaderLength: commonHeaderSize,
+		DataOffset:   dataOffset,
+		DataLength:   dataLength,
+	}
+	ch.Marshal(hdr[:])
+
+	// Build full PDU: 8-byte header + 192-byte padding + 4-byte payload
+	var buf bytes.Buffer
+	buf.Write(hdr[:])
+	buf.Write(make([]byte, totalPad))                      // padding
+	buf.Write([]byte{0xDE, 0xAD, 0xBE, 0xEF})             // payload
+
+	r := NewReader(&buf)
+	_, err := r.Dequeue()
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+
+	// Receive should skip 192 bytes of padding without panic
+	var capsule CapsuleCommand
+	if err := r.Receive(&capsule); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	// Payload should be readable
+	if r.Length() != uint32(payloadSize) {
+		t.Fatalf("Length = %d, want %d", r.Length(), payloadSize)
+	}
+	data := make([]byte, r.Length())
+	if err := r.ReceiveData(data); err != nil {
+		t.Fatalf("ReceiveData: %v", err)
+	}
+	if data[0] != 0xDE || data[1] != 0xAD {
+		t.Fatalf("payload = %x, want DEADBEEF", data)
+	}
+}
+
+// TestNQN_Sanitization verifies Server.NQN() sanitizes volume names
+// using the shared BuildNQN helper.
+func TestNQN_Sanitization(t *testing.T) {
+	srv := NewServer(Config{NQNPrefix: "nqn.2024-01.com.seaweedfs:vol."})
+
+	// Uppercase should be lowered, underscores replaced with hyphens.
+	got := srv.NQN("My_Volume")
+	want := "nqn.2024-01.com.seaweedfs:vol.my-volume"
+	if got != want {
+		t.Fatalf("NQN(%q) = %q, want %q", "My_Volume", got, want)
+	}
+}
+
+// ============================================================
+// BUG-CP103-1: WAL Pressure Retry / Throttle Tests
+// ============================================================
+
+// TestIsRetryableWALPressure_Classification verifies the error classifier
+// for WAL-pressure retry decisions.
+func TestIsRetryableWALPressure_Classification(t *testing.T) {
+	t.Run("nil_error", func(t *testing.T) {
+		if isRetryableWALPressure(nil) {
+			t.Fatal("nil error should not be retryable")
+		}
+	})
+	t.Run("ErrWALFull_direct", func(t *testing.T) {
+		if !isRetryableWALPressure(blockvol.ErrWALFull) {
+			t.Fatal("ErrWALFull should be retryable")
+		}
+	})
+	t.Run("ErrWALFull_wrapped", func(t *testing.T) {
+		wrapped := fmt.Errorf("blockvol: WAL full timeout: %w", blockvol.ErrWALFull)
+		if !isRetryableWALPressure(wrapped) {
+			t.Fatal("wrapped ErrWALFull should be retryable")
+		}
+	})
+	t.Run("non_WAL_error", func(t *testing.T) {
+		if isRetryableWALPressure(errors.New("disk full")) {
+			t.Fatal("non-WAL error should not be retryable")
+		}
+	})
+	t.Run("ErrLeaseExpired", func(t *testing.T) {
+		if isRetryableWALPressure(blockvol.ErrLeaseExpired) {
+			t.Fatal("ErrLeaseExpired should not be retryable WAL pressure")
+		}
+	})
+	t.Run("ErrDurabilityBarrierFailed", func(t *testing.T) {
+		if isRetryableWALPressure(blockerr.ErrDurabilityBarrierFailed) {
+			t.Fatal("ErrDurabilityBarrierFailed should not be retryable WAL pressure")
+		}
+	})
+}
+
+// TestWriteWithRetry_TransientSuccess verifies that writeWithRetry succeeds
+// when WAL pressure clears within the retry budget.
+func TestWriteWithRetry_TransientSuccess(t *testing.T) {
+	// Replace sleep/jitter hooks for deterministic behavior.
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	var sleepCalls []time.Duration
+	sleepFn = func(d time.Duration) { sleepCalls = append(sleepCalls, d) }
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(10, 512)
+	callCount := 0
+	dev.writeErr = blockvol.ErrWALFull
+
+	// Override WriteAt to clear error after 2 failures.
+	origWriteAt := dev.WriteAt
+	_ = origWriteAt
+	dev2 := &countingWriteDevice{
+		mockBlockDevice: dev,
+		writeFunc: func(lba uint64, data []byte) error {
+			callCount++
+			if callCount <= 2 {
+				return blockvol.ErrWALFull
+			}
+			dev.mu.Lock()
+			dev.writeErr = nil
+			dev.mu.Unlock()
+			return dev.WriteAt(lba, data)
+		},
+	}
+
+	payload := []byte{1, 2, 3, 4}
+	err := writeWithRetry(dev2, 0, payload)
+	if err != nil {
+		t.Fatalf("expected success after transient WAL pressure, got: %v", err)
+	}
+	// First call fails, then 2 retries (first retry fails, second succeeds).
+	// So we should have 2 sleep calls (for the 2 backoffs before retry 1 and 2).
+	if len(sleepCalls) != 2 {
+		t.Fatalf("expected 2 sleep calls, got %d: %v", len(sleepCalls), sleepCalls)
+	}
+	if sleepCalls[0] != 50*time.Millisecond {
+		t.Fatalf("first backoff = %v, want 50ms", sleepCalls[0])
+	}
+	if sleepCalls[1] != 200*time.Millisecond {
+		t.Fatalf("second backoff = %v, want 200ms", sleepCalls[1])
+	}
+}
+
+// countingWriteDevice wraps mockBlockDevice with a custom WriteAt.
+type countingWriteDevice struct {
+	*mockBlockDevice
+	writeFunc func(lba uint64, data []byte) error
+}
+
+func (d *countingWriteDevice) WriteAt(lba uint64, data []byte) error {
+	return d.writeFunc(lba, data)
+}
+
+// TestWriteWithRetry_PersistentFailure verifies that writeWithRetry exhausts
+// its retry budget and returns the last retryable error unchanged.
+func TestWriteWithRetry_PersistentFailure(t *testing.T) {
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	var sleepCalls []time.Duration
+	sleepFn = func(d time.Duration) { sleepCalls = append(sleepCalls, d) }
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(10, 512)
+	dev.writeErr = blockvol.ErrWALFull
+
+	err := writeWithRetry(dev, 0, []byte{1, 2, 3, 4})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if !errors.Is(err, blockvol.ErrWALFull) {
+		t.Fatalf("expected ErrWALFull, got: %v", err)
+	}
+	// 1 initial + 3 retries = 4 total calls, 3 sleeps.
+	if len(sleepCalls) != 3 {
+		t.Fatalf("expected 3 sleep calls (full retry budget), got %d", len(sleepCalls))
+	}
+}
+
+// TestWriteWithRetry_NonWALError verifies that writeWithRetry does NOT retry
+// non-WAL errors.
+func TestWriteWithRetry_NonWALError(t *testing.T) {
+	origSleep := sleepFn
+	defer func() { sleepFn = origSleep }()
+
+	sleepCalled := false
+	sleepFn = func(d time.Duration) { sleepCalled = true }
+
+	dev := newMockDevice(10, 512)
+	dev.writeErr = errors.New("disk I/O error")
+
+	err := writeWithRetry(dev, 0, []byte{1, 2, 3, 4})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if sleepCalled {
+		t.Fatal("should not sleep/retry on non-WAL errors")
+	}
+}
+
+// TestWriteWithRetry_ImmediateSuccess verifies no retry on success.
+func TestWriteWithRetry_ImmediateSuccess(t *testing.T) {
+	origSleep := sleepFn
+	defer func() { sleepFn = origSleep }()
+
+	sleepCalled := false
+	sleepFn = func(d time.Duration) { sleepCalled = true }
+
+	dev := newMockDevice(10, 512)
+	err := writeWithRetry(dev, 0, []byte{1, 2, 3, 4})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sleepCalled {
+		t.Fatal("should not sleep on immediate success")
+	}
+}
+
+// TestThrottleOnWALPressure_Deterministic verifies throttle behavior using
+// injected sleep hooks (no wall-clock timing).
+func TestThrottleOnWALPressure_Deterministic(t *testing.T) {
+	origSleep := sleepFn
+	defer func() { sleepFn = origSleep }()
+
+	var sleptDuration time.Duration
+	sleepFn = func(d time.Duration) { sleptDuration = d }
+
+	t.Run("no_provider", func(t *testing.T) {
+		sleptDuration = 0
+		plain := &plainDevice{}
+		throttleOnWALPressure(plain)
+		if sleptDuration != 0 {
+			t.Fatal("should not throttle when device has no WALPressureProvider")
+		}
+	})
+
+	t.Run("low_pressure", func(t *testing.T) {
+		sleptDuration = 0
+		dev := newMockDevice(10, 512)
+		dev.walPressure = 0.5
+		throttleOnWALPressure(dev)
+		if sleptDuration != 0 {
+			t.Fatalf("should not throttle at pressure 0.5, got sleep %v", sleptDuration)
+		}
+	})
+
+	t.Run("threshold_pressure_0.9", func(t *testing.T) {
+		sleptDuration = 0
+		dev := newMockDevice(10, 512)
+		dev.walPressure = 0.9
+		throttleOnWALPressure(dev)
+		// (0.9 - 0.9) * 50 = 0 → no sleep
+		if sleptDuration != 0 {
+			t.Fatalf("should not throttle at exactly 0.9, got sleep %v", sleptDuration)
+		}
+	})
+
+	t.Run("high_pressure_0.95", func(t *testing.T) {
+		sleptDuration = 0
+		dev := newMockDevice(10, 512)
+		dev.walPressure = 0.95
+		throttleOnWALPressure(dev)
+		// (0.95 - 0.9) * 50 ≈ 2.5ms (float precision)
+		if sleptDuration < 2*time.Millisecond || sleptDuration > 3*time.Millisecond {
+			t.Fatalf("pressure 0.95: sleep = %v, want ~2.5ms", sleptDuration)
+		}
+	})
+
+	t.Run("full_pressure_1.0", func(t *testing.T) {
+		sleptDuration = 0
+		dev := newMockDevice(10, 512)
+		dev.walPressure = 1.0
+		throttleOnWALPressure(dev)
+		// (1.0 - 0.9) * 50 ≈ 5ms (float precision)
+		if sleptDuration < 4*time.Millisecond || sleptDuration > 6*time.Millisecond {
+			t.Fatalf("pressure 1.0: sleep = %v, want ~5ms", sleptDuration)
+		}
+	})
+}
+
+// plainDevice implements BlockDevice but NOT WALPressureProvider.
+type plainDevice struct{}
+
+func (p *plainDevice) ReadAt(lba uint64, length uint32) ([]byte, error) { return make([]byte, length), nil }
+func (p *plainDevice) WriteAt(lba uint64, data []byte) error            { return nil }
+func (p *plainDevice) Trim(lba uint64, length uint32) error             { return nil }
+func (p *plainDevice) SyncCache() error                                 { return nil }
+func (p *plainDevice) BlockSize() uint32                                { return 512 }
+func (p *plainDevice) VolumeSize() uint64                               { return 512 * 100 }
+func (p *plainDevice) IsHealthy() bool                                  { return true }
+
+// TestWriteWithRetry_ConcurrentPressure verifies that concurrent writes
+// under WAL pressure do not hang or deadlock and return retryable errors.
+func TestWriteWithRetry_ConcurrentPressure(t *testing.T) {
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	// No-op sleep for speed.
+	sleepFn = func(d time.Duration) {}
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(100, 512)
+	dev.writeErr = blockvol.ErrWALFull
+
+	const goroutines = 16
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = writeWithRetry(dev, uint64(idx), make([]byte, 512))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err == nil {
+			t.Fatalf("goroutine %d: expected error, got nil", i)
+		}
+		if !errors.Is(err, blockvol.ErrWALFull) {
+			t.Fatalf("goroutine %d: expected ErrWALFull, got: %v", i, err)
+		}
+	}
+}
+
+// TestWriteWithRetry_ConcurrentTransient verifies concurrent writes
+// succeed after transient WAL pressure clears.
+func TestWriteWithRetry_ConcurrentTransient(t *testing.T) {
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	sleepFn = func(d time.Duration) {}
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(100, 512)
+
+	// Per-goroutine failure tracking: each goroutine fails once then succeeds.
+	var perGoroutineFailed sync.Map
+
+	wrapped := &countingWriteDevice{
+		mockBlockDevice: dev,
+		writeFunc: func(lba uint64, data []byte) error {
+			if _, loaded := perGoroutineFailed.LoadOrStore(lba, true); !loaded {
+				// First call per LBA fails with WAL pressure.
+				return blockvol.ErrWALFull
+			}
+			return dev.WriteAt(lba, data)
+		},
+	}
+
+	const goroutines = 4
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = writeWithRetry(wrapped, uint64(idx), make([]byte, 512))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: expected success after transient pressure, got: %v", i, err)
+		}
+	}
+}
+
+// TestWriteWithRetry_WrappedWALError verifies retry works with wrapped ErrWALFull.
+func TestWriteWithRetry_WrappedWALError(t *testing.T) {
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	sleepFn = func(d time.Duration) {}
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(10, 512)
+	dev.writeErr = fmt.Errorf("blockvol: WAL full timeout: %w", blockvol.ErrWALFull)
+
+	err := writeWithRetry(dev, 0, []byte{1, 2, 3, 4})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, blockvol.ErrWALFull) {
+		t.Fatalf("expected ErrWALFull in chain, got: %v", err)
+	}
+}
+
+// TestMockDevice_WALPressureProvider verifies the mock implements the interface.
+func TestMockDevice_WALPressureProvider(t *testing.T) {
+	dev := newMockDevice(10, 512)
+	dev.walPressure = 0.75
+
+	var bd BlockDevice = dev
+	prov, ok := bd.(WALPressureProvider)
+	if !ok {
+		t.Fatal("mockBlockDevice should implement WALPressureProvider")
+	}
+	if got := prov.WALPressure(); got != 0.75 {
+		t.Fatalf("WALPressure() = %v, want 0.75", got)
+	}
+}
+
+// TestIO_WriteWALPressure_ProtocolResponse verifies the full protocol path:
+// persistent WAL pressure → writeWithRetry exhausts → mapBlockError → NVMe
+// response is StatusNSNotReady with DNR=0 (no permanent failure).
+func TestIO_WriteWALPressure_ProtocolResponse(t *testing.T) {
+	// Replace sleep/jitter to avoid real delays.
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+	sleepFn = func(d time.Duration) {}
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	nqn := "nqn.test:wal-pressure"
+	dev := newMockDevice(256, 512)
+	dev.writeErr = blockvol.ErrWALFull
+
+	srv := NewServer(Config{Enabled: true, ListenAddr: "127.0.0.1:0", MaxIOQueues: 4})
+	srv.AddVolume(nqn, dev, dev.DeviceNGUID())
+
+	clientConn, serverConn := pipeConn()
+	defer clientConn.Close()
+
+	ctrl := newController(serverConn, srv)
+	ctrl.subsystem = srv.findSubsystem(nqn)
+	ctrl.queueID = 1
+	ctrl.queueSize = 64
+	go ctrl.Serve()
+
+	r := NewReader(clientConn)
+	w := NewWriter(clientConn)
+
+	sendICReq(w)
+	recvICResp(t, r)
+
+	writeData := make([]byte, 512)
+	writeCmd := CapsuleCommand{
+		OpCode: ioWrite,
+		CID:    300,
+		D10:    0, // LBA 0
+		D12:    0, // NLB 0 = 1 block
+	}
+	w.SendWithData(pduCapsuleCmd, 0, &writeCmd, capsuleCmdSize, writeData)
+
+	resp := recvCapsuleResp(t, r)
+	status := StatusWord(resp.Status)
+
+	// Must be StatusNSNotReady (retryable, not permanent failure).
+	if status != StatusNSNotReady {
+		t.Fatalf("expected StatusNSNotReady (0x%04x), got 0x%04x", StatusNSNotReady, status)
+	}
+	// DNR must be 0 (retryable).
+	if status.DNR() {
+		t.Fatal("DNR must be 0 for transient WAL pressure — host should retry")
+	}
+	// Must NOT be a permanent write fault.
+	if status == StatusMediaWriteFault {
+		t.Fatal("WAL pressure must not map to permanent MediaWriteFault")
+	}
+
+	clientConn.Close()
+}
+
+// TestWriteWithRetry_SharedTransientConcurrency verifies the benchmark failure
+// mode: multiple writers hit a shared transient pressure window, pressure clears,
+// and all writes complete successfully without surfacing permanent failure.
+func TestWriteWithRetry_SharedTransientConcurrency(t *testing.T) {
+	origSleep := sleepFn
+	origJitter := jitterFn
+	defer func() { sleepFn = origSleep; jitterFn = origJitter }()
+
+	sleepFn = func(d time.Duration) {}
+	jitterFn = func(max time.Duration) time.Duration { return 0 }
+
+	dev := newMockDevice(100, 512)
+
+	// Shared atomic counter: first N total calls across all goroutines fail.
+	// This simulates the real thundering-herd case where all writers hit the
+	// same WAL-full window simultaneously.
+	// Shared global counter: first N total calls fail across all goroutines.
+	// This simulates real thundering-herd behavior where all writers hit the
+	// same WAL-full window. With no-op sleep, goroutines may be scheduled
+	// sequentially, so the failure budget must be < retry budget per goroutine
+	// (4 attempts = 1 initial + 3 retries) to guarantee success.
+	var globalCallCount int64
+	var mu sync.Mutex
+	const failForFirstN = 2 // conservative: even if 1 goroutine gets all failures, it still has retries
+
+	wrapped := &countingWriteDevice{
+		mockBlockDevice: dev,
+		writeFunc: func(lba uint64, data []byte) error {
+			mu.Lock()
+			globalCallCount++
+			n := globalCallCount
+			mu.Unlock()
+			if n <= failForFirstN {
+				return blockvol.ErrWALFull
+			}
+			return dev.WriteAt(lba, data)
+		},
+	}
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	errs := make([]error, goroutines)
+
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = writeWithRetry(wrapped, uint64(idx), make([]byte, 512))
+		}(i)
+	}
+	wg.Wait()
+
+	// All goroutines must succeed. The shared pressure window (first 2 calls)
+	// is absorbed by the retry budget regardless of scheduling order.
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: expected success after shared transient pressure, got: %v", i, err)
+		}
+	}
 }

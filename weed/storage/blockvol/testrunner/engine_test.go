@@ -558,6 +558,285 @@ func TestEngine_RepeatFailStopsEarly(t *testing.T) {
 	}
 }
 
+func TestEngine_RepeatAggregateMedian(t *testing.T) {
+	registry := NewRegistry()
+
+	iter := 0
+	values := []string{"100", "200", "150", "180", "170"}
+	step := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		v := values[iter]
+		iter++
+		return map[string]string{"value": v}, nil
+	})
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "aggregate-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:      "bench",
+				Repeat:    5,
+				Aggregate: "median",
+				TrimPct:   20,
+				Actions: []Action{
+					{Action: "step", SaveAs: "iops"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusPass {
+		t.Fatalf("status = %s: %s", result.Status, result.Error)
+	}
+	if iter != 5 {
+		t.Fatalf("step called %d times, want 5", iter)
+	}
+
+	// Verify aggregated vars exist.
+	if v := actx.Vars["iops_median"]; v == "" {
+		t.Fatal("iops_median not set")
+	}
+	if v := actx.Vars["iops_mean"]; v == "" {
+		t.Fatal("iops_mean not set")
+	}
+	if v := actx.Vars["iops_all"]; v == "" {
+		t.Fatal("iops_all not set")
+	}
+	if v := actx.Vars["iops_n"]; v == "" {
+		t.Fatal("iops_n not set")
+	}
+
+	// The primary var should be overwritten with the median.
+	// Values: [100, 200, 150, 180, 170], trim 20% = remove 1 from each end
+	// Sorted: [100, 150, 170, 180, 200], trimmed: [150, 170, 180]
+	// Median of [150, 170, 180] = 170
+	if actx.Vars["iops"] != "170.00" {
+		t.Errorf("iops = %q, want 170.00 (median after trim)", actx.Vars["iops"])
+	}
+}
+
+func TestEngine_RepeatAggregateMean(t *testing.T) {
+	registry := NewRegistry()
+
+	iter := 0
+	values := []string{"100", "200", "150", "180", "170"}
+	step := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		v := values[iter]
+		iter++
+		return map[string]string{"value": v}, nil
+	})
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "aggregate-mean-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:      "bench",
+				Repeat:    5,
+				Aggregate: "mean",
+				TrimPct:   20,
+				Actions: []Action{
+					{Action: "step", SaveAs: "iops"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusPass {
+		t.Fatalf("status = %s: %s", result.Status, result.Error)
+	}
+
+	// Trimmed: [150, 170, 180], mean = 166.67
+	if actx.Vars["iops"] != "166.67" {
+		t.Errorf("iops = %q, want 166.67 (mean after trim)", actx.Vars["iops"])
+	}
+}
+
+func TestEngine_RepeatAggregateNone(t *testing.T) {
+	registry := NewRegistry()
+
+	iter := 0
+	step := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		iter++
+		return map[string]string{"value": fmt.Sprintf("%d", iter*100)}, nil
+	})
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "aggregate-none-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:      "bench",
+				Repeat:    3,
+				Aggregate: "none",
+				Actions: []Action{
+					{Action: "step", SaveAs: "iops"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusPass {
+		t.Fatalf("status = %s: %s", result.Status, result.Error)
+	}
+
+	// With aggregate: none, the var should hold the last iteration's value.
+	if actx.Vars["iops"] != "300" {
+		t.Errorf("iops = %q, want 300 (last iteration, no aggregation)", actx.Vars["iops"])
+	}
+	// And no aggregate vars should be set.
+	if _, ok := actx.Vars["iops_median"]; ok {
+		t.Error("iops_median should not be set with aggregate: none")
+	}
+}
+
+func TestTrimOutliers(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []float64
+		pct    int
+		want   int // expected length after trim
+	}{
+		{"5 values trim 20%", []float64{1, 2, 3, 4, 5}, 20, 3},
+		{"10 values trim 10%", []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, 10, 8},
+		{"3 values trim 20%", []float64{1, 2, 3}, 20, 1},
+		{"2 values no trim", []float64{1, 2}, 20, 2},
+		{"empty no trim", []float64{}, 20, 0},
+		{"no trim pct 0", []float64{1, 2, 3, 4, 5}, 0, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trimOutliers(tt.values, tt.pct)
+			if len(got) != tt.want {
+				t.Errorf("trimOutliers(%v, %d) len = %d, want %d", tt.values, tt.pct, len(got), tt.want)
+			}
+		})
+	}
+}
+
+// TestParse_InlineParams verifies that YAML fields not in the Action struct
+// are captured into Params via the inline tag. This is a regression test for
+// the snapshot-stress failure where `id: "1"` was not captured.
+func TestParse_InlineParams(t *testing.T) {
+	yaml := `
+name: inline-test
+timeout: 5m
+topology:
+  nodes:
+    node1:
+      host: "127.0.0.1"
+      is_local: true
+targets:
+  primary:
+    node: node1
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: test-primary
+phases:
+  - name: test_phase
+    actions:
+      - action: snapshot_create
+        target: primary
+        id: "42"
+      - action: dd_write
+        node: node1
+        device: "/dev/sda"
+        bs: 4k
+        count: "10"
+      - action: kubectl_apply
+        node: node1
+        file: "/tmp/cr.yaml"
+        namespace: "sw-block"
+`
+
+	s, err := Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	// Verify inline params are captured for each action type.
+	phase := s.Phases[0]
+
+	// snapshot_create: id should be in Params
+	snapAct := phase.Actions[0]
+	if snapAct.Params["id"] != "42" {
+		t.Errorf("snapshot_create: id = %q, want %q (inline param not captured)",
+			snapAct.Params["id"], "42")
+	}
+
+	// dd_write: device, bs, count should be in Params
+	ddAct := phase.Actions[1]
+	if ddAct.Params["device"] != "/dev/sda" {
+		t.Errorf("dd_write: device = %q, want /dev/sda", ddAct.Params["device"])
+	}
+	if ddAct.Params["bs"] != "4k" {
+		t.Errorf("dd_write: bs = %q, want 4k", ddAct.Params["bs"])
+	}
+	if ddAct.Params["count"] != "10" {
+		t.Errorf("dd_write: count = %q, want 10", ddAct.Params["count"])
+	}
+
+	// kubectl_apply: file, namespace should be in Params
+	k8sAct := phase.Actions[2]
+	if k8sAct.Params["file"] != "/tmp/cr.yaml" {
+		t.Errorf("kubectl_apply: file = %q, want /tmp/cr.yaml", k8sAct.Params["file"])
+	}
+	if k8sAct.Params["namespace"] != "sw-block" {
+		t.Errorf("kubectl_apply: namespace = %q, want sw-block", k8sAct.Params["namespace"])
+	}
+}
+
+// TestResolveAction_PreservesInlineParams verifies that resolveAction doesn't
+// lose inline params when copying the action.
+func TestResolveAction_PreservesInlineParams(t *testing.T) {
+	act := Action{
+		Action: "snapshot_create",
+		Target: "primary",
+		Params: map[string]string{
+			"id":     "5",
+			"device": "{{ dev }}",
+		},
+	}
+
+	vars := map[string]string{"dev": "/dev/sdb"}
+	resolved := resolveAction(act, vars)
+
+	if resolved.Params["id"] != "5" {
+		t.Errorf("id = %q, want 5", resolved.Params["id"])
+	}
+	if resolved.Params["device"] != "/dev/sdb" {
+		t.Errorf("device = %q, want /dev/sdb (should resolve var)", resolved.Params["device"])
+	}
+}
+
 func TestEngine_CleanupVars(t *testing.T) {
 	registry := NewRegistry()
 
@@ -607,5 +886,60 @@ func TestEngine_CleanupVars(t *testing.T) {
 	}
 	if actx.Vars["result"] != "tc qdisc del dev eth0 root" {
 		t.Errorf("result = %q", actx.Vars["result"])
+	}
+}
+
+func TestParse_AggregateValidation(t *testing.T) {
+	base := `
+name: validate-test
+timeout: 5m
+topology:
+  nodes:
+    node1:
+      host: "127.0.0.1"
+      is_local: true
+targets:
+  primary:
+    node: node1
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: test
+phases:
+  - name: bench
+    repeat: 5
+    aggregate: "%s"
+    trim_pct: %d
+    actions:
+      - action: exec
+        node: node1
+        cmd: "echo 1"
+`
+
+	tests := []struct {
+		name      string
+		aggregate string
+		trimPct   int
+		wantErr   bool
+	}{
+		{"valid median", "median", 20, false},
+		{"valid mean", "mean", 10, false},
+		{"valid none", "none", 0, false},
+		{"valid empty", "", 0, false},
+		{"invalid aggregate", "invalid", 0, true},
+		{"trim_pct too high", "median", 50, true},
+		{"trim_pct negative", "median", -1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yaml := fmt.Sprintf(base, tt.aggregate, tt.trimPct)
+			_, err := Parse([]byte(yaml))
+			if tt.wantErr && err == nil {
+				t.Error("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
 	}
 }

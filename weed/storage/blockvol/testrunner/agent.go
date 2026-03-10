@@ -397,15 +397,19 @@ func (a *Agent) executePhase(ctx context.Context, req *PhaseRequest) PhaseRespon
 				continue
 			}
 			htSpec := infra.HATargetSpec{
-				VolSize:         tgtSpec.VolSize,
-				WALSize:         tgtSpec.WALSize,
-				IQN:             tgtSpec.IQN(),
-				ISCSIPort:       tgtSpec.ISCSIPort,
-				AdminPort:       tgtSpec.AdminPort,
-				ReplicaDataPort: tgtSpec.ReplicaDataPort,
-				ReplicaCtrlPort: tgtSpec.ReplicaCtrlPort,
-				RebuildPort:     tgtSpec.RebuildPort,
-				TPGID:           tgtSpec.TPGID,
+				VolSize:             tgtSpec.VolSize,
+				WALSize:             tgtSpec.WALSize,
+				IQN:                 tgtSpec.IQN(),
+				ISCSIPort:           tgtSpec.ISCSIPort,
+				AdminPort:           tgtSpec.AdminPort,
+				ReplicaDataPort:     tgtSpec.ReplicaDataPort,
+				ReplicaCtrlPort:     tgtSpec.ReplicaCtrlPort,
+				RebuildPort:         tgtSpec.RebuildPort,
+				TPGID:               tgtSpec.TPGID,
+				NvmePort:            tgtSpec.NvmePort,
+				NQN:                 tgtSpec.NQN(),
+				MaxConcurrentWrites: tgtSpec.MaxConcurrentWrites,
+				NvmeIOQueues:        tgtSpec.NvmeIOQueues,
 			}
 			actx.Targets[tgtName] = infra.NewHATargetFromSpec(nativeNode, tgtName, htSpec)
 		}

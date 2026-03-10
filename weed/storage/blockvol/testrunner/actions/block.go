@@ -277,8 +277,9 @@ func killStale(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		process = "iscsi-target-test"
 	}
 
-	// Kill all matching processes.
-	cmd := fmt.Sprintf("pkill -9 -f '%s' 2>/dev/null; sleep 0.5; pgrep -f '%s' || echo 'all_killed'", process, process)
+	// Kill all matching processes. Use pidof (matches binary name, not args)
+	// to avoid killing sw-test-runner itself (whose -bin arg contains the process name).
+	cmd := fmt.Sprintf("pidof %s 2>/dev/null | xargs -r kill -9 2>/dev/null; sleep 0.5; pidof %s || echo 'all_killed'", process, process)
 	stdout, _, _, _ := node.Run(ctx, cmd)
 	actx.Log("  kill_stale %s: %s", process, strings.TrimSpace(stdout))
 
@@ -287,6 +288,12 @@ func killStale(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		node.Run(ctx, "sudo iscsiadm -m session -u 2>/dev/null; sudo iscsiadm -m node -o delete 2>/dev/null")
 		actx.Log("  cleaned stale iSCSI sessions")
 	}
+
+	// Clean up stale fillfiles from previous fault-disk-full tests.
+	node.RunRoot(ctx, "rm -f /tmp/fillfile 2>/dev/null")
+
+	// Clean up stale volume files from previous crashed runs.
+	node.Run(ctx, "rm -f /tmp/blockvol-*.blk /tmp/blockvol-*.blk.wal /tmp/blockvol-*.blk.snap.* 2>/dev/null")
 
 	return nil, nil
 }

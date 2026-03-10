@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // Config holds NVMe/TCP target configuration.
@@ -118,6 +120,7 @@ func (s *Server) acceptLoop() {
 			continue
 		}
 
+		tuneConn(conn)
 		ctrl := newController(conn, s)
 		s.addSession(ctrl)
 
@@ -204,7 +207,18 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// NQN returns the full NQN for a volume name.
+// tuneConn applies TCP optimizations to accepted connections.
+func tuneConn(conn net.Conn) {
+	tc, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	tc.SetNoDelay(true)          // TCP_NODELAY — disable Nagle
+	tc.SetReadBuffer(262144)     // SO_RCVBUF 256KB
+	tc.SetWriteBuffer(262144)    // SO_SNDBUF 256KB
+}
+
+// NQN returns the full NQN for a volume name using the shared builder.
 func (s *Server) NQN(volName string) string {
-	return s.cfg.NQNPrefix + volName
+	return blockvol.BuildNQN(s.cfg.NQNPrefix, volName)
 }

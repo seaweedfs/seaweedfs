@@ -1,0 +1,435 @@
+name: "CP10-3 NVMe MaxConcurrentWrites Sweep (16/32/64/128)"
+timeout: "60m"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: "testdev"
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+# We define 4 targets, each with a different max_concurrent_writes value.
+# They share the same server node but use different ports.
+targets:
+  cw16:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3263
+    nvme_port: 4420
+    admin_port: 8083
+    iqn_suffix: "cw16"
+    nqn_suffix: "cw16"
+    max_concurrent_writes: 16
+  cw32:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3264
+    nvme_port: 4421
+    admin_port: 8084
+    iqn_suffix: "cw32"
+    nqn_suffix: "cw32"
+    max_concurrent_writes: 32
+  cw64:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3265
+    nvme_port: 4422
+    admin_port: 8085
+    iqn_suffix: "cw64"
+    nqn_suffix: "cw64"
+    max_concurrent_writes: 64
+  cw128:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3266
+    nvme_port: 4423
+    admin_port: 8086
+    iqn_suffix: "cw128"
+    nqn_suffix: "cw128"
+    max_concurrent_writes: 128
+
+phases:
+  # --- Cleanup stale processes ---
+  - name: cleanup-stale
+    actions:
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+
+  # =============================================
+  # CW=16 (default baseline)
+  # =============================================
+  - name: cw16-start
+    actions:
+      - action: start_target
+        target: cw16
+        create: "true"
+
+  - name: cw16-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: cw16
+        node: client
+        save_as: nvme_nqn_16
+      - action: nvme_get_device
+        target: cw16
+        node: client
+        save_as: nvme_dev_16
+
+  - name: cw16-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_16}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw16-4k-rw-qd32"
+        save_as: _fio_cw16_rw32
+      - action: fio_parse
+        json_var: _fio_cw16_rw32
+        metric: iops
+        save_as: cw16_rw_iops
+
+  - name: cw16-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_16}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw16-4k-rd-qd32"
+        save_as: _fio_cw16_rd32
+      - action: fio_parse
+        json_var: _fio_cw16_rd32
+        metric: iops
+        save_as: cw16_rd_iops
+
+  - name: cw16-64k-sw-qd8
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_16}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw16-64k-sw-qd8"
+        save_as: _fio_cw16_sw64k
+      - action: fio_parse
+        json_var: _fio_cw16_sw64k
+        metric: bw_mb
+        save_as: cw16_sw_bw
+
+  - name: cw16-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: cw16
+        node: client
+      - action: stop_target
+        target: cw16
+
+  # =============================================
+  # CW=32
+  # =============================================
+  - name: cw32-start
+    actions:
+      - action: start_target
+        target: cw32
+        create: "true"
+
+  - name: cw32-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: cw32
+        node: client
+        save_as: nvme_nqn_32
+      - action: nvme_get_device
+        target: cw32
+        node: client
+        save_as: nvme_dev_32
+
+  - name: cw32-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_32}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw32-4k-rw-qd32"
+        save_as: _fio_cw32_rw32
+      - action: fio_parse
+        json_var: _fio_cw32_rw32
+        metric: iops
+        save_as: cw32_rw_iops
+
+  - name: cw32-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_32}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw32-4k-rd-qd32"
+        save_as: _fio_cw32_rd32
+      - action: fio_parse
+        json_var: _fio_cw32_rd32
+        metric: iops
+        save_as: cw32_rd_iops
+
+  - name: cw32-64k-sw-qd8
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_32}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw32-64k-sw-qd8"
+        save_as: _fio_cw32_sw64k
+      - action: fio_parse
+        json_var: _fio_cw32_sw64k
+        metric: bw_mb
+        save_as: cw32_sw_bw
+
+  - name: cw32-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: cw32
+        node: client
+      - action: stop_target
+        target: cw32
+
+  # =============================================
+  # CW=64
+  # =============================================
+  - name: cw64-start
+    actions:
+      - action: start_target
+        target: cw64
+        create: "true"
+
+  - name: cw64-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: cw64
+        node: client
+        save_as: nvme_nqn_64
+      - action: nvme_get_device
+        target: cw64
+        node: client
+        save_as: nvme_dev_64
+
+  - name: cw64-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_64}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw64-4k-rw-qd32"
+        save_as: _fio_cw64_rw32
+      - action: fio_parse
+        json_var: _fio_cw64_rw32
+        metric: iops
+        save_as: cw64_rw_iops
+
+  - name: cw64-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_64}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw64-4k-rd-qd32"
+        save_as: _fio_cw64_rd32
+      - action: fio_parse
+        json_var: _fio_cw64_rd32
+        metric: iops
+        save_as: cw64_rd_iops
+
+  - name: cw64-64k-sw-qd8
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_64}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw64-64k-sw-qd8"
+        save_as: _fio_cw64_sw64k
+      - action: fio_parse
+        json_var: _fio_cw64_sw64k
+        metric: bw_mb
+        save_as: cw64_sw_bw
+
+  - name: cw64-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: cw64
+        node: client
+      - action: stop_target
+        target: cw64
+
+  # =============================================
+  # CW=128
+  # =============================================
+  - name: cw128-start
+    actions:
+      - action: start_target
+        target: cw128
+        create: "true"
+
+  - name: cw128-nvme-connect
+    actions:
+      - action: nvme_connect
+        target: cw128
+        node: client
+        save_as: nvme_nqn_128
+      - action: nvme_get_device
+        target: cw128
+        node: client
+        save_as: nvme_dev_128
+
+  - name: cw128-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_128}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw128-4k-rw-qd32"
+        save_as: _fio_cw128_rw32
+      - action: fio_parse
+        json_var: _fio_cw128_rw32
+        metric: iops
+        save_as: cw128_rw_iops
+
+  - name: cw128-4k-rd-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_128}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw128-4k-rd-qd32"
+        save_as: _fio_cw128_rd32
+      - action: fio_parse
+        json_var: _fio_cw128_rd32
+        metric: iops
+        save_as: cw128_rd_iops
+
+  - name: cw128-64k-sw-qd8
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_dev_128}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "cw128-64k-sw-qd8"
+        save_as: _fio_cw128_sw64k
+      - action: fio_parse
+        json_var: _fio_cw128_sw64k
+        metric: bw_mb
+        save_as: cw128_sw_bw
+
+  - name: cw128-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: cw128
+        node: client
+      - action: stop_target
+        target: cw128
+
+  # =============================================
+  # Cleanup (always runs)
+  # =============================================
+  - name: cleanup
+    always: true
+    actions:
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

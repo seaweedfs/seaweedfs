@@ -23,6 +23,7 @@ type Reader struct {
 	rd     io.Reader
 	CH     CommonHeader
 	header [maxHeaderSize]byte
+	padBuf [maxHeaderSize]byte // reuse for padding skip
 }
 
 // NewReader wraps an io.Reader for NVMe/TCP PDU decoding.
@@ -67,20 +68,26 @@ func (r *Reader) Dequeue() (*CommonHeader, error) {
 // data (DataOffset - HeaderLength bytes).
 func (r *Reader) Receive(pdu PDU) error {
 	remain := int(r.CH.HeaderLength) - commonHeaderSize
-	if remain <= 0 {
-		return nil
-	}
-	if _, err := io.ReadFull(r.rd, r.header[commonHeaderSize:r.CH.HeaderLength]); err != nil {
-		return err
-	}
-	pdu.Unmarshal(r.header[commonHeaderSize:r.CH.HeaderLength])
-
-	// Skip padding between header and data.
-	pad := int(r.CH.DataOffset) - int(r.CH.HeaderLength)
-	if pad > 0 {
-		if _, err := io.ReadFull(r.rd, make([]byte, pad)); err != nil {
+	if remain > 0 {
+		if _, err := io.ReadFull(r.rd, r.header[commonHeaderSize:r.CH.HeaderLength]); err != nil {
 			return err
 		}
+		pdu.Unmarshal(r.header[commonHeaderSize:r.CH.HeaderLength])
+	}
+
+	// Skip padding between header and data.
+	// DataOffset can be up to 255 (uint8), so pad may exceed padBuf size.
+	// Use chunked discard to handle any valid padding length.
+	pad := int(r.CH.DataOffset) - int(r.CH.HeaderLength)
+	for pad > 0 {
+		n := pad
+		if n > len(r.padBuf) {
+			n = len(r.padBuf)
+		}
+		if _, err := io.ReadFull(r.rd, r.padBuf[:n]); err != nil {
+			return err
+		}
+		pad -= n
 	}
 	return nil
 }
@@ -113,6 +120,11 @@ func NewWriter(w io.Writer) *Writer {
 	return &Writer{wr: bufio.NewWriter(w)}
 }
 
+// NewWriterSize wraps an io.Writer with a specified buffer size.
+func NewWriterSize(w io.Writer, size int) *Writer {
+	return &Writer{wr: bufio.NewWriterSize(w, size)}
+}
+
 // PrepareHeaderOnly sets up a header-only PDU (no payload).
 // Call Flush() to write it to the wire.
 func (w *Writer) PrepareHeaderOnly(pduType uint8, pdu PDU, specificLen uint8) {
@@ -140,8 +152,8 @@ func (w *Writer) PrepareWithData(pduType, flags uint8, pdu PDU, specificLen uint
 	pdu.Marshal(w.header[commonHeaderSize:])
 }
 
-// Flush writes the prepared CommonHeader + specific header to the wire.
-// If there was payload data (from PrepareWithData), call FlushData after.
+// Flush writes the prepared CommonHeader + specific header to the bufio buffer.
+// Does NOT flush the underlying writer — call FlushBuf() for that.
 func (w *Writer) Flush() error {
 	w.CH.Marshal(w.header[:commonHeaderSize])
 	if _, err := w.wr.Write(w.header[:w.CH.HeaderLength]); err != nil {
@@ -150,43 +162,49 @@ func (w *Writer) Flush() error {
 	return nil
 }
 
-// FlushData writes payload data and flushes the underlying buffered writer.
-func (w *Writer) FlushData(data []byte) error {
+// FlushBuf flushes the underlying buffered writer to the wire.
+func (w *Writer) FlushBuf() error {
+	return w.wr.Flush()
+}
+
+// writeHeaderAndData encodes header (+optional data) into bufio. Does NOT flush.
+func (w *Writer) writeHeaderAndData(pduType, flags uint8, pdu PDU, specificLen uint8, data []byte) error {
+	if data != nil {
+		w.PrepareWithData(pduType, flags, pdu, specificLen, data)
+	} else {
+		w.PrepareHeaderOnly(pduType, pdu, specificLen)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
 	if len(data) > 0 {
 		if _, err := w.wr.Write(data); err != nil {
 			return err
 		}
 	}
-	return w.wr.Flush()
+	return nil
 }
 
-// SendHeaderOnly writes a complete header-only PDU (prepare + flush).
+// SendHeaderOnly writes a complete header-only PDU (prepare + flush to wire).
 func (w *Writer) SendHeaderOnly(pduType uint8, pdu PDU, specificLen uint8) error {
-	w.PrepareHeaderOnly(pduType, pdu, specificLen)
-	if err := w.Flush(); err != nil {
+	if err := w.writeHeaderAndData(pduType, 0, pdu, specificLen, nil); err != nil {
 		return err
 	}
-	return w.wr.Flush()
+	return w.FlushBuf()
 }
 
-// SendWithData writes a complete PDU with payload data.
+// SendWithData writes a complete PDU with payload data (prepare + flush to wire).
 func (w *Writer) SendWithData(pduType, flags uint8, pdu PDU, specificLen uint8, data []byte) error {
-	w.PrepareWithData(pduType, flags, pdu, specificLen, data)
-	if err := w.Flush(); err != nil {
+	if err := w.writeHeaderAndData(pduType, flags, pdu, specificLen, data); err != nil {
 		return err
 	}
-	return w.FlushData(data)
+	return w.FlushBuf()
 }
 
 // writeRaw writes raw bytes directly (used for ConnectData inline in capsule).
 func (w *Writer) writeRaw(data []byte) error {
 	_, err := w.wr.Write(data)
 	return err
-}
-
-// flushBuf flushes the underlying buffered writer.
-func (w *Writer) flushBuf() error {
-	return w.wr.Flush()
 }
 
 // ---------- Helpers ----------

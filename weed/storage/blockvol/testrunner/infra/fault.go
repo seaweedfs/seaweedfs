@@ -23,7 +23,7 @@ func InjectNetem(ctx context.Context, node *Node, targetIP string, delayMs int) 
 		return "", fmt.Errorf("tc qdisc add: code=%d stderr=%s err=%v", code, stderr, err)
 	}
 
-	cleanupCmd = fmt.Sprintf("tc qdisc del dev %s root 2>/dev/null", iface)
+	cleanupCmd = fmt.Sprintf("tc qdisc del dev %s root 2>/dev/null || true", iface)
 	return cleanupCmd, nil
 }
 
@@ -120,6 +120,8 @@ func CorruptWALRegion(ctx context.Context, node *Node, volPath string, nBytes in
 }
 
 // ClearFault executes a cleanup command stored in vars.
+// Tolerates non-zero exit codes since cleanup commands are often
+// idempotent (e.g. removing an already-removed iptables rule).
 func ClearFault(ctx context.Context, node *Node, cleanupCmd string) error {
 	if cleanupCmd == "" {
 		return nil
@@ -127,8 +129,10 @@ func ClearFault(ctx context.Context, node *Node, cleanupCmd string) error {
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	_, stderr, code, err := node.RunRoot(cctx, cleanupCmd)
-	if err != nil || code != 0 {
+	if err != nil {
 		return fmt.Errorf("clear fault: code=%d stderr=%s err=%v", code, stderr, err)
 	}
+	// Non-zero exit is tolerated — cleanup commands use "|| true" but
+	// legacy cleanup strings might not, and double-cleanup is harmless.
 	return nil
 }

@@ -1,6 +1,10 @@
 package testrunner
 
-import "time"
+import (
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
+)
 
 // Scenario is the top-level YAML structure for a test scenario.
 type Scenario struct {
@@ -50,7 +54,7 @@ type NodeSpec struct {
 	Agent   string `yaml:"agent"` // maps node to an agent (coordinator mode)
 }
 
-// TargetSpec defines an iSCSI target instance.
+// TargetSpec defines an iSCSI/NVMe target instance.
 type TargetSpec struct {
 	Node            string `yaml:"node"`
 	VolSize         string `yaml:"vol_size"`
@@ -62,20 +66,36 @@ type TargetSpec struct {
 	RebuildPort     int    `yaml:"rebuild_port"`
 	IQNSuffix       string `yaml:"iqn_suffix"`
 	TPGID           int    `yaml:"tpg_id"`
+	NvmePort             int    `yaml:"nvme_port"`
+	NQNSuffix            string `yaml:"nqn_suffix"`
+	MaxConcurrentWrites  int    `yaml:"max_concurrent_writes"`
+	NvmeIOQueues         int    `yaml:"nvme_io_queues"`
 }
 
-// IQN returns the full IQN from the suffix.
+// IQN returns the full IQN from the suffix, sanitized via the shared naming helper.
 func (ts TargetSpec) IQN() string {
-	return "iqn.2024.com.seaweedfs:" + ts.IQNSuffix
+	return "iqn.2024.com.seaweedfs:" + blockvol.SanitizeIQN(ts.IQNSuffix)
+}
+
+// NQN returns the full NQN from the suffix, using the shared BuildNQN helper
+// so that testrunner identifiers always match what the runtime registers.
+func (ts TargetSpec) NQN() string {
+	suffix := ts.NQNSuffix
+	if suffix == "" {
+		suffix = ts.IQNSuffix
+	}
+	return blockvol.BuildNQN("nqn.2024-01.com.seaweedfs:vol.", suffix)
 }
 
 // Phase is a sequential group of actions.
 type Phase struct {
-	Name     string   `yaml:"name"`
-	Always   bool     `yaml:"always"`
-	Parallel bool     `yaml:"parallel"`
-	Repeat   int      `yaml:"repeat"`
-	Actions  []Action `yaml:"actions"`
+	Name      string `yaml:"name"`
+	Always    bool   `yaml:"always"`
+	Parallel  bool   `yaml:"parallel"`
+	Repeat    int    `yaml:"repeat"`
+	Aggregate string `yaml:"aggregate"` // "median" (default when repeat>1), "mean", "none"
+	TrimPct   int    `yaml:"trim_pct"`  // percentage of outliers to trim from each end (default: 20)
+	Actions   []Action `yaml:"actions"`
 }
 
 // Action is a single step within a phase.

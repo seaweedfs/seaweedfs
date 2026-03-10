@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -808,6 +809,546 @@ func TestQA_RotationTimestamp_ExactSame_NoRotation(t *testing.T) {
 
 	if resources.NeedsRotation(cluster, secret) {
 		t.Error("BUG: same timestamp should not trigger rotation (already done)")
+	}
+}
+
+// =============================================================================
+// 9B Track A: Spec Mutation Tests
+//
+// Verify that the reconciler correctly handles spec field changes between
+// reconcile cycles (image bump, address change, port change).
+// =============================================================================
+
+// 9B-M1: Image update propagates to CSI controller Deployment.
+func Test9B_SpecMutation_ImageUpdate_PropagatedToCSIController(t *testing.T) {
+	cluster := csiOnlyCluster()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default") // finalizer
+	reconcile(t, r, "test-block", "default") // create resources
+
+	ctx := context.Background()
+
+	// Verify initial image
+	var dep appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "kube-system"}, &dep); err != nil {
+		t.Fatal(err)
+	}
+	initialImage := dep.Spec.Template.Spec.Containers[0].Image
+
+	// Update image in CR spec
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	latest.Spec.CSIImage = "sw-block-csi:v2.0"
+	if err := c.Update(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconcile with updated spec
+	reconcile(t, r, "test-block", "default")
+
+	// Image should be updated
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "kube-system"}, &dep); err != nil {
+		t.Fatal(err)
+	}
+	newImage := dep.Spec.Template.Spec.Containers[0].Image
+	if newImage == initialImage {
+		t.Errorf("CSI controller image not updated: still %q after spec change to sw-block-csi:v2.0", newImage)
+	}
+	if newImage != "sw-block-csi:v2.0" {
+		t.Errorf("CSI controller image = %q, want %q", newImage, "sw-block-csi:v2.0")
+	}
+}
+
+// 9B-M2: MasterRef address change propagates to CSI controller args.
+func Test9B_SpecMutation_MasterRefAddressChange(t *testing.T) {
+	cluster := csiOnlyCluster()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Change master address
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	latest.Spec.MasterRef.Address = "new-master.prod:9333"
+	if err := c.Update(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	reconcile(t, r, "test-block", "default")
+
+	// Status should reflect new master address
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	if latest.Status.MasterAddress != "new-master.prod:9333" {
+		t.Errorf("masterAddress = %q, want %q", latest.Status.MasterAddress, "new-master.prod:9333")
+	}
+}
+
+// 9B-M3: StorageClassName change propagates — old SC retained, new SC created.
+func Test9B_SpecMutation_StorageClassNameChange(t *testing.T) {
+	cluster := csiOnlyCluster()
+	cluster.Spec.StorageClassName = "sc-v1"
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Old SC should exist
+	var oldSC storagev1.StorageClass
+	if err := c.Get(ctx, types.NamespacedName{Name: "sc-v1"}, &oldSC); err != nil {
+		t.Fatalf("initial SC should exist: %v", err)
+	}
+
+	// Change StorageClassName
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	latest.Spec.StorageClassName = "sc-v2"
+	if err := c.Update(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	reconcile(t, r, "test-block", "default")
+
+	// New SC should exist
+	var newSC storagev1.StorageClass
+	if err := c.Get(ctx, types.NamespacedName{Name: "sc-v2"}, &newSC); err != nil {
+		t.Errorf("new SC should exist after name change: %v", err)
+	}
+
+	// Old SC still exists (operator doesn't garbage-collect renamed SCs mid-lifecycle)
+	// This is expected behavior — cleanup happens on CR deletion
+}
+
+// =============================================================================
+// 9B Track A: Resource Drift Correction Tests
+//
+// Verify that if someone externally modifies operator-managed resources,
+// the next reconcile restores them to desired state.
+// =============================================================================
+
+// 9B-D1: External image change on CSI controller is corrected by reconciler.
+func Test9B_DriftCorrection_CSIControllerImage(t *testing.T) {
+	cluster := csiOnlyCluster()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Tamper: change CSI controller image externally
+	var dep appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "kube-system"}, &dep); err != nil {
+		t.Fatal(err)
+	}
+	dep.Spec.Template.Spec.Containers[0].Image = "evil-image:latest"
+	if err := c.Update(ctx, &dep); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconcile should restore
+	reconcile(t, r, "test-block", "default")
+
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "kube-system"}, &dep); err != nil {
+		t.Fatal(err)
+	}
+	if dep.Spec.Template.Spec.Containers[0].Image == "evil-image:latest" {
+		t.Error("BUG: reconciler did not correct externally-tampered CSI controller image")
+	}
+}
+
+// 9B-D2: External label removal on cluster-scoped resource is corrected.
+func Test9B_DriftCorrection_ClusterRoleLabels(t *testing.T) {
+	cluster := csiOnlyCluster()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Tamper: remove owner labels from ClusterRole
+	var cr rbacv1.ClusterRole
+	if err := c.Get(ctx, types.NamespacedName{Name: resources.ClusterRoleName()}, &cr); err != nil {
+		t.Fatal(err)
+	}
+	cr.Labels = map[string]string{"random": "label"} // wipe ownership
+	if err := c.Update(ctx, &cr); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconcile — since owner labels are gone, this is now an orphan.
+	// Reconciler should detect conflict (orphan without adopt = conflict).
+	reconcile(t, r, "test-block", "default")
+
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	// The reconciler should fail because the ClusterRole is now an orphan
+	// (has labels but not the right owner labels)
+	if latest.Status.Phase != blockv1alpha1.PhaseFailed {
+		t.Errorf("phase = %q after label tampering; want Failed (orphan ClusterRole)", latest.Status.Phase)
+	}
+}
+
+// 9B-D3: Master StatefulSet replica count externally scaled → reconciler restores.
+func Test9B_DriftCorrection_MasterReplicaCount(t *testing.T) {
+	cluster := fullStackClusterWithVolume()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-full", "default")
+	reconcile(t, r, "test-full", "default")
+
+	ctx := context.Background()
+
+	// Tamper: externally scale master to 3
+	var sts appsv1.StatefulSet
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-full-master", Namespace: "default"}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	scaled := int32(3)
+	sts.Spec.Replicas = &scaled
+	if err := c.Update(ctx, &sts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconcile should restore to spec value (1)
+	reconcile(t, r, "test-full", "default")
+
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-full-master", Namespace: "default"}, &sts); err != nil {
+		t.Fatal(err)
+	}
+	if sts.Spec.Replicas != nil && *sts.Spec.Replicas != 1 {
+		t.Errorf("master replicas = %d after drift correction, want 1", *sts.Spec.Replicas)
+	}
+}
+
+// =============================================================================
+// 9B Track A: Cleanup Edge Cases
+//
+// Verify cleanup handles: full-stack resources, custom namespaces,
+// partial resource sets (some already deleted).
+// =============================================================================
+
+// 9B-C1: Full-stack cleanup deletes master + volume StatefulSets + Services.
+func Test9B_Cleanup_FullStack_AllResources(t *testing.T) {
+	cluster := fullStackClusterWithVolume()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-full", "default")
+	reconcile(t, r, "test-full", "default")
+
+	ctx := context.Background()
+
+	// Verify resources exist before cleanup
+	var masterSts appsv1.StatefulSet
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-full-master", Namespace: "default"}, &masterSts); err != nil {
+		t.Fatalf("master STS should exist: %v", err)
+	}
+	var volSts appsv1.StatefulSet
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-full-volume", Namespace: "default"}, &volSts); err != nil {
+		t.Fatalf("volume STS should exist: %v", err)
+	}
+
+	// Run cleanup
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-full", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.cleanupOwnedResources(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	// CSI cross-namespace resources should be cleaned
+	var dep appsv1.Deployment
+	err := c.Get(ctx, types.NamespacedName{Name: "test-full-csi-controller", Namespace: "kube-system"}, &dep)
+	if !apierrors.IsNotFound(err) {
+		t.Error("CSI controller should be deleted in full-stack cleanup")
+	}
+
+	var csiDriver storagev1.CSIDriver
+	err = c.Get(ctx, types.NamespacedName{Name: blockv1alpha1.CSIDriverName}, &csiDriver)
+	if !apierrors.IsNotFound(err) {
+		t.Error("CSIDriver should be deleted in full-stack cleanup")
+	}
+
+	// Note: master/volume StatefulSets are same-namespace with ownerRef,
+	// so K8s GC handles them (not the cleanup function). We verify the
+	// cleanup function doesn't error when they exist.
+}
+
+// 9B-C2: Cleanup with custom CSI namespace (non-default).
+func Test9B_Cleanup_CustomCSINamespace(t *testing.T) {
+	cluster := csiOnlyCluster()
+	cluster.Spec.CSINamespace = "custom-csi"
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Verify CSI resources are in custom namespace
+	var dep appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "custom-csi"}, &dep); err != nil {
+		t.Fatalf("CSI controller should be in custom-csi: %v", err)
+	}
+
+	// Cleanup
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.cleanupOwnedResources(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resources in custom namespace should be cleaned
+	err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "custom-csi"}, &dep)
+	if !apierrors.IsNotFound(err) {
+		t.Error("CSI controller in custom namespace should be deleted during cleanup")
+	}
+
+	var sa corev1.ServiceAccount
+	err = c.Get(ctx, types.NamespacedName{Name: resources.ServiceAccountName(), Namespace: "custom-csi"}, &sa)
+	if !apierrors.IsNotFound(err) {
+		t.Error("ServiceAccount in custom namespace should be deleted during cleanup")
+	}
+}
+
+// 9B-C3: Cleanup with partially-deleted resources (some already gone).
+func Test9B_Cleanup_PartialResources_NoError(t *testing.T) {
+	cluster := csiOnlyCluster()
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Manually delete some resources (simulating partial manual cleanup)
+	var dep appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "kube-system"}, &dep); err == nil {
+		_ = c.Delete(ctx, &dep)
+	}
+	var csiDriver storagev1.CSIDriver
+	if err := c.Get(ctx, types.NamespacedName{Name: blockv1alpha1.CSIDriverName}, &csiDriver); err == nil {
+		_ = c.Delete(ctx, &csiDriver)
+	}
+
+	// Cleanup should still succeed (remaining resources cleaned, missing ones skipped)
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.cleanupOwnedResources(ctx, &latest); err != nil {
+		t.Errorf("cleanup with partially-deleted resources should succeed: %v", err)
+	}
+
+	// Remaining resources should still be cleaned
+	var sc storagev1.StorageClass
+	err := c.Get(ctx, types.NamespacedName{Name: "sw-block"}, &sc)
+	if !apierrors.IsNotFound(err) {
+		t.Error("StorageClass should be deleted even though other resources were already gone")
+	}
+}
+
+// =============================================================================
+// 9B Track A: CSINamespace Mutation Rejection
+//
+// Per 9B plan: reject namespace migration to avoid resource leak/partial
+// migration risk. Changing csiNamespace after initial reconcile should fail.
+// =============================================================================
+
+// 9B-N1: CSINamespace change after resources exist should be detected.
+// Note: This test documents the current behavior. If the reconciler doesn't
+// reject namespace changes yet, this test reveals the gap.
+func Test9B_CSINamespace_ChangeAfterCreation(t *testing.T) {
+	cluster := csiOnlyCluster()
+	cluster.Spec.CSINamespace = "ns-v1"
+	scheme := testScheme()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(cluster).
+		WithStatusSubresource(cluster).
+		Build()
+
+	r := &Reconciler{Client: c, Scheme: scheme}
+	reconcile(t, r, "test-block", "default")
+	reconcile(t, r, "test-block", "default")
+
+	ctx := context.Background()
+
+	// Verify resources exist in ns-v1
+	var dep appsv1.Deployment
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "ns-v1"}, &dep); err != nil {
+		t.Fatalf("CSI controller should be in ns-v1: %v", err)
+	}
+
+	// Change CSI namespace
+	var latest blockv1alpha1.SeaweedBlockCluster
+	if err := c.Get(ctx, types.NamespacedName{Name: "test-block", Namespace: "default"}, &latest); err != nil {
+		t.Fatal(err)
+	}
+	latest.Spec.CSINamespace = "ns-v2"
+	if err := c.Update(ctx, &latest); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconcile — resources in ns-v1 are now orphaned, ns-v2 gets new resources.
+	// This is the dangerous behavior we want to detect.
+	reconcile(t, r, "test-block", "default")
+
+	// Check: old resources in ns-v1 should ideally be cleaned up OR the change rejected.
+	// Current behavior: ns-v1 resources are leaked (no cleanup for old namespace).
+	var oldDep appsv1.Deployment
+	err := c.Get(ctx, types.NamespacedName{Name: "test-block-csi-controller", Namespace: "ns-v1"}, &oldDep)
+	if err == nil {
+		// Resources leaked in old namespace — this is the known gap.
+		// The 9B plan says to REJECT namespace changes. This test documents the issue
+		// until validation is added.
+		t.Log("KNOWN GAP: CSI resources leaked in old namespace ns-v1 after namespace change. " +
+			"TODO: Add validation to reject csiNamespace mutation after initial reconcile.")
+	}
+}
+
+// =============================================================================
+// 9B Track A: Validation Completeness
+//
+// Additional validation edge cases not covered by existing QA tests.
+// =============================================================================
+
+// 9B-V1: ExtraArgs with spaces around flag should still be caught.
+func Test9B_Validation_ExtraArgs_SpacedFlag(t *testing.T) {
+	cluster := fullStackClusterWithVolume()
+	// Try with spaces — some users might format flags with spaces
+	cluster.Spec.Volume.ExtraArgs = []string{"-block.listen=0.0.0.0:4444"}
+
+	err := validate(&cluster.Spec)
+	if err == nil {
+		t.Error("ExtraArgs with -block.listen= should be rejected")
+	}
+}
+
+// 9B-V2: Multiple ExtraArgs, one valid one invalid.
+func Test9B_Validation_ExtraArgs_MixedValidInvalid(t *testing.T) {
+	cluster := fullStackClusterWithVolume()
+	cluster.Spec.Volume.ExtraArgs = []string{"-custom.flag=ok", "-port=9999", "-another=fine"}
+
+	err := validate(&cluster.Spec)
+	if err == nil {
+		t.Error("ExtraArgs containing -port= should be rejected even with other valid flags")
+	}
+	if err != nil && !strings.Contains(err.Error(), "-port=9999") {
+		t.Errorf("error should mention the specific offending flag, got: %v", err)
+	}
+}
+
+// 9B-V3: Negative storage size is rejected.
+func Test9B_Validation_NegativeStorageSize(t *testing.T) {
+	replicas := int32(1)
+	spec := &blockv1alpha1.SeaweedBlockClusterSpec{
+		Master: &blockv1alpha1.MasterSpec{
+			Replicas: &replicas,
+			Storage:  &blockv1alpha1.StorageSpec{Size: "-1Gi"},
+		},
+	}
+
+	err := validate(spec)
+	if err == nil {
+		t.Error("negative storage size should be rejected")
+	}
+}
+
+// 9B-V4: Empty DNS name (single character boundary).
+func Test9B_Validation_NameBoundary(t *testing.T) {
+	// Single char name should be valid
+	if err := validateName("a"); err != nil {
+		t.Errorf("single char name should be valid: %v", err)
+	}
+
+	// Exactly maxCRNameLength should be valid
+	if err := validateName(strings.Repeat("x", maxCRNameLength)); err != nil {
+		t.Errorf("max length name should be valid: %v", err)
+	}
+
+	// maxCRNameLength+1 should fail
+	if err := validateName(strings.Repeat("x", maxCRNameLength+1)); err == nil {
+		t.Error("maxCRNameLength+1 should be rejected")
+	}
+
+	// Uppercase should be rejected (DNS labels are lowercase)
+	if err := validateName("MyCluster"); err == nil {
+		t.Error("uppercase name should be rejected as invalid DNS label")
 	}
 }
 

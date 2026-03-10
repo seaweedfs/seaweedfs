@@ -112,10 +112,9 @@ func (c *Controller) handleConnect(req *Request) error {
 
 // handlePropertyGet returns a controller register value.
 func (c *Controller) handlePropertyGet(req *Request) error {
-	// Property offset in D10 (bits 31:0, but only lower bits used)
-	offset := req.capsule.D10
-	// Attrib in D11 bit 0: 0=4byte, 1=8byte
-	size8 := (req.capsule.D11 & 1) != 0
+	// Per NVMe-oF spec: CDW10 bits 2:0 = ATTRIB (size), CDW11 = OFST (offset)
+	size8 := (req.capsule.D10 & 1) != 0
+	offset := req.capsule.D11
 
 	var val uint64
 	switch offset {
@@ -144,8 +143,9 @@ func (c *Controller) handlePropertyGet(req *Request) error {
 
 // handlePropertySet handles controller register writes.
 func (c *Controller) handlePropertySet(req *Request) error {
-	offset := req.capsule.D10
-	value := uint64(req.capsule.D14) | uint64(req.capsule.D15)<<32
+	// Per NVMe-oF spec: CDW10 = ATTRIB (size), CDW11 = OFST (offset), CDW12-CDW13 = VALUE
+	offset := req.capsule.D11
+	value := uint64(req.capsule.D12) | uint64(req.capsule.D13)<<32
 
 	switch offset {
 	case propCC:
@@ -236,20 +236,19 @@ func connectKATO(capsule *CapsuleCommand) uint32 {
 	return capsule.D12
 }
 
-// PropertySet value extraction: the go-nvme reference puts value in D12/D13,
-// but NVMe spec actually uses CDW14/CDW15 for PropertySet. We handle both.
+// propertySetValue extracts the value from a PropertySet capsule (CDW12-CDW13).
 func propertySetValue(capsule *CapsuleCommand) uint64 {
-	return uint64(capsule.D14) | uint64(capsule.D15)<<32
+	return uint64(capsule.D12) | uint64(capsule.D13)<<32
 }
 
 // propertyGetSize returns true if the PropertyGet requests an 8-byte value.
 func propertyGetSize8(capsule *CapsuleCommand) bool {
-	return (capsule.D11 & 1) != 0
+	return (capsule.D10 & 1) != 0
 }
 
 // propertyGetOffset returns the register offset for PropertyGet.
 func propertyGetOffset(capsule *CapsuleCommand) uint32 {
-	return capsule.D10
+	return capsule.D11
 }
 
 // ---------- ConnectData marshal helpers for tests ----------
@@ -271,26 +270,28 @@ func makeConnectCapsule(queueID, queueSize uint16, kato uint32, fcType uint8) Ca
 }
 
 // makePropertyGetCapsule creates a PropertyGet capsule for the given register offset.
+// Per NVMe-oF spec: CDW10 = ATTRIB (size), CDW11 = OFST (offset).
 func makePropertyGetCapsule(offset uint32, size8 bool) CapsuleCommand {
 	c := CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertyGet,
-		D10:    offset,
+		D11:    offset,
 	}
 	if size8 {
-		c.D11 = 1
+		c.D10 = 1
 	}
 	return c
 }
 
 // makePropertySetCapsule creates a PropertySet capsule.
+// Per NVMe-oF spec: CDW10 = ATTRIB (size), CDW11 = OFST (offset), CDW12-13 = VALUE.
 func makePropertySetCapsule(offset uint32, value uint64) CapsuleCommand {
 	return CapsuleCommand{
 		OpCode: adminFabric,
 		FCType: fcPropertySet,
-		D10:    offset,
-		D14:    uint32(value),
-		D15:    uint32(value >> 32),
+		D11:    offset,
+		D12:    uint32(value),
+		D13:    uint32(value >> 32),
 	}
 }
 

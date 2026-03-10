@@ -429,7 +429,7 @@ func listCmd() {
 	}
 
 	byTier := registry.ListByTier()
-	tierOrder := []string{tr.TierCore, tr.TierBlock, tr.TierDevOps, tr.TierChaos}
+	tierOrder := []string{tr.TierCore, tr.TierBlock, tr.TierDevOps, tr.TierChaos, actions.TierK8s}
 
 	fmt.Println("Registered actions:")
 	for _, tier := range tierOrder {
@@ -485,15 +485,19 @@ func setupActionContext(s *tr.Scenario, logFunc func(string, ...interface{})) (*
 			return nil, fmt.Errorf("target %s: node %s is not infra.Node", name, spec.Node)
 		}
 		htSpec := infra.HATargetSpec{
-			VolSize:         spec.VolSize,
-			WALSize:         spec.WALSize,
-			IQN:             spec.IQN(),
-			ISCSIPort:       spec.ISCSIPort,
-			AdminPort:       spec.AdminPort,
-			ReplicaDataPort: spec.ReplicaDataPort,
-			ReplicaCtrlPort: spec.ReplicaCtrlPort,
-			RebuildPort:     spec.RebuildPort,
-			TPGID:           spec.TPGID,
+			VolSize:             spec.VolSize,
+			WALSize:             spec.WALSize,
+			IQN:                 spec.IQN(),
+			ISCSIPort:           spec.ISCSIPort,
+			AdminPort:           spec.AdminPort,
+			ReplicaDataPort:     spec.ReplicaDataPort,
+			ReplicaCtrlPort:     spec.ReplicaCtrlPort,
+			RebuildPort:         spec.RebuildPort,
+			TPGID:               spec.TPGID,
+			NvmePort:            spec.NvmePort,
+			NQN:                 spec.NQN(),
+			MaxConcurrentWrites: spec.MaxConcurrentWrites,
+			NvmeIOQueues:        spec.NvmeIOQueues,
 		}
 		ht := infra.NewHATargetFromSpec(node, name, htSpec)
 		actx.Targets[name] = ht

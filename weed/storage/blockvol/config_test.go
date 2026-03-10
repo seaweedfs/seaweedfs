@@ -64,6 +64,9 @@ func testConfigValidateGood(t *testing.T) {
 			WALFullTimeout:         10 * time.Second,
 			FlushInterval:          50 * time.Millisecond,
 			DirtyMapShards:         1,
+			WALSoftWatermark:       0.5,
+			WALHardWatermark:       0.8,
+			WALMaxConcurrentWrites: 32,
 		},
 		{
 			GroupCommitMaxDelay:     1 * time.Microsecond,
@@ -73,6 +76,9 @@ func testConfigValidateGood(t *testing.T) {
 			WALFullTimeout:         1 * time.Millisecond,
 			FlushInterval:          1 * time.Millisecond,
 			DirtyMapShards:         1024,
+			WALSoftWatermark:       0.3,
+			WALHardWatermark:       0.6,
+			WALMaxConcurrentWrites: 4,
 		},
 	}
 	for i, cfg := range cases {

@@ -19,6 +19,7 @@ const (
 	pduC2HTermReq  uint8 = 0x3 // Controller-to-Host Termination Request
 	pduCapsuleCmd  uint8 = 0x4 // NVMe Capsule Command
 	pduCapsuleResp uint8 = 0x5 // NVMe Capsule Response
+	pduH2CData     uint8 = 0x6 // Host-to-Controller Data Transfer
 	pduC2HData     uint8 = 0x7 // Controller-to-Host Data Transfer
 	pduR2T         uint8 = 0x9 // Ready-to-Transfer
 )
@@ -109,6 +110,8 @@ const (
 	capsuleCmdSize  = 64 // CapsuleCommand specific header size (after CommonHeader)
 	capsuleRespSize = 16 // CapsuleResponse specific header size
 	c2hDataHdrSize  = 16 // C2HDataHeader specific header size
+	h2cDataHdrSize  = 16 // H2CDataHeader specific header size
+	r2tHdrSize      = 16 // R2THeader specific header size
 	icBodySize      = 120 // ICReq/ICResp body size (after CommonHeader)
 	connectDataSize = 1024
 
@@ -350,6 +353,62 @@ func (h *C2HDataHeader) Marshal(buf []byte) {
 
 func (h *C2HDataHeader) Unmarshal(buf []byte) {
 	h.CCCID = binary.LittleEndian.Uint16(buf[0:])
+	h.DATAO = binary.LittleEndian.Uint32(buf[4:])
+	h.DATAL = binary.LittleEndian.Uint32(buf[8:])
+}
+
+// ---------- R2THeader (16-byte specific header) ----------
+
+// R2THeader is the Ready-to-Transfer PDU specific header.
+type R2THeader struct {
+	CCCID uint16 // Command Capsule CID
+	TAG   uint16 // R2T Tag (echoed by host in H2CData)
+	DATAO uint32 // Data offset
+	DATAL uint32 // Data length requested
+	_pad  uint32
+}
+
+func (h *R2THeader) Marshal(buf []byte) {
+	for i := range buf[:r2tHdrSize] {
+		buf[i] = 0
+	}
+	binary.LittleEndian.PutUint16(buf[0:], h.CCCID)
+	binary.LittleEndian.PutUint16(buf[2:], h.TAG)
+	binary.LittleEndian.PutUint32(buf[4:], h.DATAO)
+	binary.LittleEndian.PutUint32(buf[8:], h.DATAL)
+}
+
+func (h *R2THeader) Unmarshal(buf []byte) {
+	h.CCCID = binary.LittleEndian.Uint16(buf[0:])
+	h.TAG = binary.LittleEndian.Uint16(buf[2:])
+	h.DATAO = binary.LittleEndian.Uint32(buf[4:])
+	h.DATAL = binary.LittleEndian.Uint32(buf[8:])
+}
+
+// ---------- H2CDataHeader (16-byte specific header) ----------
+
+// H2CDataHeader is the host-to-controller data transfer header.
+type H2CDataHeader struct {
+	CCCID uint16 // Command Capsule CID
+	TAG   uint16 // Matches R2T Tag
+	DATAO uint32 // Data offset
+	DATAL uint32 // Data length in this PDU
+	_pad  uint32
+}
+
+func (h *H2CDataHeader) Marshal(buf []byte) {
+	for i := range buf[:h2cDataHdrSize] {
+		buf[i] = 0
+	}
+	binary.LittleEndian.PutUint16(buf[0:], h.CCCID)
+	binary.LittleEndian.PutUint16(buf[2:], h.TAG)
+	binary.LittleEndian.PutUint32(buf[4:], h.DATAO)
+	binary.LittleEndian.PutUint32(buf[8:], h.DATAL)
+}
+
+func (h *H2CDataHeader) Unmarshal(buf []byte) {
+	h.CCCID = binary.LittleEndian.Uint16(buf[0:])
+	h.TAG = binary.LittleEndian.Uint16(buf[2:])
 	h.DATAO = binary.LittleEndian.Uint32(buf[4:])
 	h.DATAL = binary.LittleEndian.Uint32(buf[8:])
 }

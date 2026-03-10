@@ -61,9 +61,15 @@ func (a *NVMeAdapter) DeviceNGUID() [16]byte {
 	return UUIDToNGUID(a.Vol.Info().UUID)
 }
 
+// WALPressure returns the current WAL usage fraction (0.0–1.0).
+func (a *NVMeAdapter) WALPressure() float64 {
+	return a.Vol.WALUsedFraction()
+}
+
 // Compile-time checks.
 var _ BlockDevice = (*NVMeAdapter)(nil)
 var _ ANAProvider = (*NVMeAdapter)(nil)
+var _ WALPressureProvider = (*NVMeAdapter)(nil)
 
 // RoleToANAState maps a BlockVol Role to an NVMe ANA state.
 func RoleToANAState(r blockvol.Role) uint8 {

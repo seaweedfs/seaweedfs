@@ -78,6 +78,10 @@ func cp3Vol(t *testing.T, name string, walSize uint64) *BlockVol {
 	cfg := DefaultConfig()
 	cfg.FlushInterval = 5 * time.Millisecond
 	cfg.WALFullTimeout = 200 * time.Millisecond
+	// Relax admission control for tiny test WALs: prevent watermark delays
+	// from changing flusher/rebuild timing on 64KB WALs.
+	cfg.WALSoftWatermark = 0.95
+	cfg.WALHardWatermark = 0.99
 	vol, err := CreateBlockVol(filepath.Join(dir, name), CreateOptions{
 		VolumeSize: 64 * 1024,
 		BlockSize:  4096,

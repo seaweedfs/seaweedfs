@@ -1,0 +1,128 @@
+# Lease Expiry Write Gate
+#
+# Tests that the write gate correctly blocks writes after lease expiry.
+# After lease expires, writes via iSCSI should return I/O errors.
+# Re-granting a lease should allow writes again.
+#
+# Pass criteria:
+# - Writes succeed with valid lease
+# - Writes fail after lease expires (dd returns error or I/O error)
+# - After re-granting lease, writes succeed again
+# - Data written before expiry is still readable
+
+name: lease-expiry-write-gate
+timeout: 3m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3270
+    admin_port: 8090
+    iqn_suffix: lease-gate
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 8s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: write_with_lease
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        save_as: md5_valid
+
+  - name: wait_for_expiry
+    actions:
+      - action: sleep
+        duration: 10s
+      - action: assert_status
+        target: primary
+        field: has_lease
+        expected: "false"
+
+  - name: verify_read_still_works
+    actions:
+      # Reads should still work even without lease
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        save_as: verify_read
+      - action: assert_equal
+        actual: "{{ verify_read }}"
+        expected: "{{ md5_valid }}"
+
+  - name: regrant_and_write
+    actions:
+      # Re-grant lease with higher epoch
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: assert_status
+        target: primary
+        field: has_lease
+        expected: "true"
+      # Writes should work again
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        seek: "10"
+        save_as: md5_regrant
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        skip: "10"
+        save_as: verify_regrant
+      - action: assert_equal
+        actual: "{{ verify_regrant }}"
+        expected: "{{ md5_regrant }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

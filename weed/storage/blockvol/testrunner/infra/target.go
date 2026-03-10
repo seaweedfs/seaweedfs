@@ -80,6 +80,14 @@ func (t *Target) Deploy(localBin string) error {
 
 // Start launches the target process. If create is true, a new volume is created.
 func (t *Target) Start(ctx context.Context, create bool) error {
+	// Pre-flight: check if iSCSI port is already in use.
+	stdout, _, code, _ := t.Node.Run(ctx, fmt.Sprintf("ss -tln | grep ':%d '", t.Config.Port))
+	if code == 0 && strings.TrimSpace(stdout) != "" {
+		owner, _, _, _ := t.Node.Run(ctx, fmt.Sprintf("ss -tlnp | grep ':%d ' | head -1", t.Config.Port))
+		return fmt.Errorf("port %d already in use on %s: %s",
+			t.Config.Port, t.Node.Host, strings.TrimSpace(owner))
+	}
+
 	// Remove old log
 	t.Node.Run(ctx, fmt.Sprintf("rm -f %s", t.LogFile))
 
@@ -87,8 +95,14 @@ func (t *Target) Start(ctx context.Context, create bool) error {
 		t.VolFile, t.Config.Port, t.Config.IQN)
 
 	if create {
+		if err := CheckDiskSpace(ctx, t.Node, t.VolFile, t.Config.VolSize, t.Config.WALSize); err != nil {
+			return err
+		}
 		t.Node.Run(ctx, fmt.Sprintf("rm -f %s %s.wal", t.VolFile, t.VolFile))
 		args += fmt.Sprintf(" -create -size %s", t.Config.VolSize)
+		if t.Config.WALSize != "" {
+			args += fmt.Sprintf(" -wal-size %s", t.Config.WALSize)
+		}
 	}
 
 	cmd := fmt.Sprintf("setsid -f %s %s >%s 2>&1", t.BinPath, args, t.LogFile)
@@ -102,7 +116,7 @@ func (t *Target) Start(ctx context.Context, create bool) error {
 	}
 
 	// Discover PID by matching the binary name
-	stdout, _, _, _ := t.Node.Run(ctx, fmt.Sprintf("ps -eo pid,args | grep '%s' | grep -v grep | awk '{print $1}'", t.BinPath))
+	stdout, _, _, _ = t.Node.Run(ctx, fmt.Sprintf("ps -eo pid,args | grep '%s' | grep -v grep | awk '{print $1}'", t.BinPath))
 	pidStr := strings.TrimSpace(stdout)
 	if idx := strings.IndexByte(pidStr, '\n'); idx > 0 {
 		pidStr = pidStr[:idx]
@@ -194,3 +208,65 @@ func (t *Target) PID() int { return t.Pid }
 
 // VolFilePath returns the remote volume file path.
 func (t *Target) VolFilePath() string { return t.VolFile }
+
+// CheckDiskSpace verifies a node has enough space for a volume + WAL.
+// volSize/walSize are human-readable strings like "100M", "64M".
+func CheckDiskSpace(ctx context.Context, node *Node, volFile, volSize, walSize string) error {
+	// Parse sizes to MB.
+	volMB := parseSizeMB(volSize)
+	walMB := parseSizeMB(walSize)
+	if walMB == 0 {
+		walMB = 64 // default WAL
+	}
+	neededMB := volMB + walMB + 50 // headroom for metadata/journal
+
+	// Get available space on the directory containing the volume file.
+	dir := volFile
+	if idx := strings.LastIndex(dir, "/"); idx > 0 {
+		dir = dir[:idx]
+	}
+	stdout, _, code, _ := node.Run(ctx, fmt.Sprintf("df -BM %s 2>/dev/null | tail -1 | awk '{print $4}'", dir))
+	if code != 0 {
+		return nil // can't check, proceed anyway
+	}
+	availStr := strings.TrimSpace(stdout)
+	availStr = strings.TrimSuffix(availStr, "M")
+	availMB, err := strconv.Atoi(availStr)
+	if err != nil {
+		return nil // can't parse, proceed anyway
+	}
+
+	if availMB < neededMB {
+		return fmt.Errorf("insufficient disk space on %s: %dMB available, need %dMB (vol=%s wal=%s + 50MB headroom)",
+			node.Host, availMB, neededMB, volSize, walSize)
+	}
+	return nil
+}
+
+// parseSizeMB parses a human-readable size string (e.g. "100M", "1G", "1073741824") to megabytes.
+// Raw numbers >= 1048576 are treated as bytes.
+func parseSizeMB(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	s = strings.ToUpper(s)
+	multiplier := 1
+	if strings.HasSuffix(s, "G") {
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "G")
+	} else if strings.HasSuffix(s, "M") {
+		s = strings.TrimSuffix(s, "M")
+	} else if strings.HasSuffix(s, "K") {
+		s = strings.TrimSuffix(s, "K")
+		v, _ := strconv.Atoi(s)
+		return v / 1024
+	}
+	v, _ := strconv.Atoi(s)
+	result := v * multiplier
+	// Raw numbers >= 1MB are assumed to be in bytes.
+	if multiplier == 1 && result >= 1048576 {
+		return result / (1024 * 1024)
+	}
+	return result
+}

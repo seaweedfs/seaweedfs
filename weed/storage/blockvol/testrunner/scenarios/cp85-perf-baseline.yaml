@@ -18,6 +18,7 @@ targets:
   primary:
     node: target_node
     vol_size: 200M
+    wal_size: 128M
     iscsi_port: 3270
     admin_port: 8090
     iqn_suffix: cp85-perf-primary
@@ -52,7 +53,7 @@ phases:
         device: "{{ device }}"
         rw: randwrite
         bs: 4k
-        iodepth: "32"
+        iodepth: "8"
         runtime: "60"
         size: 180M
         name: perf_4k_randwrite
@@ -65,7 +66,7 @@ phases:
         device: "{{ device }}"
         rw: randread
         bs: 4k
-        iodepth: "32"
+        iodepth: "8"
         runtime: "60"
         size: 180M
         name: perf_4k_randread
@@ -79,7 +80,7 @@ phases:
         rw: write
         bs: 64k
         size: 180M
-        iodepth: "32"
+        iodepth: "8"
         runtime: "60"
         name: perf_64k_seqwrite
         save_as: fio_64k_sw

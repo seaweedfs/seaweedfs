@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/nvme"
 )
 
 func main() {
@@ -35,8 +36,13 @@ func main() {
 	replicaData := flag.String("replica-data", "", "replica receiver data listen address (e.g. :9001; empty = disabled)")
 	replicaCtrl := flag.String("replica-ctrl", "", "replica receiver ctrl listen address (e.g. :9002; empty = disabled)")
 	rebuildListen := flag.String("rebuild-listen", "", "rebuild server listen address (e.g. :9003; empty = disabled)")
+	walSize := flag.String("wal-size", "64M", "WAL size (e.g., 64M, 128M) -- used with -create")
 	chapUser := flag.String("chap-user", "", "CHAP username (empty = CHAP disabled)")
 	chapSecret := flag.String("chap-secret", "", "CHAP shared secret")
+	nvmeAddr := flag.String("nvme-addr", "", "NVMe/TCP listen address (e.g. :4420; empty = disabled)")
+	nqn := flag.String("nqn", "", "NVMe NQN (defaults to nqn.2024-01.com.seaweedfs:vol.<sanitized iqn suffix>)")
+	walMaxCW := flag.Int("wal-max-concurrent-writes", 0, "max concurrent writers in WAL append path (0 = use default 16)")
+	nvmeIOQueues := flag.Int("nvme-io-queues", 0, "max NVMe IO queues (0 = use default 4)")
 	flag.Parse()
 
 	if *volPath == "" {
@@ -53,6 +59,15 @@ func main() {
 
 	logger := log.New(os.Stdout, "[iscsi] ", log.LstdFlags)
 
+	// Build config with optional WAL concurrency override.
+	var cfgs []blockvol.BlockVolConfig
+	if *walMaxCW > 0 {
+		cfg := blockvol.DefaultConfig()
+		cfg.WALMaxConcurrentWrites = *walMaxCW
+		cfgs = append(cfgs, cfg)
+		logger.Printf("WALMaxConcurrentWrites = %d", *walMaxCW)
+	}
+
 	var vol *blockvol.BlockVol
 	var err error
 
@@ -61,9 +76,13 @@ func main() {
 		if parseErr != nil {
 			log.Fatalf("invalid size %q: %v", *size, parseErr)
 		}
+		walBytes, parseErr := parseSize(*walSize)
+		if parseErr != nil {
+			log.Fatalf("invalid wal-size %q: %v", *walSize, parseErr)
+		}
 		if _, statErr := os.Stat(*volPath); statErr == nil {
 			// File exists -- open it instead of failing
-			vol, err = blockvol.OpenBlockVol(*volPath)
+			vol, err = blockvol.OpenBlockVol(*volPath, cfgs...)
 			if err != nil {
 				log.Fatalf("open existing volume: %v", err)
 			}
@@ -72,15 +91,15 @@ func main() {
 			vol, err = blockvol.CreateBlockVol(*volPath, blockvol.CreateOptions{
 				VolumeSize: volSize,
 				BlockSize:  4096,
-				WALSize:    64 * 1024 * 1024,
-			})
+				WALSize:    walBytes,
+			}, cfgs...)
 			if err != nil {
 				log.Fatalf("create volume: %v", err)
 			}
 			logger.Printf("created volume: %s (%s)", *volPath, *size)
 		}
 	} else {
-		vol, err = blockvol.OpenBlockVol(*volPath)
+		vol, err = blockvol.OpenBlockVol(*volPath, cfgs...)
 		if err != nil {
 			log.Fatalf("open volume: %v", err)
 		}
@@ -154,6 +173,36 @@ func main() {
 	}
 	ts.AddVolume(*iqn, adapter)
 
+	// Start NVMe/TCP target if configured.
+	var nvmeSrv *nvme.Server
+	if *nvmeAddr != "" {
+		nvmeNQN := *nqn
+		if nvmeNQN == "" {
+			// Derive NQN from IQN: extract suffix after last ':'
+			iqnParts := strings.SplitN(*iqn, ":", 2)
+			suffix := *iqn
+			if len(iqnParts) == 2 {
+				suffix = iqnParts[1]
+			}
+			nvmeNQN = blockvol.BuildNQN("nqn.2024-01.com.seaweedfs:vol.", suffix)
+		}
+
+		nvmeCfg := nvme.DefaultConfig()
+		nvmeCfg.ListenAddr = *nvmeAddr
+		nvmeCfg.Enabled = true
+		if *nvmeIOQueues > 0 {
+			nvmeCfg.MaxIOQueues = uint16(*nvmeIOQueues)
+			logger.Printf("NVMe MaxIOQueues = %d", *nvmeIOQueues)
+		}
+
+		nvmeSrv = nvme.NewServer(nvmeCfg)
+		nvmeSrv.AddVolume(nvmeNQN, adapter, [16]byte{}) // NGUID zero = auto
+		if err := nvmeSrv.ListenAndServe(); err != nil {
+			log.Fatalf("nvme target: %v", err)
+		}
+		logger.Printf("NVMe/TCP target: %s on %s", nvmeNQN, *nvmeAddr)
+	}
+
 	// Start periodic performance stats logging (every 5 seconds).
 	instrumented.StartStatsLogger(5 * time.Second)
 
@@ -163,6 +212,9 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		logger.Printf("received %v, shutting down...", sig)
+		if nvmeSrv != nil {
+			nvmeSrv.Close()
+		}
 		ts.Close()
 	}()
 

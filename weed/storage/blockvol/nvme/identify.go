@@ -86,6 +86,20 @@ func (c *Controller) identifyController(req *Request) error {
 	// ELPE (Error Log Page Entries) - offset 262
 	buf[262] = 0 // 1 entry (0-based)
 
+	// KAS (Keep Alive Support) - offset 320-321
+	// Granularity in 100ms units. Non-zero is mandatory for fabrics controllers.
+	binary.LittleEndian.PutUint16(buf[320:], 10) // 1 second granularity
+
+	// ANACAP (ANA Capabilities) - offset 341
+	// bit 3: reports Optimized state
+	buf[341] = 0x08
+
+	// ANAGRPMAX (Max ANA Group ID) - offset 344-347
+	binary.LittleEndian.PutUint32(buf[344:], 1)
+
+	// NANAGRPID (Number of ANA Group IDs) - offset 348-351
+	binary.LittleEndian.PutUint32(buf[348:], 1)
+
 	// SQES (Submission Queue Entry Size) - offset 512
 	// min=6 (2^6=64 bytes), max=6
 	buf[512] = 0x66
@@ -104,16 +118,6 @@ func (c *Controller) identifyController(req *Request) error {
 	// bit 3: WriteZeros, bit 2: DatasetMgmt (Trim)
 	binary.LittleEndian.PutUint16(buf[520:], 0x0C)
 
-	// ANACAP (ANA Capabilities) - offset 522
-	// bit 3: reports Optimized state
-	buf[522] = 0x08
-
-	// ANAGRPMAX - offset 524-527
-	binary.LittleEndian.PutUint32(buf[524:], 1)
-
-	// NANAGRPID - offset 528-531
-	binary.LittleEndian.PutUint32(buf[528:], 1)
-
 	// VWC (Volatile Write Cache) - offset 525
 	// bit 0: volatile write cache present → Flush required
 	buf[525] = 0x01
@@ -122,8 +126,13 @@ func (c *Controller) identifyController(req *Request) error {
 	// bit 0: SGLs supported (required for NVMe/TCP)
 	binary.LittleEndian.PutUint32(buf[536:], 0x01)
 
-	// SubNQN (Subsystem NQN) - offset 768, 256 bytes
-	copyPadded(buf[768:1024], sub.NQN)
+	// MNAN (Maximum Number of Allowed Namespaces) - offset 540-543
+	// Must be non-zero for NVMe 1.4+ controllers; kernel validates this.
+	binary.LittleEndian.PutUint32(buf[540:], 1)
+
+	// SubNQN (Subsystem NQN) - offset 768, 256 bytes, NUL-terminated
+	// Must NOT be space-padded — kernel uses strcmp() to match against Connect NQN.
+	copy(buf[768:1024], sub.NQN) // buf is already zeroed → NUL-terminated
 
 	// IOCCSZ (I/O Queue Command Capsule Supported Size) - offset 1792-1795
 	// In 16-byte units: 64/16 = 4

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -94,7 +95,12 @@ func (n *Node) runNative(ctx context.Context, cmd string) (string, string, int, 
 }
 
 func (n *Node) runLocal(ctx context.Context, cmd string) (string, string, int, error) {
-	c := exec.CommandContext(ctx, "wsl", "-e", "bash", "-c", cmd)
+	var c *exec.Cmd
+	if runtime.GOOS == "windows" {
+		c = exec.CommandContext(ctx, "wsl", "-e", "bash", "-c", cmd)
+	} else {
+		c = exec.CommandContext(ctx, "bash", "-c", cmd)
+	}
 	var outBuf, errBuf bytes.Buffer
 	c.Stdout = &outBuf
 	c.Stderr = &errBuf
@@ -166,8 +172,11 @@ func (n *Node) Upload(local, remote string) error {
 	if n.IsLocal {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		wslLocal := ToWSLPath(local)
-		_, stderr, code, err := n.Run(ctx, fmt.Sprintf("cp %s %s && chmod +x %s", wslLocal, remote, remote))
+		src := local
+		if runtime.GOOS == "windows" {
+			src = ToWSLPath(local)
+		}
+		_, stderr, code, err := n.Run(ctx, fmt.Sprintf("cp %s %s && chmod +x %s", src, remote, remote))
 		if err != nil || code != 0 {
 			return fmt.Errorf("local upload: code=%d stderr=%s err=%v", code, stderr, err)
 		}
@@ -226,8 +235,11 @@ func (n *Node) Download(remote, local string) error {
 	if n.IsLocal {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		wslLocal := ToWSLPath(local)
-		_, stderr, code, err := n.Run(ctx, fmt.Sprintf("cp %s %s", remote, wslLocal))
+		dst := local
+		if runtime.GOOS == "windows" {
+			dst = ToWSLPath(local)
+		}
+		_, stderr, code, err := n.Run(ctx, fmt.Sprintf("cp %s %s", remote, dst))
 		if err != nil || code != 0 {
 			return fmt.Errorf("local download: code=%d stderr=%s err=%v", code, stderr, err)
 		}
@@ -305,7 +317,12 @@ func (n *Node) StreamRun(ctx context.Context, cmd string, w io.Writer) error {
 		return c.Run()
 	}
 	if n.IsLocal {
-		c := exec.CommandContext(ctx, "wsl", "-e", "bash", "-c", cmd)
+		var c *exec.Cmd
+		if runtime.GOOS == "windows" {
+			c = exec.CommandContext(ctx, "wsl", "-e", "bash", "-c", cmd)
+		} else {
+			c = exec.CommandContext(ctx, "bash", "-c", cmd)
+		}
 		c.Stdout = w
 		c.Stderr = w
 		return c.Run()

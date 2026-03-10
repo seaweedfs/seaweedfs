@@ -65,6 +65,9 @@ type BlockVol struct {
 	healthScore *HealthScore
 	scrubber    *Scrubber
 
+	// Write admission control (BUG-CP103-2).
+	walAdmission *WALAdmission
+
 	// Observability (CP8-4).
 	Metrics *EngineMetrics
 
@@ -156,6 +159,14 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		Metrics:  v.Metrics,
 	})
 	go v.flusher.Run()
+	v.walAdmission = NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: cfg.WALMaxConcurrentWrites,
+		SoftWatermark: cfg.WALSoftWatermark,
+		HardWatermark: cfg.WALHardWatermark,
+		WALUsedFn:     wal.UsedFraction,
+		NotifyFn:      v.flusher.NotifyUrgent,
+		ClosedFn:      v.closed.Load,
+	})
 	return v, nil
 }
 
@@ -255,6 +266,15 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		log.Printf("blockvol: recovered %d snapshot(s)", len(v.snapshots))
 	}
 
+	v.walAdmission = NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: cfg.WALMaxConcurrentWrites,
+		SoftWatermark: cfg.WALSoftWatermark,
+		HardWatermark: cfg.WALHardWatermark,
+		WALUsedFn:     wal.UsedFraction,
+		NotifyFn:      v.flusher.NotifyUrgent,
+		ClosedFn:      v.closed.Load,
+	})
+
 	return v, nil
 }
 
@@ -333,6 +353,14 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 	}
 	if err := ValidateWrite(lba, uint32(len(data)), v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
+	}
+
+	// Admission control: throttle/block based on WAL pressure watermarks.
+	if v.walAdmission != nil {
+		if err := v.walAdmission.Acquire(v.config.WALFullTimeout); err != nil {
+			return fmt.Errorf("blockvol: write admission: %w", err)
+		}
+		defer v.walAdmission.Release()
 	}
 
 	lsn := v.nextLSN.Add(1) - 1
@@ -509,6 +537,14 @@ func (v *BlockVol) Trim(lba uint64, length uint32) error {
 	}
 	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return err
+	}
+
+	// Admission control: throttle/block based on WAL pressure watermarks.
+	if v.walAdmission != nil {
+		if err := v.walAdmission.Acquire(v.config.WALFullTimeout); err != nil {
+			return fmt.Errorf("blockvol: trim admission: %w", err)
+		}
+		defer v.walAdmission.Release()
 	}
 
 	lsn := v.nextLSN.Add(1) - 1

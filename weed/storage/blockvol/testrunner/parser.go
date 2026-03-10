@@ -91,6 +91,12 @@ func validate(s *Scenario) error {
 		if phase.Repeat < 0 || phase.Repeat > 100 {
 			return fmt.Errorf("phase %q: repeat must be 0..100 (got %d)", phase.Name, phase.Repeat)
 		}
+		if phase.TrimPct < 0 || phase.TrimPct > 49 {
+			return fmt.Errorf("phase %q: trim_pct must be 0..49 (got %d)", phase.Name, phase.TrimPct)
+		}
+		if phase.Aggregate != "" && phase.Aggregate != "median" && phase.Aggregate != "mean" && phase.Aggregate != "none" {
+			return fmt.Errorf("phase %q: aggregate must be 'median', 'mean', or 'none' (got %q)", phase.Name, phase.Aggregate)
+		}
 
 		// Validate save_as uniqueness within parallel phases.
 		if phase.Parallel {

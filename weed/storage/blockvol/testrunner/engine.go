@@ -3,7 +3,10 @@ package testrunner
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +70,13 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 		if count <= 0 {
 			count = 1
 		}
+
+		// Collect save_as values across iterations for aggregation.
+		var iterValues map[string][]float64
+		if count > 1 && phase.Aggregate != "none" {
+			iterValues = make(map[string][]float64)
+		}
+
 		for iter := 1; iter <= count; iter++ {
 			iterPhase := phase
 			if phase.Repeat > 1 {
@@ -74,6 +84,20 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 			}
 			pr := e.runPhase(ctx, actx, iterPhase)
 			result.Phases = append(result.Phases, pr)
+
+			// Collect numeric save_as values for aggregation.
+			if iterValues != nil {
+				for _, act := range phase.Actions {
+					if act.SaveAs != "" {
+						if v, ok := actx.Vars[act.SaveAs]; ok {
+							if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+								iterValues[act.SaveAs] = append(iterValues[act.SaveAs], f)
+							}
+						}
+					}
+				}
+			}
+
 			if pr.Status == StatusFail {
 				failed = true
 				result.Status = StatusFail
@@ -81,14 +105,64 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 				break
 			}
 		}
+
+		// Aggregate collected values across iterations.
+		if iterValues != nil && !failed {
+			trimPct := phase.TrimPct
+			// 0 means no trimming (explicit or default). Only auto-default
+			// when repeat >= 5 and trim_pct was not set.
+			if trimPct == 0 && count >= 5 {
+				trimPct = 20
+			}
+			agg := phase.Aggregate
+			if agg == "" {
+				agg = "median" // default aggregation method
+			}
+			for varName, values := range iterValues {
+				if len(values) < 2 {
+					continue
+				}
+				trimmed := trimOutliers(values, trimPct)
+				stats := ComputeStats(trimmed)
+
+				// Store aggregate results as vars.
+				switch agg {
+				case "median":
+					actx.Vars[varName] = strconv.FormatFloat(stats.P50, 'f', 2, 64)
+				case "mean":
+					actx.Vars[varName] = strconv.FormatFloat(stats.Mean, 'f', 2, 64)
+				}
+				actx.Vars[varName+"_median"] = strconv.FormatFloat(stats.P50, 'f', 2, 64)
+				actx.Vars[varName+"_mean"] = strconv.FormatFloat(stats.Mean, 'f', 2, 64)
+				actx.Vars[varName+"_stddev"] = strconv.FormatFloat(stats.StdDev, 'f', 2, 64)
+				actx.Vars[varName+"_min"] = strconv.FormatFloat(stats.Min, 'f', 2, 64)
+				actx.Vars[varName+"_max"] = strconv.FormatFloat(stats.Max, 'f', 2, 64)
+				actx.Vars[varName+"_n"] = strconv.Itoa(stats.Count)
+
+				// Store all raw values as comma-separated string.
+				parts := make([]string, len(values))
+				for i, v := range values {
+					parts[i] = strconv.FormatFloat(v, 'f', 2, 64)
+				}
+				actx.Vars[varName+"_all"] = strings.Join(parts, ",")
+
+				e.log("  [aggregate] %s: n=%d median=%.2f mean=%.2f stddev=%.2f (trimmed %d%% from %d samples)",
+					varName, stats.Count, stats.P50, stats.Mean, stats.StdDev, trimPct, len(values))
+			}
+		}
+
 		if failed {
 			break
 		}
 	}
 
-	// Always-phases run regardless of failure.
+	// Always-phases run regardless of failure, with a fresh 60s context
+	// so they can complete even if the main context was canceled.
+	cleanupCtx := context.Background()
+	cleanupCtx, cleanupCancel := context.WithTimeout(cleanupCtx, 60*time.Second)
+	defer cleanupCancel()
 	for _, phase := range alwaysPhases {
-		pr := e.runPhase(ctx, actx, phase)
+		pr := e.runPhase(cleanupCtx, actx, phase)
 		result.Phases = append(result.Phases, pr)
 	}
 
@@ -310,3 +384,23 @@ func marshalActionYAML(act Action) string {
 	}
 	return string(data)
 }
+
+// trimOutliers removes the top and bottom pct% of values.
+// E.g. pct=20 on 10 values removes the 2 lowest and 2 highest, returning 6.
+// Returns a copy; does not modify the input.
+func trimOutliers(values []float64, pct int) []float64 {
+	if len(values) <= 2 || pct <= 0 {
+		return values
+	}
+	sorted := make([]float64, len(values))
+	copy(sorted, values)
+	sort.Float64s(sorted)
+
+	trim := int(math.Round(float64(len(sorted)) * float64(pct) / 100.0))
+	if trim*2 >= len(sorted) {
+		// Can't trim more than half from each end; keep at least 1.
+		trim = (len(sorted) - 1) / 2
+	}
+	return sorted[trim : len(sorted)-trim]
+}
+

@@ -77,11 +77,11 @@ func TestAllActions_Registration(t *testing.T) {
 	byTier := registry.ListByTier()
 
 	// Verify tier counts.
-	if n := len(byTier[tr.TierCore]); n != 8 {
-		t.Errorf("core: %d, want 8", n)
+	if n := len(byTier[tr.TierCore]); n != 11 {
+		t.Errorf("core: %d, want 11", n)
 	}
-	if n := len(byTier[tr.TierBlock]); n != 44 {
-		t.Errorf("block: %d, want 44", n)
+	if n := len(byTier[tr.TierBlock]); n != 52 {
+		t.Errorf("block: %d, want 52", n)
 	}
 	if n := len(byTier[tr.TierDevOps]); n != 7 {
 		t.Errorf("devops: %d, want 7", n)
@@ -89,13 +89,71 @@ func TestAllActions_Registration(t *testing.T) {
 	if n := len(byTier[tr.TierChaos]); n != 5 {
 		t.Errorf("chaos: %d, want 5", n)
 	}
+	if n := len(byTier[TierK8s]); n != 14 {
+		t.Errorf("k8s: %d, want 14", n)
+	}
 
-	// Total should be 64.
+	// Total should be 89 (85 existing + 3 pgbench + 1 bench_stats).
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 64 {
-		t.Errorf("total actions: %d, want 64", total)
+	if total != 89 {
+		t.Errorf("total actions: %d, want 89", total)
+	}
+}
+
+func TestK8sActions_Registration(t *testing.T) {
+	registry := tr.NewRegistry()
+	RegisterK8sActions(registry)
+
+	expected := []string{
+		"kubectl_apply",
+		"kubectl_delete",
+		"kubectl_get_field",
+		"kubectl_wait_condition",
+		"kubectl_set_image",
+		"kubectl_assert_exists",
+		"kubectl_assert_not_exists",
+		"kubectl_logs",
+		"kubectl_rollout_status",
+		"kubectl_exec",
+		"kubectl_delete_pod",
+		"kubectl_pod_ready_count",
+		"kubectl_label",
+		"kubectl_get_condition",
+	}
+
+	for _, name := range expected {
+		if _, err := registry.Get(name); err != nil {
+			t.Errorf("action %q not registered: %v", name, err)
+		}
+	}
+
+	byTier := registry.ListByTier()
+	if n := len(byTier[TierK8s]); n != 14 {
+		t.Errorf("k8s tier has %d actions, want 14", n)
+	}
+}
+
+func TestK8sActions_TierGating(t *testing.T) {
+	registry := tr.NewRegistry()
+	RegisterK8sActions(registry)
+
+	// Without gating, all should be accessible.
+	if _, err := registry.Get("kubectl_apply"); err != nil {
+		t.Errorf("ungated: %v", err)
+	}
+
+	// Enable only core tier — k8s should be blocked.
+	registry.EnableTiers([]string{tr.TierCore})
+	if _, err := registry.Get("kubectl_apply"); err == nil {
+		t.Error("expected error when k8s tier is disabled")
+	}
+
+	// Enable k8s tier — should work again.
+	registry.EnableTiers([]string{TierK8s})
+	if _, err := registry.Get("kubectl_apply"); err != nil {
+		t.Errorf("k8s enabled: %v", err)
 	}
 }

@@ -1,0 +1,242 @@
+# Operator Gate G4: Ownership and Conflict Safety
+#
+# Tests that the operator correctly handles:
+# 1. Two CRs competing for singleton cluster-scoped resources
+# 2. Label tampering on owned resources
+# 3. Cleanup after conflict
+#
+# The operator uses label-based ownership (not ownerReferences) for
+# cluster-scoped resources. When a second CR tries to create the same
+# CSIDriver/StorageClass, the operator should set ResourceConflict=True
+# and phase=Failed on the second CR.
+#
+# Pass criteria:
+# - First CR reaches Running with CSIReady=True
+# - Second CR gets ResourceConflict condition, phase=Failed
+# - Label tampering on cluster-scoped resource is detected and corrected
+# - Cleanup of first CR removes all owned resources
+# - After cleanup, second CR can reconcile to Running
+#
+# Requires: k3s cluster, operator deployed
+
+name: op-ownership-conflict
+timeout: 15m
+env:
+  operator_ns: "sw-block-system"
+
+topology:
+  nodes:
+    k8s_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+phases:
+  - name: deploy_operator
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/crd/bases/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/rbac/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/manager/"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "3m"
+
+  - name: create_first_cr
+    actions:
+      # Create first CR — should succeed
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: block.seaweedfs.com/v1alpha1
+          kind: SeaweedBlockCluster
+          metadata:
+            name: cr-alpha
+            namespace: default
+          spec:
+            masterRef:
+              address: "192.168.1.184:9333"
+            csi:
+              storageClassName: "sw-block"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-alpha"
+        namespace: "default"
+        condition: "CSIReady=True"
+        timeout: "5m"
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-alpha"
+        namespace: "default"
+        jsonpath: "{.status.phase}"
+        save_as: alpha_phase
+      - action: assert_equal
+        actual: "{{ alpha_phase }}"
+        expected: "Running"
+
+  - name: create_conflicting_cr
+    actions:
+      # Create second CR with same StorageClass name — should conflict
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: block.seaweedfs.com/v1alpha1
+          kind: SeaweedBlockCluster
+          metadata:
+            name: cr-beta
+            namespace: default
+          spec:
+            masterRef:
+              address: "192.168.1.184:9333"
+            csi:
+              storageClassName: "sw-block"
+      - action: sleep
+        duration: 15s
+
+  - name: verify_conflict
+    actions:
+      # Second CR should have ResourceConflict condition
+      - action: kubectl_get_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-beta"
+        namespace: "default"
+        condition_type: "ResourceConflict"
+        save_as: conflict_status
+      - action: assert_equal
+        actual: "{{ conflict_status }}"
+        expected: "True"
+      # Second CR should be in Failed phase
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-beta"
+        namespace: "default"
+        jsonpath: "{.status.phase}"
+        save_as: beta_phase
+      - action: assert_equal
+        actual: "{{ beta_phase }}"
+        expected: "Failed"
+      # First CR should still be Running
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-alpha"
+        namespace: "default"
+        jsonpath: "{.status.phase}"
+        save_as: alpha_still_running
+      - action: assert_equal
+        actual: "{{ alpha_still_running }}"
+        expected: "Running"
+
+  - name: label_tampering
+    actions:
+      # Tamper with the ownership label on CSIDriver
+      - action: kubectl_label
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+        labels: "app.kubernetes.io/managed-by=tampered"
+        overwrite: "true"
+      - action: sleep
+        duration: 10s
+      # After next reconcile, operator should restore the label
+      # Trigger reconcile by touching the CR
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: block.seaweedfs.com/v1alpha1
+          kind: SeaweedBlockCluster
+          metadata:
+            name: cr-alpha
+            namespace: default
+            annotations:
+              reconcile-trigger: "label-fix"
+          spec:
+            masterRef:
+              address: "192.168.1.184:9333"
+            csi:
+              storageClassName: "sw-block"
+      - action: sleep
+        duration: 10s
+      # Verify label was restored
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+        jsonpath: "{.metadata.labels.app\\.kubernetes\\.io/managed-by}"
+        save_as: managed_by
+      - action: assert_equal
+        actual: "{{ managed_by }}"
+        expected: "sw-block-operator"
+
+  - name: cleanup_first_cr
+    actions:
+      # Delete first CR — finalizer should clean up cluster-scoped resources
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-alpha"
+        namespace: "default"
+        wait: "true"
+      - action: sleep
+        duration: 10s
+      # Cluster-scoped resources should be gone
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "storageclass/sw-block"
+
+  - name: second_cr_recovers
+    actions:
+      # Now that first CR is gone, second CR should reconcile to Running
+      # Trigger reconcile
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: block.seaweedfs.com/v1alpha1
+          kind: SeaweedBlockCluster
+          metadata:
+            name: cr-beta
+            namespace: default
+            annotations:
+              reconcile-trigger: "retry-after-cleanup"
+          spec:
+            masterRef:
+              address: "192.168.1.184:9333"
+            csi:
+              storageClassName: "sw-block"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-beta"
+        namespace: "default"
+        condition: "CSIReady=True"
+        timeout: "5m"
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-beta"
+        namespace: "default"
+        jsonpath: "{.status.phase}"
+        save_as: beta_recovered
+      - action: assert_equal
+        actual: "{{ beta_recovered }}"
+        expected: "Running"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-alpha"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/cr-beta"
+        namespace: "default"
+        ignore_error: true
+      - action: sleep
+        duration: 10s
