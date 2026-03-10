@@ -434,6 +434,15 @@ func (f *Flusher) CheckpointLSN() uint64 {
 	return f.checkpointLSN
 }
 
+// CloseBatchIO releases the batch I/O backend resources (e.g. io_uring ring).
+// Must be called after Stop() and the final FlushOnce().
+func (f *Flusher) CloseBatchIO() error {
+	if f.bio != nil {
+		return f.bio.Close()
+	}
+	return nil
+}
+
 // SetFD replaces the file descriptor used for extent writes. Test-only.
 func (f *Flusher) SetFD(fd *os.File) {
 	f.mu.Lock()

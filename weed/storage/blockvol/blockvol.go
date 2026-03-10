@@ -1127,8 +1127,9 @@ func (v *BlockVol) Close() error {
 	}
 	var flushErr error
 	if v.flusher != nil {
-		v.flusher.Stop()         // stop background goroutine first (no concurrent flush)
+		v.flusher.Stop()                 // stop background goroutine first (no concurrent flush)
 		flushErr = v.flusher.FlushOnce() // then do final flush safely
+		v.flusher.CloseBatchIO()         // release io_uring ring / kernel resources
 	}
 
 	// Close snapshot delta files.

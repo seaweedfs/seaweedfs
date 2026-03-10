@@ -33,12 +33,15 @@ type BatchIO interface {
 	// Op.Offset. Returns the first error encountered.
 	PwriteBatch(fd *os.File, ops []Op) error
 
-	// Fsync issues fdatasync on the file.
+	// Fsync issues fdatasync on the file, flushing data to disk without
+	// updating file metadata (mtime, size). On non-Linux platforms where
+	// fdatasync is unavailable, falls back to fsync. Both backends use
+	// identical sync semantics.
 	Fsync(fd *os.File) error
 
-	// LinkedWriteFsync writes buf at offset then fsyncs, as an atomic pair.
-	// On io_uring this is a linked SQE chain (one syscall).
-	// On standard, this is sequential write + fdatasync.
+	// LinkedWriteFsync writes buf at offset then issues fdatasync as a pair.
+	// On io_uring this is a linked SQE chain (one io_uring_enter syscall).
+	// On standard, this is sequential pwrite + fdatasync.
 	LinkedWriteFsync(fd *os.File, buf []byte, offset int64) error
 
 	// Close releases resources (io_uring ring, etc). No-op for standard.
