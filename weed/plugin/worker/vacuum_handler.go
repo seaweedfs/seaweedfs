@@ -544,12 +544,9 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 		summary = summary + " on " + result.Server
 	}
 
-	// Estimate runtime: 5 min/GB (compact + commit + overhead), minimum 3 minutes
+	// Estimate runtime: 5 min/GB (compact + commit + overhead)
 	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
 	estimatedRuntimeSeconds := volumeSizeGB * 5 * 60
-	if estimatedRuntimeSeconds < 180 {
-		estimatedRuntimeSeconds = 180
-	}
 
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,

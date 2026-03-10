@@ -152,6 +152,9 @@ func (t *VacuumTask) GetProgress() float64 {
 // topology vacuum approach. base is the per-GB multiplier (e.g. 1 minute for
 // check, 3 minutes for compact).
 func (t *VacuumTask) vacuumTimeout(base time.Duration) time.Duration {
+	if t.volumeSize == 0 {
+		glog.V(1).Infof("volume %d has no size metric, using minimum timeout", t.volumeID)
+	}
 	sizeGB := int64(t.volumeSize/1024/1024/1024) + 1
 	return base * time.Duration(sizeGB)
 }
