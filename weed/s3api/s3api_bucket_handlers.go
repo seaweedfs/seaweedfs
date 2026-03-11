@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
@@ -396,8 +397,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Clean up bucket-related caches and locks after successful deletion
+	// Clean up bucket-related caches, locks, and metrics after successful deletion
 	s3a.invalidateBucketConfigCache(bucket)
+	stats_collect.DeleteBucketMetrics(bucket)
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
