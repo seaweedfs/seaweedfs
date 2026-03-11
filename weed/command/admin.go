@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/spf13/viper"
@@ -55,7 +57,7 @@ func init() {
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
-	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
+	a.adminUser = cmdAdmin.Flag.String("adminUser", "", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
@@ -98,6 +100,9 @@ var cmdAdmin = &Command{
     - IMPORTANT: When read-only credentials are configured, adminPassword MUST also be set
     - This ensures an admin account exists to manage and authorize read-only access
     - Sessions are secured with auto-generated session keys
+    - Credentials can also be set via security.toml [admin] section or environment variables:
+      WEED_ADMIN_USER, WEED_ADMIN_PASSWORD, WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
+    - Precedence: CLI flag > env var / security.toml > default value
 
   Security Configuration:
     - The admin server reads TLS configuration from security.toml
@@ -136,6 +141,13 @@ var cmdAdmin = &Command{
 func runAdmin(cmd *Command, args []string) bool {
 	// Load security configuration
 	util.LoadSecurityConfiguration()
+
+	// Apply security.toml / env var fallbacks for credential flags.
+	// CLI flags take precedence over security.toml / WEED_* env vars.
+	applyViperFallback(cmd, a.adminUser, "adminUser", "admin.user")
+	applyViperFallback(cmd, a.adminPassword, "adminPassword", "admin.password")
+	applyViperFallback(cmd, a.readOnlyUser, "readOnlyUser", "admin.readonly.user")
+	applyViperFallback(cmd, a.readOnlyPassword, "readOnlyPassword", "admin.readonly.password")
 
 	// Backward compatibility: if -masters is provided, use it
 	if *a.masters != "" {
@@ -532,6 +544,22 @@ func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	}
 
 	return key[:keyLen], key[keyLen:], nil
+}
+
+// applyViperFallback sets a flag's value from viper (security.toml / env var)
+// when the flag was not explicitly set on the command line.
+func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string) {
+	explicitlySet := false
+	cmd.Flag.Visit(func(f *flag.Flag) {
+		if f.Name == flagName {
+			explicitlySet = true
+		}
+	})
+	if !explicitlySet {
+		if v := viper.GetString(viperKey); v != "" {
+			*flagPtr = v
+		}
+	}
 }
 
 // expandHomeDir expands the tilde (~) in a path to the user's home directory
