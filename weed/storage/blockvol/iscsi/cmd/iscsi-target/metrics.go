@@ -155,7 +155,7 @@ func newMetricsAdapter(inner iscsi.BlockDevice, vol *blockvol.BlockVol, reg prom
 		Namespace: "seaweedfs", Subsystem: "blockvol",
 		Name: "wal_admit_timeout_total", Help: "WAL admission timeouts (ErrWALFull)",
 	}, func() float64 { return float64(em.WALAdmitTimeoutTotal.Load()) }))
-	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Namespace: "seaweedfs", Subsystem: "blockvol",
 		Name: "wal_admit_wait_seconds_total", Help: "Total time spent waiting in WAL admission (seconds)",
 	}, func() float64 { _, s := em.WALAdmitWaitSnapshot(); return float64(s) / 1e9 }))
