@@ -297,6 +297,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}); err != nil {
+		// If mkdir failed because another request created the bucket concurrently,
+		// return BucketAlreadyExists instead of InternalError.
+		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
+			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+			return
+		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
