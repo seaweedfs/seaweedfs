@@ -809,11 +809,17 @@ pub struct SecurityConfig {
 /// ```
 pub fn parse_security_config(path: &str) -> SecurityConfig {
     if path.is_empty() {
-        return SecurityConfig::default();
+        let mut cfg = SecurityConfig::default();
+        apply_env_overrides(&mut cfg);
+        return cfg;
     }
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return SecurityConfig::default(),
+        Err(_) => {
+            let mut cfg = SecurityConfig::default();
+            apply_env_overrides(&mut cfg);
+            return cfg;
+        }
     };
 
     let mut cfg = SecurityConfig::default();
@@ -912,7 +918,57 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         }
     }
 
+    // Override with WEED_ environment variables (matches Go's Viper convention:
+    // prefix WEED_, uppercase, replace . with _).
+    // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
+    apply_env_overrides(&mut cfg);
+
     cfg
+}
+
+/// Apply WEED_ environment variable overrides to a SecurityConfig.
+/// Matches Go's Viper convention: WEED_ prefix, uppercase, dots replaced with underscores.
+fn apply_env_overrides(cfg: &mut SecurityConfig) {
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_KEY") {
+        cfg.jwt_signing_key = v.into_bytes();
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_signing_expires = v.parse().unwrap_or(cfg.jwt_signing_expires);
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_KEY") {
+        cfg.jwt_read_signing_key = v.into_bytes();
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_read_signing_expires = v.parse().unwrap_or(cfg.jwt_read_signing_expires);
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CERT") {
+        cfg.https_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_KEY") {
+        cfg.https_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CA") {
+        cfg.https_ca_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CERT") {
+        cfg.grpc_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_KEY") {
+        cfg.grpc_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
+        cfg.grpc_ca_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GUARD_WHITE_LIST") {
+        cfg.guard_white_list = v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Ok(v) = std::env::var("WEED_ACCESS_UI") {
+        cfg.access_ui = v == "true" || v == "1";
+    }
 }
 
 /// Detect the host's IP address.
@@ -1159,5 +1215,48 @@ ui = true
             find_options_arg(&["bin".into(), "--port".into(), "8080".into()]),
             ""
         );
+    }
+
+    #[test]
+    fn test_env_override_jwt_signing_key() {
+        // Set env, parse empty config, verify env wins
+        std::env::set_var("WEED_JWT_SIGNING_KEY", "env-secret");
+        let cfg = parse_security_config("");
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
+        std::env::remove_var("WEED_JWT_SIGNING_KEY");
+    }
+
+    #[test]
+    fn test_env_override_takes_precedence_over_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "file-secret"
+"#,
+        )
+        .unwrap();
+
+        std::env::set_var("WEED_JWT_SIGNING_KEY", "env-secret");
+        let cfg = parse_security_config(tmp.path().to_str().unwrap());
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
+        std::env::remove_var("WEED_JWT_SIGNING_KEY");
+    }
+
+    #[test]
+    fn test_env_override_guard_white_list() {
+        std::env::set_var("WEED_GUARD_WHITE_LIST", "10.0.0.0/8, 192.168.1.0/24");
+        let cfg = parse_security_config("");
+        assert_eq!(cfg.guard_white_list, vec!["10.0.0.0/8", "192.168.1.0/24"]);
+        std::env::remove_var("WEED_GUARD_WHITE_LIST");
+    }
+
+    #[test]
+    fn test_env_override_access_ui() {
+        std::env::set_var("WEED_ACCESS_UI", "true");
+        let cfg = parse_security_config("");
+        assert!(cfg.access_ui);
+        std::env::remove_var("WEED_ACCESS_UI");
     }
 }
