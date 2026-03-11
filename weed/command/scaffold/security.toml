@@ -173,8 +173,10 @@ ca = ""
 [admin]
 user = ""
 password = ""
-readonly.user = ""
-readonly.password = ""
+
+[admin.readonly]
+user = ""
+password = ""
 
 # white list. It's checking request ip address.
 [guard]
