@@ -149,10 +149,42 @@ weed admin -port=443 -tlsCert=/path/to/cert.pem -tlsKey=/path/to/key.pem
 |--------|---------|-------------|
 | `-port` | 23646 | Admin server port |
 | `-masters` | localhost:9333 | Comma-separated master servers |
-| `-adminUser` | admin | Admin username (if auth enabled) |
+| `-adminUser` | "" | Admin username (if auth enabled) |
 | `-adminPassword` | "" | Admin password (empty = no auth) |
+| `-readOnlyUser` | "" | Read-only username (optional) |
+| `-readOnlyPassword` | "" | Read-only password (optional) |
 | `-tlsCert` | "" | Path to TLS certificate |
 | `-tlsKey` | "" | Path to TLS private key |
+
+### Environment Variable / security.toml Support
+
+Credentials can also be configured via the `[admin]` section in `security.toml` or
+environment variables, which avoids exposing secrets in CLI flags or process listings.
+
+**security.toml example:**
+```toml
+[admin]
+user = "admin"
+password = "secret"
+readonly.user = "viewer"
+readonly.password = "viewpass"
+```
+
+**Environment variables** (via viper's `WEED_` prefix):
+
+| security.toml key | Environment Variable |
+|--------------------|----------------------|
+| `admin.user` | `WEED_ADMIN_USER` |
+| `admin.password` | `WEED_ADMIN_PASSWORD` |
+| `admin.readonly.user` | `WEED_ADMIN_READONLY_USER` |
+| `admin.readonly.password` | `WEED_ADMIN_READONLY_PASSWORD` |
+
+**Precedence**: CLI flag > env var / security.toml > default value
+
+```bash
+# Start with credentials from environment variables
+WEED_ADMIN_PASSWORD=secret weed admin -master=localhost:9333
+```
 
 ### Docker Usage
 
