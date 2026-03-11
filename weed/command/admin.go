@@ -556,7 +556,7 @@ func applyViperFallback(cmd *Command, flagPtr *string, flagName, viperKey string
 		}
 	})
 	if !explicitlySet {
-		if v := viper.GetString(viperKey); v != "" {
+		if v := util.GetViper().GetString(viperKey); v != "" {
 			*flagPtr = v
 		}
 	}

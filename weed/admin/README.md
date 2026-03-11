@@ -183,7 +183,8 @@ readonly.password = "viewpass"
 
 ```bash
 # Start with credentials from environment variables
-WEED_ADMIN_PASSWORD=secret weed admin -master=localhost:9333
+# Note: adminUser must be set when adminPassword is set
+WEED_ADMIN_USER=admin WEED_ADMIN_PASSWORD=secret weed admin -master=localhost:9333
 ```
 
 ### Docker Usage
