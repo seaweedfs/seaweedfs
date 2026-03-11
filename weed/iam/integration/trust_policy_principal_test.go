@@ -176,7 +176,9 @@ func TestTrustPolicyAWSUserArrayPrincipal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := iamManager.ValidateTrustPolicyForPrincipal(ctx, roleArn, tt.principalArn)
 			if tt.expectErr {
-				assert.Error(t, err)
+				if assert.Error(t, err) {
+					assert.Contains(t, err.Error(), "trust policy denies access")
+				}
 			} else {
 				assert.NoError(t, err)
 			}
@@ -240,5 +242,7 @@ func TestTrustPolicyPlainStringPrincipal(t *testing.T) {
 	assert.NoError(t, err, "Matching plain string principal should allow user")
 
 	err = iamManager.ValidateTrustPolicyForPrincipal(ctx, roleArn2, "arn:aws:iam::000000000000:user/other")
-	assert.Error(t, err, "Non-matching plain string principal should deny user")
+	if assert.Error(t, err, "Non-matching plain string principal should deny user") {
+		assert.Contains(t, err.Error(), "trust policy denies access")
+	}
 }
