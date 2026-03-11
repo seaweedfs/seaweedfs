@@ -57,7 +57,7 @@ func init() {
 	a.masters = cmdAdmin.Flag.String("masters", "", "comma-separated master servers (deprecated, use -master instead)")
 	a.dataDir = cmdAdmin.Flag.String("dataDir", "", "directory to store admin configuration and data files")
 
-	a.adminUser = cmdAdmin.Flag.String("adminUser", "", "admin interface username")
+	a.adminUser = cmdAdmin.Flag.String("adminUser", "admin", "admin interface username")
 	a.adminPassword = cmdAdmin.Flag.String("adminPassword", "", "admin interface password (if empty, auth is disabled)")
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")

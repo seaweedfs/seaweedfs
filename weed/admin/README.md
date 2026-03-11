@@ -149,7 +149,7 @@ weed admin -port=443 -tlsCert=/path/to/cert.pem -tlsKey=/path/to/key.pem
 |--------|---------|-------------|
 | `-port` | 23646 | Admin server port |
 | `-masters` | localhost:9333 | Comma-separated master servers |
-| `-adminUser` | "" | Admin username (if auth enabled) |
+| `-adminUser` | admin | Admin username (if auth enabled) |
 | `-adminPassword` | "" | Admin password (empty = no auth) |
 | `-readOnlyUser` | "" | Read-only username (optional) |
 | `-readOnlyPassword` | "" | Read-only password (optional) |
@@ -182,9 +182,8 @@ readonly.password = "viewpass"
 **Precedence**: CLI flag > env var / security.toml > default value
 
 ```bash
-# Start with credentials from environment variables
-# Note: adminUser must be set when adminPassword is set
-WEED_ADMIN_USER=admin WEED_ADMIN_PASSWORD=secret weed admin -master=localhost:9333
+# Start with credentials from environment variables (adminUser defaults to "admin")
+WEED_ADMIN_PASSWORD=secret weed admin -master=localhost:9333
 ```
 
 ### Docker Usage
