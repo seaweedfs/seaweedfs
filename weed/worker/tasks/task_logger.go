@@ -322,9 +322,9 @@ func (l *FileTaskLogger) writeLogEntry(entry TaskLogEntry) {
 		formattedMsg := fmt.Sprintf("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
 		switch entry.Level {
 		case "ERROR":
-			glog.ErrorDepth(3, formattedMsg)
+			glog.ErrorDepth(4, formattedMsg)
 		case "WARNING":
-			glog.WarningDepth(3, formattedMsg)
+			glog.WarningDepth(4, formattedMsg)
 		}
 	}
 }
