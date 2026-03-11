@@ -257,6 +257,7 @@ require (
 	github.com/openzipkin/zipkin-go v0.4.3 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
+	github.com/pawelgaczynski/giouring v0.0.0-20230826085535-69588b89acb9 // indirect
 	github.com/petermattis/goid v0.0.0-20260113132338-7c7de50cc741 // indirect
 	github.com/pierrre/geohash v1.0.0 // indirect
 	github.com/pquerna/otp v1.5.0 // indirect

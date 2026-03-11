@@ -1,4 +1,4 @@
-//go:build linux && !no_iouring
+//go:build linux && iouring_iceber
 
 package batchio
 
