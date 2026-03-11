@@ -10,6 +10,8 @@ import (
 	"github.com/pawelgaczynski/giouring"
 )
 
+func init() { IOUringImpl = "giouring" }
+
 // giouringBatchIO implements BatchIO using giouring (direct liburing port).
 // No goroutines or channels — direct SQE/CQE ring manipulation.
 // Requires kernel 6.0+.

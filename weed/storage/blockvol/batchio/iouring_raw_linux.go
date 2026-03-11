@@ -1,4 +1,4 @@
-//go:build linux && !no_iouring && !iouring_iceber && !iouring_giouring
+//go:build linux && iouring_raw
 
 package batchio
 
@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"unsafe"
 )
+
+func init() { IOUringImpl = "raw" }
 
 // Raw io_uring syscall numbers.
 const (

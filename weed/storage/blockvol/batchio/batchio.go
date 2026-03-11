@@ -23,6 +23,11 @@ import (
 // Callers decide whether to fall back to standard or fail.
 var ErrIOUringUnavailable = errors.New("batchio: io_uring unavailable")
 
+// IOUringImpl reports the compiled io_uring implementation name.
+// Set by each iouring_*_linux.go file. Empty string means no io_uring
+// backend was compiled in (standard only).
+var IOUringImpl string
+
 // Op represents a single I/O operation: read or write buf at offset.
 type Op struct {
 	Buf    []byte

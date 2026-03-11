@@ -9,6 +9,8 @@ import (
 	"github.com/iceber/iouring-go"
 )
 
+func init() { IOUringImpl = "iceber" }
+
 // ioUringBatchIO implements BatchIO using Linux io_uring.
 // Requires kernel 5.6+ (linked fsync: 5.10+).
 type ioUringBatchIO struct {

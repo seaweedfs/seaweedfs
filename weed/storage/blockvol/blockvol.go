@@ -1165,25 +1165,31 @@ func (v *BlockVol) Close() error {
 //   - "auto": tries io_uring, falls back to standard with warning
 //   - "io_uring": requires io_uring, returns error if unavailable
 func newBatchIO(mode IOBackendMode, logger *log.Logger) (batchio.BatchIO, string, error) {
+	impl := batchio.IOUringImpl // compiled-in implementation ("iceber", "giouring", "raw", or "")
+	if impl == "" {
+		impl = "none"
+	}
+
 	switch mode {
 	case IOBackendIOUring:
 		bio, err := batchio.NewIOUring(256)
 		if err != nil {
-			return nil, "", fmt.Errorf("io_uring requested but unavailable: %w", err)
+			return nil, "", fmt.Errorf("io_uring requested but unavailable (compiled=%s): %w", impl, err)
 		}
-		logger.Printf("io backend: requested=io_uring selected=io_uring")
+		logger.Printf("io backend: requested=io_uring implementation=%s selected=io_uring", impl)
 		return bio, "io_uring", nil
 
 	case IOBackendAuto:
 		bio, err := batchio.NewIOUring(256)
 		if err != nil {
-			logger.Printf("io backend: requested=auto selected=standard reason=%v", err)
+			logger.Printf("io backend: requested=auto implementation=%s selected=standard reason=%v", impl, err)
 			return batchio.NewStandard(), "standard", nil
 		}
-		logger.Printf("io backend: requested=auto selected=io_uring")
+		logger.Printf("io backend: requested=auto implementation=%s selected=io_uring", impl)
 		return bio, "io_uring", nil
 
 	default: // IOBackendStandard or empty
+		logger.Printf("io backend: requested=standard implementation=%s selected=standard", impl)
 		return batchio.NewStandard(), "standard", nil
 	}
 }
