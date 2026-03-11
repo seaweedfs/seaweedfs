@@ -251,11 +251,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// If collection exists but bucket directory doesn't, this is an inconsistent state
+	// If collection exists but bucket directory doesn't, this is an orphaned state
+	// from a previous bucket deletion where volumes haven't been fully cleaned up yet.
+	// Allow the bucket to be recreated by proceeding with directory creation.
 	if collectionExists {
-		glog.Errorf("PutBucketHandler: collection exists but bucket directory missing for %s", bucket)
-		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-		return
+		glog.Warningf("PutBucketHandler: collection exists but bucket directory missing for %s, recreating bucket directory", bucket)
 	}
 
 	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
@@ -297,6 +297,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}); err != nil {
+		// If mkdir failed because another request created the bucket concurrently,
+		// return BucketAlreadyExists instead of InternalError.
+		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
+			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+			return
+		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
