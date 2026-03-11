@@ -632,6 +632,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 
 		// Set nextMarker only when we have quota to process this entry
 		nextMarker = entry.Name
+		// Track whether this entry is the exact directory targeted by a trailing-slash prefix
+		// (e.g., prefix "foo" from original prefix "foo/"). After recursing into this directory,
+		// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
+		matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
 				if delimiter != "/" {
@@ -690,6 +694,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
 				nextMarker = entry.Name + "/" + subNextMarker
 				if cursor.isTruncated {
+					return
+				}
+				if matchedPrefixDir {
 					return
 				}
 				// println("doListFilerEntries2 nextMarker", nextMarker)
