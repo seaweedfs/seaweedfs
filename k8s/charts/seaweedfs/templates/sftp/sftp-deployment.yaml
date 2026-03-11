@@ -49,7 +49,7 @@ spec:
       {{- end }}
       {{- if .Values.sftp.topologySpreadConstraints }}
       topologySpreadConstraints:
-        {{ tpl .Values.sftp.topologySpreadConstraint . | nindent 8 | trim }}
+        {{ tpl .Values.sftp.topologySpreadConstraints . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.sftp.tolerations }}
       tolerations:
