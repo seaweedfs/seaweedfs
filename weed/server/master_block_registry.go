@@ -28,6 +28,8 @@ type ReplicaInfo struct {
 	Path        string    // file path on replica VS
 	ISCSIAddr   string    // iSCSI target address
 	IQN         string    // iSCSI qualified name
+	NvmeAddr    string    // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQN         string    // NVMe subsystem NQN, empty if NVMe disabled
 	DataAddr    string    // WAL receiver data listen addr
 	CtrlAddr    string    // WAL receiver ctrl listen addr
 	HealthScore float64   // from heartbeat (0.0-1.0)
@@ -336,6 +338,10 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				if info.ReplicaCtrlAddr != "" {
 					existing.ReplicaCtrlAddr = info.ReplicaCtrlAddr
 				}
+				// NVMe publication: update NVMe fields from heartbeat.
+				// Required for master restart reconstruction and NVMe enable/disable.
+				existing.NvmeAddr = info.NvmeAddr
+				existing.NQN = info.Nqn
 				// Sync first replica's data addrs to Replicas[].
 				if info.ReplicaDataAddr != "" && len(existing.Replicas) > 0 {
 					existing.Replicas[0].DataAddr = info.ReplicaDataAddr
@@ -350,6 +356,8 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 						existing.Replicas[i].HealthScore = info.HealthScore
 						existing.Replicas[i].LastHeartbeat = time.Now()
 						existing.Replicas[i].Role = info.Role
+						existing.Replicas[i].NvmeAddr = info.NvmeAddr
+						existing.Replicas[i].NQN = info.Nqn
 						if existing.WALHeadLSN > info.WalHeadLsn {
 							existing.Replicas[i].WALLag = existing.WALHeadLSN - info.WalHeadLsn
 						} else {
@@ -369,6 +377,8 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 					WALHeadLSN:    info.WalHeadLsn,
 					LastHeartbeat: time.Now(),
 					Role:          info.Role,
+					NvmeAddr:      info.NvmeAddr,
+					NQN:           info.Nqn,
 				}
 				existing.Replicas = append(existing.Replicas, ri)
 				r.addToServer(server, existingName)
@@ -408,6 +418,9 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				if info.ReplicaCtrlAddr != "" {
 					entry.ReplicaCtrlAddr = info.ReplicaCtrlAddr
 				}
+				// NVMe publication: propagate NVMe fields from heartbeat.
+				entry.NvmeAddr = info.NvmeAddr
+				entry.NQN = info.Nqn
 				r.volumes[name] = entry
 				r.addToServer(server, name)
 				glog.V(0).Infof("block registry: auto-registered %q from heartbeat (server=%s, path=%s, size=%d)",
@@ -816,6 +829,8 @@ func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
 	entry.Path = promoted.Path
 	entry.IQN = promoted.IQN
 	entry.ISCSIAddr = promoted.ISCSIAddr
+	entry.NvmeAddr = promoted.NvmeAddr
+	entry.NQN = promoted.NQN
 	entry.Epoch = newEpoch
 	entry.Role = blockvol.RoleToWire(blockvol.RolePrimary)
 	entry.LastLeaseGrant = time.Now()

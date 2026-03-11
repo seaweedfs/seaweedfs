@@ -287,6 +287,8 @@ func (ms *MasterServer) tryCreateOneReplica(ctx context.Context, req *master_pb.
 			Path:      replicaResult.Path,
 			ISCSIAddr: replicaResult.ISCSIAddr,
 			IQN:       replicaResult.IQN,
+			NvmeAddr:  replicaResult.NvmeAddr,
+			NQN:       replicaResult.NQN,
 			DataAddr:  replicaResult.ReplicaDataAddr,
 			CtrlAddr:  replicaResult.ReplicaCtrlAddr,
 		})

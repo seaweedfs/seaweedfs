@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -1097,5 +1098,83 @@ func TestMaster_NoNvmeFieldsWhenDisabled(t *testing.T) {
 	}
 	if lresp.NvmeAddr != "" || lresp.Nqn != "" {
 		t.Fatalf("Lookup NVMe fields should be empty, got addr=%q nqn=%q", lresp.NvmeAddr, lresp.Nqn)
+	}
+}
+
+func TestMaster_PromotionCopiesNvmeFields(t *testing.T) {
+	ms := testMasterServer(t)
+
+	// Directly register an entry with primary + replica, both having NVMe fields.
+	ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name:         "ha-vol",
+		VolumeServer: "vs1:9333",
+		Path:         "/data/ha-vol.blk",
+		IQN:          "iqn.2024.test:ha-vol",
+		ISCSIAddr:    "vs1:3260",
+		NvmeAddr:     "vs1:4420",
+		NQN:          "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs1",
+		SizeBytes:    1 << 30,
+		Epoch:        5,
+		Role:         1, // RolePrimary
+		LeaseTTL:     30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{
+				Server:      "vs2:9333",
+				Path:        "/data/ha-vol.blk",
+				IQN:         "iqn.2024.test:ha-vol-r",
+				ISCSIAddr:   "vs2:3260",
+				NvmeAddr:    "vs2:4420",
+				NQN:         "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2",
+				DataAddr:    "vs2:14260",
+				CtrlAddr:    "vs2:14261",
+				HealthScore: 0.95,
+				WALHeadLSN:  100,
+			},
+		},
+	})
+	// Wire byServer index for replica.
+	ms.blockRegistry.mu.Lock()
+	ms.blockRegistry.addToServer("vs2:9333", "ha-vol")
+	ms.blockRegistry.mu.Unlock()
+
+	// Pre-promotion: verify primary NVMe fields.
+	entry, _ := ms.blockRegistry.Lookup("ha-vol")
+	if entry.NvmeAddr != "vs1:4420" {
+		t.Fatalf("pre-promotion NvmeAddr: got %q, want vs1:4420", entry.NvmeAddr)
+	}
+
+	// Promote replica.
+	newEpoch, err := ms.blockRegistry.PromoteBestReplica("ha-vol")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	if newEpoch != 6 {
+		t.Fatalf("newEpoch: got %d, want 6", newEpoch)
+	}
+
+	// After promotion: entry should have replica's NVMe fields.
+	entry, _ = ms.blockRegistry.Lookup("ha-vol")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("after promotion, VolumeServer: got %q, want vs2:9333", entry.VolumeServer)
+	}
+	if entry.NvmeAddr != "vs2:4420" {
+		t.Fatalf("after promotion, NvmeAddr: got %q, want vs2:4420", entry.NvmeAddr)
+	}
+	if entry.NQN != "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2" {
+		t.Fatalf("after promotion, NQN: got %q", entry.NQN)
+	}
+
+	// Lookup should return the promoted replica's NVMe fields immediately.
+	lresp, err := ms.LookupBlockVolume(context.Background(), &master_pb.LookupBlockVolumeRequest{
+		Name: "ha-vol",
+	})
+	if err != nil {
+		t.Fatalf("LookupBlockVolume: %v", err)
+	}
+	if lresp.NvmeAddr != "vs2:4420" {
+		t.Fatalf("Lookup NvmeAddr after promotion: got %q, want vs2:4420", lresp.NvmeAddr)
+	}
+	if lresp.Nqn != "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2" {
+		t.Fatalf("Lookup Nqn after promotion: got %q", lresp.Nqn)
 	}
 }
