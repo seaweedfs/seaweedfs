@@ -165,6 +165,17 @@ cert = ""
 key = ""
 ca = ""
 
+# Admin server authentication
+# If password is set, users must login to access the admin interface
+# These can be overridden by environment variables with WEED_ prefix:
+#   WEED_ADMIN_USER, WEED_ADMIN_PASSWORD
+#   WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
+[admin]
+user = ""
+password = ""
+readonly.user = ""
+readonly.password = ""
+
 # white list. It's checking request ip address.
 [guard]
 white_list = ""
