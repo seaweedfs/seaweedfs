@@ -544,6 +544,10 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 			} else {
 				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
 			}
+			// Remove bucket from negative cache — it exists now
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
+			}
 			return nil
 		}
 		return fmt.Errorf("failed to auto-create bucket %s: %w", bucket, err)
