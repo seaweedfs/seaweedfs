@@ -555,9 +555,23 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 // If a gRPC port is 0, it will be set to httpPort + GrpcPortOffset
 // This must be called after HTTP ports are finalized and before services start
 func initializeGrpcPortsOnIP(bindIp string) {
-	// Track gRPC ports allocated during this function to prevent collisions between services
-	// when multiple services need fallback port allocation
-	allocatedGrpcPorts := make(map[int]bool)
+	// Track all ports allocated (both HTTP and gRPC) to prevent collisions.
+	// We must reserve HTTP ports so that gRPC fallback allocation never picks
+	// a port already assigned to an HTTP service (which hasn't bound yet).
+	allocatedPorts := make(map[int]bool)
+
+	// Reserve all HTTP ports first
+	allocatedPorts[*miniMasterOptions.port] = true
+	allocatedPorts[*miniFilerOptions.port] = true
+	allocatedPorts[*miniOptions.v.port] = true
+	allocatedPorts[*miniWebDavOptions.port] = true
+	allocatedPorts[*miniAdminOptions.port] = true
+	if *miniEnableS3 {
+		allocatedPorts[*miniS3Options.port] = true
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			allocatedPorts[*miniS3Options.portIceberg] = true
+		}
+	}
 
 	grpcConfigs := []struct {
 		httpPort *int
@@ -593,10 +607,10 @@ func initializeGrpcPortsOnIP(bindIp string) {
 
 		// Verify the gRPC port is available (whether calculated or explicitly set)
 		// Check on both specific IP and all interfaces, and check against already allocated ports
-		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedGrpcPorts[*config.grpcPort] {
+		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedPorts[*config.grpcPort] {
 			glog.Warningf("gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
 			originalPort := *config.grpcPort
-			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedGrpcPorts)
+			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedPorts)
 			if newPort == 0 {
 				glog.Errorf("Could not find available gRPC port for %s starting from %d, will use %d and fail on binding", config.name, originalPort+1, originalPort)
 			} else {
@@ -604,7 +618,7 @@ func initializeGrpcPortsOnIP(bindIp string) {
 				*config.grpcPort = newPort
 			}
 		}
-		allocatedGrpcPorts[*config.grpcPort] = true
+		allocatedPorts[*config.grpcPort] = true
 		glog.V(1).Infof("%s gRPC port set to %d", config.name, *config.grpcPort)
 	}
 }
