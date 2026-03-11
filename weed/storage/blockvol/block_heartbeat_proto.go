@@ -23,6 +23,8 @@ func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMess
 		LastScrubTime:   m.LastScrubTime,
 		ReplicaDegraded: m.ReplicaDegraded,
 		DurabilityMode:  m.DurabilityMode,
+		NvmeAddr:        m.NvmeAddr,
+		Nqn:             m.NQN,
 	}
 }
 
@@ -48,6 +50,8 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		LastScrubTime:   p.LastScrubTime,
 		ReplicaDegraded: p.ReplicaDegraded,
 		DurabilityMode:  p.DurabilityMode,
+		NvmeAddr:        p.NvmeAddr,
+		NQN:             p.Nqn,
 	}
 }
 

@@ -107,6 +107,8 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			Path:           result.Path,
 			IQN:            result.IQN,
 			ISCSIAddr:      result.ISCSIAddr,
+			NvmeAddr:       result.NvmeAddr,
+			NQN:            result.NQN,
 			SizeBytes:      req.SizeBytes,
 			Epoch:          1,
 			Role:           blockvol.RoleToWire(blockvol.RolePrimary),
@@ -264,6 +266,8 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		ReplicaFactor:  uint32(rf),
 		ReplicaServers: replicaServers,
 		DurabilityMode: durModeStr,
+		NvmeAddr:       entry.NvmeAddr,
+		Nqn:            entry.NQN,
 	}, nil
 }
 
@@ -409,6 +413,8 @@ func (ms *MasterServer) createBlockVolumeResponseFromEntry(entry *BlockVolumeEnt
 		CapacityBytes:  entry.SizeBytes,
 		ReplicaServer:  entry.ReplicaServer, // backward compat
 		ReplicaServers: replicaServerList(entry),
+		NvmeAddr:       entry.NvmeAddr,
+		Nqn:            entry.NQN,
 	}
 }
 

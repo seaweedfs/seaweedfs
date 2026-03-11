@@ -545,6 +545,14 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 			msgs[i].ReplicaDataAddr = s.replicaDataAddr
 			msgs[i].ReplicaCtrlAddr = s.replicaCtrlAddr
 		}
+		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
+		if bs.nvmeListenAddr != "" {
+			msgs[i].NvmeAddr = bs.nvmeListenAddr
+			// Derive volume name from path for NQN construction.
+			name := filepath.Base(msgs[i].Path)
+			name = strings.TrimSuffix(name, ".blk")
+			msgs[i].NQN = bs.NQN(name)
+		}
 	}
 	return msgs
 }

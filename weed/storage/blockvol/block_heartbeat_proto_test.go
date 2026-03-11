@@ -403,6 +403,45 @@ func TestInfoMessage_DurabilityModeEmpty_BackwardCompat(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_NvmeFieldsRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:     "/data/nvme.blk",
+		Epoch:    1,
+		NvmeAddr: "10.0.0.1:4420",
+		NQN:      "nqn.2024-01.com.seaweedfs:vol.test-vol",
+	}
+	pb := InfoMessageToProto(orig)
+	if pb.NvmeAddr != "10.0.0.1:4420" {
+		t.Fatalf("ToProto NvmeAddr: got %q", pb.NvmeAddr)
+	}
+	if pb.Nqn != "nqn.2024-01.com.seaweedfs:vol.test-vol" {
+		t.Fatalf("ToProto Nqn: got %q", pb.Nqn)
+	}
+	back := InfoMessageFromProto(pb)
+	if back.NvmeAddr != orig.NvmeAddr {
+		t.Fatalf("FromProto NvmeAddr: got %q, want %q", back.NvmeAddr, orig.NvmeAddr)
+	}
+	if back.NQN != orig.NQN {
+		t.Fatalf("FromProto NQN: got %q, want %q", back.NQN, orig.NQN)
+	}
+}
+
+func TestInfoMessage_NvmeFieldsEmpty_BackwardCompat(t *testing.T) {
+	// Empty NVMe fields (NVMe disabled) should round-trip as empty.
+	orig := BlockVolumeInfoMessage{
+		Path:  "/data/iscsi-only.blk",
+		Epoch: 1,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.NvmeAddr != "" {
+		t.Fatalf("NvmeAddr should be empty, got %q", back.NvmeAddr)
+	}
+	if back.NQN != "" {
+		t.Fatalf("NQN should be empty, got %q", back.NQN)
+	}
+}
+
 func TestInfoMessage_HealthFieldsZeroDefault(t *testing.T) {
 	// Verify zero-valued health fields round-trip correctly (backward compat).
 	orig := BlockVolumeInfoMessage{

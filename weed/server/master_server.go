@@ -550,6 +550,8 @@ type blockAllocResult struct {
 	ReplicaDataAddr  string
 	ReplicaCtrlAddr  string
 	RebuildListenAddr string
+	NvmeAddr         string
+	NQN              string
 }
 
 // defaultBlockVSAllocate calls a volume server's AllocateBlockVolume RPC.
@@ -571,6 +573,8 @@ func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server strin
 		result.ReplicaDataAddr = resp.ReplicaDataAddr
 		result.ReplicaCtrlAddr = resp.ReplicaCtrlAddr
 		result.RebuildListenAddr = resp.RebuildListenAddr
+		result.NvmeAddr = resp.NvmeAddr
+		result.NQN = resp.Nqn
 		return nil
 	})
 	return &result, err

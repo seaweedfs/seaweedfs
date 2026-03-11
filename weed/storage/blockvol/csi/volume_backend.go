@@ -106,11 +106,6 @@ func (b *LocalVolumeBackend) ExpandVolume(ctx context.Context, volumeID string, 
 }
 
 // MasterVolumeClient calls master gRPC for volume operations.
-// NOTE: NvmeAddr/NQN fields in VolumeInfo are NOT populated by MasterVolumeClient
-// because the master proto (CreateBlockVolumeResponse, LookupBlockVolumeResponse)
-// does not yet have nvme_addr/nqn fields. This is deferred until proto is updated
-// in a future CP. NVMe support via master-backend path is therefore iSCSI-only
-// until that proto change lands.
 type MasterVolumeClient struct {
 	masterAddr string
 	dialOpt    grpc.DialOption
@@ -139,6 +134,8 @@ func (c *MasterVolumeClient) CreateVolume(ctx context.Context, name string, size
 			ISCSIAddr:     resp.IscsiAddr,
 			IQN:           resp.Iqn,
 			CapacityBytes: resp.CapacityBytes,
+			NvmeAddr:      resp.NvmeAddr,
+			NQN:           resp.Nqn,
 		}
 		return nil
 	})
@@ -168,6 +165,8 @@ func (c *MasterVolumeClient) LookupVolume(ctx context.Context, name string) (*Vo
 			ISCSIAddr:     resp.IscsiAddr,
 			IQN:           resp.Iqn,
 			CapacityBytes: resp.CapacityBytes,
+			NvmeAddr:      resp.NvmeAddr,
+			NQN:           resp.Nqn,
 		}
 		return nil
 	})

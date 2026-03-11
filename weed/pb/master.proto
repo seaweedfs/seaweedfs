@@ -506,6 +506,8 @@ message BlockVolumeInfoMessage {
   int64  last_scrub_time = 14;
   bool   replica_degraded = 15;
   string durability_mode = 16;
+  string nvme_addr = 17;
+  string nqn = 18;
 }
 
 message BlockVolumeShortInfoMessage {
@@ -546,6 +548,8 @@ message CreateBlockVolumeResponse {
   uint64 capacity_bytes = 5;
   string replica_server = 6;
   repeated string replica_servers = 7;
+  string nvme_addr = 8;
+  string nqn = 9;
 }
 
 message DeleteBlockVolumeRequest {
@@ -566,6 +570,8 @@ message LookupBlockVolumeResponse {
   uint32 replica_factor = 6;
   repeated string replica_servers = 7;
   string durability_mode = 8;
+  string nvme_addr = 9;
+  string nqn = 10;
 }
 
 message CreateBlockSnapshotRequest {

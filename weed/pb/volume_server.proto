@@ -788,6 +788,8 @@ message AllocateBlockVolumeResponse {
     string replica_data_addr = 4;
     string replica_ctrl_addr = 5;
     string rebuild_listen_addr = 6;
+    string nvme_addr = 7;
+    string nqn = 8;
 }
 
 message VolumeServerDeleteBlockVolumeRequest {

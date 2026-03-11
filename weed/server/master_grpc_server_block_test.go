@@ -1013,3 +1013,89 @@ func TestMaster_ResponseConsistency_ReplicaServerVsReplicaServers(t *testing.T) 
 			lresp.ReplicaServer, lresp.ReplicaServers[0])
 	}
 }
+
+func TestMaster_NvmeFieldsFlowThroughCreateAndLookup(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	// Mock: VS returns NVMe fields.
+	ms.blockVSAllocate = func(ctx context.Context, server, name string, sizeBytes uint64, diskType, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server,
+			NvmeAddr:  "10.0.0.1:4420",
+			NQN:       fmt.Sprintf("nqn.2024-01.com.seaweedfs:vol.%s", name),
+		}, nil
+	}
+
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "nvme-vol",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+	if resp.NvmeAddr != "10.0.0.1:4420" {
+		t.Fatalf("CreateResponse.NvmeAddr: got %q, want 10.0.0.1:4420", resp.NvmeAddr)
+	}
+	if resp.Nqn != "nqn.2024-01.com.seaweedfs:vol.nvme-vol" {
+		t.Fatalf("CreateResponse.Nqn: got %q", resp.Nqn)
+	}
+
+	// Verify registry entry.
+	entry, ok := ms.blockRegistry.Lookup("nvme-vol")
+	if !ok {
+		t.Fatal("volume not found in registry")
+	}
+	if entry.NvmeAddr != "10.0.0.1:4420" {
+		t.Fatalf("entry.NvmeAddr: got %q", entry.NvmeAddr)
+	}
+	if entry.NQN != "nqn.2024-01.com.seaweedfs:vol.nvme-vol" {
+		t.Fatalf("entry.NQN: got %q", entry.NQN)
+	}
+
+	// Lookup should also return NVMe fields.
+	lresp, err := ms.LookupBlockVolume(context.Background(), &master_pb.LookupBlockVolumeRequest{
+		Name: "nvme-vol",
+	})
+	if err != nil {
+		t.Fatalf("LookupBlockVolume: %v", err)
+	}
+	if lresp.NvmeAddr != "10.0.0.1:4420" {
+		t.Fatalf("LookupResponse.NvmeAddr: got %q", lresp.NvmeAddr)
+	}
+	if lresp.Nqn != "nqn.2024-01.com.seaweedfs:vol.nvme-vol" {
+		t.Fatalf("LookupResponse.Nqn: got %q", lresp.Nqn)
+	}
+}
+
+func TestMaster_NoNvmeFieldsWhenDisabled(t *testing.T) {
+	ms := testMasterServer(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	// Default mock returns no NVMe fields (NVMe disabled).
+	resp, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name:      "iscsi-only-vol",
+		SizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVolume: %v", err)
+	}
+	if resp.NvmeAddr != "" {
+		t.Fatalf("NvmeAddr should be empty when NVMe disabled, got %q", resp.NvmeAddr)
+	}
+	if resp.Nqn != "" {
+		t.Fatalf("Nqn should be empty when NVMe disabled, got %q", resp.Nqn)
+	}
+
+	lresp, err := ms.LookupBlockVolume(context.Background(), &master_pb.LookupBlockVolumeRequest{
+		Name: "iscsi-only-vol",
+	})
+	if err != nil {
+		t.Fatalf("LookupBlockVolume: %v", err)
+	}
+	if lresp.NvmeAddr != "" || lresp.Nqn != "" {
+		t.Fatalf("Lookup NVMe fields should be empty, got addr=%q nqn=%q", lresp.NvmeAddr, lresp.Nqn)
+	}
+}

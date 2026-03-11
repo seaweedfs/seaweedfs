@@ -32,14 +32,19 @@ func (vs *VolumeServer) AllocateBlockVolume(_ context.Context, req *volume_serve
 		host = host[:idx]
 	}
 
-	return &volume_server_pb.AllocateBlockVolumeResponse{
+	resp := &volume_server_pb.AllocateBlockVolumeResponse{
 		Path:              path,
 		Iqn:               iqn,
 		IscsiAddr:         iscsiAddr,
 		ReplicaDataAddr:   fmt.Sprintf("%s:%d", host, dataPort),
 		ReplicaCtrlAddr:   fmt.Sprintf("%s:%d", host, ctrlPort),
 		RebuildListenAddr: fmt.Sprintf("%s:%d", host, rebuildPort),
-	}, nil
+	}
+	if nvmeAddr := vs.blockService.NvmeListenAddr(); nvmeAddr != "" {
+		resp.NvmeAddr = nvmeAddr
+		resp.Nqn = vs.blockService.NQN(req.Name)
+	}
+	return resp, nil
 }
 
 // VolumeServerDeleteBlockVolume deletes a block volume on this volume server.

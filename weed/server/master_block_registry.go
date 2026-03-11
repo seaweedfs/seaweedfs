@@ -50,6 +50,8 @@ type BlockVolumeEntry struct {
 	Path             string // file path on volume server
 	IQN              string
 	ISCSIAddr        string
+	NvmeAddr         string // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQN              string // NVMe subsystem NQN, empty if NVMe disabled
 	SizeBytes        uint64
 	ReplicaPlacement string // SeaweedFS placement string: "000", "001", "010", "100"
 	Epoch            uint64
