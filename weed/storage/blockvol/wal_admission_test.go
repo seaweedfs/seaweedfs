@@ -352,3 +352,182 @@ func TestWALAdmission_CloseDuringSemaphoreWait(t *testing.T) {
 	// Drain.
 	<-a.sem
 }
+
+// --- WAL Admission Metrics Tests (Item 2: WAL visibility hooks) ---
+
+func TestWALAdmission_Metrics_NoPressure(t *testing.T) {
+	m := NewEngineMetrics()
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.0 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		Metrics:       m,
+	})
+
+	if err := a.Acquire(100 * time.Millisecond); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Errorf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+	if m.WALAdmitSoftTotal.Load() != 0 {
+		t.Errorf("WALAdmitSoftTotal = %d, want 0", m.WALAdmitSoftTotal.Load())
+	}
+	if m.WALAdmitHardTotal.Load() != 0 {
+		t.Errorf("WALAdmitHardTotal = %d, want 0", m.WALAdmitHardTotal.Load())
+	}
+	if m.WALAdmitTimeoutTotal.Load() != 0 {
+		t.Errorf("WALAdmitTimeoutTotal = %d, want 0", m.WALAdmitTimeoutTotal.Load())
+	}
+}
+
+func TestWALAdmission_Metrics_SoftWatermark(t *testing.T) {
+	m := NewEngineMetrics()
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.8 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		Metrics:       m,
+	})
+	a.sleepFn = func(d time.Duration) {} // no-op
+
+	if err := a.Acquire(100 * time.Millisecond); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Errorf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+	if m.WALAdmitSoftTotal.Load() != 1 {
+		t.Errorf("WALAdmitSoftTotal = %d, want 1", m.WALAdmitSoftTotal.Load())
+	}
+	if m.WALAdmitHardTotal.Load() != 0 {
+		t.Errorf("WALAdmitHardTotal = %d, want 0", m.WALAdmitHardTotal.Load())
+	}
+}
+
+func TestWALAdmission_Metrics_HardWatermark(t *testing.T) {
+	m := NewEngineMetrics()
+	var pressure atomic.Int64
+	pressure.Store(95)
+	var sleepCount atomic.Int64
+
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return float64(pressure.Load()) / 100.0 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		Metrics:       m,
+	})
+	a.sleepFn = func(d time.Duration) {
+		if sleepCount.Add(1) >= 3 {
+			pressure.Store(50) // drain
+		}
+	}
+
+	if err := a.Acquire(1 * time.Second); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Errorf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+	if m.WALAdmitHardTotal.Load() != 1 {
+		t.Errorf("WALAdmitHardTotal = %d, want 1", m.WALAdmitHardTotal.Load())
+	}
+	// Wait snapshot should have recorded exactly 1 observation.
+	count, _ := m.WALAdmitWaitSnapshot()
+	if count != 1 {
+		t.Errorf("WALAdmitWait count = %d, want 1", count)
+	}
+}
+
+func TestWALAdmission_Metrics_Timeout(t *testing.T) {
+	m := NewEngineMetrics()
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.95 }, // always above hard
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		Metrics:       m,
+	})
+	a.sleepFn = func(d time.Duration) {}
+
+	err := a.Acquire(10 * time.Millisecond)
+	if !errors.Is(err, ErrWALFull) {
+		t.Fatalf("expected ErrWALFull, got %v", err)
+	}
+
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Errorf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+	if m.WALAdmitHardTotal.Load() != 1 {
+		t.Errorf("WALAdmitHardTotal = %d, want 1", m.WALAdmitHardTotal.Load())
+	}
+	if m.WALAdmitTimeoutTotal.Load() != 1 {
+		t.Errorf("WALAdmitTimeoutTotal = %d, want 1", m.WALAdmitTimeoutTotal.Load())
+	}
+}
+
+func TestWALAdmission_Metrics_NilMetrics(t *testing.T) {
+	// Ensure no panic when Metrics is nil (backwards compat).
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.8 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		// Metrics: nil — intentionally omitted
+	})
+	a.sleepFn = func(d time.Duration) {}
+
+	if err := a.Acquire(100 * time.Millisecond); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+	// No panic = pass.
+}
+
+func TestWALAdmission_Metrics_ClosedDuringHard(t *testing.T) {
+	m := NewEngineMetrics()
+	var closed atomic.Bool
+
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.95 },
+		NotifyFn:      func() {},
+		ClosedFn:      closed.Load,
+		Metrics:       m,
+	})
+	a.sleepFn = func(d time.Duration) { closed.Store(true) }
+
+	err := a.Acquire(1 * time.Second)
+	if !errors.Is(err, ErrVolumeClosed) {
+		t.Fatalf("expected ErrVolumeClosed, got %v", err)
+	}
+
+	// Should still record metrics even on close.
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Errorf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+	if m.WALAdmitHardTotal.Load() != 1 {
+		t.Errorf("WALAdmitHardTotal = %d, want 1", m.WALAdmitHardTotal.Load())
+	}
+}

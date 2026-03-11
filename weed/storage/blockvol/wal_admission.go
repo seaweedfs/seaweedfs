@@ -28,6 +28,8 @@ type WALAdmission struct {
 
 	// sleepFn is the sleep function. Replaced in tests for determinism.
 	sleepFn func(time.Duration)
+
+	metrics *EngineMetrics // optional; if nil, no metrics recorded
 }
 
 // WALAdmissionConfig holds parameters for WALAdmission construction.
@@ -38,6 +40,7 @@ type WALAdmissionConfig struct {
 	WALUsedFn     func() float64 // returns WAL used fraction
 	NotifyFn      func()         // wake flusher on pressure
 	ClosedFn      func() bool    // check if volume is closed
+	Metrics       *EngineMetrics // optional; if nil, no metrics recorded
 }
 
 // NewWALAdmission creates a WAL admission controller.
@@ -50,6 +53,7 @@ func NewWALAdmission(cfg WALAdmissionConfig) *WALAdmission {
 		hardMark: cfg.HardWatermark,
 		closedFn: cfg.ClosedFn,
 		sleepFn:  time.Sleep,
+		metrics:  cfg.Metrics,
 	}
 }
 
@@ -57,6 +61,9 @@ func NewWALAdmission(cfg WALAdmissionConfig) *WALAdmission {
 // The timeout covers both the watermark wait and semaphore acquisition.
 // Returns ErrWALFull on timeout, ErrVolumeClosed if the volume closes.
 func (a *WALAdmission) Acquire(timeout time.Duration) error {
+	start := time.Now()
+	var hitSoft, hitHard bool
+
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 
@@ -64,14 +71,17 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 
 	// Hard watermark gate: wait for flusher to drain before competing for semaphore.
 	if pressure >= a.hardMark {
+		hitHard = true
 		a.notifyFn()
 		for a.walUsed() >= a.hardMark {
 			if a.closedFn() {
+				a.recordAdmit(start, hitSoft, hitHard, false)
 				return ErrVolumeClosed
 			}
 			a.notifyFn()
 			select {
 			case <-deadline.C:
+				a.recordAdmit(start, hitSoft, hitHard, true)
 				return ErrWALFull
 			default:
 			}
@@ -80,6 +90,7 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 		// Pressure dropped — fall through to semaphore acquisition.
 	} else if pressure >= a.softMark {
 		// Soft watermark: small delay to desynchronize herd.
+		hitSoft = true
 		a.notifyFn()
 		scale := (pressure - a.softMark) / (a.hardMark - a.softMark)
 		if scale > 1 {
@@ -95,6 +106,7 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 	// Acquire semaphore slot using the same deadline.
 	select {
 	case a.sem <- struct{}{}:
+		a.recordAdmit(start, hitSoft, hitHard, false)
 		return nil
 	default:
 	}
@@ -104,14 +116,23 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 	for {
 		select {
 		case a.sem <- struct{}{}:
+			a.recordAdmit(start, hitSoft, hitHard, false)
 			return nil
 		case <-deadline.C:
+			a.recordAdmit(start, hitSoft, hitHard, true)
 			return ErrWALFull
 		case <-closeTick.C:
 			if a.closedFn() {
+				a.recordAdmit(start, hitSoft, hitHard, false)
 				return ErrVolumeClosed
 			}
 		}
+	}
+}
+
+func (a *WALAdmission) recordAdmit(start time.Time, soft, hard, timedOut bool) {
+	if a.metrics != nil {
+		a.metrics.RecordWALAdmit(time.Since(start), soft, hard, timedOut)
 	}
 }
 

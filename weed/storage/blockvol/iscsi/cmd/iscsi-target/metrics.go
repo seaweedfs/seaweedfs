@@ -138,6 +138,28 @@ func newMetricsAdapter(inner iscsi.BlockDevice, vol *blockvol.BlockVol, reg prom
 		Name: "replica_failed_barriers_total", Help: "Total failed barrier requests",
 	}, func() float64 { return float64(em.WALFailedBarriersTotal.Load()) }))
 
+	// WAL Admission
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_admit_total", Help: "Total WAL admission Acquire calls",
+	}, func() float64 { return float64(em.WALAdmitTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_admit_soft_total", Help: "Soft watermark throttle events",
+	}, func() float64 { return float64(em.WALAdmitSoftTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_admit_hard_total", Help: "Hard watermark block events",
+	}, func() float64 { return float64(em.WALAdmitHardTotal.Load()) }))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_admit_timeout_total", Help: "WAL admission timeouts (ErrWALFull)",
+	}, func() float64 { return float64(em.WALAdmitTimeoutTotal.Load()) }))
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_admit_wait_seconds_total", Help: "Total time spent waiting in WAL admission (seconds)",
+	}, func() float64 { _, s := em.WALAdmitWaitSnapshot(); return float64(s) / 1e9 }))
+
 	// Scrub
 	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Namespace: "seaweedfs", Subsystem: "blockvol",

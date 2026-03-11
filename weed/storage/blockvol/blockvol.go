@@ -175,6 +175,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		WALUsedFn:     wal.UsedFraction,
 		NotifyFn:      v.flusher.NotifyUrgent,
 		ClosedFn:      v.closed.Load,
+		Metrics:       v.Metrics,
 	})
 	return v, nil
 }
@@ -288,6 +289,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		WALUsedFn:     wal.UsedFraction,
 		NotifyFn:      v.flusher.NotifyUrgent,
 		ClosedFn:      v.closed.Load,
+		Metrics:       v.Metrics,
 	})
 
 	return v, nil

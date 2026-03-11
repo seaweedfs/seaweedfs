@@ -30,6 +30,13 @@ type EngineMetrics struct {
 	ScrubErrorsTotal   atomic.Uint64
 	scrubDurationNs    atomicHistogram
 
+	// WAL Admission
+	WALAdmitTotal         atomic.Uint64 // total Acquire calls
+	WALAdmitSoftTotal     atomic.Uint64 // soft watermark throttles
+	WALAdmitHardTotal     atomic.Uint64 // hard watermark blocks
+	WALAdmitTimeoutTotal  atomic.Uint64 // ErrWALFull timeouts
+	walAdmitWaitNs        atomicHistogram // wait time in Acquire
+
 	// Durability (CP8-3-1)
 	DurabilityBarrierFailedTotal atomic.Uint64 // sync_all barrier failures
 	DurabilityQuorumLostTotal    atomic.Uint64 // sync_quorum quorum lost
@@ -71,6 +78,26 @@ func (m *EngineMetrics) RecordWALBarrier(dur time.Duration, failed bool) {
 	if failed {
 		m.WALFailedBarriersTotal.Add(1)
 	}
+}
+
+// RecordWALAdmit records a WAL admission Acquire call.
+func (m *EngineMetrics) RecordWALAdmit(waitDur time.Duration, soft, hard, timedOut bool) {
+	m.WALAdmitTotal.Add(1)
+	m.walAdmitWaitNs.record(waitDur.Nanoseconds())
+	if soft {
+		m.WALAdmitSoftTotal.Add(1)
+	}
+	if hard {
+		m.WALAdmitHardTotal.Add(1)
+	}
+	if timedOut {
+		m.WALAdmitTimeoutTotal.Add(1)
+	}
+}
+
+// WALAdmitWaitSnapshot returns WAL admission wait stats.
+func (m *EngineMetrics) WALAdmitWaitSnapshot() (count uint64, sumNs int64) {
+	return m.walAdmitWaitNs.snapshot()
 }
 
 // RecordScrubPass records a completed scrub pass.
