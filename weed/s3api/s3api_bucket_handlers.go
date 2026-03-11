@@ -251,11 +251,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// If collection exists but bucket directory doesn't, this is an orphaned state
-	// from a previous bucket deletion where volumes haven't been fully cleaned up yet.
-	// Allow the bucket to be recreated by proceeding with directory creation.
+	// If collection exists but bucket directory doesn't, this is an inconsistent state
+	// that can occur when a previous bucket deletion partially completed (collection
+	// deletion failed but directory deletion succeeded, or volumes were recreated).
+	// Recover by proceeding to create the missing bucket directory.
 	if collectionExists {
-		glog.Warningf("PutBucketHandler: collection exists but bucket directory missing for %s, recreating bucket directory", bucket)
+		glog.Warningf("PutBucketHandler: collection exists but bucket directory missing for %s, recovering by creating bucket directory", bucket)
 	}
 
 	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
