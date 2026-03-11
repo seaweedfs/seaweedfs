@@ -31,7 +31,6 @@ func (m *IAMManager) ValidateTrustPolicyForPrincipal(ctx context.Context, roleAr
 	// principal matching works for specific (non-wildcard) principals.
 	// Without this, evaluatePrincipalValue cannot look up "aws:PrincipalArn"
 	// and always returns false for non-wildcard trust policy principals.
-	// See https://github.com/seaweedfs/seaweedfs/discussions/8588
 	evalCtx := &policy.EvaluationContext{
 		Principal: principalArn,
 		Action:    "sts:AssumeRole",

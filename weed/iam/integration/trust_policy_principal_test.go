@@ -11,8 +11,7 @@ import (
 
 // TestTrustPolicyAWSUserPrincipal tests that trust policies with specific AWS user
 // principals work correctly with ValidateTrustPolicyForPrincipal.
-// This is a regression test for https://github.com/seaweedfs/seaweedfs/discussions/8588
-// where setting a specific user principal like:
+// This is a regression test for the case where setting a specific user principal like:
 //
 //	"Principal": {"AWS": "arn:aws:iam::000000000000:user/backend"}
 //
