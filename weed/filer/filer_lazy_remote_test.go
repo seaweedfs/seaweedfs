@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,12 +73,50 @@ func (s *stubFilerStore) KvDelete(_ context.Context, key []byte) error {
 	delete(s.kv, string(key))
 	return nil
 }
-func (s *stubFilerStore) DeleteFolderChildren(context.Context, util.FullPath) error { return nil }
-func (s *stubFilerStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
-	return "", nil
+func (s *stubFilerStore) DeleteFolderChildren(_ context.Context, dirPath util.FullPath) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := string(dirPath) + "/"
+	for k := range s.entries {
+		if strings.HasPrefix(k, prefix) {
+			delete(s.entries, k)
+		}
+	}
+	return nil
+}
+func (s *stubFilerStore) ListDirectoryEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := string(dirPath) + "/"
+	var names []string
+	for k := range s.entries {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		rest := k[len(prefix):]
+		if strings.Contains(rest, "/") {
+			continue // not a direct child
+		}
+		if rest > startFileName || (includeStartFile && rest == startFileName) {
+			names = append(names, rest)
+		}
+	}
+	sort.Strings(names)
+	lastFileName := ""
+	for i, name := range names {
+		if int64(i) >= limit {
+			break
+		}
+		entry := s.entries[prefix+name]
+		if cont, _ := eachEntryFunc(entry); !cont {
+			break
+		}
+		lastFileName = name
+	}
+	return lastFileName, nil
 }
 func (s *stubFilerStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
-	return "", nil
+	return s.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc)
 }
 
 func (s *stubFilerStore) InsertEntry(_ context.Context, entry *Entry) error {
@@ -189,9 +229,11 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 	f := &Filer{
 		RemoteStorage:       rs,
 		Store:               NewFilerStoreWrapper(store),
+		FilerConf:           NewFilerConf(),
 		MaxFilenameLength:   255,
 		MasterClient:        mc,
 		fileIdDeletionQueue: util.NewUnboundedQueue(),
+		deletionQuit:        make(chan struct{}),
 		LocalMetaLogBuffer: log_buffer.NewLogBuffer("test", time.Minute,
 			func(*log_buffer.LogBuffer, time.Time, time.Time, []byte, int64, int64) {}, nil, func() {}),
 	}
@@ -722,4 +764,52 @@ func TestDeleteEntryMetaAndData_DirectoryUnderMountDeletesRemoteDirectory(t *tes
 	pendingPaths, pendingErr := f.listPendingRemoteMetadataDeletionPaths(context.Background())
 	require.NoError(t, pendingErr)
 	require.Empty(t, pendingPaths)
+}
+
+func TestDeleteEntryMetaAndData_RecursiveFolderDeleteRemotesChildren(t *testing.T) {
+	const storageType = "stub_lazy_delete_folder_children"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "childstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "childstore",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	dirPath := util.FullPath("/buckets/mybucket/subdir")
+	store.entries[string(dirPath)] = &Entry{
+		FullPath: dirPath,
+		Attr: Attr{
+			Mtime:  time.Unix(1700000000, 0),
+			Crtime: time.Unix(1700000000, 0),
+			Mode:   os.ModeDir | 0755,
+		},
+	}
+	childPath := util.FullPath("/buckets/mybucket/subdir/child.txt")
+	store.entries[string(childPath)] = &Entry{
+		FullPath: childPath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 50,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 50},
+	}
+	f := newTestFiler(t, store, rs)
+
+	err := f.DeleteEntryMetaAndData(context.Background(), dirPath, true, false, false, false, nil, 0)
+	require.NoError(t, err)
+
+	// Child file should have been deleted from remote
+	require.Len(t, stub.deleteCalls, 1)
+	assert.Equal(t, "/subdir/child.txt", stub.deleteCalls[0].Path)
+	// Directory itself should also have been deleted from remote
+	require.Len(t, stub.removeCalls, 1)
+	assert.Equal(t, "/subdir", stub.removeCalls[0].Path)
 }

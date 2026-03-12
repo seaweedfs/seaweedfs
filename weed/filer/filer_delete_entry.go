@@ -101,8 +101,16 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 				lastFileName = sub.Name()
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
-					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, false, nil, onHardLinkIdsFn)
+					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
 				} else {
+					if !isFromOtherCluster {
+						if _, remoteErr := f.maybeDeleteFromRemote(ctx, sub); remoteErr != nil {
+							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
+							if !ignoreRecursiveError {
+								err = remoteErr
+							}
+						}
+					}
 					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
