@@ -140,9 +140,13 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
-	remoteDeleted, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry)
-	if remoteDeletionErr != nil {
-		return remoteDeletionErr
+	var remoteDeleted bool
+	if !isFromOtherCluster {
+		var remoteDeletionErr error
+		remoteDeleted, remoteDeletionErr = f.maybeDeleteFromRemote(ctx, entry)
+		if remoteDeletionErr != nil {
+			return remoteDeletionErr
+		}
 	}
 	if remoteDeleted {
 		markBackoff := remoteMetadataDeletionMarkRetryBackoff

@@ -453,6 +453,46 @@ func TestDeleteEntryMetaAndData_RemoteOnlyFileDeletesRemoteAndMetadata(t *testin
 	assert.Equal(t, "/file.txt", stub.deleteCalls[0].Path)
 }
 
+func TestDeleteEntryMetaAndData_IsFromOtherClusterSkipsRemoteDelete(t *testing.T) {
+	const storageType = "stub_lazy_delete_other_cluster"
+	stub := &stubRemoteClient{}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "othercluster", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "othercluster",
+		Bucket: "mybucket",
+		Path:   "/",
+	})
+
+	store := newStubFilerStore()
+	filePath := util.FullPath("/buckets/mybucket/replicated.txt")
+	store.entries[string(filePath)] = &Entry{
+		FullPath: filePath,
+		Attr: Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 64,
+		},
+		Remote: &filer_pb.RemoteEntry{RemoteMtime: 1700000000, RemoteSize: 64},
+	}
+	f := newTestFiler(t, store, rs)
+
+	// isFromOtherCluster=true simulates a replicated delete from another filer
+	err := f.DeleteEntryMetaAndData(context.Background(), filePath, false, false, false, true, nil, 0)
+	require.NoError(t, err)
+
+	// Local metadata should be deleted
+	_, findErr := store.FindEntry(context.Background(), filePath)
+	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+	// Remote should NOT have been called — the originating filer handles that
+	require.Len(t, stub.deleteCalls, 0)
+	require.Len(t, stub.removeCalls, 0)
+}
+
 func TestDeleteEntryMetaAndData_RemoteOnlyFileNotUnderMountSkipsRemoteDelete(t *testing.T) {
 	const storageType = "stub_lazy_delete_not_under_mount"
 	stub := &stubRemoteClient{}
