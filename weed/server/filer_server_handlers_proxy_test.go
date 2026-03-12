@@ -10,6 +10,7 @@ import (
 
 func TestProxySemaphore_LimitsConcurrency(t *testing.T) {
 	host := "test-volume:8080"
+	defer proxySemaphores.Delete(host)
 
 	var running atomic.Int32
 	var maxSeen atomic.Int32
