@@ -116,6 +116,69 @@ jobs:
           echo "✓ COSI driver renders correctly"
           
           echo ""
+          echo "=== Testing long release name: service names match DNS references ==="
+          # Use a release name that, combined with chart name "seaweedfs", exceeds 63 chars.
+          # fullname = "my-very-long-release-name-that-will-cause-truncation-seaweedfs" (65 chars before trunc)
+          LONG_RELEASE="my-very-long-release-name-that-will-cause-truncation"
+
+          # --- Normal mode: master + filer-client services vs helper-produced addresses ---
+          helm template "$LONG_RELEASE" $CHART_DIR \
+            --set s3.enabled=true \
+            --set global.createBuckets[0].name=test > /tmp/longname.yaml
+
+          # Extract Service names from metadata
+          MASTER_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname.yaml \
+            | grep -- '-master$')
+          FILER_CLIENT_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname.yaml \
+            | grep -- '-filer-client$')
+
+          # Extract the hostname from WEED_CLUSTER_SW_MASTER in post-install-bucket-hook
+          MASTER_ADDR=$(grep 'WEED_CLUSTER_SW_MASTER' -A1 /tmp/longname.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/')
+          FILER_ADDR=$(grep 'WEED_CLUSTER_SW_FILER' -A1 /tmp/longname.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/')
+
+          # Extract the hostname from S3 deployment -filer= argument
+          S3_FILER_HOST=$(grep '\-filer=' /tmp/longname.yaml \
+            | sed 's/.*-filer=\([^:]*\).*/\1/')
+
+          # The address helpers produce "<svc>.<namespace>:<port>"; extract just the svc name
+          MASTER_ADDR_SVC=$(echo "$MASTER_ADDR" | cut -d. -f1)
+          FILER_ADDR_SVC=$(echo "$FILER_ADDR" | cut -d. -f1)
+          S3_FILER_SVC=$(echo "$S3_FILER_HOST" | cut -d. -f1)
+
+          echo "  master Service.name:       $MASTER_SVC"
+          echo "  cluster.masterAddress svc:  $MASTER_ADDR_SVC"
+          echo "  filer-client Service.name:  $FILER_CLIENT_SVC"
+          echo "  cluster.filerAddress svc:   $FILER_ADDR_SVC"
+          echo "  S3 -filer= svc:             $S3_FILER_SVC"
+
+          [ "$MASTER_SVC" = "$MASTER_ADDR_SVC" ] || { echo "FAIL: master service name mismatch"; exit 1; }
+          [ "$FILER_CLIENT_SVC" = "$FILER_ADDR_SVC" ] || { echo "FAIL: filer-client service name mismatch"; exit 1; }
+          [ "$FILER_CLIENT_SVC" = "$S3_FILER_SVC" ] || { echo "FAIL: S3 -filer= does not match filer-client service"; exit 1; }
+          echo "✓ Normal mode: service names match DNS references with long release name"
+
+          # --- All-in-one mode: all-in-one service vs both helper addresses ---
+          helm template "$LONG_RELEASE" $CHART_DIR \
+            --set allInOne.enabled=true \
+            --set global.createBuckets[0].name=test > /tmp/longname-aio.yaml
+
+          AIO_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname-aio.yaml \
+            | grep -- '-all-in-one$')
+          AIO_MASTER_ADDR_SVC=$(grep 'WEED_CLUSTER_SW_MASTER' -A1 /tmp/longname-aio.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/' | cut -d. -f1)
+          AIO_FILER_ADDR_SVC=$(grep 'WEED_CLUSTER_SW_FILER' -A1 /tmp/longname-aio.yaml \
+            | grep 'value:' | head -1 | sed 's/.*value: *"\{0,1\}\([^":]*\).*/\1/' | cut -d. -f1)
+
+          echo "  all-in-one Service.name:    $AIO_SVC"
+          echo "  cluster.masterAddress svc:  $AIO_MASTER_ADDR_SVC"
+          echo "  cluster.filerAddress svc:   $AIO_FILER_ADDR_SVC"
+
+          [ "$AIO_SVC" = "$AIO_MASTER_ADDR_SVC" ] || { echo "FAIL: all-in-one master address mismatch"; exit 1; }
+          [ "$AIO_SVC" = "$AIO_FILER_ADDR_SVC" ] || { echo "FAIL: all-in-one filer address mismatch"; exit 1; }
+          echo "✓ All-in-one mode: service names match DNS references with long release name"
+
+          echo ""
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
