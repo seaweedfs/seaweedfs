@@ -188,7 +188,8 @@ jobs:
             --set s3.enabled=true > /tmp/security-s3.yaml
           helm template test $CHART_DIR \
             --set global.enableSecurity=true \
-            --set allInOne.enabled=true > /tmp/security-aio.yaml
+            --set allInOne.enabled=true \
+            --set allInOne.s3.enabled=true > /tmp/security-aio.yaml
 
           pip install pyyaml -q
           python3 - /tmp/security-s3.yaml /tmp/security-aio.yaml <<'PYEOF'
