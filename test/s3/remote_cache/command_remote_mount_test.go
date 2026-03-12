@@ -75,16 +75,16 @@ func TestRemoteMountNonEmpty(t *testing.T) {
 	require.NoError(t, err, "failed to unmount")
 }
 
-// TestRemoteMountNoSync tests mounting with -noSync: no upfront metadata pull, mount mapping persisted
-func TestRemoteMountNoSync(t *testing.T) {
+// TestRemoteMountMetadataStrategyLazy tests mounting with -metadataStrategy=lazy: no upfront metadata pull, mount mapping persisted
+func TestRemoteMountMetadataStrategyLazy(t *testing.T) {
 	checkServersRunning(t)
 
-	testDir := fmt.Sprintf("/buckets/testnosync%d", time.Now().UnixNano()%1000000)
+	testDir := fmt.Sprintf("/buckets/testlazy%d", time.Now().UnixNano()%1000000)
 
-	t.Logf("Mounting with -noSync...")
-	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -noSync", testDir)
+	t.Logf("Mounting with -metadataStrategy=lazy...")
+	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -metadataStrategy=lazy", testDir)
 	output, err := runWeedShellWithOutput(t, cmd)
-	require.NoError(t, err, "failed to mount with -noSync")
+	require.NoError(t, err, "failed to mount with -metadataStrategy=lazy")
 	t.Logf("Mount output: %s", output)
 
 	listCmd := fmt.Sprintf("fs.ls %s", testDir)
@@ -102,15 +102,50 @@ func TestRemoteMountNoSync(t *testing.T) {
 		}
 		nonEmptyLines++
 	}
-	assert.Zero(t, nonEmptyLines, "expected no upfront metadata (empty dir listing) after -noSync mount, got %d entries: %s", nonEmptyLines, listOutput)
+	assert.Zero(t, nonEmptyLines, "expected no upfront metadata (empty dir listing) after -metadataStrategy=lazy mount, got %d entries: %s", nonEmptyLines, listOutput)
 
 	output, err = runWeedShellWithOutput(t, "remote.mount")
 	require.NoError(t, err, "failed to list mounts")
-	assert.Contains(t, output, testDir, "mount not found in list after -noSync mount")
+	assert.Contains(t, output, testDir, "mount not found in list after -metadataStrategy=lazy mount")
 
 	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
 	_, err = runWeedShellWithOutput(t, cmd)
 	require.NoError(t, err, "failed to unmount")
+}
+
+// TestRemoteMountMetadataStrategyEager tests mounting with -metadataStrategy=eager: full upfront metadata pull
+func TestRemoteMountMetadataStrategyEager(t *testing.T) {
+	checkServersRunning(t)
+
+	testDir := fmt.Sprintf("/buckets/testeager%d", time.Now().UnixNano()%1000000)
+
+	t.Logf("Mounting with -metadataStrategy=eager...")
+	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -metadataStrategy=eager", testDir)
+	output, err := runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to mount with -metadataStrategy=eager")
+	t.Logf("Mount output: %s", output)
+
+	_, err = runWeedShellWithOutput(t, fmt.Sprintf("fs.ls %s", testDir))
+	require.NoError(t, err, "eager mount should allow listing (metadata pulled)")
+
+	output, err = runWeedShellWithOutput(t, "remote.mount")
+	require.NoError(t, err, "failed to list mounts")
+	assert.Contains(t, output, testDir, "mount not found in list after -metadataStrategy=eager mount")
+
+	cmd = fmt.Sprintf("remote.unmount -dir=%s", testDir)
+	_, err = runWeedShellWithOutput(t, cmd)
+	require.NoError(t, err, "failed to unmount")
+}
+
+// TestRemoteMountMetadataStrategyInvalid tests that invalid metadataStrategy is rejected
+func TestRemoteMountMetadataStrategyInvalid(t *testing.T) {
+	checkServersRunning(t)
+
+	testDir := fmt.Sprintf("/buckets/testinvalidstrat%d", time.Now().UnixNano()%1000000)
+	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -metadataStrategy=invalid", testDir)
+	output, err := runWeedShellWithOutput(t, cmd)
+	require.Error(t, err, "expected error for invalid metadataStrategy")
+	assert.Contains(t, strings.ToLower(output), "lazy or eager", "error should mention allowed values")
 }
 
 // TestRemoteMountInvalidRemote tests mounting with non-existent remote configuration

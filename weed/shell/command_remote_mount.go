@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -37,7 +38,7 @@ func (c *commandRemoteMount) Help() string {
 	# mount and pull one bucket (full upfront metadata sync)
 	remote.mount -dir=/xxx -remote=cloud1/bucket
 	# mount without upfront sync; metadata is fetched lazily on access
-	remote.mount -dir=/xxx -remote=cloud1/bucket -noSync
+	remote.mount -dir=/xxx -remote=cloud1/bucket -metadataStrategy=lazy
 	# mount and pull one directory in the bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
 
@@ -57,7 +58,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
-	noSync := remoteMountCommand.Bool("noSync", false, "skip upfront metadata pull; rely on lazy metadata fetch on access")
+	metadataStrategy := remoteMountCommand.String("metadataStrategy", "eager", "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
@@ -84,14 +85,17 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("mount setup: %w", err)
 	}
 
-	if *noSync {
+	switch strings.ToLower(*metadataStrategy) {
+	case "lazy":
 		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
 			return fmt.Errorf("validate mount root: %w", err)
 		}
-	} else {
+	case "eager":
 		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
+	default:
+		return fmt.Errorf("metadataStrategy must be lazy or eager, got %q", *metadataStrategy)
 	}
 
 	// store a mount configuration in filer
