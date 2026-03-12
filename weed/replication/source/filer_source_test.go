@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestDownloadWithRange_NoOffset(t *testing.T) {
+func TestDownloadFile_NoOffset(t *testing.T) {
 	testData := []byte("0123456789abcdefghij")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +31,7 @@ func TestDownloadWithRange_NoOffset(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, resp, err := downloadWithRange(server.URL, 0)
+	_, _, resp, err := util_http.DownloadFile(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestDownloadWithRange_NoOffset(t *testing.T) {
 	}
 }
 
-func TestDownloadWithRange_WithOffset(t *testing.T) {
+func TestDownloadFile_WithOffset(t *testing.T) {
 	testData := []byte("0123456789abcdefghij")
 
 	var receivedRange string
@@ -60,7 +60,7 @@ func TestDownloadWithRange_WithOffset(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, _, resp, err := downloadWithRange(server.URL, 10)
+	_, _, resp, err := util_http.DownloadFile(server.URL, "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,14 +82,28 @@ func TestDownloadWithRange_WithOffset(t *testing.T) {
 	}
 }
 
-func TestDownloadWithRange_ContentDisposition(t *testing.T) {
+func TestDownloadFile_RejectsIgnoredRange(t *testing.T) {
+	// Server ignores Range header and returns 200 OK with full body
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("full body"))
+	}))
+	defer server.Close()
+
+	_, _, _, err := util_http.DownloadFile(server.URL, "", 100)
+	if err == nil {
+		t.Fatal("expected error when server ignores Range and returns 200")
+	}
+}
+
+func TestDownloadFile_ContentDisposition(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="test.txt"`)
 		w.Write([]byte("data"))
 	}))
 	defer server.Close()
 
-	filename, _, resp, err := downloadWithRange(server.URL, 0)
+	filename, _, resp, err := util_http.DownloadFile(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,10 +114,10 @@ func TestDownloadWithRange_ContentDisposition(t *testing.T) {
 	}
 }
 
-// TestDownloadWithRange_PartialReadThenResume simulates a connection drop
+// TestDownloadFile_PartialReadThenResume simulates a connection drop
 // after partial data, then resumes from the offset. Verifies the combined
 // data matches the original.
-func TestDownloadWithRange_PartialReadThenResume(t *testing.T) {
+func TestDownloadFile_PartialReadThenResume(t *testing.T) {
 	testData := bytes.Repeat([]byte("abcdefghij"), 100) // 1000 bytes
 	dropAfter := 500
 
@@ -141,7 +155,7 @@ func TestDownloadWithRange_PartialReadThenResume(t *testing.T) {
 	defer server.Close()
 
 	// First read — should get partial data + error
-	_, _, resp1, err := downloadWithRange(server.URL, 0)
+	_, _, resp1, err := util_http.DownloadFile(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +172,7 @@ func TestDownloadWithRange_PartialReadThenResume(t *testing.T) {
 	}
 
 	// Resume from where we left off
-	_, _, resp2, err := downloadWithRange(server.URL, int64(len(partialData)))
+	_, _, resp2, err := util_http.DownloadFile(server.URL, "", int64(len(partialData)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,12 +189,12 @@ func TestDownloadWithRange_PartialReadThenResume(t *testing.T) {
 	}
 }
 
-// TestDownloadWithRange_GzipPartialReadThenResume verifies the tricky case
+// TestDownloadFile_GzipPartialReadThenResume verifies the tricky case
 // where the first response is gzip-encoded (and Go's HTTP client auto-
 // decompresses it), but the resume request gets uncompressed data (because
 // Go doesn't add Accept-Encoding when Range is set). The combined
 // decompressed bytes must still match the original.
-func TestDownloadWithRange_GzipPartialReadThenResume(t *testing.T) {
+func TestDownloadFile_GzipPartialReadThenResume(t *testing.T) {
 	testData := bytes.Repeat([]byte("hello world gzip test "), 100) // ~2200 bytes
 
 	// Pre-compress
@@ -234,7 +248,7 @@ func TestDownloadWithRange_GzipPartialReadThenResume(t *testing.T) {
 	defer server.Close()
 
 	// First read: Go auto-decompresses; truncated stream → error + partial data
-	_, _, resp1, err := downloadWithRange(server.URL, 0)
+	_, _, resp1, err := util_http.DownloadFile(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +267,7 @@ func TestDownloadWithRange_GzipPartialReadThenResume(t *testing.T) {
 
 	// Resume: offset is in the *decompressed* domain.
 	// The server (like the volume server) decompresses and serves from that offset.
-	_, _, resp2, err := downloadWithRange(server.URL, int64(len(partialData)))
+	_, _, resp2, err := util_http.DownloadFile(server.URL, "", int64(len(partialData)))
 	if err != nil {
 		t.Fatal(err)
 	}

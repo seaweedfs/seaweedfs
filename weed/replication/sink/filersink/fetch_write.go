@@ -272,12 +272,14 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 
 		// Combine with previously accumulated partial data
-		fullData := data
+		var fullData []byte
 		if len(partialData) > 0 {
 			fullData = append(partialData, data...)
 			glog.V(0).Infof("resumed reading %s, got %d + %d = %d bytes",
 				sourceChunk.GetFileIdString(), len(partialData), len(data), len(fullData))
 			partialData = nil
+		} else {
+			fullData = data
 		}
 
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
