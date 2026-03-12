@@ -109,7 +109,7 @@ func (c *commandRemoteMountBuckets) Do(args []string, commandEnv *CommandEnv, wr
 				Path:   "/",
 			}
 
-			if err = ensureMountDirectory(commandEnv, string(dir), true, remoteConf, remoteStorageLocation); err != nil {
+			if err = ensureMountDirectory(commandEnv, string(dir), true, remoteConf); err != nil {
 				return fmt.Errorf("mount setup on %+v: %v", remoteStorageLocation, err)
 			}
 			if err = pullMetadata(commandEnv, writer, dir, remoteStorageLocation, dir, remoteConf); err != nil {

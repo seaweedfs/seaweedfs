@@ -94,7 +94,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		}
 	}
 
-	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
+	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf); err != nil {
 		return fmt.Errorf("mount setup: %w", err)
 	}
 
@@ -130,7 +130,7 @@ func jsonPrintln(writer io.Writer, message proto.Message) error {
 	return filer.ProtoToText(writer, message)
 }
 
-func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
+func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, remoteConf *remote_pb.RemoteConf) error {
 	return commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		parent, name := util.FullPath(dir).DirAndName()
 		_, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
