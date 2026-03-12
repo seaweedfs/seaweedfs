@@ -238,7 +238,7 @@ func (c *stubRemoteClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) erro
 	})
 	return c.deleteErr
 }
-func (c *stubRemoteClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+func (c *stubRemoteClient) ListDirectory(_ context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
 	c.listDirCalls++
 	if c.listDirFn != nil {
 		return c.listDirFn(loc, visitFn)
@@ -874,8 +874,7 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, rs)
 
-	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 1, stub.listDirCalls)
 
 	// Check that the file was persisted
@@ -914,8 +913,7 @@ func TestMaybeLazyListFromRemote_DisabledWhenTTLZero(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, rs)
 
-	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 0, stub.listDirCalls, "should not call remote when TTL is 0")
 }
 
@@ -944,13 +942,11 @@ func TestMaybeLazyListFromRemote_TTLCachePreventsSecondCall(t *testing.T) {
 	f := newTestFiler(t, store, rs)
 
 	// First call should hit remote
-	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 1, stub.listDirCalls)
 
 	// Second call within TTL should be a no-op
-	err = f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 1, stub.listDirCalls, "should not call remote again within TTL")
 }
 
@@ -959,8 +955,7 @@ func TestMaybeLazyListFromRemote_NotUnderMount(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, rs)
 
-	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/not/a/mount"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/not/a/mount"))
 }
 
 func TestMaybeLazyListFromRemote_SkipsLocalOnlyEntries(t *testing.T) {
@@ -993,8 +988,7 @@ func TestMaybeLazyListFromRemote_SkipsLocalOnlyEntries(t *testing.T) {
 	}
 	f := newTestFiler(t, store, rs)
 
-	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
 
 	// Local entry should NOT have been overwritten
 	localEntry := store.getEntry("/buckets/mybucket/local.txt")
@@ -1023,13 +1017,11 @@ func TestMaybeLazyListFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 
 	// With lazyListContextKey set, should be a no-op
 	guardCtx := context.WithValue(context.Background(), lazyListContextKey{}, true)
-	err := f.maybeLazyListFromRemote(guardCtx, util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(guardCtx, util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 0, stub.listDirCalls)
 
 	// With lazyFetchContextKey set, should also be a no-op
 	fetchCtx := context.WithValue(context.Background(), lazyFetchContextKey{}, true)
-	err = f.maybeLazyListFromRemote(fetchCtx, util.FullPath("/buckets/mybucket"))
-	require.NoError(t, err)
+	f.maybeLazyListFromRemote(fetchCtx, util.FullPath("/buckets/mybucket"))
 	assert.Equal(t, 0, stub.listDirCalls)
 }

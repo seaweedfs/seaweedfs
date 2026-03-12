@@ -28,18 +28,18 @@ type lazyListContextKey struct{}
 // attribute so subsequent calls within the TTL window are no-ops.
 //
 // Errors are logged and swallowed (availability over consistency).
-func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) error {
+func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 	// Prevent recursion: CreateEntry → FindEntry → doListDirectoryEntries → here
 	if ctx.Value(lazyListContextKey{}) != nil {
-		return nil
+		return
 	}
 	// Also respect the lazy-fetch guard to prevent mutual recursion
 	if ctx.Value(lazyFetchContextKey{}) != nil {
-		return nil
+		return
 	}
 
 	if f.RemoteStorage == nil {
-		return nil
+		return
 	}
 
 	// The ptrie stores mount rules with trailing "/". When p is exactly the
@@ -51,13 +51,13 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 		lookupPath = util.FullPath(string(p) + "/")
 		mountDir, remoteLoc = f.RemoteStorage.FindMountDirectory(lookupPath)
 		if remoteLoc == nil {
-			return nil
+			return
 		}
 	}
 
 	// Lazy listing is opt-in: disabled when TTL is 0
 	if remoteLoc.ListingCacheTtlSeconds <= 0 {
-		return nil
+		return
 	}
 	cacheTTL := time.Duration(remoteLoc.ListingCacheTtlSeconds) * time.Second
 
@@ -67,7 +67,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 		if syncedAtStr, ok := dirEntry.Extended[xattrRemoteListingSyncedAt]; ok {
 			if syncedAt, err := strconv.ParseInt(string(syncedAtStr), 10, 64); err == nil {
 				if time.Since(time.Unix(syncedAt, 0)) < cacheTTL {
-					return nil
+					return
 				}
 			}
 		}
@@ -75,23 +75,20 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 
 	client, _, found := f.RemoteStorage.FindRemoteStorageClient(lookupPath)
 	if !found {
-		return nil
+		return
 	}
 
 	key := "list:" + string(p)
-	_, err, _ := f.lazyListGroup.Do(key, func() (interface{}, error) {
+	f.lazyListGroup.Do(key, func() (interface{}, error) {
+		startTime := time.Now()
 		objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, p)
-		// Ensure the remote path ends with "/" for directory listing
-		if objectLoc.Path != "/" && len(objectLoc.Path) > 0 && objectLoc.Path[len(objectLoc.Path)-1] != '/' {
-			objectLoc.Path += "/"
-		}
 
 		persistBaseCtx, cancelPersist := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancelPersist()
 		persistCtx := context.WithValue(persistBaseCtx, lazyListContextKey{}, true)
 		persistCtx = context.WithValue(persistCtx, lazyFetchContextKey{}, true)
 
-		listErr := client.ListDirectory(objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
+		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			childPath := p.Child(name)
 
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
@@ -144,15 +141,13 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 		}
 
 		// Update the synced_at timestamp on the directory entry
-		f.updateDirectoryListingSyncedAt(persistCtx, p)
+		f.updateDirectoryListingSyncedAt(persistCtx, p, startTime)
 
 		return nil, nil
 	})
-
-	return err
 }
 
-func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullPath) {
+func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullPath, syncTime time.Time) {
 	dirEntry, findErr := f.Store.FindEntry(ctx, p)
 	if findErr != nil {
 		// Directory doesn't exist yet, create it
@@ -171,7 +166,7 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 	if dirEntry.Extended == nil {
 		dirEntry.Extended = make(map[string][]byte)
 	}
-	dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", time.Now().Unix()))
+	dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", syncTime.Unix()))
 
 	if saveErr := f.CreateEntry(ctx, dirEntry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 		glog.Warningf("maybeLazyListFromRemote: update synced_at for %s: %v", p, saveErr)

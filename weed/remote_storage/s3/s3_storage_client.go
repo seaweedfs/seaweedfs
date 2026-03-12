@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,7 +124,7 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 	return
 }
 
-func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (s *s3RemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
 	pathKey := loc.Path[1:]
 	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
 		pathKey += "/"
@@ -134,49 +135,45 @@ func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocati
 		Prefix:    aws.String(pathKey),
 		Delimiter: aws.String("/"),
 	}
-	isLastPage := false
-	for !isLastPage && err == nil {
-		var localErr error
-		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
-			for _, prefix := range page.CommonPrefixes {
-				if prefix.Prefix == nil {
-					continue
-				}
-				dirKey := "/" + strings.TrimSuffix(*prefix.Prefix, "/")
-				dir, name := util.FullPath(dirKey).DirAndName()
-				if err := visitFn(dir, name, true, nil); err != nil {
-					localErr = err
-					return false
-				}
+
+	var localErr error
+	listErr := s.conn.ListObjectsV2PagesWithContext(ctx, listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		for _, prefix := range page.CommonPrefixes {
+			if prefix.Prefix == nil {
+				continue
 			}
-			for _, content := range page.Contents {
-				key := "/" + *content.Key
-				if strings.HasSuffix(key, "/") {
-					continue // skip directory markers
-				}
-				dir, name := util.FullPath(key).DirAndName()
-				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
-					RemoteMtime: (*content.LastModified).Unix(),
-					RemoteSize:  *content.Size,
-					RemoteETag:  *content.ETag,
-					StorageName: s.conf.Name,
-				}); err != nil {
-					localErr = err
-					return false
-				}
+			dirKey := "/" + strings.TrimSuffix(*prefix.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err := visitFn(dir, name, true, nil); err != nil {
+				localErr = err
+				return false
 			}
-			listInput.ContinuationToken = page.NextContinuationToken
-			isLastPage = lastPage
-			return true
-		})
-		if listErr != nil {
-			err = fmt.Errorf("list directory %v: %w", loc, listErr)
 		}
-		if localErr != nil {
-			err = fmt.Errorf("process directory %v: %w", loc, localErr)
+		for _, content := range page.Contents {
+			key := "/" + *content.Key
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
+				RemoteMtime: (*content.LastModified).Unix(),
+				RemoteSize:  *content.Size,
+				RemoteETag:  *content.ETag,
+				StorageName: s.conf.Name,
+			}); err != nil {
+				localErr = err
+				return false
+			}
 		}
+		return true
+	})
+	if listErr != nil {
+		return fmt.Errorf("list directory %v: %w", loc, listErr)
 	}
-	return
+	if localErr != nil {
+		return fmt.Errorf("process directory %v: %w", loc, localErr)
+	}
+	return nil
 }
 
 func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {

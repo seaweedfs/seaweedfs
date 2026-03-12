@@ -127,7 +127,7 @@ type azureRemoteStorageClient struct {
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
 
-func (az *azureRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (az *azureRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 	pathKey := loc.Path[1:]
 	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
 		pathKey += "/"
@@ -139,7 +139,7 @@ func (az *azureRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLo
 	})
 
 	for pager.More() {
-		resp, pageErr := pager.NextPage(context.Background())
+		resp, pageErr := pager.NextPage(ctx)
 		if pageErr != nil {
 			return fmt.Errorf("azure list directory %s%s: %w", loc.Bucket, loc.Path, pageErr)
 		}

@@ -131,13 +131,13 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 
 const defaultGCSOpTimeout = 30 * time.Second
 
-func (gcs *gcsRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
 	pathKey := loc.Path[1:]
 	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
 		pathKey += "/"
 	}
 
-	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(context.Background(), &storage.Query{
+	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(ctx, &storage.Query{
 		Delimiter: "/",
 		Prefix:    pathKey,
 		Versions:  false,
