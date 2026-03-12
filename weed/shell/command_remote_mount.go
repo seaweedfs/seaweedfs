@@ -179,6 +179,10 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 	})
 }
 
+// validateMountRoot checks that the remote bucket exists and credentials are valid.
+// TODO: use a targeted HeadBucket-style check instead of ListBuckets to avoid
+// fetching every bucket on accounts with many buckets. This requires adding a
+// BucketExists method to the RemoteStorageClient interface.
 func validateMountRoot(remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
 	client, err := remote_storage.GetRemoteStorage(remoteConf)
 	if err != nil {
