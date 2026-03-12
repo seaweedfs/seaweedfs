@@ -200,7 +200,7 @@ spec:
               {{- if .Values.filer.s3.httpsPort }}
               -s3.port.https={{ .Values.filer.s3.httpsPort }} \
               {{- end }}
-              {{ include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "s3.") | nindent 14 }}
+              {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "s3.") | nindent 14 }}
               {{- end }}
               {{- if .Values.filer.s3.enableAuth }}
               -s3.config=/etc/sw/seaweedfs_s3_config \
