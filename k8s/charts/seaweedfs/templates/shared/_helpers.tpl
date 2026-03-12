@@ -287,11 +287,11 @@ Compute the master service address to be used in cluster env vars.
 If allInOne is enabled, point to the all-in-one service; otherwise, point to the master service.
 */}}
 {{- define "seaweedfs.cluster.masterAddress" -}}
-{{- $serviceNameSuffix := "-master" -}}
+{{- $component := "master" -}}
 {{- if .Values.allInOne.enabled -}}
-{{-   $serviceNameSuffix = "-all-in-one" -}}
+{{-   $component = "all-in-one" -}}
 {{- end -}}
-{{- printf "%s.%s:%d" (printf "%s%s" (include "seaweedfs.fullname" .) $serviceNameSuffix | trunc 63 | trimSuffix "-") .Release.Namespace (int .Values.master.port) -}}
+{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) .Release.Namespace (int .Values.master.port) -}}
 {{- end -}}
 
 {{/*
@@ -299,11 +299,11 @@ Compute the filer service address to be used in cluster env vars.
 If allInOne is enabled, point to the all-in-one service; otherwise, point to the filer-client service.
 */}}
 {{- define "seaweedfs.cluster.filerAddress" -}}
-{{- $serviceNameSuffix := "-filer-client" -}}
+{{- $component := "filer-client" -}}
 {{- if .Values.allInOne.enabled -}}
-{{-   $serviceNameSuffix = "-all-in-one" -}}
+{{-   $component = "all-in-one" -}}
 {{- end -}}
-{{- printf "%s.%s:%d" (printf "%s%s" (include "seaweedfs.fullname" .) $serviceNameSuffix | trunc 63 | trimSuffix "-") .Release.Namespace (int .Values.filer.port) -}}
+{{- printf "%s.%s:%d" (include "seaweedfs.componentName" (list . $component)) .Release.Namespace (int .Values.filer.port) -}}
 {{- end -}}
 
 {{/*
