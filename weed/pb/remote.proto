@@ -73,4 +73,5 @@ message RemoteStorageLocation {
   string name = 1;
   string bucket = 2;
   string path = 3;
+  int32 listing_cache_ttl_seconds = 4; // 0 = disabled; >0 enables on-demand directory listing with this TTL in seconds
 }

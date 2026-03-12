@@ -865,9 +865,10 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
-		Name:   "myliststore",
-		Bucket: "mybucket",
-		Path:   "/",
+		Name:                   "myliststore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
 	})
 
 	store := newStubFilerStore()
@@ -889,6 +890,35 @@ func TestMaybeLazyListFromRemote_PopulatesStoreFromRemote(t *testing.T) {
 	assert.True(t, dirEntry.IsDirectory())
 }
 
+func TestMaybeLazyListFromRemote_DisabledWhenTTLZero(t *testing.T) {
+	const storageType = "stub_lazy_list_disabled"
+	stub := &stubRemoteClient{
+		listDirFn: func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+			return visitFn("/", "file.txt", false, &filer_pb.RemoteEntry{
+				RemoteMtime: 1700000000, RemoteSize: 10,
+			})
+		},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "disabledstore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:   "disabledstore",
+		Bucket: "mybucket",
+		Path:   "/",
+		// ListingCacheTtlSeconds defaults to 0 → disabled
+	})
+
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, rs)
+
+	err := f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
+	require.NoError(t, err)
+	assert.Equal(t, 0, stub.listDirCalls, "should not call remote when TTL is 0")
+}
+
 func TestMaybeLazyListFromRemote_TTLCachePreventsSecondCall(t *testing.T) {
 	const storageType = "stub_lazy_list_ttl"
 	stub := &stubRemoteClient{
@@ -904,9 +934,10 @@ func TestMaybeLazyListFromRemote_TTLCachePreventsSecondCall(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
-		Name:   "ttlstore",
-		Bucket: "mybucket",
-		Path:   "/",
+		Name:                   "ttlstore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
 	})
 
 	store := newStubFilerStore()
@@ -948,9 +979,10 @@ func TestMaybeLazyListFromRemote_SkipsLocalOnlyEntries(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
-		Name:   "skipstore",
-		Bucket: "mybucket",
-		Path:   "/",
+		Name:                   "skipstore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
 	})
 
 	store := newStubFilerStore()
@@ -980,9 +1012,10 @@ func TestMaybeLazyListFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
-		Name:   "guardliststore",
-		Bucket: "mybucket",
-		Path:   "/",
+		Name:                   "guardliststore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
 	})
 
 	store := newStubFilerStore()

@@ -12,15 +12,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const lazyListingCacheTTL = 5 * time.Minute
 const xattrRemoteListingSyncedAt = "remote.listing.synced_at"
 
 type lazyListContextKey struct{}
 
 // maybeLazyListFromRemote populates the local filer store with entries from the
 // remote storage backend for directory p if the following conditions hold:
-//   - p is under a remote mount
-//   - the cached listing has expired (based on lazyListingCacheTTL)
+//   - p is under a remote mount with listing_cache_ttl_seconds > 0
+//   - the cached listing has expired (based on the per-mount TTL)
+//
+// When listing_cache_ttl_seconds is 0 (the default), lazy listing is disabled
+// for that mount.
 //
 // On success it updates the directory's xattrRemoteListingSyncedAt extended
 // attribute so subsequent calls within the TTL window are no-ops.
@@ -53,12 +55,18 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 		}
 	}
 
+	// Lazy listing is opt-in: disabled when TTL is 0
+	if remoteLoc.ListingCacheTtlSeconds <= 0 {
+		return nil
+	}
+	cacheTTL := time.Duration(remoteLoc.ListingCacheTtlSeconds) * time.Second
+
 	// Check staleness: read the directory entry's extended attributes
 	dirEntry, _ := f.FindEntry(ctx, p)
 	if dirEntry != nil {
 		if syncedAtStr, ok := dirEntry.Extended[xattrRemoteListingSyncedAt]; ok {
 			if syncedAt, err := strconv.ParseInt(string(syncedAtStr), 10, 64); err == nil {
-				if time.Since(time.Unix(syncedAt, 0)) < lazyListingCacheTTL {
+				if time.Since(time.Unix(syncedAt, 0)) < cacheTTL {
 					return nil
 				}
 			}
@@ -169,4 +177,3 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 		glog.Warningf("maybeLazyListFromRemote: update synced_at for %s: %v", p, saveErr)
 	}
 }
-
