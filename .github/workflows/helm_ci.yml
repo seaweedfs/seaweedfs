@@ -179,6 +179,44 @@ jobs:
           echo "✓ All-in-one mode: service names match DNS references with long release name"
 
           echo ""
+          echo "=== Testing security+S3: no blank lines in shell command blocks ==="
+          # Render the three manifests that include seaweedfs.s3.tlsArgs:
+          #   filer-statefulset, s3-deployment, all-in-one-deployment
+          helm template test $CHART_DIR \
+            --set global.enableSecurity=true \
+            --set filer.s3.enabled=true \
+            --set s3.enabled=true > /tmp/security-s3.yaml
+          helm template test $CHART_DIR \
+            --set global.enableSecurity=true \
+            --set allInOne.enabled=true \
+            --set allInOne.s3.enabled=true > /tmp/security-aio.yaml
+
+          pip install pyyaml -q
+          python3 - /tmp/security-s3.yaml /tmp/security-aio.yaml <<'PYEOF'
+          import yaml, sys
+          errors = []
+          for path in sys.argv[1:]:
+              with open(path) as f:
+                  docs = list(yaml.safe_load_all(f))
+              for doc in docs:
+                  if not doc or doc.get("kind") not in ("Deployment", "StatefulSet"):
+                      continue
+                  name = doc["metadata"]["name"]
+                  for c in doc["spec"]["template"]["spec"].get("containers", []):
+                      cmd = c.get("command", [])
+                      if len(cmd) >= 3 and cmd[0] == "/bin/sh" and cmd[1] == "-ec":
+                          script = cmd[2]
+                          for i, line in enumerate(script.splitlines(), 1):
+                              if line.strip() == "":
+                                  errors.append(f"{path}: {name}/{c['name']} has blank line at script line {i}")
+          if errors:
+              for e in errors:
+                  print(f"FAIL: {e}", file=sys.stderr)
+              print("Rendered with: global.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
+              sys.exit(1)
+          print("✓ No blank lines in security+S3 command blocks")
+          PYEOF
+
           echo "✅ All template rendering tests passed!"
 
       - name: Create kind cluster
