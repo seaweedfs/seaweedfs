@@ -155,10 +155,15 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 		}
 	}
 	if remoteDeleted && !entry.IsDirectory() {
+		// Use a detached context so that pending-mark writes survive
+		// request cancellation — the remote object is already deleted at
+		// this point and we must record the intent durably.
+		markCtx, markCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer markCancel()
 		markBackoff := remoteMetadataDeletionMarkRetryBackoff
 		var markErr error
 		for attempt := 1; attempt <= remoteMetadataDeletionMarkRetryAttempts; attempt++ {
-			markErr = f.markRemoteMetadataDeletionPending(ctx, entry.FullPath)
+			markErr = f.markRemoteMetadataDeletionPending(markCtx, entry.FullPath)
 			if markErr == nil {
 				break
 			}
@@ -177,7 +182,9 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
 	if remoteDeleted && !entry.IsDirectory() {
-		if clearErr := f.clearRemoteMetadataDeletionPending(ctx, entry.FullPath); clearErr != nil {
+		clearCtx, clearCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer clearCancel()
+		if clearErr := f.clearRemoteMetadataDeletionPending(clearCtx, entry.FullPath); clearErr != nil {
 			glog.Warningf("clear remote metadata deletion pending %s: %v", entry.FullPath, clearErr)
 		}
 	}
@@ -253,6 +260,7 @@ func (f *Filer) reconcilePendingRemoteMetadataDeletions(ctx context.Context) err
 			glog.Warningf("retry local metadata deletion %s: %v", pendingPath, deleteErr)
 			continue
 		}
+		f.NotifyUpdateEvent(ctx, entry, nil, true, false, nil)
 
 		if clearErr := f.clearRemoteMetadataDeletionPending(ctx, pendingPath); clearErr != nil {
 			glog.Warningf("clear remote metadata deletion pending %s: %v", pendingPath, clearErr)
