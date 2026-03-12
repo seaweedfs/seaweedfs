@@ -717,4 +717,9 @@ func TestDeleteEntryMetaAndData_DirectoryUnderMountDeletesRemoteDirectory(t *tes
 	assert.Equal(t, "/dir", stub.removeCalls[0].Path)
 	_, findErr := store.FindEntry(context.Background(), dirPath)
 	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
+
+	// Directory deletes should not leave pending entries
+	pendingPaths, pendingErr := f.listPendingRemoteMetadataDeletionPaths(context.Background())
+	require.NoError(t, pendingErr)
+	require.Empty(t, pendingPaths)
 }

@@ -148,7 +148,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 			return remoteDeletionErr
 		}
 	}
-	if remoteDeleted {
+	if remoteDeleted && !entry.IsDirectory() {
 		markBackoff := remoteMetadataDeletionMarkRetryBackoff
 		var markErr error
 		for attempt := 1; attempt <= remoteMetadataDeletionMarkRetryAttempts; attempt++ {
@@ -170,7 +170,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
-	if remoteDeleted {
+	if remoteDeleted && !entry.IsDirectory() {
 		if clearErr := f.clearRemoteMetadataDeletionPending(ctx, entry.FullPath); clearErr != nil {
 			glog.Warningf("clear remote metadata deletion pending %s: %v", entry.FullPath, clearErr)
 		}
