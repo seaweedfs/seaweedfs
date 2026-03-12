@@ -81,21 +81,27 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
+	strategy := strings.ToLower(*metadataStrategy)
+	if strategy != "lazy" && strategy != "eager" {
+		return fmt.Errorf("metadataStrategy must be lazy or eager, got %q", *metadataStrategy)
+	}
+
+	// For lazy mounts, validate the remote before creating any local state
+	// so that bad buckets or credentials fail without leaving orphaned directories.
+	if strategy == "lazy" {
+		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
+			return fmt.Errorf("validate mount root: %w", err)
+		}
+	}
+
 	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf, remoteStorageLocation); err != nil {
 		return fmt.Errorf("mount setup: %w", err)
 	}
 
-	switch strings.ToLower(*metadataStrategy) {
-	case "lazy":
-		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
-			return fmt.Errorf("validate mount root: %w", err)
-		}
-	case "eager":
+	if strategy == "eager" {
 		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
-	default:
-		return fmt.Errorf("metadataStrategy must be lazy or eager, got %q", *metadataStrategy)
 	}
 
 	// store a mount configuration in filer
