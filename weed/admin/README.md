@@ -166,8 +166,10 @@ environment variables, which avoids exposing secrets in CLI flags or process lis
 [admin]
 user = "admin"
 password = "secret"
-readonly.user = "viewer"
-readonly.password = "viewpass"
+
+[admin.readonly]
+user = "viewer"
+password = "viewpass"
 ```
 
 **Environment variables** (via viper's `WEED_` prefix):
