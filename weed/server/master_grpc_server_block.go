@@ -409,6 +409,15 @@ func (ms *MasterServer) ExpandBlockVolume(ctx context.Context, req *master_pb.Ex
 		}
 	}()
 
+	// B-09: Re-read entry after acquiring expand lock. Between the initial
+	// Lookup and AcquireExpandInflight, failover may have changed VolumeServer
+	// or Replicas. Using the stale snapshot would send PREPARE to dead nodes.
+	entry, ok = ms.blockRegistry.Lookup(req.Name)
+	if !ok {
+		expandClean = true
+		return nil, fmt.Errorf("block volume %q disappeared during expand", req.Name)
+	}
+
 	// Track prepared nodes for rollback.
 	var prepared []string
 

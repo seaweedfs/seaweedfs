@@ -325,6 +325,14 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			if entry.VolumeServer == server {
 				// Server is the primary: check if primary path is reported.
 				if _, found := reported[entry.Path]; !found {
+					// B-10: Do not delete entries with a coordinated expand in flight.
+					// The primary may have restarted mid-expand; deleting the entry
+					// would orphan the volume and strand the expand coordinator.
+					if entry.ExpandInProgress {
+						glog.Warningf("block registry: skipping stale-cleanup for %q (ExpandInProgress=true, server=%s)",
+							name, server)
+						continue
+					}
 					delete(r.volumes, name)
 					delete(names, name)
 					// Also clean up replica entries from byServer.
