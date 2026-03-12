@@ -13,6 +13,7 @@ import (
 )
 
 const lazyListingCacheTTL = 5 * time.Minute
+const xattrRemoteListingSyncedAt = "remote.listing.synced_at"
 
 type lazyListContextKey struct{}
 
@@ -21,7 +22,7 @@ type lazyListContextKey struct{}
 //   - p is under a remote mount
 //   - the cached listing has expired (based on lazyListingCacheTTL)
 //
-// On success it updates the directory's "remote.listing.synced_at" extended
+// On success it updates the directory's xattrRemoteListingSyncedAt extended
 // attribute so subsequent calls within the TTL window are no-ops.
 //
 // Errors are logged and swallowed (availability over consistency).
@@ -55,7 +56,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) er
 	// Check staleness: read the directory entry's extended attributes
 	dirEntry, _ := f.FindEntry(ctx, p)
 	if dirEntry != nil {
-		if syncedAtStr, ok := dirEntry.Extended["remote.listing.synced_at"]; ok {
+		if syncedAtStr, ok := dirEntry.Extended[xattrRemoteListingSyncedAt]; ok {
 			if syncedAt, err := strconv.ParseInt(string(syncedAtStr), 10, 64); err == nil {
 				if time.Since(time.Unix(syncedAt, 0)) < lazyListingCacheTTL {
 					return nil
@@ -162,7 +163,7 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 	if dirEntry.Extended == nil {
 		dirEntry.Extended = make(map[string][]byte)
 	}
-	dirEntry.Extended["remote.listing.synced_at"] = []byte(fmt.Sprintf("%d", time.Now().Unix()))
+	dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", time.Now().Unix()))
 
 	if saveErr := f.CreateEntry(ctx, dirEntry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
 		glog.Warningf("maybeLazyListFromRemote: update synced_at for %s: %v", p, saveErr)
