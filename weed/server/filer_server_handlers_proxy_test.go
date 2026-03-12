@@ -53,6 +53,7 @@ func TestProxySemaphore_LimitsConcurrency(t *testing.T) {
 
 func TestProxySemaphore_ContextCancellation(t *testing.T) {
 	host := "test-cancel:8080"
+	defer proxySemaphores.Delete(host)
 
 	// Fill the semaphore
 	for i := 0; i < proxyReadConcurrencyPerVolumeServer; i++ {
@@ -78,6 +79,8 @@ func TestProxySemaphore_ContextCancellation(t *testing.T) {
 func TestProxySemaphore_PerHostIsolation(t *testing.T) {
 	hostA := "volume-a:8080"
 	hostB := "volume-b:8080"
+	defer proxySemaphores.Delete(hostA)
+	defer proxySemaphores.Delete(hostB)
 
 	// Fill hostA's semaphore
 	for i := 0; i < proxyReadConcurrencyPerVolumeServer; i++ {
