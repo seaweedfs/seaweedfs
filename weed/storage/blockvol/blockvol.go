@@ -213,6 +213,25 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		return nil, fmt.Errorf("blockvol: validate superblock: %w", err)
 	}
 
+	// CP11A-2: Clear stale prepared expand state on recovery.
+	if sb.PreparedSize != 0 {
+		log.Printf("blockvol: clearing stale PreparedSize=%d ExpandEpoch=%d on open (crash during prepare phase)", sb.PreparedSize, sb.ExpandEpoch)
+		sb.PreparedSize = 0
+		sb.ExpandEpoch = 0
+		if _, err := fd.Seek(0, 0); err != nil {
+			fd.Close()
+			return nil, fmt.Errorf("blockvol: seek for prepared clear: %w", err)
+		}
+		if _, err := sb.WriteTo(fd); err != nil {
+			fd.Close()
+			return nil, fmt.Errorf("blockvol: write superblock for prepared clear: %w", err)
+		}
+		if err := fd.Sync(); err != nil {
+			fd.Close()
+			return nil, fmt.Errorf("blockvol: sync for prepared clear: %w", err)
+		}
+	}
+
 	dirtyMap := NewDirtyMap(cfg.DirtyMapShards)
 
 	// Run WAL recovery: replay entries from tail to head.
@@ -1055,22 +1074,19 @@ func (v *BlockVol) ListSnapshots() []SnapshotInfo {
 var (
 	ErrShrinkNotSupported     = errors.New("blockvol: shrink not supported")
 	ErrSnapshotsPreventResize = errors.New("blockvol: cannot resize with active snapshots")
+	ErrExpandAlreadyInFlight  = errors.New("blockvol: expand already in flight")
+	ErrExpandEpochMismatch    = errors.New("blockvol: expand epoch mismatch")
+	ErrNoExpandInFlight       = errors.New("blockvol: no expand in flight")
+	ErrSameSize               = errors.New("blockvol: new size equals current size")
 )
 
-// Expand grows the volume to newSize bytes. newSize must be larger than
-// the current size and aligned to BlockSize. Fails if snapshots are active.
-func (v *BlockVol) Expand(newSize uint64) error {
-	if err := v.beginOp(); err != nil {
-		return err
-	}
-	defer v.endOp()
-	if err := v.writeGate(); err != nil {
-		return err
-	}
-
+// growFile extends the backing file to accommodate newSize bytes of extent data.
+// Validates size, alignment, and snapshot constraints. Pauses/resumes flusher.
+// Does NOT update VolumeSize in the superblock.
+func (v *BlockVol) growFile(newSize uint64) error {
 	if newSize <= v.super.VolumeSize {
 		if newSize == v.super.VolumeSize {
-			return nil // no-op
+			return nil // no-op, caller should check
 		}
 		return ErrShrinkNotSupported
 	}
@@ -1098,10 +1114,119 @@ func (v *BlockVol) Expand(newSize uint64) error {
 	if err := v.fd.Truncate(newFileSize); err != nil {
 		return fmt.Errorf("blockvol: expand truncate: %w", err)
 	}
+	return nil
+}
 
-	// Update superblock.
+// Expand grows the volume to newSize bytes (standalone direct-commit).
+// newSize must be larger than the current size and aligned to BlockSize.
+// Fails if snapshots are active. No PreparedSize involved.
+func (v *BlockVol) Expand(newSize uint64) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+	if err := v.writeGate(); err != nil {
+		return err
+	}
+
+	if newSize == v.super.VolumeSize {
+		return nil // no-op
+	}
+
+	if err := v.growFile(newSize); err != nil {
+		return err
+	}
+
+	// Update superblock: direct-commit.
 	v.super.VolumeSize = newSize
+	v.super.PreparedSize = 0  // defensive clear
+	v.super.ExpandEpoch = 0
 	return v.persistSuperblock()
+}
+
+// PrepareExpand grows the file and records the pending expand in the superblock
+// without updating VolumeSize. Writes beyond the old VolumeSize are rejected
+// by ValidateWrite until CommitExpand is called.
+func (v *BlockVol) PrepareExpand(newSize, expandEpoch uint64) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.super.PreparedSize != 0 {
+		return ErrExpandAlreadyInFlight
+	}
+
+	if newSize <= v.super.VolumeSize {
+		if newSize == v.super.VolumeSize {
+			return ErrSameSize
+		}
+		return ErrShrinkNotSupported
+	}
+
+	if err := v.growFile(newSize); err != nil {
+		return err
+	}
+
+	v.super.PreparedSize = newSize
+	v.super.ExpandEpoch = expandEpoch
+	return v.persistSuperblock()
+}
+
+// CommitExpand activates the prepared expand: VolumeSize = PreparedSize.
+// Returns ErrNoExpandInFlight if no prepare was done, or ErrExpandEpochMismatch
+// if the epoch doesn't match.
+func (v *BlockVol) CommitExpand(expandEpoch uint64) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if v.super.PreparedSize == 0 {
+		return ErrNoExpandInFlight
+	}
+	if v.super.ExpandEpoch != expandEpoch {
+		return ErrExpandEpochMismatch
+	}
+
+	v.super.VolumeSize = v.super.PreparedSize
+	v.super.PreparedSize = 0
+	v.super.ExpandEpoch = 0
+	return v.persistSuperblock()
+}
+
+// CancelExpand clears the prepared expand state without activating it.
+// The file stays physically grown (sparse, harmless).
+// If expandEpoch is 0, force-cancels regardless of current epoch.
+func (v *BlockVol) CancelExpand(expandEpoch uint64) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if expandEpoch != 0 && v.super.ExpandEpoch != expandEpoch {
+		return ErrExpandEpochMismatch
+	}
+
+	v.super.PreparedSize = 0
+	v.super.ExpandEpoch = 0
+	return v.persistSuperblock()
+}
+
+// ExpandState returns the current prepared expand state.
+func (v *BlockVol) ExpandState() (preparedSize, expandEpoch uint64) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.super.PreparedSize, v.super.ExpandEpoch
 }
 
 // persistSuperblock writes the superblock to disk and fsyncs.

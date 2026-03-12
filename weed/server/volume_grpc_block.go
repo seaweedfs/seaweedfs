@@ -125,6 +125,60 @@ func (vs *VolumeServer) ListBlockSnapshots(_ context.Context, req *volume_server
 	return resp, nil
 }
 
+// PrepareExpandBlockVolume prepares a block volume for expansion without committing.
+func (vs *VolumeServer) PrepareExpandBlockVolume(_ context.Context, req *volume_server_pb.PrepareExpandBlockVolumeRequest) (*volume_server_pb.PrepareExpandBlockVolumeResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if req.NewSizeBytes == 0 {
+		return nil, fmt.Errorf("new_size_bytes must be > 0")
+	}
+
+	if err := vs.blockService.PrepareExpandBlockVol(req.Name, req.NewSizeBytes, req.ExpandEpoch); err != nil {
+		return nil, fmt.Errorf("prepare expand block volume %q: %w", req.Name, err)
+	}
+
+	return &volume_server_pb.PrepareExpandBlockVolumeResponse{}, nil
+}
+
+// CommitExpandBlockVolume commits a prepared block volume expansion.
+func (vs *VolumeServer) CommitExpandBlockVolume(_ context.Context, req *volume_server_pb.CommitExpandBlockVolumeRequest) (*volume_server_pb.CommitExpandBlockVolumeResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	capacity, err := vs.blockService.CommitExpandBlockVol(req.Name, req.ExpandEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("commit expand block volume %q: %w", req.Name, err)
+	}
+
+	return &volume_server_pb.CommitExpandBlockVolumeResponse{
+		CapacityBytes: capacity,
+	}, nil
+}
+
+// CancelExpandBlockVolume cancels a prepared block volume expansion.
+func (vs *VolumeServer) CancelExpandBlockVolume(_ context.Context, req *volume_server_pb.CancelExpandBlockVolumeRequest) (*volume_server_pb.CancelExpandBlockVolumeResponse, error) {
+	if vs.blockService == nil {
+		return nil, fmt.Errorf("block service not enabled on this volume server")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	if err := vs.blockService.CancelExpandBlockVol(req.Name, req.ExpandEpoch); err != nil {
+		return nil, fmt.Errorf("cancel expand block volume %q: %w", req.Name, err)
+	}
+
+	return &volume_server_pb.CancelExpandBlockVolumeResponse{}, nil
+}
+
 // ExpandBlockVolume expands a block volume to a new size.
 func (vs *VolumeServer) ExpandBlockVolume(_ context.Context, req *volume_server_pb.ExpandBlockVolumeRequest) (*volume_server_pb.ExpandBlockVolumeResponse, error) {
 	if vs.blockService == nil {

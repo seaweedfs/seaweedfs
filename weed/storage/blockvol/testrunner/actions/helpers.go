@@ -85,6 +85,34 @@ func parseInt(s string, def int) int {
 	return v
 }
 
+// parseSizeBytes converts a human-readable size string (e.g. "50M", "1G", "104857600") to bytes.
+func parseSizeBytes(s string) (uint64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty size string")
+	}
+	upper := strings.ToUpper(s)
+	var multiplier uint64 = 1
+	switch {
+	case strings.HasSuffix(upper, "G"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(upper, "G")
+	case strings.HasSuffix(upper, "M"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(upper, "M")
+	case strings.HasSuffix(upper, "K"):
+		multiplier = 1024
+		s = strings.TrimSuffix(upper, "K")
+	default:
+		s = upper
+	}
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse size %q: %w", s, err)
+	}
+	return v * multiplier, nil
+}
+
 func parseIntSlice(s string) []int {
 	var result []int
 	for _, part := range strings.Split(s, ",") {

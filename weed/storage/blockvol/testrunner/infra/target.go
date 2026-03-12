@@ -80,11 +80,17 @@ func (t *Target) Deploy(localBin string) error {
 
 // Start launches the target process. If create is true, a new volume is created.
 func (t *Target) Start(ctx context.Context, create bool) error {
+	// Pre-flight: verify binary exists and is executable.
+	_, _, binCode, _ := t.Node.Run(ctx, fmt.Sprintf("test -x %s", t.BinPath))
+	if binCode != 0 {
+		return fmt.Errorf("binary not found or not executable on %s: %s", t.Node.Host, t.BinPath)
+	}
+
 	// Pre-flight: check if iSCSI port is already in use.
-	stdout, _, code, _ := t.Node.Run(ctx, fmt.Sprintf("ss -tln | grep ':%d '", t.Config.Port))
-	if code == 0 && strings.TrimSpace(stdout) != "" {
+	portOut, _, portCode, _ := t.Node.Run(ctx, fmt.Sprintf("ss -tln | grep ':%d '", t.Config.Port))
+	if portCode == 0 && strings.TrimSpace(portOut) != "" {
 		owner, _, _, _ := t.Node.Run(ctx, fmt.Sprintf("ss -tlnp | grep ':%d ' | head -1", t.Config.Port))
-		return fmt.Errorf("port %d already in use on %s: %s",
+		return fmt.Errorf("port %d (iSCSI) already in use on %s: %s",
 			t.Config.Port, t.Node.Host, strings.TrimSpace(owner))
 	}
 
@@ -116,7 +122,7 @@ func (t *Target) Start(ctx context.Context, create bool) error {
 	}
 
 	// Discover PID by matching the binary name
-	stdout, _, _, _ = t.Node.Run(ctx, fmt.Sprintf("ps -eo pid,args | grep '%s' | grep -v grep | awk '{print $1}'", t.BinPath))
+	stdout, _, _, _ := t.Node.Run(ctx, fmt.Sprintf("ps -eo pid,args | grep '%s' | grep -v grep | awk '{print $1}'", t.BinPath))
 	pidStr := strings.TrimSpace(stdout)
 	if idx := strings.IndexByte(pidStr, '\n'); idx > 0 {
 		pidStr = pidStr[:idx]
@@ -227,13 +233,13 @@ func CheckDiskSpace(ctx context.Context, node *Node, volFile, volSize, walSize s
 	}
 	stdout, _, code, _ := node.Run(ctx, fmt.Sprintf("df -BM %s 2>/dev/null | tail -1 | awk '{print $4}'", dir))
 	if code != 0 {
-		return nil // can't check, proceed anyway
+		return fmt.Errorf("disk space check failed on %s (df returned code %d for %s)", node.Host, code, dir)
 	}
 	availStr := strings.TrimSpace(stdout)
 	availStr = strings.TrimSuffix(availStr, "M")
 	availMB, err := strconv.Atoi(availStr)
 	if err != nil {
-		return nil // can't parse, proceed anyway
+		return fmt.Errorf("disk space check: cannot parse df output %q on %s", availStr, node.Host)
 	}
 
 	if availMB < neededMB {

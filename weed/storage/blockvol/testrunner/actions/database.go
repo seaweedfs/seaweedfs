@@ -70,10 +70,10 @@ func sqliteInsertRows(ctx context.Context, actx *tr.ActionContext, act tr.Action
 
 	// Generate SQL in a temp file with BEGIN/COMMIT, then pipe to sqlite3.
 	// Use bash -c with \x27 for single quotes to avoid quoting issues with sudo.
-	tmpFile := "/tmp/sw_sqlite_insert.sql"
+	tmpFile := tempPath(actx, "sqlite_insert.sql")
 	cmd := fmt.Sprintf(
-		`bash -c 'printf "BEGIN;\n" > %s; for i in $(seq 1 %s); do printf "INSERT INTO %s (data) VALUES (\x27row-%%d\x27);\n" $i; done >> %s; printf "COMMIT;\n" >> %s; sqlite3 %s < %s; rm -f %s'`,
-		tmpFile, count, table, tmpFile, tmpFile, path, tmpFile, tmpFile)
+		`bash -c 'mkdir -p %s; printf "BEGIN;\n" > %s; for i in $(seq 1 %s); do printf "INSERT INTO %s (data) VALUES (\x27row-%%d\x27);\n" $i; done >> %s; printf "COMMIT;\n" >> %s; sqlite3 %s < %s; rm -f %s'`,
+		actx.TempRoot, tmpFile, count, table, tmpFile, tmpFile, path, tmpFile, tmpFile)
 	_, stderr, code, err := node.RunRoot(ctx, cmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("sqlite_insert_rows: code=%d stderr=%s err=%v", code, stderr, err)

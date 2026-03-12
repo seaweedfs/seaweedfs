@@ -518,6 +518,36 @@ func (bs *BlockService) ExpandBlockVol(name string, newSize uint64) (uint64, err
 	return actualSize, err
 }
 
+// PrepareExpandBlockVol prepares an expand on the named volume without committing.
+func (bs *BlockService) PrepareExpandBlockVol(name string, newSize, expandEpoch uint64) error {
+	path := bs.volumePath(name)
+	return bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		return vol.PrepareExpand(newSize, expandEpoch)
+	})
+}
+
+// CommitExpandBlockVol commits a prepared expand on the named volume.
+func (bs *BlockService) CommitExpandBlockVol(name string, expandEpoch uint64) (uint64, error) {
+	path := bs.volumePath(name)
+	var actualSize uint64
+	err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		if eerr := vol.CommitExpand(expandEpoch); eerr != nil {
+			return eerr
+		}
+		actualSize = vol.Info().VolumeSize
+		return nil
+	})
+	return actualSize, err
+}
+
+// CancelExpandBlockVol cancels a prepared expand on the named volume.
+func (bs *BlockService) CancelExpandBlockVol(name string, expandEpoch uint64) error {
+	path := bs.volumePath(name)
+	return bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		return vol.CancelExpand(expandEpoch)
+	})
+}
+
 // volumePath converts a volume name to its .blk file path.
 func (bs *BlockService) volumePath(name string) string {
 	sanitized := blockvol.SanitizeFilename(name)

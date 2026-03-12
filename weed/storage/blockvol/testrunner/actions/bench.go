@@ -218,6 +218,7 @@ type fioJobStats struct {
 	IOPS    float64    `json:"iops"`
 	BWBytes float64    `json:"bw_bytes"`
 	LatNS   fioLatency `json:"lat_ns"`
+	CLatNS  fioLatency `json:"clat_ns"`
 }
 
 type fioLatency struct {
@@ -283,11 +284,11 @@ func ParseFioMetric(input, metric, direction string) (float64, error) {
 	case "lat_mean_us":
 		return stats.LatNS.Mean / 1000, nil // ns → µs
 	case "lat_p50_us":
-		return getPercentile(stats.LatNS, "50.000000") / 1000, nil
+		return getPercentileWithFallback(stats, "50.000000") / 1000, nil
 	case "lat_p99_us":
-		return getPercentile(stats.LatNS, "99.000000") / 1000, nil
+		return getPercentileWithFallback(stats, "99.000000") / 1000, nil
 	case "lat_p999_us":
-		return getPercentile(stats.LatNS, "99.900000") / 1000, nil
+		return getPercentileWithFallback(stats, "99.900000") / 1000, nil
 	default:
 		return 0, fmt.Errorf("unknown metric %q", metric)
 	}
@@ -298,6 +299,15 @@ func getPercentile(lat fioLatency, key string) float64 {
 		return 0
 	}
 	return lat.Percentile[key]
+}
+
+// getPercentileWithFallback tries clat_ns first (fio puts percentiles there),
+// then falls back to lat_ns.
+func getPercentileWithFallback(stats fioJobStats, key string) float64 {
+	if v := getPercentile(stats.CLatNS, key); v != 0 {
+		return v
+	}
+	return getPercentile(stats.LatNS, key)
 }
 
 // benchStats computes statistics from a comma-separated list of values.

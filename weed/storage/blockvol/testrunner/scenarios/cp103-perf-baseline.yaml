@@ -172,6 +172,45 @@ phases:
         runtime: "60"
         name: "mixed-70-30-j4-qd32"
 
+  # --- iSCSI profiling snapshot (T7) ---
+  - name: iscsi-profile
+    parallel: true
+    actions:
+      - action: pprof_capture
+        target: primary
+        save_as: iscsi_pprof_heap
+        profile: heap
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: iscsi-heap
+      - action: pprof_capture
+        target: primary
+        save_as: iscsi_pprof_goroutine
+        profile: goroutine
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: iscsi-goroutine
+      - action: pprof_capture
+        target: primary
+        save_as: iscsi_pprof_cpu
+        profile: profile
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: iscsi-cpu
+      - action: vmstat_capture
+        node: server
+        save_as: iscsi_vmstat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: iscsi-vmstat
+      - action: iostat_capture
+        node: server
+        save_as: iscsi_iostat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: iscsi-iostat
+      - action: scrape_metrics
+        target: primary
+        save_as: iscsi_metrics
+
   - name: iscsi-disconnect
     actions:
       - action: iscsi_logout
@@ -312,6 +351,45 @@ phases:
         numjobs: "4"
         runtime: "60"
         name: "mixed-70-30-j4-qd32"
+
+  # --- NVMe profiling snapshot (T7) ---
+  - name: nvme-profile
+    parallel: true
+    actions:
+      - action: pprof_capture
+        target: primary
+        save_as: nvme_pprof_heap
+        profile: heap
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: nvme-heap
+      - action: pprof_capture
+        target: primary
+        save_as: nvme_pprof_goroutine
+        profile: goroutine
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: nvme-goroutine
+      - action: pprof_capture
+        target: primary
+        save_as: nvme_pprof_cpu
+        profile: profile
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: nvme-cpu
+      - action: vmstat_capture
+        node: server
+        save_as: nvme_vmstat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: nvme-vmstat
+      - action: iostat_capture
+        node: server
+        save_as: nvme_iostat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: nvme-iostat
+      - action: scrape_metrics
+        target: primary
+        save_as: nvme_metrics
 
   - name: nvme-disconnect
     actions:

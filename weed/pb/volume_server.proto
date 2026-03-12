@@ -151,6 +151,12 @@ service VolumeServer {
     }
     rpc ExpandBlockVolume (ExpandBlockVolumeRequest) returns (ExpandBlockVolumeResponse) {
     }
+    rpc PrepareExpandBlockVolume (PrepareExpandBlockVolumeRequest) returns (PrepareExpandBlockVolumeResponse) {
+    }
+    rpc CommitExpandBlockVolume (CommitExpandBlockVolumeRequest) returns (CommitExpandBlockVolumeResponse) {
+    }
+    rpc CancelExpandBlockVolume (CancelExpandBlockVolumeRequest) returns (CancelExpandBlockVolumeResponse) {
+    }
 
 }
 
@@ -833,4 +839,27 @@ message ExpandBlockVolumeRequest {
 }
 message ExpandBlockVolumeResponse {
     uint64 capacity_bytes = 1;
+}
+
+message PrepareExpandBlockVolumeRequest {
+    string name = 1;
+    uint64 new_size_bytes = 2;
+    uint64 expand_epoch = 3;
+}
+message PrepareExpandBlockVolumeResponse {
+}
+
+message CommitExpandBlockVolumeRequest {
+    string name = 1;
+    uint64 expand_epoch = 2;
+}
+message CommitExpandBlockVolumeResponse {
+    uint64 capacity_bytes = 1;
+}
+
+message CancelExpandBlockVolumeRequest {
+    string name = 1;
+    uint64 expand_epoch = 2;
+}
+message CancelExpandBlockVolumeResponse {
 }

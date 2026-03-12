@@ -85,6 +85,36 @@ phases:
         name: perf_64k_seqwrite
         save_as: fio_64k_sw
 
+  # --- Profiling snapshot (T7) ---
+  - name: profile_capture
+    parallel: true
+    actions:
+      - action: pprof_capture
+        target: primary
+        save_as: pprof_heap
+        profile: heap
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: post-bench-heap
+      - action: pprof_capture
+        target: primary
+        save_as: pprof_cpu
+        profile: profile
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: post-bench-cpu
+      - action: vmstat_capture
+        node: target_node
+        save_as: post_vmstat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: post-bench-vmstat
+      - action: iostat_capture
+        node: target_node
+        save_as: post_iostat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: post-bench-iostat
+
   - name: collect_metrics
     actions:
       - action: scrape_metrics

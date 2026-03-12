@@ -813,14 +813,21 @@ func TestMaster_DeleteRF3_DeletesAllReplicas(t *testing.T) {
 	}
 }
 
-// ExpandBlockVolume RF=3 expands all replicas.
+// ExpandBlockVolume RF=3 uses coordinated prepare/commit on all nodes.
 func TestMaster_ExpandRF3_ExpandsAllReplicas(t *testing.T) {
 	ms := testMasterServerRF3(t)
 
-	var expandedServers []string
-	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
-		expandedServers = append(expandedServers, server)
-		return newSize, nil
+	var preparedServers, committedServers []string
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		preparedServers = append(preparedServers, server)
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		committedServers = append(committedServers, server)
+		return 2 << 30, nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
 	}
 
 	_, err := ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
@@ -839,10 +846,12 @@ func TestMaster_ExpandRF3_ExpandsAllReplicas(t *testing.T) {
 		t.Fatalf("expand: %v", err)
 	}
 
-	// Should have expanded on primary + 2 replicas = 3 servers.
-	if len(expandedServers) != 3 {
-		t.Fatalf("expected 3 expand calls (primary + 2 replicas), got %d: %v",
-			len(expandedServers), expandedServers)
+	// Should have prepared on primary + 2 replicas = 3 servers.
+	if len(preparedServers) != 3 {
+		t.Fatalf("expected 3 prepare calls, got %d: %v", len(preparedServers), preparedServers)
+	}
+	if len(committedServers) != 3 {
+		t.Fatalf("expected 3 commit calls, got %d: %v", len(committedServers), committedServers)
 	}
 }
 
@@ -1176,5 +1185,470 @@ func TestMaster_PromotionCopiesNvmeFields(t *testing.T) {
 	}
 	if lresp.Nqn != "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2" {
 		t.Fatalf("Lookup Nqn after promotion: got %q", lresp.Nqn)
+	}
+}
+
+// ============================================================
+// CP11A-2: Coordinated Expand Tests
+// ============================================================
+
+func testMasterServerWithExpandMocks(t *testing.T) *MasterServer {
+	t.Helper()
+	ms := testMasterServer(t)
+	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
+		return newSize, nil
+	}
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 2 << 30, nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
+	}
+	return ms
+}
+
+func TestMaster_ExpandCoordinated_Success(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	var prepareCount, commitCount int
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		prepareCount++
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		commitCount++
+		return 2 << 30, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "coord-vol", SizeBytes: 1 << 30,
+	})
+
+	resp, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "coord-vol", NewSizeBytes: 2 << 30,
+	})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if resp.CapacityBytes != 2<<30 {
+		t.Fatalf("capacity: got %d, want %d", resp.CapacityBytes, 2<<30)
+	}
+	if prepareCount != 2 {
+		t.Fatalf("expected 2 prepare calls (primary+replica), got %d", prepareCount)
+	}
+	if commitCount != 2 {
+		t.Fatalf("expected 2 commit calls, got %d", commitCount)
+	}
+	entry, _ := ms.blockRegistry.Lookup("coord-vol")
+	if entry.SizeBytes != 2<<30 {
+		t.Fatalf("registry size: got %d, want %d", entry.SizeBytes, 2<<30)
+	}
+}
+
+func TestMaster_ExpandCoordinated_PrepareFailure_Cancels(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "cancel-vol", SizeBytes: 1 << 30,
+	})
+
+	// Determine which server is primary so we can fail the replica.
+	entry, _ := ms.blockRegistry.Lookup("cancel-vol")
+	primaryServer := entry.VolumeServer
+
+	var cancelCount int
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		if server != primaryServer {
+			return fmt.Errorf("replica prepare failed")
+		}
+		return nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		cancelCount++
+		return nil
+	}
+
+	_, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "cancel-vol", NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("expected error when replica prepare fails")
+	}
+	if cancelCount != 1 {
+		t.Fatalf("expected 1 cancel call (primary was prepared), got %d", cancelCount)
+	}
+	entry, _ = ms.blockRegistry.Lookup("cancel-vol")
+	if entry.SizeBytes != 1<<30 {
+		t.Fatalf("registry size should be unchanged: got %d", entry.SizeBytes)
+	}
+}
+
+func TestMaster_ExpandCoordinated_Standalone_DirectCommit(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	var expandCalled bool
+	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
+		expandCalled = true
+		return newSize, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "solo-vol", SizeBytes: 1 << 30,
+	})
+
+	resp, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "solo-vol", NewSizeBytes: 2 << 30,
+	})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if !expandCalled {
+		t.Fatal("standalone should use direct expand, not prepare/commit")
+	}
+	if resp.CapacityBytes != 2<<30 {
+		t.Fatalf("capacity: got %d", resp.CapacityBytes)
+	}
+}
+
+func TestMaster_ExpandCoordinated_ConcurrentRejected(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	// Make prepare block until we release it.
+	blockCh := make(chan struct{})
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		<-blockCh
+		return nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "conc-vol", SizeBytes: 1 << 30,
+	})
+
+	// First expand acquires inflight.
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+			Name: "conc-vol", NewSizeBytes: 2 << 30,
+		})
+		errCh <- err
+	}()
+
+	// Give goroutine time to acquire lock.
+	time.Sleep(20 * time.Millisecond)
+
+	// Second expand should be rejected.
+	_, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "conc-vol", NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("concurrent expand should be rejected")
+	}
+
+	// Release the first expand.
+	close(blockCh)
+	<-errCh
+}
+
+func TestMaster_ExpandCoordinated_Idempotent(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "idem-vol", SizeBytes: 1 << 30,
+	})
+
+	// Same size expand: standalone path, Expand handles no-op internally.
+	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
+		return 1 << 30, nil // return current size
+	}
+
+	resp, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "idem-vol", NewSizeBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("idempotent expand: %v", err)
+	}
+	if resp.CapacityBytes != 1<<30 {
+		t.Fatalf("capacity: got %d", resp.CapacityBytes)
+	}
+}
+
+func TestMaster_ExpandCoordinated_CommitFailure_MarksInconsistent(t *testing.T) {
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "fail-vol", SizeBytes: 1 << 30,
+	})
+
+	// Determine which server is primary so we fail only the replica's commit.
+	entry, _ := ms.blockRegistry.Lookup("fail-vol")
+	primaryServer := entry.VolumeServer
+
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		if server != primaryServer {
+			return 0, fmt.Errorf("replica commit failed")
+		}
+		return 2 << 30, nil
+	}
+
+	_, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "fail-vol", NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("expected error when replica commit fails")
+	}
+
+	// Registry size should NOT be updated (inconsistent state).
+	entry, _ = ms.blockRegistry.Lookup("fail-vol")
+	if entry.SizeBytes != 1<<30 {
+		t.Fatalf("registry size should be unchanged: got %d", entry.SizeBytes)
+	}
+
+	// Finding 1: ExpandFailed must be true, ExpandInProgress must stay true
+	// so heartbeat cannot overwrite SizeBytes with the primary's new committed size.
+	if !entry.ExpandFailed {
+		t.Fatal("entry.ExpandFailed should be true after partial commit failure")
+	}
+	if !entry.ExpandInProgress {
+		t.Fatal("entry.ExpandInProgress should stay true to suppress heartbeat size updates")
+	}
+
+	// Finding 2: PendingExpandSize and ExpandEpoch should be populated for diagnosis.
+	if entry.PendingExpandSize != 2<<30 {
+		t.Fatalf("entry.PendingExpandSize: got %d, want %d", entry.PendingExpandSize, 2<<30)
+	}
+	if entry.ExpandEpoch == 0 {
+		t.Fatal("entry.ExpandEpoch should be non-zero")
+	}
+
+	// A new expand should be rejected while ExpandFailed is set.
+	_, err = ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "fail-vol", NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("expand should be rejected while ExpandFailed is set")
+	}
+
+	// ClearExpandFailed unblocks new expands.
+	ms.blockRegistry.ClearExpandFailed("fail-vol")
+	entry, _ = ms.blockRegistry.Lookup("fail-vol")
+	if entry.ExpandFailed || entry.ExpandInProgress {
+		t.Fatal("ClearExpandFailed should reset both flags")
+	}
+}
+
+func TestMaster_ExpandCoordinated_HeartbeatSuppressedAfterPartialCommit(t *testing.T) {
+	// Bug 1 regression: after primary commits but replica fails,
+	// a heartbeat from the primary reporting the new VolumeSize
+	// must NOT update the registry SizeBytes.
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "hb-vol", SizeBytes: 1 << 30,
+	})
+
+	entry, _ := ms.blockRegistry.Lookup("hb-vol")
+	primaryServer := entry.VolumeServer
+
+	// Fail replica commit.
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		if server != primaryServer {
+			return 0, fmt.Errorf("replica commit failed")
+		}
+		return 2 << 30, nil
+	}
+
+	ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "hb-vol", NewSizeBytes: 2 << 30,
+	})
+
+	// Volume is now in ExpandFailed state, ExpandInProgress=true.
+	// Simulate primary heartbeat reporting VolumeSize = 2 GiB (primary already committed).
+	ms.blockRegistry.UpdateFullHeartbeat(primaryServer, []*master_pb.BlockVolumeInfoMessage{
+		{
+			Path:       fmt.Sprintf("/data/%s.blk", "hb-vol"),
+			VolumeSize: 2 << 30, // primary's new committed size
+			Epoch:      1,
+			Role:       1,
+		},
+	})
+
+	// Registry size must still be the OLD size — heartbeat must not leak the new size.
+	entry, _ = ms.blockRegistry.Lookup("hb-vol")
+	if entry.SizeBytes != 1<<30 {
+		t.Fatalf("heartbeat leaked new size: got %d, want %d", entry.SizeBytes, 1<<30)
+	}
+	if !entry.ExpandFailed {
+		t.Fatal("ExpandFailed should still be true after heartbeat")
+	}
+}
+
+func TestMaster_ExpandCoordinated_FailoverDuringPrepare(t *testing.T) {
+	// Scenario: primary and replica are prepared but commit hasn't happened.
+	// On recovery (OpenBlockVol), prepared state is cleared → VolumeSize stays at old.
+	// This test validates at the registry/coordinator level.
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	// Prepare succeeds but commit on primary fails (simulating crash).
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	var cancelCount int
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 0, fmt.Errorf("primary crashed during commit")
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		cancelCount++
+		return nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "failover-vol", SizeBytes: 1 << 30,
+	})
+
+	_, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "failover-vol", NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("expected error when primary commit fails")
+	}
+
+	// Cancel should have been called on all prepared nodes.
+	if cancelCount < 1 {
+		t.Fatalf("expected cancel calls, got %d", cancelCount)
+	}
+
+	// Registry size should be unchanged.
+	entry, _ := ms.blockRegistry.Lookup("failover-vol")
+	if entry.SizeBytes != 1<<30 {
+		t.Fatalf("registry size should be unchanged: got %d", entry.SizeBytes)
+	}
+}
+
+func TestMaster_ExpandCoordinated_RestartRecovery(t *testing.T) {
+	// After node restart with prepared state, OpenBlockVol clears it.
+	// Master re-driving expand would go through full prepare/commit again.
+	// This test verifies the coordinator doesn't get stuck after a failed expand.
+	ms := testMasterServerWithExpandMocks(t)
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		return &blockAllocResult{
+			Path:            fmt.Sprintf("/data/%s.blk", name),
+			IQN:             fmt.Sprintf("iqn.test:%s", name),
+			ISCSIAddr:       server,
+			ReplicaDataAddr: server + ":4001",
+			ReplicaCtrlAddr: server + ":4002",
+		}, nil
+	}
+
+	ms.CreateBlockVolume(context.Background(), &master_pb.CreateBlockVolumeRequest{
+		Name: "restart-vol", SizeBytes: 1 << 30,
+	})
+
+	// First expand fails at commit.
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 0, fmt.Errorf("crash")
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
+	}
+
+	ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "restart-vol", NewSizeBytes: 2 << 30,
+	})
+
+	// After "restart" (inflight released), retry should work.
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 2 << 30, nil
+	}
+
+	resp, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
+		Name: "restart-vol", NewSizeBytes: 2 << 30,
+	})
+	if err != nil {
+		t.Fatalf("retry expand: %v", err)
+	}
+	if resp.CapacityBytes != 2<<30 {
+		t.Fatalf("capacity: got %d", resp.CapacityBytes)
 	}
 }

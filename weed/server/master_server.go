@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
@@ -104,6 +105,10 @@ type MasterServer struct {
 	blockVSDeleteSnap func(ctx context.Context, server string, name string, snapID uint32) error
 	blockVSListSnaps func(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error)
 	blockVSExpand    func(ctx context.Context, server string, name string, newSize uint64) (uint64, error)
+	blockVSPrepareExpand func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error
+	blockVSCommitExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error)
+	blockVSCancelExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) error
+	nextExpandEpoch      atomic.Uint64
 }
 
 func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.ServerAddress) *MasterServer {
@@ -164,6 +169,9 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.blockVSDeleteSnap = ms.defaultBlockVSDeleteSnap
 	ms.blockVSListSnaps = ms.defaultBlockVSListSnaps
 	ms.blockVSExpand = ms.defaultBlockVSExpand
+	ms.blockVSPrepareExpand = ms.defaultBlockVSPrepareExpand
+	ms.blockVSCommitExpand = ms.defaultBlockVSCommitExpand
+	ms.blockVSCancelExpand = ms.defaultBlockVSCancelExpand
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 
@@ -215,6 +223,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		r.HandleFunc("/block/volume/{name}", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeDeleteHandler)))).Methods("DELETE")
 		r.HandleFunc("/block/volume/{name}", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeLookupHandler))).Methods("GET")
 		r.HandleFunc("/block/volumes", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeListHandler))).Methods("GET")
+		r.HandleFunc("/block/volume/{name}/expand", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeExpandHandler)))).Methods("POST")
 		r.HandleFunc("/block/assign", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockAssignHandler)))).Methods("POST")
 		r.HandleFunc("/block/servers", ms.guard.WhiteList(requestIDMiddleware(ms.blockServersHandler))).Methods("GET")
 		r.HandleFunc("/block/status", ms.guard.WhiteList(requestIDMiddleware(ms.blockStatusHandler))).Methods("GET")
@@ -647,4 +656,41 @@ func (ms *MasterServer) defaultBlockVSExpand(ctx context.Context, server string,
 		return nil
 	})
 	return capacity, err
+}
+
+func (ms *MasterServer) defaultBlockVSPrepareExpand(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.PrepareExpandBlockVolume(ctx, &volume_server_pb.PrepareExpandBlockVolumeRequest{
+			Name:         name,
+			NewSizeBytes: newSize,
+			ExpandEpoch:  expandEpoch,
+		})
+		return err
+	})
+}
+
+func (ms *MasterServer) defaultBlockVSCommitExpand(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+	var capacity uint64
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		resp, rerr := client.CommitExpandBlockVolume(ctx, &volume_server_pb.CommitExpandBlockVolumeRequest{
+			Name:        name,
+			ExpandEpoch: expandEpoch,
+		})
+		if rerr != nil {
+			return rerr
+		}
+		capacity = resp.CapacityBytes
+		return nil
+	})
+	return capacity, err
+}
+
+func (ms *MasterServer) defaultBlockVSCancelExpand(ctx context.Context, server string, name string, expandEpoch uint64) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.CancelExpandBlockVolume(ctx, &volume_server_pb.CancelExpandBlockVolumeRequest{
+			Name:        name,
+			ExpandEpoch: expandEpoch,
+		})
+		return err
+	})
 }

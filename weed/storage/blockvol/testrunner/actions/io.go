@@ -46,7 +46,10 @@ func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 	}
 
 	// Generate random data to temp file, write to device, compute md5.
-	tmpFile := "/tmp/sw-test-runner-dd-data"
+	tmpFile := tempPath(actx, "dd-data")
+	if err := ensureTempRoot(ctx, node, actx); err != nil {
+		return nil, fmt.Errorf("dd_write: %w", err)
+	}
 	genCmd := fmt.Sprintf("dd if=/dev/urandom of=%s bs=%s count=%s 2>/dev/null", tmpFile, bs, count)
 	_, stderr, code, err := node.RunRoot(ctx, genCmd)
 	if err != nil || code != 0 {
@@ -98,7 +101,10 @@ func ddReadMD5(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		return nil, err
 	}
 
-	tmpFile := "/tmp/sw-test-runner-dd-read"
+	tmpFile := tempPath(actx, "dd-read")
+	if err := ensureTempRoot(ctx, node, actx); err != nil {
+		return nil, fmt.Errorf("dd_read_md5: %w", err)
+	}
 	readCmd := fmt.Sprintf("dd if=%s of=%s bs=%s count=%s iflag=direct", device, tmpFile, bs, count)
 	if skip := act.Params["skip"]; skip != "" {
 		readCmd += fmt.Sprintf(" skip=%s", skip)
@@ -285,8 +291,12 @@ func writeLoopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 		return nil, err
 	}
 
-	cmd := fmt.Sprintf("setsid bash -c 'while true; do dd if=/dev/urandom of=%s bs=%s count=1 oflag=%s conv=notrunc 2>/dev/null; done' &>/tmp/sw_bg.log & echo $!",
-		device, bs, oflag)
+	bgLog := tempPath(actx, "bg.log")
+	if err := ensureTempRoot(ctx, node, actx); err != nil {
+		return nil, fmt.Errorf("write_loop_bg: %w", err)
+	}
+	cmd := fmt.Sprintf("setsid bash -c 'while true; do dd if=/dev/urandom of=%s bs=%s count=1 oflag=%s conv=notrunc 2>/dev/null; done' &>%s & echo $!",
+		device, bs, oflag, bgLog)
 	stdout, stderr, code, err := node.RunRoot(ctx, cmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("write_loop_bg: code=%d stderr=%s err=%v", code, stderr, err)
@@ -317,4 +327,28 @@ func stopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[str
 	node.RunRoot(ctx, cmd)
 
 	return nil, nil
+}
+
+// ensureTempRoot creates the per-run temp directory on the remote node.
+// Uses RunRoot so the directory is created with root privileges, ensuring
+// subsequent RunRoot commands can write into it.
+func ensureTempRoot(ctx context.Context, node interface{ RunRoot(context.Context, string) (string, string, int, error) }, actx *tr.ActionContext) error {
+	if actx.TempRoot == "" {
+		return nil
+	}
+	_, stderr, code, err := node.RunRoot(ctx, fmt.Sprintf("mkdir -p %s", actx.TempRoot))
+	if err != nil || code != 0 {
+		return fmt.Errorf("mkdir TempRoot %s: code=%d stderr=%s err=%v", actx.TempRoot, code, stderr, err)
+	}
+	return nil
+}
+
+// tempPath returns a path under the per-run temp root for the given suffix.
+// Falls back to /tmp if TempRoot is empty (backward compat).
+func tempPath(actx *tr.ActionContext, suffix string) string {
+	root := actx.TempRoot
+	if root == "" {
+		root = "/tmp"
+	}
+	return root + "/sw-" + suffix
 }

@@ -18,6 +18,10 @@ func TestDevOpsActions_Registration(t *testing.T) {
 		"stop_weed",
 		"wait_cluster_ready",
 		"create_block_volume",
+		"expand_block_volume",
+		"lookup_block_volume",
+		"delete_block_volume",
+		"wait_block_servers",
 		"cluster_status",
 	}
 
@@ -35,8 +39,8 @@ func TestDevOpsActions_Tier(t *testing.T) {
 	byTier := registry.ListByTier()
 	devopsActions := byTier[tr.TierDevOps]
 
-	if len(devopsActions) != 7 {
-		t.Errorf("devops tier has %d actions, want 7", len(devopsActions))
+	if len(devopsActions) != 11 {
+		t.Errorf("devops tier has %d actions, want 11", len(devopsActions))
 	}
 
 	// Verify all are in devops tier.
@@ -80,11 +84,11 @@ func TestAllActions_Registration(t *testing.T) {
 	if n := len(byTier[tr.TierCore]); n != 11 {
 		t.Errorf("core: %d, want 11", n)
 	}
-	if n := len(byTier[tr.TierBlock]); n != 55 {
-		t.Errorf("block: %d, want 55", n)
+	if n := len(byTier[tr.TierBlock]); n != 56 {
+		t.Errorf("block: %d, want 56", n)
 	}
-	if n := len(byTier[tr.TierDevOps]); n != 7 {
-		t.Errorf("devops: %d, want 7", n)
+	if n := len(byTier[tr.TierDevOps]); n != 11 {
+		t.Errorf("devops: %d, want 11", n)
 	}
 	if n := len(byTier[tr.TierChaos]); n != 5 {
 		t.Errorf("chaos: %d, want 5", n)
@@ -93,13 +97,13 @@ func TestAllActions_Registration(t *testing.T) {
 		t.Errorf("k8s: %d, want 14", n)
 	}
 
-	// Total should be 92 (89 existing + 3 profiling: pprof_capture, vmstat_capture, iostat_capture).
+	// Total should be 97 (92 prev + 4 devops: expand/lookup/delete/wait_block_servers + 1 block: iscsi_login_direct).
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 92 {
-		t.Errorf("total actions: %d, want 92", total)
+	if total != 97 {
+		t.Errorf("total actions: %d, want 97", total)
 	}
 }
 

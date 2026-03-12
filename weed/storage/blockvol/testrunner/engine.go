@@ -53,6 +53,12 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 		actx.Vars[k] = v
 	}
 
+	// Allocate a unique per-run temp directory (T6).
+	if actx.TempRoot == "" {
+		actx.TempRoot = fmt.Sprintf("/tmp/sw-run-%s-%d", s.Name, start.UnixMilli())
+	}
+	actx.Vars["__temp_dir"] = actx.TempRoot
+
 	// Separate always-phases for deferred cleanup.
 	var normalPhases, alwaysPhases []Phase
 	for _, p := range s.Phases {
@@ -237,14 +243,18 @@ func (e *Engine) runPhaseParallel(ctx context.Context, actx *ActionContext, phas
 	}
 	wg.Wait()
 
+	var errors []string
 	for i, ar := range results {
 		pr.Actions = append(pr.Actions, ar)
 		if ar.Status == StatusFail && !phase.Actions[i].IgnoreError {
 			pr.Status = StatusFail
-			if pr.Error == "" {
-				pr.Error = fmt.Sprintf("action %d (%s) failed: %s", i, phase.Actions[i].Action, ar.Error)
-			}
+			errors = append(errors, fmt.Sprintf("action %d (%s): %s", i, phase.Actions[i].Action, ar.Error))
 		}
+	}
+	if len(errors) == 1 {
+		pr.Error = errors[0]
+	} else if len(errors) > 1 {
+		pr.Error = fmt.Sprintf("%d actions failed: [1] %s", len(errors), strings.Join(errors, "; "))
 	}
 	return pr
 }
@@ -287,13 +297,37 @@ func (e *Engine) runAction(ctx context.Context, actx *ActionContext, act Action)
 		}
 	}
 
-	e.log("  [action] %s", resolved.Action)
+	// Enforce action-level timeout if specified.
+	var actionTimeout time.Duration
+	if resolved.Timeout != "" {
+		if dur, err := time.ParseDuration(resolved.Timeout); err == nil && dur > 0 {
+			actionTimeout = dur
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, dur)
+			defer cancel()
+		}
+	}
+
+	// Log action start with context (node/target if available).
+	actionLabel := resolved.Action
+	if resolved.Node != "" {
+		actionLabel += " @" + resolved.Node
+	} else if resolved.Target != "" {
+		actionLabel += " >" + resolved.Target
+	}
+	e.log("  [action] %s", actionLabel)
 
 	output, err := handler.Execute(ctx, actx, resolved)
+	elapsed := time.Since(start)
+
+	// Enrich timeout errors with action-specific context.
+	if err != nil && ctx.Err() != nil && actionTimeout > 0 {
+		err = fmt.Errorf("action %q timed out after %s: %w", resolved.Action, actionTimeout, err)
+	}
 
 	ar := ActionResult{
 		Action:   resolved.Action,
-		Duration: time.Since(start),
+		Duration: elapsed,
 		YAML:     yamlDef,
 	}
 
@@ -302,10 +336,16 @@ func (e *Engine) runAction(ctx context.Context, actx *ActionContext, act Action)
 		ar.Error = err.Error()
 		if act.IgnoreError {
 			ar.Status = StatusPass
-			e.log("  [action] %s failed (ignored): %v", resolved.Action, err)
+			e.log("  [done] %s (ignored error, %s): %v", actionLabel, fmtDuration(elapsed), err)
+		} else {
+			e.log("  [FAIL] %s (%s): %v", actionLabel, fmtDuration(elapsed), err)
 		}
 	} else {
 		ar.Status = StatusPass
+		// Only log completion for slow actions (>1s) to avoid noise on quick ones.
+		if elapsed >= time.Second {
+			e.log("  [done] %s (%s)", actionLabel, fmtDuration(elapsed))
+		}
 	}
 
 	// Store output as var if save_as is set.
@@ -327,7 +367,7 @@ func (e *Engine) runAction(ctx context.Context, actx *ActionContext, act Action)
 
 	if output != nil {
 		if v, ok := output["value"]; ok {
-			ar.Output = truncate(v, 4096)
+			ar.Output = truncate(v, 65536)
 		}
 	}
 
@@ -343,6 +383,8 @@ func resolveAction(act Action, vars map[string]string) Action {
 		Node:        act.Node,
 		SaveAs:      act.SaveAs,
 		IgnoreError: act.IgnoreError,
+		Retry:       act.Retry,
+		Timeout:     act.Timeout,
 		Params:      make(map[string]string),
 	}
 
@@ -373,7 +415,18 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	return s[:max] + fmt.Sprintf("...[truncated, %d/%d bytes]", max, len(s))
+}
+
+// fmtDuration formats a duration as a human-readable string.
+func fmtDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 }
 
 // marshalActionYAML serializes a resolved action to YAML for report display.

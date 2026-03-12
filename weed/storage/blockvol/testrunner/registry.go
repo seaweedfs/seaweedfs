@@ -14,6 +14,7 @@ type ActionContext struct {
 	Vars        map[string]string
 	Log         func(format string, args ...interface{})
 	Coordinator *Coordinator // non-nil when running in coordinator mode
+	TempRoot    string       // per-run temp directory on remote nodes (T6)
 }
 
 // NodeRunner abstracts remote command execution (implemented by infra.Node).

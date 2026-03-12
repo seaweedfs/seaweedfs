@@ -43,6 +43,15 @@ func qaDurabilityMaster(t *testing.T) *MasterServer {
 	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
 		return newSize, nil
 	}
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 2 << 30, nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
+	}
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 	ms.blockRegistry.MarkBlockCapable("vs3:9333")

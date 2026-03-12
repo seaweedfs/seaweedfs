@@ -64,6 +64,16 @@ type ServerInfo struct {
 	BlockCapable bool   `json:"block_capable"`
 }
 
+// ExpandVolumeRequest is the request body for POST /block/volume/{name}/expand.
+type ExpandVolumeRequest struct {
+	NewSizeBytes uint64 `json:"new_size_bytes"`
+}
+
+// ExpandVolumeResponse is the response for POST /block/volume/{name}/expand.
+type ExpandVolumeResponse struct {
+	CapacityBytes uint64 `json:"capacity_bytes"`
+}
+
 // RoleFromString converts a role string to its uint32 wire value.
 // Returns 0 (RoleNone) for unrecognized strings.
 func RoleFromString(s string) uint32 {

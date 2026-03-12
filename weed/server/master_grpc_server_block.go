@@ -367,7 +367,8 @@ func (ms *MasterServer) ListBlockSnapshots(ctx context.Context, req *master_pb.L
 	return resp, nil
 }
 
-// ExpandBlockVolume expands a block volume via the volume server, then updates registry.
+// ExpandBlockVolume expands a block volume. For standalone volumes (no replicas),
+// uses direct expand. For replicated volumes, uses coordinated prepare/commit/cancel.
 func (ms *MasterServer) ExpandBlockVolume(ctx context.Context, req *master_pb.ExpandBlockVolumeRequest) (*master_pb.ExpandBlockVolumeResponse, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("name is required")
@@ -381,28 +382,96 @@ func (ms *MasterServer) ExpandBlockVolume(ctx context.Context, req *master_pb.Ex
 		return nil, fmt.Errorf("block volume %q not found", req.Name)
 	}
 
-	// Expand primary first; only update registry on success.
-	capacity, err := ms.blockVSExpand(ctx, entry.VolumeServer, req.Name, req.NewSizeBytes)
-	if err != nil {
-		return nil, fmt.Errorf("expand on %s: %w", entry.VolumeServer, err)
+	// Standalone path: no replicas → direct expand (unchanged behavior).
+	if len(entry.Replicas) == 0 {
+		capacity, err := ms.blockVSExpand(ctx, entry.VolumeServer, req.Name, req.NewSizeBytes)
+		if err != nil {
+			return nil, fmt.Errorf("expand on %s: %w", entry.VolumeServer, err)
+		}
+		if uerr := ms.blockRegistry.UpdateSize(req.Name, capacity); uerr != nil {
+			glog.Warningf("[reqID=%s] ExpandBlockVolume %q: registry update failed: %v", blockReqID(ctx), req.Name, uerr)
+		}
+		return &master_pb.ExpandBlockVolumeResponse{CapacityBytes: capacity}, nil
 	}
 
-	// CP8-2: Expand ALL replicas (best-effort, log warning on failure).
+	// Coordinated expand for replicated volumes.
+	expandEpoch := ms.nextExpandEpoch.Add(1)
+
+	if !ms.blockRegistry.AcquireExpandInflight(req.Name, req.NewSizeBytes, expandEpoch) {
+		return nil, fmt.Errorf("block volume %q: expand already in progress or failed (requires reconciliation)", req.Name)
+	}
+	// Only release on clean success or clean cancel (all nodes rolled back).
+	// On partial commit failure, MarkExpandFailed keeps the guard up.
+	expandClean := false
+	defer func() {
+		if expandClean {
+			ms.blockRegistry.ReleaseExpandInflight(req.Name)
+		}
+	}()
+
+	// Track prepared nodes for rollback.
+	var prepared []string
+
+	// PREPARE: primary.
+	if err := ms.blockVSPrepareExpand(ctx, entry.VolumeServer, req.Name, req.NewSizeBytes, expandEpoch); err != nil {
+		expandClean = true // nothing to worry about, just release
+		return nil, fmt.Errorf("prepare expand on primary %s: %w", entry.VolumeServer, err)
+	}
+	prepared = append(prepared, entry.VolumeServer)
+
+	// PREPARE: replicas.
 	for _, ri := range entry.Replicas {
-		if _, err := ms.blockVSExpand(ctx, ri.Server, req.Name, req.NewSizeBytes); err != nil {
-			glog.Warningf("[reqID=%s] ExpandBlockVolume %q: replica expand on %s failed (best-effort): %v",
-				blockReqID(ctx), req.Name, ri.Server, err)
+		if err := ms.blockVSPrepareExpand(ctx, ri.Server, req.Name, req.NewSizeBytes, expandEpoch); err != nil {
+			glog.Warningf("[reqID=%s] ExpandBlockVolume %q: prepare on replica %s failed: %v", blockReqID(ctx), req.Name, ri.Server, err)
+			// Cancel all prepared nodes.
+			for _, ps := range prepared {
+				if cerr := ms.blockVSCancelExpand(ctx, ps, req.Name, expandEpoch); cerr != nil {
+					glog.Warningf("[reqID=%s] ExpandBlockVolume %q: cancel on %s failed: %v", blockReqID(ctx), req.Name, ps, cerr)
+				}
+			}
+			expandClean = true // all cancelled, safe to release
+			return nil, fmt.Errorf("prepare expand on replica %s: %w", ri.Server, err)
+		}
+		prepared = append(prepared, ri.Server)
+	}
+
+	// COMMIT: primary.
+	capacity, err := ms.blockVSCommitExpand(ctx, entry.VolumeServer, req.Name, expandEpoch)
+	if err != nil {
+		// Commit failed on primary — cancel all.
+		for _, ps := range prepared {
+			if cerr := ms.blockVSCancelExpand(ctx, ps, req.Name, expandEpoch); cerr != nil {
+				glog.Warningf("[reqID=%s] ExpandBlockVolume %q: cancel on %s after primary commit fail: %v", blockReqID(ctx), req.Name, ps, cerr)
+			}
+		}
+		expandClean = true // all cancelled, safe to release
+		return nil, fmt.Errorf("commit expand on primary %s: %w", entry.VolumeServer, err)
+	}
+
+	// COMMIT: replicas.
+	allCommitted := true
+	for _, ri := range entry.Replicas {
+		if _, cerr := ms.blockVSCommitExpand(ctx, ri.Server, req.Name, expandEpoch); cerr != nil {
+			glog.Warningf("[reqID=%s] ExpandBlockVolume %q: commit on replica %s failed: %v", blockReqID(ctx), req.Name, ri.Server, cerr)
+			allCommitted = false
 		}
 	}
 
-	// Update registry with actual new size.
-	if uerr := ms.blockRegistry.UpdateSize(req.Name, capacity); uerr != nil {
-		glog.Warningf("[reqID=%s] ExpandBlockVolume %q: registry update failed (VS succeeded): %v", blockReqID(ctx), req.Name, uerr)
+	if !allCommitted {
+		// Primary committed but replica(s) failed. Mark expand as failed:
+		// ExpandInProgress stays true → heartbeat won't overwrite SizeBytes.
+		// Operator must reconcile (rebuild/re-expand failed replicas) then call ClearExpandFailed.
+		ms.blockRegistry.MarkExpandFailed(req.Name)
+		return nil, fmt.Errorf("block volume %q: expand committed on primary but failed on one or more replicas (volume degraded, expand locked)", req.Name)
 	}
 
-	return &master_pb.ExpandBlockVolumeResponse{
-		CapacityBytes: capacity,
-	}, nil
+	// All committed: update registry and release cleanly.
+	if uerr := ms.blockRegistry.UpdateSize(req.Name, capacity); uerr != nil {
+		glog.Warningf("[reqID=%s] ExpandBlockVolume %q: registry update failed: %v", blockReqID(ctx), req.Name, uerr)
+	}
+	expandClean = true
+
+	return &master_pb.ExpandBlockVolumeResponse{CapacityBytes: capacity}, nil
 }
 
 // createBlockVolumeResponseFromEntry builds a CreateBlockVolumeResponse from a registry entry.

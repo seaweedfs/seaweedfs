@@ -201,3 +201,53 @@ func TestVS_ExpandVolumeNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent volume")
 	}
 }
+
+func TestVS_PrepareExpand(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+	bs.CreateBlockVol("prep-vol", 4*1024*1024, "", "")
+
+	if err := bs.PrepareExpandBlockVol("prep-vol", 8*1024*1024, 1); err != nil {
+		t.Fatalf("PrepareExpandBlockVol: %v", err)
+	}
+}
+
+func TestVS_CommitExpand(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+	bs.CreateBlockVol("commit-vol", 4*1024*1024, "", "")
+
+	if err := bs.PrepareExpandBlockVol("commit-vol", 8*1024*1024, 42); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	capacity, err := bs.CommitExpandBlockVol("commit-vol", 42)
+	if err != nil {
+		t.Fatalf("CommitExpandBlockVol: %v", err)
+	}
+	if capacity != 8*1024*1024 {
+		t.Fatalf("capacity: got %d, want %d", capacity, 8*1024*1024)
+	}
+}
+
+func TestVS_CancelExpand(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+	bs.CreateBlockVol("cancel-vol", 4*1024*1024, "", "")
+
+	if err := bs.PrepareExpandBlockVol("cancel-vol", 8*1024*1024, 5); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if err := bs.CancelExpandBlockVol("cancel-vol", 5); err != nil {
+		t.Fatalf("CancelExpandBlockVol: %v", err)
+	}
+}
+
+func TestVS_PrepareExpand_AlreadyInFlight(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+	bs.CreateBlockVol("inflight-vol", 4*1024*1024, "", "")
+
+	if err := bs.PrepareExpandBlockVol("inflight-vol", 8*1024*1024, 1); err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	err := bs.PrepareExpandBlockVol("inflight-vol", 16*1024*1024, 2)
+	if err == nil {
+		t.Fatal("second prepare should be rejected")
+	}
+}

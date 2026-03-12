@@ -283,6 +283,21 @@ func killStale(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 	stdout, _, _, _ := node.Run(ctx, cmd)
 	actx.Log("  kill_stale %s: %s", process, strings.TrimSpace(stdout))
 
+	// Also kill by port: any process holding ports the scenario needs,
+	// regardless of binary name. This catches stale binaries with different
+	// names (e.g., iscsi-target-linux vs iscsi-target-test).
+	for _, portKey := range []string{"port", "iscsi_port", "nvme_port", "admin_port"} {
+		if portStr := act.Params[portKey]; portStr != "" {
+			killCmd := fmt.Sprintf(
+				"ss -tlnp 2>/dev/null | grep ':%s ' | grep -oP 'pid=\\K[0-9]+' | xargs -r kill -9 2>/dev/null && echo 'killed port %s occupant' || true",
+				portStr, portStr)
+			out, _, _, _ := node.Run(ctx, killCmd)
+			if out = strings.TrimSpace(out); out != "" {
+				actx.Log("  kill_stale port %s: %s", portStr, out)
+			}
+		}
+	}
+
 	// If iscsi cleanup requested, clean up stale iSCSI sessions.
 	if act.Params["iscsi_cleanup"] == "true" {
 		node.Run(ctx, "sudo iscsiadm -m session -u 2>/dev/null; sudo iscsiadm -m node -o delete 2>/dev/null")

@@ -82,6 +82,12 @@ type BlockVolumeEntry struct {
 	// Lease tracking for failover (CP6-3 F2).
 	LastLeaseGrant time.Time
 	LeaseTTL       time.Duration
+
+	// CP11A-2: Coordinated expand tracking.
+	ExpandInProgress  bool
+	ExpandFailed      bool   // true = primary committed but replica(s) failed; size suppressed
+	PendingExpandSize uint64
+	ExpandEpoch       uint64
 }
 
 // HasReplica returns true if this volume has any replica (checks both new and deprecated fields).
@@ -188,6 +194,70 @@ func (r *BlockVolumeRegistry) Unregister(name string) *BlockVolumeEntry {
 		r.removeFromServer(ri.Server, name)
 	}
 	return entry
+}
+
+// AcquireExpandInflight tries to acquire an expand lock for the named volume
+// and records the pending expand metadata on the entry.
+// Returns false if an expand is already in flight or failed (requires ClearExpandFailed first).
+func (r *BlockVolumeRegistry) AcquireExpandInflight(name string, pendingSize, expandEpoch uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return false
+	}
+	if entry.ExpandInProgress || entry.ExpandFailed {
+		return false
+	}
+	entry.ExpandInProgress = true
+	entry.PendingExpandSize = pendingSize
+	entry.ExpandEpoch = expandEpoch
+	return true
+}
+
+// ReleaseExpandInflight clears all expand tracking fields for the named volume.
+// Only call on clean success or clean cancel (all nodes rolled back).
+func (r *BlockVolumeRegistry) ReleaseExpandInflight(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return
+	}
+	entry.ExpandInProgress = false
+	entry.ExpandFailed = false
+	entry.PendingExpandSize = 0
+	entry.ExpandEpoch = 0
+}
+
+// MarkExpandFailed transitions the entry from in-progress to failed.
+// ExpandInProgress stays true so heartbeat continues to suppress size updates.
+// The entry remains locked until ClearExpandFailed is called (manual reconciliation).
+func (r *BlockVolumeRegistry) MarkExpandFailed(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return
+	}
+	entry.ExpandFailed = true
+	// Keep ExpandInProgress=true, PendingExpandSize, ExpandEpoch — all needed for diagnosis.
+}
+
+// ClearExpandFailed resets the expand-failed state so a new expand can be attempted.
+// Called by an operator or automated reconciliation after the inconsistency is resolved
+// (e.g., failed replica rebuilt or manually expanded).
+func (r *BlockVolumeRegistry) ClearExpandFailed(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return
+	}
+	entry.ExpandInProgress = false
+	entry.ExpandFailed = false
+	entry.PendingExpandSize = 0
+	entry.ExpandEpoch = 0
 }
 
 // UpdateSize updates the size of a registered volume.
@@ -319,7 +389,10 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 
 			if isPrimary {
 				// Primary heartbeat: update primary fields.
-				existing.SizeBytes = info.VolumeSize
+				// CP11A-2: skip size update during coordinated expand.
+				if !existing.ExpandInProgress {
+					existing.SizeBytes = info.VolumeSize
+				}
 				existing.Epoch = info.Epoch
 				existing.Role = info.Role
 				existing.Status = StatusActive

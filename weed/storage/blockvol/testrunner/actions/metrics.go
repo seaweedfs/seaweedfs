@@ -312,7 +312,7 @@ func iostatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 func collectArtifactsAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
 	dir := act.Params["dir"]
 	if dir == "" {
-		dir = "/tmp/sw-test-runner-artifacts"
+		dir = tempPath(actx, "artifacts")
 	}
 
 	// Find client node for dmesg/lsblk.

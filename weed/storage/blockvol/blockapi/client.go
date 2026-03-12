@@ -115,6 +115,27 @@ func (c *Client) AssignRole(ctx context.Context, req AssignRequest) error {
 	return checkStatus(resp, http.StatusOK)
 }
 
+// ExpandVolume expands a block volume to a new size.
+func (c *Client) ExpandVolume(ctx context.Context, name string, newSizeBytes uint64) (uint64, error) {
+	body, err := json.Marshal(ExpandVolumeRequest{NewSizeBytes: newSizeBytes})
+	if err != nil {
+		return 0, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := c.doRequest(ctx, http.MethodPost, "/block/volume/"+name+"/expand", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return 0, err
+	}
+	var out ExpandVolumeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("decode response: %w", err)
+	}
+	return out.CapacityBytes, nil
+}
+
 // ListServers lists all block-capable volume servers.
 func (c *Client) ListServers(ctx context.Context) ([]ServerInfo, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/block/servers", nil)

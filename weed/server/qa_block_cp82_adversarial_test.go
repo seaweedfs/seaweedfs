@@ -43,6 +43,15 @@ func qaCP82Master(t *testing.T) *MasterServer {
 	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
 		return newSize, nil
 	}
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 2 << 30, nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
+	}
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 	ms.blockRegistry.MarkBlockCapable("vs3:9333")
@@ -726,30 +735,57 @@ func TestQA_CP82_ExpandRF3_PartialReplicaFailure(t *testing.T) {
 	entry, _ := ms.blockRegistry.Lookup("vol-expand")
 	failServer := entry.Replicas[1].Server
 
-	// Override expand mock: one replica fails.
-	ms.blockVSExpand = func(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {
+	// CP11A-2: coordinated expand — set up prepare/commit/cancel mocks.
+	ms.blockVSPrepareExpand = func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error {
+		return nil
+	}
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
 		if server == failServer {
 			return 0, fmt.Errorf("disk full on %s", server)
 		}
-		return newSize, nil
+		return 2 << 30, nil
+	}
+	ms.blockVSCancelExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) error {
+		return nil
 	}
 
-	// Expand should succeed (primary + one replica succeed, one fails best-effort).
+	// Under coordinated expand, partial replica commit failure marks the volume degraded.
+	_, err = ms.ExpandBlockVolume(ctx, &master_pb.ExpandBlockVolumeRequest{
+		Name:         "vol-expand",
+		NewSizeBytes: 2 << 30,
+	})
+	if err == nil {
+		t.Fatal("expand should fail when a required replica commit fails")
+	}
+
+	// Registry size should NOT be updated (primary committed but replica failed → degraded).
+	entry, _ = ms.blockRegistry.Lookup("vol-expand")
+	if entry.SizeBytes != 1<<30 {
+		t.Fatalf("registry size should be unchanged: got %d, want %d", entry.SizeBytes, uint64(1<<30))
+	}
+	if !entry.ExpandFailed {
+		t.Fatal("ExpandFailed should be true after partial commit failure")
+	}
+	if !entry.ExpandInProgress {
+		t.Fatal("ExpandInProgress should stay true to suppress heartbeat size updates")
+	}
+
+	// Cleanup: ClearExpandFailed allows future operations.
+	ms.blockRegistry.ClearExpandFailed("vol-expand")
+
+	// Now expand with all mocks succeeding should work.
+	ms.blockVSCommitExpand = func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error) {
+		return 2 << 30, nil
+	}
 	resp, err := ms.ExpandBlockVolume(ctx, &master_pb.ExpandBlockVolumeRequest{
 		Name:         "vol-expand",
 		NewSizeBytes: 2 << 30,
 	})
 	if err != nil {
-		t.Fatalf("expand should succeed despite partial replica failure: %v", err)
+		t.Fatalf("retry expand after clear: %v", err)
 	}
 	if resp.CapacityBytes != 2<<30 {
 		t.Fatalf("capacity: got %d, want %d", resp.CapacityBytes, uint64(2<<30))
-	}
-
-	// Registry should reflect new size.
-	entry, _ = ms.blockRegistry.Lookup("vol-expand")
-	if entry.SizeBytes != 2<<30 {
-		t.Fatalf("registry size: got %d, want %d", entry.SizeBytes, uint64(2<<30))
 	}
 }
 

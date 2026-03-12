@@ -73,6 +73,9 @@ const (
 	VolumeServer_DeleteBlockSnapshot_FullMethodName           = "/volume_server_pb.VolumeServer/DeleteBlockSnapshot"
 	VolumeServer_ListBlockSnapshots_FullMethodName            = "/volume_server_pb.VolumeServer/ListBlockSnapshots"
 	VolumeServer_ExpandBlockVolume_FullMethodName             = "/volume_server_pb.VolumeServer/ExpandBlockVolume"
+	VolumeServer_PrepareExpandBlockVolume_FullMethodName      = "/volume_server_pb.VolumeServer/PrepareExpandBlockVolume"
+	VolumeServer_CommitExpandBlockVolume_FullMethodName       = "/volume_server_pb.VolumeServer/CommitExpandBlockVolume"
+	VolumeServer_CancelExpandBlockVolume_FullMethodName       = "/volume_server_pb.VolumeServer/CancelExpandBlockVolume"
 )
 
 // VolumeServerClient is the client API for VolumeServer service.
@@ -141,6 +144,9 @@ type VolumeServerClient interface {
 	DeleteBlockSnapshot(ctx context.Context, in *DeleteBlockSnapshotRequest, opts ...grpc.CallOption) (*DeleteBlockSnapshotResponse, error)
 	ListBlockSnapshots(ctx context.Context, in *ListBlockSnapshotsRequest, opts ...grpc.CallOption) (*ListBlockSnapshotsResponse, error)
 	ExpandBlockVolume(ctx context.Context, in *ExpandBlockVolumeRequest, opts ...grpc.CallOption) (*ExpandBlockVolumeResponse, error)
+	PrepareExpandBlockVolume(ctx context.Context, in *PrepareExpandBlockVolumeRequest, opts ...grpc.CallOption) (*PrepareExpandBlockVolumeResponse, error)
+	CommitExpandBlockVolume(ctx context.Context, in *CommitExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CommitExpandBlockVolumeResponse, error)
+	CancelExpandBlockVolume(ctx context.Context, in *CancelExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CancelExpandBlockVolumeResponse, error)
 }
 
 type volumeServerClient struct {
@@ -784,6 +790,36 @@ func (c *volumeServerClient) ExpandBlockVolume(ctx context.Context, in *ExpandBl
 	return out, nil
 }
 
+func (c *volumeServerClient) PrepareExpandBlockVolume(ctx context.Context, in *PrepareExpandBlockVolumeRequest, opts ...grpc.CallOption) (*PrepareExpandBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PrepareExpandBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_PrepareExpandBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) CommitExpandBlockVolume(ctx context.Context, in *CommitExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CommitExpandBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CommitExpandBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_CommitExpandBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *volumeServerClient) CancelExpandBlockVolume(ctx context.Context, in *CancelExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CancelExpandBlockVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelExpandBlockVolumeResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_CancelExpandBlockVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
 // for forward compatibility.
@@ -850,6 +886,9 @@ type VolumeServerServer interface {
 	DeleteBlockSnapshot(context.Context, *DeleteBlockSnapshotRequest) (*DeleteBlockSnapshotResponse, error)
 	ListBlockSnapshots(context.Context, *ListBlockSnapshotsRequest) (*ListBlockSnapshotsResponse, error)
 	ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error)
+	PrepareExpandBlockVolume(context.Context, *PrepareExpandBlockVolumeRequest) (*PrepareExpandBlockVolumeResponse, error)
+	CommitExpandBlockVolume(context.Context, *CommitExpandBlockVolumeRequest) (*CommitExpandBlockVolumeResponse, error)
+	CancelExpandBlockVolume(context.Context, *CancelExpandBlockVolumeRequest) (*CancelExpandBlockVolumeResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
@@ -1021,6 +1060,15 @@ func (UnimplementedVolumeServerServer) ListBlockSnapshots(context.Context, *List
 }
 func (UnimplementedVolumeServerServer) ExpandBlockVolume(context.Context, *ExpandBlockVolumeRequest) (*ExpandBlockVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExpandBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) PrepareExpandBlockVolume(context.Context, *PrepareExpandBlockVolumeRequest) (*PrepareExpandBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrepareExpandBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) CommitExpandBlockVolume(context.Context, *CommitExpandBlockVolumeRequest) (*CommitExpandBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CommitExpandBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) CancelExpandBlockVolume(context.Context, *CancelExpandBlockVolumeRequest) (*CancelExpandBlockVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelExpandBlockVolume not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
 func (UnimplementedVolumeServerServer) testEmbeddedByValue()                      {}
@@ -1934,6 +1982,60 @@ func _VolumeServer_ExpandBlockVolume_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_PrepareExpandBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrepareExpandBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).PrepareExpandBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_PrepareExpandBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).PrepareExpandBlockVolume(ctx, req.(*PrepareExpandBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_CommitExpandBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommitExpandBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).CommitExpandBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_CommitExpandBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).CommitExpandBlockVolume(ctx, req.(*CommitExpandBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VolumeServer_CancelExpandBlockVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelExpandBlockVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).CancelExpandBlockVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_CancelExpandBlockVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).CancelExpandBlockVolume(ctx, req.(*CancelExpandBlockVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2112,6 +2214,18 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExpandBlockVolume",
 			Handler:    _VolumeServer_ExpandBlockVolume_Handler,
+		},
+		{
+			MethodName: "PrepareExpandBlockVolume",
+			Handler:    _VolumeServer_PrepareExpandBlockVolume_Handler,
+		},
+		{
+			MethodName: "CommitExpandBlockVolume",
+			Handler:    _VolumeServer_CommitExpandBlockVolume_Handler,
+		},
+		{
+			MethodName: "CancelExpandBlockVolume",
+			Handler:    _VolumeServer_CancelExpandBlockVolume_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -3,6 +3,7 @@ package testrunner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -886,6 +887,149 @@ func TestEngine_CleanupVars(t *testing.T) {
 	}
 	if actx.Vars["result"] != "tc qdisc del dev eth0 root" {
 		t.Errorf("result = %q", actx.Vars["result"])
+	}
+}
+
+func TestEngine_ActionTimeout_Enforced(t *testing.T) {
+	registry := NewRegistry()
+
+	// Action that sleeps forever, should be killed by action-level timeout.
+	slowStep := ActionHandlerFunc(func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(30 * time.Second):
+			return nil, nil
+		}
+	})
+	registry.Register("slow", TierCore, slowStep)
+
+	scenario := &Scenario{
+		Name:    "action-timeout-test",
+		Timeout: Duration{10 * time.Second}, // scenario timeout is generous
+		Phases: []Phase{
+			{
+				Name: "phase1",
+				Actions: []Action{
+					{Action: "slow", Timeout: "150ms"},
+				},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+
+	start := time.Now()
+	result := engine.Run(context.Background(), scenario, actx)
+	elapsed := time.Since(start)
+
+	if result.Status != StatusFail {
+		t.Errorf("status = %s, want FAIL", result.Status)
+	}
+	// Should timeout at ~150ms, not 10s.
+	if elapsed > 2*time.Second {
+		t.Errorf("took %v, action timeout should have fired at ~150ms", elapsed)
+	}
+	// Error message should mention the action name and timeout.
+	if len(result.Phases) > 0 && len(result.Phases[0].Actions) > 0 {
+		errMsg := result.Phases[0].Actions[0].Error
+		if !strings.Contains(errMsg, "slow") || !strings.Contains(errMsg, "timed out") {
+			t.Errorf("error = %q, should mention action name and timeout", errMsg)
+		}
+	}
+}
+
+func TestEngine_TempRoot_UniquePerRun(t *testing.T) {
+	registry := NewRegistry()
+	step := &mockHandler{}
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "tempdir-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:    "phase1",
+				Actions: []Action{{Action: "step"}},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+
+	// Run 1
+	actx1 := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	engine.Run(context.Background(), scenario, actx1)
+
+	// Small delay so timestamp differs.
+	time.Sleep(2 * time.Millisecond)
+
+	// Run 2
+	actx2 := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+	}
+	engine.Run(context.Background(), scenario, actx2)
+
+	// Both should have TempRoot set and they should differ.
+	if actx1.TempRoot == "" {
+		t.Fatal("run 1: TempRoot is empty")
+	}
+	if actx2.TempRoot == "" {
+		t.Fatal("run 2: TempRoot is empty")
+	}
+	if actx1.TempRoot == actx2.TempRoot {
+		t.Errorf("TempRoot should be unique per run: both = %q", actx1.TempRoot)
+	}
+
+	// __temp_dir var should be set.
+	if actx1.Vars["__temp_dir"] != actx1.TempRoot {
+		t.Errorf("__temp_dir = %q, want %q", actx1.Vars["__temp_dir"], actx1.TempRoot)
+	}
+
+	// Should contain scenario name.
+	if !strings.Contains(actx1.TempRoot, "tempdir-test") {
+		t.Errorf("TempRoot %q should contain scenario name", actx1.TempRoot)
+	}
+}
+
+func TestEngine_TempRoot_PreservedIfSet(t *testing.T) {
+	registry := NewRegistry()
+	step := &mockHandler{}
+	registry.Register("step", TierCore, step)
+
+	scenario := &Scenario{
+		Name:    "tempdir-preset-test",
+		Timeout: Duration{5 * time.Second},
+		Phases: []Phase{
+			{
+				Name:    "phase1",
+				Actions: []Action{{Action: "step"}},
+			},
+		},
+	}
+
+	engine := NewEngine(registry, nil)
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     make(map[string]string),
+		Log:      func(string, ...interface{}) {},
+		TempRoot: "/custom/temp/path",
+	}
+	engine.Run(context.Background(), scenario, actx)
+
+	if actx.TempRoot != "/custom/temp/path" {
+		t.Errorf("TempRoot = %q, want /custom/temp/path (should preserve caller-set value)", actx.TempRoot)
 	}
 }
 

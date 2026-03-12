@@ -42,6 +42,8 @@ type Superblock struct {
 	Epoch            uint64        // fencing epoch (0 = no fencing, Phase 3 compat)
 	DurabilityMode   uint8         // CP8-3-1: 0=best_effort, 1=sync_all, 2=sync_quorum
 	StorageProfile   uint8         // CP11A-1: 0=single, 1=striped (reserved)
+	PreparedSize     uint64        // CP11A-2: pending expand size (0 = no expand in flight)
+	ExpandEpoch      uint64        // CP11A-2: expand operation ID (0 = none)
 }
 
 // superblockOnDisk is the fixed-size on-disk layout (binary.Write/Read target).
@@ -65,6 +67,8 @@ type superblockOnDisk struct {
 	Epoch            uint64
 	DurabilityMode   uint8
 	StorageProfile   uint8
+	PreparedSize     uint64
+	ExpandEpoch      uint64
 }
 
 // NewSuperblock creates a superblock with defaults and a fresh UUID.
@@ -135,6 +139,8 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 		Epoch:            sb.Epoch,
 		DurabilityMode:   sb.DurabilityMode,
 		StorageProfile:   sb.StorageProfile,
+		PreparedSize:     sb.PreparedSize,
+		ExpandEpoch:      sb.ExpandEpoch,
 	}
 
 	// Encode into beginning of buf; rest stays zero (padding).
@@ -172,6 +178,10 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 	buf[off] = d.DurabilityMode
 	off++
 	buf[off] = d.StorageProfile
+	off++
+	endian.PutUint64(buf[off:], d.PreparedSize)
+	off += 8
+	endian.PutUint64(buf[off:], d.ExpandEpoch)
 
 	n, err := w.Write(buf)
 	return int64(n), err
@@ -236,6 +246,10 @@ func ReadSuperblock(r io.Reader) (Superblock, error) {
 	sb.DurabilityMode = buf[off]
 	off++
 	sb.StorageProfile = buf[off]
+	off++
+	sb.PreparedSize = endian.Uint64(buf[off:])
+	off += 8
+	sb.ExpandEpoch = endian.Uint64(buf[off:])
 
 	return sb, nil
 }
@@ -273,6 +287,12 @@ func (sb *Superblock) Validate() error {
 	}
 	if sb.StorageProfile > 1 {
 		return fmt.Errorf("%w: invalid StorageProfile %d", ErrInvalidSuperblock, sb.StorageProfile)
+	}
+	if sb.PreparedSize != 0 && sb.PreparedSize <= sb.VolumeSize {
+		return fmt.Errorf("%w: PreparedSize %d must be > VolumeSize %d", ErrInvalidSuperblock, sb.PreparedSize, sb.VolumeSize)
+	}
+	if sb.PreparedSize == 0 && sb.ExpandEpoch != 0 {
+		return fmt.Errorf("%w: ExpandEpoch %d must be 0 when PreparedSize is 0", ErrInvalidSuperblock, sb.ExpandEpoch)
 	}
 	return nil
 }

@@ -162,6 +162,35 @@ func (ms *MasterServer) blockServersHandler(w http.ResponseWriter, r *http.Reque
 	writeJsonQuiet(w, r, http.StatusOK, infos)
 }
 
+// blockVolumeExpandHandler handles POST /block/volume/{name}/expand.
+func (ms *MasterServer) blockVolumeExpandHandler(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	if name == "" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("name is required"))
+		return
+	}
+
+	var req blockapi.ExpandVolumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	if req.NewSizeBytes == 0 {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("new_size_bytes must be > 0"))
+		return
+	}
+
+	resp, err := ms.ExpandBlockVolume(r.Context(), &master_pb.ExpandBlockVolumeRequest{
+		Name:         name,
+		NewSizeBytes: req.NewSizeBytes,
+	})
+	if err != nil {
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	writeJsonQuiet(w, r, http.StatusOK, blockapi.ExpandVolumeResponse{CapacityBytes: resp.CapacityBytes})
+}
+
 // blockStatusHandler handles GET /block/status — returns registry configuration for debugging.
 func (ms *MasterServer) blockStatusHandler(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
