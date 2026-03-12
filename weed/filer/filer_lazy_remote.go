@@ -146,7 +146,7 @@ func (f *Filer) maybeDeleteFromRemote(ctx context.Context, entry *Entry) (bool, 
 		return true, nil
 	}
 
-	if !entry.IsInRemoteOnly() {
+	if entry.Remote == nil {
 		return false, nil
 	}
 
