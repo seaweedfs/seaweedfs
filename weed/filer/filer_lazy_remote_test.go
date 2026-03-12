@@ -601,22 +601,22 @@ func TestDeleteEntryMetaAndData_RemoteMountWithoutClientResolutionKeepsMetadata(
 	require.NotNil(t, stored)
 }
 
-func TestDeleteEntryMetaAndData_LocalDeleteFailureLeavesDurablePendingForReconcile(t *testing.T) {
-	const storageType = "stub_lazy_delete_pending_reconcile"
+func TestDeleteEntryMetaAndData_LocalDeleteFailurePreservesMetadata(t *testing.T) {
+	const storageType = "stub_lazy_delete_local_fail"
 	stub := &stubRemoteClient{}
 	defer registerStubMaker(t, storageType, stub)()
 
-	conf := &remote_pb.RemoteConf{Name: "pendingreconcile", Type: storageType}
+	conf := &remote_pb.RemoteConf{Name: "localfail", Type: storageType}
 	rs := NewFilerRemoteStorage()
 	rs.storageNameToConf[conf.Name] = conf
 	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
-		Name:   "pendingreconcile",
+		Name:   "localfail",
 		Bucket: "mybucket",
 		Path:   "/",
 	})
 
 	store := newStubFilerStore()
-	filePath := util.FullPath("/buckets/mybucket/reconcile.txt")
+	filePath := util.FullPath("/buckets/mybucket/localfail.txt")
 	store.entries[string(filePath)] = &Entry{
 		FullPath: filePath,
 		Attr: Attr{
@@ -635,24 +635,10 @@ func TestDeleteEntryMetaAndData_LocalDeleteFailureLeavesDurablePendingForReconci
 	require.ErrorContains(t, err, "filer store delete")
 	require.Len(t, stub.deleteCalls, 1)
 
+	// Local metadata should still exist since local delete failed
 	stored, findErr := store.FindEntry(context.Background(), filePath)
 	require.NoError(t, findErr)
 	require.NotNil(t, stored)
-
-	pendingPaths, pendingErr := f.listPendingRemoteMetadataDeletionPaths(context.Background())
-	require.NoError(t, pendingErr)
-	require.Equal(t, []util.FullPath{filePath}, pendingPaths)
-
-	delete(store.deleteErrByPath, string(filePath))
-	require.NoError(t, f.reconcilePendingRemoteMetadataDeletions(context.Background()))
-
-	_, findAfterReconcileErr := store.FindEntry(context.Background(), filePath)
-	require.ErrorIs(t, findAfterReconcileErr, filer_pb.ErrNotFound)
-	require.Len(t, stub.deleteCalls, 1)
-
-	pendingPaths, pendingErr = f.listPendingRemoteMetadataDeletionPaths(context.Background())
-	require.NoError(t, pendingErr)
-	require.Empty(t, pendingPaths)
 }
 
 func TestDeleteEntryMetaAndData_RemoteDeleteNotFoundStillDeletesMetadata(t *testing.T) {
@@ -759,11 +745,6 @@ func TestDeleteEntryMetaAndData_DirectoryUnderMountDeletesRemoteDirectory(t *tes
 	assert.Equal(t, "/dir", stub.removeCalls[0].Path)
 	_, findErr := store.FindEntry(context.Background(), dirPath)
 	require.ErrorIs(t, findErr, filer_pb.ErrNotFound)
-
-	// Directory deletes should not leave pending entries
-	pendingPaths, pendingErr := f.listPendingRemoteMetadataDeletionPaths(context.Background())
-	require.NoError(t, pendingErr)
-	require.Empty(t, pendingPaths)
 }
 
 func TestDeleteEntryMetaAndData_RecursiveFolderDeleteRemotesChildren(t *testing.T) {
