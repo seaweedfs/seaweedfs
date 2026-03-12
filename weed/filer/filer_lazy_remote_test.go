@@ -84,39 +84,73 @@ func (s *stubFilerStore) DeleteFolderChildren(_ context.Context, dirPath util.Fu
 	}
 	return nil
 }
-func (s *stubFilerStore) ListDirectoryEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
+func (s *stubFilerStore) listDirectoryChildNames(dirPath util.FullPath, startFileName string, includeStartFile bool, namePrefix string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prefix := string(dirPath) + "/"
+	dirPrefix := string(dirPath) + "/"
 	var names []string
 	for k := range s.entries {
-		if !strings.HasPrefix(k, prefix) {
+		if !strings.HasPrefix(k, dirPrefix) {
 			continue
 		}
-		rest := k[len(prefix):]
+		rest := k[len(dirPrefix):]
 		if strings.Contains(rest, "/") {
-			continue // not a direct child
+			continue
+		}
+		if namePrefix != "" && !strings.HasPrefix(rest, namePrefix) {
+			continue
 		}
 		if rest > startFileName || (includeStartFile && rest == startFileName) {
 			names = append(names, rest)
 		}
 	}
 	sort.Strings(names)
+	return names
+}
+func (s *stubFilerStore) getEntry(path string) *Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entries[path]
+}
+func (s *stubFilerStore) ListDirectoryEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
+	names := s.listDirectoryChildNames(dirPath, startFileName, includeStartFile, "")
+	dirPrefix := string(dirPath) + "/"
 	lastFileName := ""
 	for i, name := range names {
 		if int64(i) >= limit {
 			break
 		}
-		entry := s.entries[prefix+name]
-		if cont, _ := eachEntryFunc(entry); !cont {
-			break
+		entry := s.getEntry(dirPrefix + name)
+		cont, err := eachEntryFunc(entry)
+		if err != nil {
+			return lastFileName, err
 		}
 		lastFileName = name
+		if !cont {
+			break
+		}
 	}
 	return lastFileName, nil
 }
-func (s *stubFilerStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
-	return s.ListDirectoryEntries(ctx, dirPath, startFileName, includeStartFile, limit, eachEntryFunc)
+func (s *stubFilerStore) ListDirectoryPrefixedEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
+	names := s.listDirectoryChildNames(dirPath, startFileName, includeStartFile, prefix)
+	dirPrefix := string(dirPath) + "/"
+	lastFileName := ""
+	for i, name := range names {
+		if int64(i) >= limit {
+			break
+		}
+		entry := s.getEntry(dirPrefix + name)
+		cont, err := eachEntryFunc(entry)
+		if err != nil {
+			return lastFileName, err
+		}
+		lastFileName = name
+		if !cont {
+			break
+		}
+	}
+	return lastFileName, nil
 }
 
 func (s *stubFilerStore) InsertEntry(_ context.Context, entry *Entry) error {

@@ -98,6 +98,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
 							if !ignoreRecursiveError {
 								err = remoteErr
+								continue
 							}
 						}
 					}
@@ -147,6 +148,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
+
 	if !entry.IsDirectory() {
 		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	}
