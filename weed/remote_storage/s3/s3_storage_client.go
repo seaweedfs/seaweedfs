@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -117,6 +118,62 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 		}
 		if localErr != nil {
 			err = fmt.Errorf("process %v: %w", remote, localErr)
+		}
+	}
+	return
+}
+
+func (s *s3RemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	listInput := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(loc.Bucket),
+		Prefix:    aws.String(pathKey),
+		Delimiter: aws.String("/"),
+	}
+	isLastPage := false
+	for !isLastPage && err == nil {
+		var localErr error
+		listErr := s.conn.ListObjectsV2Pages(listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+			for _, prefix := range page.CommonPrefixes {
+				if prefix.Prefix == nil {
+					continue
+				}
+				dirKey := "/" + strings.TrimSuffix(*prefix.Prefix, "/")
+				dir, name := util.FullPath(dirKey).DirAndName()
+				if err := visitFn(dir, name, true, nil); err != nil {
+					localErr = err
+					return false
+				}
+			}
+			for _, content := range page.Contents {
+				key := "/" + *content.Key
+				if strings.HasSuffix(key, "/") {
+					continue // skip directory markers
+				}
+				dir, name := util.FullPath(key).DirAndName()
+				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
+					RemoteMtime: (*content.LastModified).Unix(),
+					RemoteSize:  *content.Size,
+					RemoteETag:  *content.ETag,
+					StorageName: s.conf.Name,
+				}); err != nil {
+					localErr = err
+					return false
+				}
+			}
+			listInput.ContinuationToken = page.NextContinuationToken
+			isLastPage = lastPage
+			return true
+		})
+		if listErr != nil {
+			err = fmt.Errorf("list directory %v: %w", loc, listErr)
+		}
+		if localErr != nil {
+			err = fmt.Errorf("process directory %v: %w", loc, localErr)
 		}
 	}
 	return

@@ -127,6 +127,68 @@ type azureRemoteStorageClient struct {
 
 var _ = remote_storage.RemoteStorageClient(&azureRemoteStorageClient{})
 
+func (az *azureRemoteStorageClient) ListDirectory(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	containerClient := az.client.ServiceClient().NewContainerClient(loc.Bucket)
+	pager := containerClient.NewListBlobsHierarchyPager("/", &container.ListBlobsHierarchyOptions{
+		Prefix: &pathKey,
+	})
+
+	for pager.More() {
+		resp, pageErr := pager.NextPage(context.Background())
+		if pageErr != nil {
+			return fmt.Errorf("azure list directory %s%s: %w", loc.Bucket, loc.Path, pageErr)
+		}
+
+		for _, prefix := range resp.Segment.BlobPrefixes {
+			if prefix.Name == nil {
+				continue
+			}
+			dirKey := "/" + strings.TrimSuffix(*prefix.Name, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err = visitFn(dir, name, true, nil); err != nil {
+				return fmt.Errorf("azure processing directory prefix %s: %w", *prefix.Name, err)
+			}
+		}
+
+		for _, blobItem := range resp.Segment.BlobItems {
+			if blobItem.Name == nil {
+				continue
+			}
+			key := "/" + *blobItem.Name
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+
+			remoteEntry := &filer_pb.RemoteEntry{
+				StorageName: az.conf.Name,
+			}
+			if blobItem.Properties != nil {
+				if blobItem.Properties.LastModified != nil {
+					remoteEntry.RemoteMtime = blobItem.Properties.LastModified.Unix()
+				}
+				if blobItem.Properties.ContentLength != nil {
+					remoteEntry.RemoteSize = *blobItem.Properties.ContentLength
+				}
+				if blobItem.Properties.ETag != nil {
+					remoteEntry.RemoteETag = string(*blobItem.Properties.ETag)
+				}
+			}
+
+			if err = visitFn(dir, name, false, remoteEntry); err != nil {
+				return fmt.Errorf("azure processing blob %s: %w", *blobItem.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (az *azureRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	key := loc.Path[1:]
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultAzureOpTimeout)
