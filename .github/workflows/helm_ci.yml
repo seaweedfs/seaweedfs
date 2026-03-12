@@ -140,7 +140,7 @@ jobs:
 
           # Extract the hostname from S3 deployment -filer= argument
           S3_FILER_HOST=$(grep '\-filer=' /tmp/longname.yaml \
-            | sed 's/.*-filer=\([^:]*\).*/\1/')
+            | head -1 | sed 's/.*-filer=\([^:]*\).*/\1/')
 
           # The address helpers produce "<svc>.<namespace>:<port>"; extract just the svc name
           MASTER_ADDR_SVC=$(echo "$MASTER_ADDR" | cut -d. -f1)
