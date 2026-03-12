@@ -18,11 +18,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type MetadataStrategy string
+type MetadataCacheStrategy string
 
 const (
-	MetadataStrategyEager MetadataStrategy = "eager"
-	MetadataStrategyLazy  MetadataStrategy = "lazy"
+	MetadataCacheEager MetadataCacheStrategy = "eager"
+	MetadataCacheLazy  MetadataCacheStrategy = "lazy"
 )
 
 func init() {
@@ -65,7 +65,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 
 	dir := remoteMountCommand.String("dir", "", "a directory in filer")
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
-	metadataStrategy := remoteMountCommand.String("metadataStrategy", string(MetadataStrategyEager), "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
+	metadataStrategy := remoteMountCommand.String("metadataStrategy", string(MetadataCacheEager), "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
@@ -88,14 +88,14 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}
 
-	strategy := MetadataStrategy(strings.ToLower(*metadataStrategy))
-	if strategy != MetadataStrategyLazy && strategy != MetadataStrategyEager {
-		return fmt.Errorf("metadataStrategy must be %s or %s, got %q", MetadataStrategyLazy, MetadataStrategyEager, *metadataStrategy)
+	strategy := MetadataCacheStrategy(strings.ToLower(*metadataStrategy))
+	if strategy != MetadataCacheLazy && strategy != MetadataCacheEager {
+		return fmt.Errorf("metadataStrategy must be %s or %s, got %q", MetadataCacheLazy, MetadataCacheEager, *metadataStrategy)
 	}
 
 	// For lazy mounts, validate the remote before creating any local state
 	// so that bad buckets or credentials fail without leaving orphaned directories.
-	if strategy == MetadataStrategyLazy {
+	if strategy == MetadataCacheLazy {
 		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
 			return fmt.Errorf("validate mount root: %w", err)
 		}
@@ -105,7 +105,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("mount setup: %w", err)
 	}
 
-	if strategy == MetadataStrategyEager {
+	if strategy == MetadataCacheEager {
 		if err = pullMetadata(commandEnv, writer, util.FullPath(*dir), remoteStorageLocation, util.FullPath(*dir), remoteConf); err != nil {
 			return fmt.Errorf("cache metadata: %w", err)
 		}
