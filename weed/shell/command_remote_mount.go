@@ -93,14 +93,6 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 		return fmt.Errorf("metadataStrategy must be %s or %s, got %q", MetadataCacheLazy, MetadataCacheEager, *metadataStrategy)
 	}
 
-	// For lazy mounts, validate the remote before creating any local state
-	// so that bad buckets or credentials fail without leaving orphaned directories.
-	if strategy == MetadataCacheLazy {
-		if err = validateMountRoot(remoteConf, remoteStorageLocation); err != nil {
-			return fmt.Errorf("validate mount root: %w", err)
-		}
-	}
-
 	if err = ensureMountDirectory(commandEnv, *dir, *nonEmpty, remoteConf); err != nil {
 		return fmt.Errorf("mount setup: %w", err)
 	}
@@ -184,31 +176,6 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 
 		return nil
 	})
-}
-
-// validateMountRoot checks that the remote bucket exists and credentials are valid.
-// TODO: use a targeted HeadBucket-style check instead of ListBuckets to avoid
-// fetching every bucket on accounts with many buckets. This requires adding a
-// BucketExists method to the RemoteStorageClient interface.
-func validateMountRoot(remoteConf *remote_pb.RemoteConf, remote *remote_pb.RemoteStorageLocation) error {
-	client, err := remote_storage.GetRemoteStorage(remoteConf)
-	if err != nil {
-		return err
-	}
-	if remote.Bucket == "" {
-		// Bucket-less storage (e.g. local); no bucket existence check needed.
-		return nil
-	}
-	buckets, err := client.ListBuckets()
-	if err != nil {
-		return fmt.Errorf("list buckets: %w", err)
-	}
-	for _, b := range buckets {
-		if b.Name == remote.Bucket {
-			return nil
-		}
-	}
-	return fmt.Errorf("bucket %q not found in remote %s", remote.Bucket, remote.Name)
 }
 
 // if an entry has synchronized metadata but has not synchronized content
