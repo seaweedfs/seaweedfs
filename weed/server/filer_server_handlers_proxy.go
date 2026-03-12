@@ -58,8 +58,13 @@ func acquireProxySemaphore(ctx context.Context, host string) error {
 
 func releaseProxySemaphore(host string) {
 	v, ok := proxySemaphores.Load(host)
-	if ok {
-		<-v.(chan struct{})
+	if !ok {
+		return
+	}
+	select {
+	case <-v.(chan struct{}):
+	default:
+		glog.Warningf("proxy semaphore for %s was already empty on release", host)
 	}
 }
 
