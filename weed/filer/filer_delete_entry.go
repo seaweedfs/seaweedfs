@@ -98,9 +98,11 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
 							if !ignoreRecursiveError {
 								err = remoteErr
-								continue
 							}
 						}
+					}
+					if err != nil && !ignoreRecursiveError {
+						break
 					}
 					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
 					if len(sub.HardLinkId) != 0 {
