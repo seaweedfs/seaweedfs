@@ -41,6 +41,7 @@ type Superblock struct {
 	SnapshotCount    uint32
 	Epoch            uint64        // fencing epoch (0 = no fencing, Phase 3 compat)
 	DurabilityMode   uint8         // CP8-3-1: 0=best_effort, 1=sync_all, 2=sync_quorum
+	StorageProfile   uint8         // CP11A-1: 0=single, 1=striped (reserved)
 }
 
 // superblockOnDisk is the fixed-size on-disk layout (binary.Write/Read target).
@@ -63,6 +64,7 @@ type superblockOnDisk struct {
 	SnapshotCount    uint32
 	Epoch            uint64
 	DurabilityMode   uint8
+	StorageProfile   uint8
 }
 
 // NewSuperblock creates a superblock with defaults and a fresh UUID.
@@ -101,6 +103,7 @@ func NewSuperblock(volumeSize uint64, opts CreateOptions) (Superblock, error) {
 		WALOffset:      SuperblockSize,
 		WALSize:        walSize,
 		DurabilityMode: uint8(opts.DurabilityMode),
+		StorageProfile: uint8(opts.StorageProfile),
 	}
 	copy(sb.Magic[:], MagicSWBK)
 	sb.UUID = id
@@ -131,6 +134,7 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 		SnapshotCount:    sb.SnapshotCount,
 		Epoch:            sb.Epoch,
 		DurabilityMode:   sb.DurabilityMode,
+		StorageProfile:   sb.StorageProfile,
 	}
 
 	// Encode into beginning of buf; rest stays zero (padding).
@@ -166,6 +170,8 @@ func (sb *Superblock) WriteTo(w io.Writer) (int64, error) {
 	endian.PutUint64(buf[off:], d.Epoch)
 	off += 8
 	buf[off] = d.DurabilityMode
+	off++
+	buf[off] = d.StorageProfile
 
 	n, err := w.Write(buf)
 	return int64(n), err
@@ -228,6 +234,8 @@ func ReadSuperblock(r io.Reader) (Superblock, error) {
 	sb.Epoch = endian.Uint64(buf[off:])
 	off += 8
 	sb.DurabilityMode = buf[off]
+	off++
+	sb.StorageProfile = buf[off]
 
 	return sb, nil
 }
@@ -262,6 +270,9 @@ func (sb *Superblock) Validate() error {
 	}
 	if sb.DurabilityMode > 2 {
 		return fmt.Errorf("%w: invalid DurabilityMode %d", ErrInvalidSuperblock, sb.DurabilityMode)
+	}
+	if sb.StorageProfile > 1 {
+		return fmt.Errorf("%w: invalid StorageProfile %d", ErrInvalidSuperblock, sb.StorageProfile)
 	}
 	return nil
 }

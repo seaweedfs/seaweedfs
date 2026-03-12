@@ -25,6 +25,7 @@ type CreateOptions struct {
 	WALSize        uint64         // default 64MB
 	Replication    string         // default "000"
 	DurabilityMode DurabilityMode // CP8-3-1: default best_effort (0)
+	StorageProfile StorageProfile // CP11A-1: default single (0)
 }
 
 // ErrVolumeClosed is returned when an operation is attempted on a closed BlockVol.
@@ -91,6 +92,12 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 
 	if opts.VolumeSize == 0 {
 		return nil, ErrInvalidVolumeSize
+	}
+	if opts.StorageProfile == ProfileStriped {
+		return nil, ErrStripedNotImplemented
+	}
+	if opts.StorageProfile > ProfileStriped {
+		return nil, fmt.Errorf("%w: %d", ErrInvalidStorageProfile, opts.StorageProfile)
 	}
 
 	sb, err := NewSuperblock(opts.VolumeSize, opts)
@@ -618,6 +625,11 @@ type VolumeInfo struct {
 // DurabilityMode returns the volume's durability mode from the superblock.
 func (v *BlockVol) DurabilityMode() DurabilityMode {
 	return DurabilityMode(v.super.DurabilityMode)
+}
+
+// Profile returns the volume's storage profile from the superblock.
+func (v *BlockVol) Profile() StorageProfile {
+	return StorageProfile(v.super.StorageProfile)
 }
 
 // WALUsedFraction returns the fraction of WAL space currently in use (0.0 to 1.0).
