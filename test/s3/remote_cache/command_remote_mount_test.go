@@ -144,7 +144,12 @@ func TestRemoteMountMetadataStrategyInvalid(t *testing.T) {
 	testDir := fmt.Sprintf("/buckets/testinvalidstrat%d", time.Now().UnixNano()%1000000)
 	cmd := fmt.Sprintf("remote.mount -dir=%s -remote=seaweedremote/remotesourcebucket -metadataStrategy=invalid", testDir)
 	output, err := runWeedShellWithOutput(t, cmd)
-	require.Error(t, err, "expected error for invalid metadataStrategy")
+	if err != nil {
+		// Shell process itself failed — error is expected.
+		assert.Contains(t, strings.ToLower(output), "lazy or eager", "error should mention allowed values")
+		return
+	}
+	// Shell process exited 0 but the command error appears in output.
 	assert.Contains(t, strings.ToLower(output), "lazy or eager", "error should mention allowed values")
 }
 
