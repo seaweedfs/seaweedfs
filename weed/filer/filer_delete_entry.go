@@ -1,7 +1,6 @@
 package filer
 
 import (
-	"encoding/base64"
 	"context"
 	"errors"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
 	remoteMetadataDeletionPendingIndexKey = "filer.remote.metadata.deletion.pending.index"
-	remoteMetadataDeletionPendingKeyPrefix = "filer.remote.metadata.deletion.pending/"
 	remoteMetadataDeletionReconcileInterval = 1 * time.Minute
 	remoteMetadataDeletionMarkRetryAttempts = 3
 	remoteMetadataDeletionMarkRetryBackoff = 100 * time.Millisecond
@@ -268,18 +266,7 @@ func (f *Filer) markRemoteMetadataDeletionPending(ctx context.Context, path util
 	f.remoteMetadataDeletionIndexMu.Lock()
 	defer f.remoteMetadataDeletionIndexMu.Unlock()
 
-	txnCtx, beginErr := f.BeginTransaction(ctx)
-	if beginErr != nil {
-		return beginErr
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = f.RollbackTransaction(txnCtx)
-		}
-	}()
-
-	pendings, err := f.listPendingRemoteMetadataDeletionPaths(txnCtx)
+	pendings, err := f.listPendingRemoteMetadataDeletionPaths(ctx)
 	if err != nil {
 		return err
 	}
@@ -290,35 +277,14 @@ func (f *Filer) markRemoteMetadataDeletionPending(ctx context.Context, path util
 	}
 	pendingSet[string(path)] = struct{}{}
 
-	if err := f.Store.KvPut(txnCtx, pendingRemoteMetadataDeletionPathKey(path), []byte(path)); err != nil {
-		return err
-	}
-	if err := f.Store.KvPut(txnCtx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet)); err != nil {
-		return err
-	}
-	if err := f.CommitTransaction(txnCtx); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return f.Store.KvPut(ctx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet))
 }
 
 func (f *Filer) clearRemoteMetadataDeletionPending(ctx context.Context, path util.FullPath) error {
 	f.remoteMetadataDeletionIndexMu.Lock()
 	defer f.remoteMetadataDeletionIndexMu.Unlock()
 
-	txnCtx, beginErr := f.BeginTransaction(ctx)
-	if beginErr != nil {
-		return beginErr
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = f.RollbackTransaction(txnCtx)
-		}
-	}()
-
-	pendings, err := f.listPendingRemoteMetadataDeletionPaths(txnCtx)
+	pendings, err := f.listPendingRemoteMetadataDeletionPaths(ctx)
 	if err != nil {
 		return err
 	}
@@ -329,17 +295,7 @@ func (f *Filer) clearRemoteMetadataDeletionPending(ctx context.Context, path uti
 	}
 	delete(pendingSet, string(path))
 
-	if err := f.Store.KvDelete(txnCtx, pendingRemoteMetadataDeletionPathKey(path)); err != nil {
-		return err
-	}
-	if err := f.Store.KvPut(txnCtx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet)); err != nil {
-		return err
-	}
-	if err := f.CommitTransaction(txnCtx); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return f.Store.KvPut(ctx, []byte(remoteMetadataDeletionPendingIndexKey), encodePendingRemoteMetadataDeletionIndex(pendingSet))
 }
 
 func (f *Filer) listPendingRemoteMetadataDeletionPaths(ctx context.Context) ([]util.FullPath, error) {
@@ -358,32 +314,14 @@ func (f *Filer) listPendingRemoteMetadataDeletionPaths(ctx context.Context) ([]u
 		return nil, nil
 	}
 
-	encodedKeys := decodePendingRemoteMetadataDeletionIndex(indexData)
-	if len(encodedKeys) == 0 {
-		return nil, nil
-	}
-
 	var pendingPaths []util.FullPath
-	for _, encodedKey := range encodedKeys {
-		encodedKey = strings.TrimSpace(encodedKey)
-		if encodedKey == "" {
-			continue
+	for _, p := range strings.Split(string(indexData), "\n") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			pendingPaths = append(pendingPaths, util.FullPath(p))
 		}
-		data, getErr := f.Store.KvGet(ctx, []byte(encodedKey))
-		if getErr != nil {
-			if getErr == ErrKvNotFound {
-				continue
-			}
-			return nil, getErr
-		}
-		pendingPaths = append(pendingPaths, util.FullPath(string(data)))
 	}
 	return pendingPaths, nil
-}
-
-func pendingRemoteMetadataDeletionPathKey(path util.FullPath) []byte {
-	encodedPath := base64.RawURLEncoding.EncodeToString([]byte(path))
-	return []byte(remoteMetadataDeletionPendingKeyPrefix + encodedPath)
 }
 
 func encodePendingRemoteMetadataDeletionIndex(pendingSet map[string]struct{}) []byte {
@@ -391,17 +329,10 @@ func encodePendingRemoteMetadataDeletionIndex(pendingSet map[string]struct{}) []
 		return []byte{}
 	}
 
-	keys := make([]string, 0, len(pendingSet))
+	paths := make([]string, 0, len(pendingSet))
 	for path := range pendingSet {
-		keys = append(keys, string(pendingRemoteMetadataDeletionPathKey(util.FullPath(path))))
+		paths = append(paths, path)
 	}
-	sort.Strings(keys)
-	return []byte(strings.Join(keys, "\n"))
-}
-
-func decodePendingRemoteMetadataDeletionIndex(indexData []byte) []string {
-	if len(indexData) == 0 {
-		return nil
-	}
-	return strings.Split(string(indexData), "\n")
+	sort.Strings(paths)
+	return []byte(strings.Join(paths, "\n"))
 }
