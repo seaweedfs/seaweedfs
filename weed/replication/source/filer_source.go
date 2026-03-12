@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -17,10 +16,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
-
-type ReplicationSource interface {
-	ReadPart(part string, offset int64) io.ReadCloser
-}
 
 type FilerSource struct {
 	grpcAddress    string
