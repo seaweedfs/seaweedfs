@@ -1034,6 +1034,11 @@ func TestDetection_DataCenterFilter(t *testing.T) {
 		t.Fatalf("Detection failed: %v", err)
 	}
 
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within dc1, got 0")
+	}
+
 	// With DC filter, only node-a and node-b are considered in topology seeding.
 	// node-c should never appear as source or destination.
 	for _, task := range tasks {
@@ -1084,6 +1089,11 @@ func TestDetection_NodeFilter(t *testing.T) {
 		t.Fatalf("Detection failed: %v", err)
 	}
 
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within node-a,node-b scope, got 0")
+	}
+
 	for _, task := range tasks {
 		if task.Server == "node-c" {
 			t.Errorf("node-c should not be a source with node filter")
@@ -1096,7 +1106,5 @@ func TestDetection_NodeFilter(t *testing.T) {
 		}
 	}
 
-	if len(tasks) > 0 {
-		t.Logf("Created %d tasks within node-a,node-b scope", len(tasks))
-	}
+	t.Logf("Created %d tasks within node-a,node-b scope", len(tasks))
 }
