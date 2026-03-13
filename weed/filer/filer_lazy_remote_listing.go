@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -93,7 +94,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 			childPath := p.Child(name)
 
 			existingEntry, findErr := f.Store.FindEntry(persistCtx, childPath)
-			if findErr != nil && findErr != filer_pb.ErrNotFound {
+			if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 				glog.Warningf("maybeLazyListFromRemote: find %s: %v", childPath, findErr)
 				return nil // skip this entry on transient store error
 			}
@@ -171,11 +172,11 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 
 func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullPath, syncTime time.Time) {
 	dirEntry, findErr := f.Store.FindEntry(ctx, p)
-	if findErr != nil && findErr != filer_pb.ErrNotFound {
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 		glog.Warningf("maybeLazyListFromRemote: find dir %s: %v", p, findErr)
 		return
 	}
-	if findErr == filer_pb.ErrNotFound {
+	if errors.Is(findErr, filer_pb.ErrNotFound) {
 		// Directory doesn't exist yet, create it
 		now := time.Now()
 		dirEntry = &Entry{
