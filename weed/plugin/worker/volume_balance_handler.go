@@ -23,6 +23,10 @@ import (
 const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 	maxProposalStringLength      = 200
+
+	// Collection filter mode constants.
+	collectionFilterAll  = "ALL_COLLECTIONS"
+	collectionFilterEach = "EACH_COLLECTION"
 )
 
 func init() {
@@ -272,7 +276,7 @@ func (h *VolumeBalanceHandler) Detect(
 	var results []*workertypes.TaskDetectionResult
 	var hasMore bool
 
-	if collectionFilter == "EACH_COLLECTION" {
+	if collectionFilter == collectionFilterEach {
 		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
 		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {
@@ -285,17 +289,24 @@ func (h *VolumeBalanceHandler) Detect(
 		sort.Strings(collections)
 
 		budget := maxResults
+		unlimitedBudget := budget <= 0
 		for _, collection := range collections {
-			if budget <= 0 {
+			if !unlimitedBudget && budget <= 0 {
 				hasMore = true
 				break
 			}
-			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, budget)
+			perCollectionLimit := budget
+			if unlimitedBudget {
+				perCollectionLimit = 0 // Detection treats <= 0 as unbounded
+			}
+			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, perCollectionLimit)
 			if perErr != nil {
 				return perErr
 			}
 			results = append(results, perResults...)
-			budget -= len(perResults)
+			if !unlimitedBudget {
+				budget -= len(perResults)
+			}
 			if perHasMore {
 				hasMore = true
 			}

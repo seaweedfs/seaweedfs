@@ -53,7 +53,7 @@ func TestBuildVolumeMetricsAllCollections(t *testing.T) {
 		&master_pb.VolumeInformationMessage{Id: 1, Collection: "photos", Size: 100},
 		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
 	)
-	metrics, _, err := buildVolumeMetrics(resp, "ALL_COLLECTIONS")
+	metrics, _, err := buildVolumeMetrics(resp, collectionFilterAll)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestBuildVolumeMetricsEachCollection(t *testing.T) {
 		&master_pb.VolumeInformationMessage{Id: 2, Collection: "videos", Size: 200},
 	)
 	// EACH_COLLECTION passes all volumes through; filtering happens in the handler
-	metrics, _, err := buildVolumeMetrics(resp, "EACH_COLLECTION")
+	metrics, _, err := buildVolumeMetrics(resp, collectionFilterEach)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
