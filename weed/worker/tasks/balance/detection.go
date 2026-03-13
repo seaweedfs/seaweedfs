@@ -87,15 +87,11 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
-			var rackFilterSet, nodeFilterSet map[string]bool
-			if balanceConfig.RackFilter != "" {
-				rackFilterSet = parseCSVSet(balanceConfig.RackFilter)
-			}
-			if balanceConfig.NodeFilter != "" {
-				nodeFilterSet = parseCSVSet(balanceConfig.NodeFilter)
-			}
+			rackFilterSet := util.ParseCSVSet(balanceConfig.RackFilter)
+			nodeFilterSet := util.ParseCSVSet(balanceConfig.NodeFilter)
+			dcFilter := strings.TrimSpace(balanceConfig.DataCenterFilter)
 			for _, dc := range topologyInfo.DataCenterInfos {
-				if balanceConfig.DataCenterFilter != "" && dc.Id != balanceConfig.DataCenterFilter {
+				if dcFilter != "" && dc.Id != dcFilter {
 					continue
 				}
 				for _, rack := range dc.RackInfos {
@@ -117,7 +113,15 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			}
 		}
 	}
+	hasLocationFilter := balanceConfig.DataCenterFilter != "" || balanceConfig.RackFilter != "" || balanceConfig.NodeFilter != ""
 	for _, metric := range diskMetrics {
+		if hasLocationFilter {
+			// Only count metrics for servers that passed filtering.
+			// Without this guard, out-of-scope servers are re-introduced.
+			if _, allowed := serverVolumeCounts[metric.Server]; !allowed {
+				continue
+			}
+		}
 		serverVolumeCounts[metric.Server]++
 	}
 
@@ -621,13 +625,3 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 }
 
 // parseCSVSet splits a comma-separated string into a set of trimmed, non-empty values.
-func parseCSVSet(csv string) map[string]bool {
-	set := make(map[string]bool)
-	for _, item := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(item)
-		if trimmed != "" {
-			set[trimmed] = true
-		}
-	}
-	return set
-}

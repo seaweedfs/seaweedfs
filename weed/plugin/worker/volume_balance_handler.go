@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	taskutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -1080,10 +1081,10 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilter, rackFilter, nodeFilter string) []*workertypes.VolumeHealthMetrics {
 	var rackSet, nodeSet map[string]bool
 	if rackFilter != "" {
-		rackSet = parseCSVSet(rackFilter)
+		rackSet = taskutil.ParseCSVSet(rackFilter)
 	}
 	if nodeFilter != "" {
-		nodeSet = parseCSVSet(nodeFilter)
+		nodeSet = taskutil.ParseCSVSet(nodeFilter)
 	}
 
 	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
@@ -1100,17 +1101,6 @@ func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilte
 		filtered = append(filtered, m)
 	}
 	return filtered
-}
-
-func parseCSVSet(csv string) map[string]bool {
-	set := make(map[string]bool)
-	for _, item := range strings.Split(csv, ",") {
-		trimmed := strings.TrimSpace(item)
-		if trimmed != "" {
-			set[trimmed] = true
-		}
-	}
-	return set
 }
 
 func buildVolumeBalanceProposal(

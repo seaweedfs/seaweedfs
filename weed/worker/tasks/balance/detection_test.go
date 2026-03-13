@@ -1045,10 +1045,11 @@ func TestDetection_DataCenterFilter(t *testing.T) {
 		if task.Server == "node-c" {
 			t.Errorf("node-c (dc2) should not be a source with dc1 filter")
 		}
-		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
-			target := task.TypedParams.Targets[0].Node
-			if strings.Contains(target, "node-c") {
-				t.Errorf("node-c (dc2) should not be a target with dc1 filter")
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c (dc2) should not be a target with dc1 filter")
+				}
 			}
 		}
 	}
@@ -1098,10 +1099,11 @@ func TestDetection_NodeFilter(t *testing.T) {
 		if task.Server == "node-c" {
 			t.Errorf("node-c should not be a source with node filter")
 		}
-		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
-			target := task.TypedParams.Targets[0].Node
-			if strings.Contains(target, "node-c") {
-				t.Errorf("node-c should not be a target with node filter")
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c should not be a target with node filter")
+				}
 			}
 		}
 	}
