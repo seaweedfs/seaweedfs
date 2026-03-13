@@ -92,7 +92,11 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			childPath := p.Child(name)
 
-			existingEntry, _ := f.Store.FindEntry(persistCtx, childPath)
+			existingEntry, findErr := f.Store.FindEntry(persistCtx, childPath)
+			if findErr != nil && findErr != filer_pb.ErrNotFound {
+				glog.Warningf("maybeLazyListFromRemote: find %s: %v", childPath, findErr)
+				return nil // skip this entry on transient store error
+			}
 
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
 			if existingEntry != nil && existingEntry.Remote == nil {
@@ -167,7 +171,11 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 
 func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullPath, syncTime time.Time) {
 	dirEntry, findErr := f.Store.FindEntry(ctx, p)
-	if findErr != nil {
+	if findErr != nil && findErr != filer_pb.ErrNotFound {
+		glog.Warningf("maybeLazyListFromRemote: find dir %s: %v", p, findErr)
+		return
+	}
+	if findErr == filer_pb.ErrNotFound {
 		// Directory doesn't exist yet, create it
 		now := time.Now()
 		dirEntry = &Entry{
