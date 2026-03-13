@@ -87,16 +87,23 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
+			var rackFilterSet, nodeFilterSet map[string]bool
+			if balanceConfig.RackFilter != "" {
+				rackFilterSet = parseCSVSet(balanceConfig.RackFilter)
+			}
+			if balanceConfig.NodeFilter != "" {
+				nodeFilterSet = parseCSVSet(balanceConfig.NodeFilter)
+			}
 			for _, dc := range topologyInfo.DataCenterInfos {
 				if balanceConfig.DataCenterFilter != "" && dc.Id != balanceConfig.DataCenterFilter {
 					continue
 				}
 				for _, rack := range dc.RackInfos {
-					if balanceConfig.RackFilter != "" && !containsInCSV(balanceConfig.RackFilter, rack.Id) {
+					if rackFilterSet != nil && !rackFilterSet[rack.Id] {
 						continue
 					}
 					for _, node := range rack.DataNodeInfos {
-						if balanceConfig.NodeFilter != "" && !containsInCSV(balanceConfig.NodeFilter, node.Id) {
+						if nodeFilterSet != nil && !nodeFilterSet[node.Id] {
 							continue
 						}
 						for diskTypeName, diskInfo := range node.DiskInfos {
@@ -598,12 +605,14 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 	return score
 }
 
-// containsInCSV checks if value is present in a comma-separated string.
-func containsInCSV(csv, value string) bool {
+// parseCSVSet splits a comma-separated string into a set of trimmed, non-empty values.
+func parseCSVSet(csv string) map[string]bool {
+	set := make(map[string]bool)
 	for _, item := range strings.Split(csv, ",") {
-		if strings.TrimSpace(item) == value {
-			return true
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			set[trimmed] = true
 		}
 	}
-	return false
+	return set
 }

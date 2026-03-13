@@ -632,24 +632,10 @@ func TestExecuteSingleMovePathUnchanged(t *testing.T) {
 func TestVolumeBalanceDescriptorHasLocationFilters(t *testing.T) {
 	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
 	for _, name := range []string{"data_center_filter", "rack_filter", "node_filter"} {
-		if !adminConfigFormHasField(descriptor.AdminConfigForm, name) {
+		if !workerConfigFormHasField(descriptor.AdminConfigForm, name) {
 			t.Fatalf("expected %s in admin config form", name)
 		}
 	}
-}
-
-func adminConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
-	if form == nil {
-		return false
-	}
-	for _, section := range form.Sections {
-		for _, field := range section.Fields {
-			if field != nil && field.Name == fieldName {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func TestFilterMetricsByLocation(t *testing.T) {
