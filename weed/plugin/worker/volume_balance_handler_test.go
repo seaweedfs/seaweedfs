@@ -686,6 +686,23 @@ func TestFilterMetricsByVolumeState(t *testing.T) {
 	}
 }
 
+func TestFilterMetricsByVolumeState_NilElement(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		nil,
+		{VolumeID: 1, FullnessRatio: 0.5},
+		nil,
+		{VolumeID: 2, FullnessRatio: 1.5},
+	}
+	result := filterMetricsByVolumeState(metrics, "ACTIVE")
+	if len(result) != 1 || result[0].VolumeID != 1 {
+		t.Fatalf("expected [vol 1] for ACTIVE with nil elements, got %d results", len(result))
+	}
+	result = filterMetricsByVolumeState(metrics, "FULL")
+	if len(result) != 1 || result[0].VolumeID != 2 {
+		t.Fatalf("expected [vol 2] for FULL with nil elements, got %d results", len(result))
+	}
+}
+
 func TestFilterMetricsByVolumeState_EmptyInput(t *testing.T) {
 	result := filterMetricsByVolumeState(nil, "ACTIVE")
 	if len(result) != 0 {

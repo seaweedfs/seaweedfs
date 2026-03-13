@@ -94,9 +94,13 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Name:        "volume_state",
 							Label:       "Volume State Filter",
 							Description: "Filter volumes by state: ALL (default), ACTIVE (writable volumes below size limit), or FULL (read-only volumes above size limit).",
-							Placeholder: "ALL",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
+							Options: []*plugin_pb.ConfigOption{
+								{Value: "ALL", Label: "All Volumes"},
+								{Value: "ACTIVE", Label: "Active (writable)"},
+								{Value: "FULL", Label: "Full (read-only)"},
+							},
 						},
 					},
 				},
@@ -563,14 +567,28 @@ func emitVolumeBalanceDetectionDecisionTrace(
 // "FULL" keeps volumes with FullnessRatio >= 1.01 (read-only, above size limit).
 // "ALL" or any other value returns all metrics unfiltered.
 func filterMetricsByVolumeState(metrics []*workertypes.VolumeHealthMetrics, volumeState string) []*workertypes.VolumeHealthMetrics {
-	if volumeState != "ACTIVE" && volumeState != "FULL" {
+	const fullnessThreshold = 1.01
+
+	var predicate func(m *workertypes.VolumeHealthMetrics) bool
+	switch volumeState {
+	case "ACTIVE":
+		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
+			return m.FullnessRatio < fullnessThreshold
+		}
+	case "FULL":
+		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
+			return m.FullnessRatio >= fullnessThreshold
+		}
+	default:
 		return metrics
 	}
-	const fullnessThreshold = 1.01
+
 	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
 	for _, m := range metrics {
-		isActive := m.FullnessRatio < fullnessThreshold
-		if (volumeState == "ACTIVE" && isActive) || (volumeState == "FULL" && !isActive) {
+		if m == nil {
+			continue
+		}
+		if predicate(m) {
 			filtered = append(filtered, m)
 		}
 	}
