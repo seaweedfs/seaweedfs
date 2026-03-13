@@ -86,6 +86,40 @@ func TestIsGoodMove_SameNode(t *testing.T) {
 	}
 }
 
+func TestIsGoodMove_011_Composite(t *testing.T) {
+	// 011 = 1 same-rack + 1 different-rack (3 replicas: 2 on same rack, 1 on different)
+	existing := []types.ReplicaLocation{
+		loc("dc1", "r1", "n1"),
+		loc("dc1", "r1", "n2"),
+		loc("dc1", "r2", "n3"),
+	}
+	// Move n1 -> n4 on r1: good (maintains 2 on r1, 1 on r2)
+	if !IsGoodMove(rp(t, "011"), existing, "n1", loc("dc1", "r1", "n4")) {
+		t.Error("011: move within same rack should be allowed")
+	}
+	// Move n3 -> n4 on r1: bad (would have 3 on r1, 0 on different rack)
+	if IsGoodMove(rp(t, "011"), existing, "n3", loc("dc1", "r1", "n4")) {
+		t.Error("011: move that eliminates different-rack replica should not be allowed")
+	}
+}
+
+func TestIsGoodMove_110_Composite(t *testing.T) {
+	// 110 = 1 different-rack + 1 different-DC (3 replicas across 2 DCs and 2 racks)
+	existing := []types.ReplicaLocation{
+		loc("dc1", "r1", "n1"),
+		loc("dc1", "r2", "n2"),
+		loc("dc2", "r1", "n3"),
+	}
+	// Move n1 -> n4 in dc1/r3: good (dc1 still has r2+r3, dc2 has r1)
+	if !IsGoodMove(rp(t, "110"), existing, "n1", loc("dc1", "r3", "n4")) {
+		t.Error("110: move to new rack in same DC should be allowed")
+	}
+	// Move n3 -> n4 in dc1/r1: bad (would lose the different-DC replica)
+	if IsGoodMove(rp(t, "110"), existing, "n3", loc("dc1", "r1", "n4")) {
+		t.Error("110: move that eliminates different-DC replica should not be allowed")
+	}
+}
+
 func TestIsGoodMove_NilReplicaPlacement(t *testing.T) {
 	if !IsGoodMove(nil, []types.ReplicaLocation{loc("dc1", "r1", "n1")}, "n1", loc("dc1", "r1", "n2")) {
 		t.Error("nil replica placement should allow any move")
