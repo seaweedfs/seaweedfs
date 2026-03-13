@@ -1,6 +1,8 @@
 package balance
 
 import (
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
@@ -68,7 +70,7 @@ func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.
 		return false
 	}
 	// now same as one of existing data centers
-	if !isAmongDC(target.DataCenter, primaryDCs) {
+	if !slices.Contains(primaryDCs, target.DataCenter) {
 		return false
 	}
 
@@ -93,7 +95,7 @@ func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.
 		return false
 	}
 	// same as one of existing racks
-	if !isAmongRack(targetRK, primaryRacks) {
+	if !slices.Contains(primaryRacks, targetRK) {
 		return false
 	}
 
@@ -142,20 +144,3 @@ func findTopRackKeys(m map[rackKey]int) (topKeys []rackKey, max int) {
 	return
 }
 
-func isAmongDC(key string, keys []string) bool {
-	for _, k := range keys {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
-
-func isAmongRack(key rackKey, keys []rackKey) bool {
-	for _, k := range keys {
-		if k == key {
-			return true
-		}
-	}
-	return false
-}
