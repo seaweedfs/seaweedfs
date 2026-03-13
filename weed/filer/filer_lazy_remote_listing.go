@@ -91,47 +91,62 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			childPath := p.Child(name)
 
+			existingEntry, _ := f.FindEntry(persistCtx, childPath)
+
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
-			if existingEntry, findErr := f.FindEntry(persistCtx, childPath); findErr == nil && existingEntry != nil {
-				if existingEntry.Remote == nil {
-					return nil
-				}
+			if existingEntry != nil && existingEntry.Remote == nil {
+				return nil
 			}
 
-			var entry *Entry
-			if isDirectory {
-				now := time.Now()
-				entry = &Entry{
-					FullPath: childPath,
-					Attr: Attr{
-						Mtime:  now,
-						Crtime: now,
-						Mode:   os.ModeDir | 0755,
-						Uid:    OS_UID,
-						Gid:    OS_GID,
-					},
+			if existingEntry != nil {
+				// Merge: update remote metadata while preserving local state
+				// (Chunks, Extended, Uid/Gid/Mode, etc.)
+				existingEntry.Remote = remoteEntry
+				if !isDirectory && remoteEntry != nil {
+					if remoteEntry.RemoteMtime > 0 {
+						existingEntry.Attr.Mtime = time.Unix(remoteEntry.RemoteMtime, 0)
+					}
+					existingEntry.Attr.FileSize = uint64(remoteEntry.RemoteSize)
+				}
+				if saveErr := f.Store.UpdateEntry(persistCtx, existingEntry); saveErr != nil {
+					glog.Warningf("maybeLazyListFromRemote: update %s: %v", childPath, saveErr)
 				}
 			} else {
-				mtime := time.Now()
-				if remoteEntry != nil && remoteEntry.RemoteMtime > 0 {
-					mtime = time.Unix(remoteEntry.RemoteMtime, 0)
+				// New entry not yet in local store
+				var entry *Entry
+				if isDirectory {
+					now := time.Now()
+					entry = &Entry{
+						FullPath: childPath,
+						Attr: Attr{
+							Mtime:  now,
+							Crtime: now,
+							Mode:   os.ModeDir | 0755,
+							Uid:    OS_UID,
+							Gid:    OS_GID,
+						},
+					}
+				} else {
+					mtime := time.Now()
+					if remoteEntry != nil && remoteEntry.RemoteMtime > 0 {
+						mtime = time.Unix(remoteEntry.RemoteMtime, 0)
+					}
+					entry = &Entry{
+						FullPath: childPath,
+						Attr: Attr{
+							Mtime:  mtime,
+							Crtime: mtime,
+							Mode:   0644,
+						},
+						Remote: remoteEntry,
+					}
+					if remoteEntry != nil {
+						entry.Attr.FileSize = uint64(remoteEntry.RemoteSize)
+					}
 				}
-				entry = &Entry{
-					FullPath: childPath,
-					Attr: Attr{
-						Mtime:  mtime,
-						Crtime: mtime,
-						Mode:   0644,
-					},
-					Remote: remoteEntry,
+				if saveErr := f.CreateEntry(persistCtx, entry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+					glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
 				}
-				if remoteEntry != nil {
-					entry.Attr.FileSize = uint64(remoteEntry.RemoteSize)
-				}
-			}
-
-			if saveErr := f.CreateEntry(persistCtx, entry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
-				glog.Warningf("maybeLazyListFromRemote: persist %s: %v", childPath, saveErr)
 			}
 			return nil
 		})

@@ -997,6 +997,80 @@ func TestMaybeLazyListFromRemote_SkipsLocalOnlyEntries(t *testing.T) {
 	assert.Nil(t, localEntry.Remote, "local-only entry should keep nil Remote")
 }
 
+func TestMaybeLazyListFromRemote_MergesExistingRemoteEntry(t *testing.T) {
+	const storageType = "stub_lazy_list_merge"
+	stub := &stubRemoteClient{
+		listDirFn: func(loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+			return visitFn("/", "cached.txt", false, &filer_pb.RemoteEntry{
+				RemoteMtime: 1700000099, // updated mtime
+				RemoteSize:  200,        // updated size
+				RemoteETag:  "new-etag",
+				StorageName: "mergestore",
+			})
+		},
+	}
+	defer registerStubMaker(t, storageType, stub)()
+
+	conf := &remote_pb.RemoteConf{Name: "mergestore", Type: storageType}
+	rs := NewFilerRemoteStorage()
+	rs.storageNameToConf[conf.Name] = conf
+	rs.mapDirectoryToRemoteStorage("/buckets/mybucket", &remote_pb.RemoteStorageLocation{
+		Name:                   "mergestore",
+		Bucket:                 "mybucket",
+		Path:                   "/",
+		ListingCacheTtlSeconds: 300,
+	})
+
+	store := newStubFilerStore()
+	// Pre-populate an existing remote-backed entry with chunks and extended attrs
+	existingChunks := []*filer_pb.FileChunk{
+		{FileId: "1,abc123", Size: 100, Offset: 0},
+	}
+	store.entries["/buckets/mybucket/cached.txt"] = &Entry{
+		FullPath: "/buckets/mybucket/cached.txt",
+		Attr: Attr{
+			Mode:     0644,
+			FileSize: 100,
+			Uid:      1000,
+			Gid:      1000,
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1699000000, 0),
+		},
+		Chunks: existingChunks,
+		Extended: map[string][]byte{
+			"user.custom": []byte("myvalue"),
+		},
+		Remote: &filer_pb.RemoteEntry{
+			RemoteMtime: 1700000000,
+			RemoteSize:  100,
+			RemoteETag:  "old-etag",
+			StorageName: "mergestore",
+		},
+	}
+	f := newTestFiler(t, store, rs)
+
+	f.maybeLazyListFromRemote(context.Background(), util.FullPath("/buckets/mybucket"))
+	assert.Equal(t, 1, stub.listDirCalls)
+
+	merged := store.getEntry("/buckets/mybucket/cached.txt")
+	require.NotNil(t, merged)
+
+	// Remote metadata should be updated
+	assert.Equal(t, int64(1700000099), merged.Remote.RemoteMtime)
+	assert.Equal(t, int64(200), merged.Remote.RemoteSize)
+	assert.Equal(t, "new-etag", merged.Remote.RemoteETag)
+	assert.Equal(t, uint64(200), merged.FileSize)
+	assert.Equal(t, time.Unix(1700000099, 0), merged.Mtime)
+
+	// Local state should be preserved
+	assert.Equal(t, existingChunks, merged.Chunks, "chunks must be preserved")
+	assert.Equal(t, []byte("myvalue"), merged.Extended["user.custom"], "extended attrs must be preserved")
+	assert.Equal(t, uint32(1000), merged.Uid, "uid must be preserved")
+	assert.Equal(t, uint32(1000), merged.Gid, "gid must be preserved")
+	assert.Equal(t, os.FileMode(0644), merged.Mode, "mode must be preserved")
+	assert.Equal(t, time.Unix(1699000000, 0), merged.Crtime, "crtime must be preserved")
+}
+
 func TestMaybeLazyListFromRemote_ContextGuardPreventsRecursion(t *testing.T) {
 	const storageType = "stub_lazy_list_guard"
 	stub := &stubRemoteClient{}
