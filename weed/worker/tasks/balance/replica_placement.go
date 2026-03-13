@@ -5,6 +5,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
+// rackKey uniquely identifies a rack within a data center.
+type rackKey struct {
+	DataCenter string
+	Rack       string
+}
+
+// nodeKey uniquely identifies a node within a rack.
+type nodeKey struct {
+	DataCenter string
+	Rack       string
+	NodeID     string
+}
+
 // IsGoodMove checks whether moving a volume from sourceNodeID to target
 // would satisfy the volume's replica placement policy, given the current
 // set of replica locations.
@@ -30,13 +43,13 @@ func IsGoodMove(rp *super_block.ReplicaPlacement, existingReplicas []types.Repli
 func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.ReplicaLocation, target types.ReplicaLocation) bool {
 	existingDCs, _, existingNodes := countReplicas(replicas)
 
-	targetNodeKey := target.DataCenter + " " + target.Rack + " " + target.NodeID
-	if _, found := existingNodes[targetNodeKey]; found {
+	targetNK := nodeKey{DataCenter: target.DataCenter, Rack: target.Rack, NodeID: target.NodeID}
+	if _, found := existingNodes[targetNK]; found {
 		// avoid duplicated volume on the same data node
 		return false
 	}
 
-	primaryDCs, _ := findTopKeys(existingDCs)
+	primaryDCs, _ := findTopDCKeys(existingDCs)
 
 	// ensure data center count is within limit
 	if _, found := existingDCs[target.DataCenter]; !found {
@@ -47,25 +60,24 @@ func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.
 		return false
 	}
 	// now same as one of existing data centers
-	if !isAmong(target.DataCenter, primaryDCs) {
+	if !isAmongDC(target.DataCenter, primaryDCs) {
 		return false
 	}
 
 	// now on a primary dc - check racks within this DC
-	primaryDcRacks := make(map[string]int)
+	primaryDcRacks := make(map[rackKey]int)
 	for _, r := range replicas {
 		if r.DataCenter != target.DataCenter {
 			continue
 		}
-		rackKey := r.DataCenter + " " + r.Rack
-		primaryDcRacks[rackKey]++
+		primaryDcRacks[rackKey{DataCenter: r.DataCenter, Rack: r.Rack}]++
 	}
 
-	targetRackKey := target.DataCenter + " " + target.Rack
-	primaryRacks, _ := findTopKeys(primaryDcRacks)
-	sameRackCount := primaryDcRacks[targetRackKey]
+	targetRK := rackKey{DataCenter: target.DataCenter, Rack: target.Rack}
+	primaryRacks, _ := findTopRackKeys(primaryDcRacks)
+	sameRackCount := primaryDcRacks[targetRK]
 
-	if _, found := primaryDcRacks[targetRackKey]; !found {
+	if _, found := primaryDcRacks[targetRK]; !found {
 		// different from existing racks
 		if len(primaryDcRacks) < rp.DiffRackCount+1 {
 			return true
@@ -73,7 +85,7 @@ func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.
 		return false
 	}
 	// same as one of existing racks
-	if !isAmong(targetRackKey, primaryRacks) {
+	if !isAmongRack(targetRK, primaryRacks) {
 		return false
 	}
 
@@ -84,21 +96,19 @@ func satisfyReplicaPlacement(rp *super_block.ReplicaPlacement, replicas []types.
 	return false
 }
 
-func countReplicas(replicas []types.ReplicaLocation) (dcCounts, rackCounts, nodeCounts map[string]int) {
+func countReplicas(replicas []types.ReplicaLocation) (dcCounts map[string]int, rackCounts map[rackKey]int, nodeCounts map[nodeKey]int) {
 	dcCounts = make(map[string]int)
-	rackCounts = make(map[string]int)
-	nodeCounts = make(map[string]int)
+	rackCounts = make(map[rackKey]int)
+	nodeCounts = make(map[nodeKey]int)
 	for _, r := range replicas {
 		dcCounts[r.DataCenter]++
-		rackKey := r.DataCenter + " " + r.Rack
-		rackCounts[rackKey]++
-		nodeKey := r.DataCenter + " " + r.Rack + " " + r.NodeID
-		nodeCounts[nodeKey]++
+		rackCounts[rackKey{DataCenter: r.DataCenter, Rack: r.Rack}]++
+		nodeCounts[nodeKey{DataCenter: r.DataCenter, Rack: r.Rack, NodeID: r.NodeID}]++
 	}
 	return
 }
 
-func findTopKeys(m map[string]int) (topKeys []string, max int) {
+func findTopDCKeys(m map[string]int) (topKeys []string, max int) {
 	for k, c := range m {
 		if max < c {
 			topKeys = topKeys[:0]
@@ -111,7 +121,29 @@ func findTopKeys(m map[string]int) (topKeys []string, max int) {
 	return
 }
 
-func isAmong(key string, keys []string) bool {
+func findTopRackKeys(m map[rackKey]int) (topKeys []rackKey, max int) {
+	for k, c := range m {
+		if max < c {
+			topKeys = topKeys[:0]
+			topKeys = append(topKeys, k)
+			max = c
+		} else if max == c {
+			topKeys = append(topKeys, k)
+		}
+	}
+	return
+}
+
+func isAmongDC(key string, keys []string) bool {
+	for _, k := range keys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+func isAmongRack(key rackKey, keys []rackKey) bool {
 	for _, k := range keys {
 		if k == key {
 			return true
