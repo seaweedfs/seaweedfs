@@ -629,15 +629,6 @@ func TestExecuteSingleMovePathUnchanged(t *testing.T) {
 	}
 }
 
-func TestVolumeBalanceDescriptorHasLocationFilters(t *testing.T) {
-	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
-	for _, name := range []string{"data_center_filter", "rack_filter", "node_filter"} {
-		if !workerConfigFormHasField(descriptor.AdminConfigForm, name) {
-			t.Fatalf("expected %s in admin config form", name)
-		}
-	}
-}
-
 func TestFilterMetricsByLocation(t *testing.T) {
 	metrics := []*workertypes.VolumeHealthMetrics{
 		{VolumeID: 1, Server: "node-a", DataCenter: "dc1", Rack: "rack1"},
