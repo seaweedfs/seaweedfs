@@ -647,6 +647,118 @@ func TestVolumeBalanceDescriptorHasCollectionFilterModes(t *testing.T) {
 	t.Fatal("collection_filter field not found")
 }
 
+func TestFilterMetricsByVolumeState(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{VolumeID: 1, FullnessRatio: 0.5},   // active
+		{VolumeID: 2, FullnessRatio: 1.0},   // active (below 1.01)
+		{VolumeID: 3, FullnessRatio: 1.009}, // active (below 1.01)
+		{VolumeID: 4, FullnessRatio: 1.01},  // full (exactly at threshold)
+		{VolumeID: 5, FullnessRatio: 1.5},   // full
+		{VolumeID: 6, FullnessRatio: 2.0},   // full
+	}
+
+	tests := []struct {
+		name        string
+		state       string
+		expectedIDs []uint32
+	}{
+		{
+			name:        "ALL returns everything",
+			state:       "ALL",
+			expectedIDs: []uint32{1, 2, 3, 4, 5, 6},
+		},
+		{
+			name:        "empty string returns everything",
+			state:       "",
+			expectedIDs: []uint32{1, 2, 3, 4, 5, 6},
+		},
+		{
+			name:        "ACTIVE keeps FullnessRatio below 1.01",
+			state:       "ACTIVE",
+			expectedIDs: []uint32{1, 2, 3},
+		},
+		{
+			name:        "FULL keeps FullnessRatio at or above 1.01",
+			state:       "FULL",
+			expectedIDs: []uint32{4, 5, 6},
+		},
+		{
+			name:        "unknown value returns everything",
+			state:       "INVALID",
+			expectedIDs: []uint32{1, 2, 3, 4, 5, 6},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterMetricsByVolumeState(metrics, tt.state)
+			if len(result) != len(tt.expectedIDs) {
+				t.Fatalf("expected %d metrics, got %d", len(tt.expectedIDs), len(result))
+			}
+			for i, m := range result {
+				if m.VolumeID != tt.expectedIDs[i] {
+					t.Errorf("result[%d].VolumeID = %d, want %d", i, m.VolumeID, tt.expectedIDs[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFilterMetricsByVolumeState_NilElement(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		nil,
+		{VolumeID: 1, FullnessRatio: 0.5},
+		nil,
+		{VolumeID: 2, FullnessRatio: 1.5},
+	}
+	result := filterMetricsByVolumeState(metrics, "ACTIVE")
+	if len(result) != 1 || result[0].VolumeID != 1 {
+		t.Fatalf("expected [vol 1] for ACTIVE with nil elements, got %d results", len(result))
+	}
+	result = filterMetricsByVolumeState(metrics, "FULL")
+	if len(result) != 1 || result[0].VolumeID != 2 {
+		t.Fatalf("expected [vol 2] for FULL with nil elements, got %d results", len(result))
+	}
+}
+
+func TestFilterMetricsByVolumeState_EmptyInput(t *testing.T) {
+	result := filterMetricsByVolumeState(nil, "ACTIVE")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 metrics for nil input, got %d", len(result))
+	}
+
+	result = filterMetricsByVolumeState([]*workertypes.VolumeHealthMetrics{}, "FULL")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 metrics for empty input, got %d", len(result))
+	}
+}
+
+func TestVolumeBalanceDescriptorHasVolumeStateField(t *testing.T) {
+	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
+	if descriptor == nil || descriptor.AdminConfigForm == nil {
+		t.Fatalf("expected admin config form in descriptor")
+	}
+	found := false
+	for _, section := range descriptor.AdminConfigForm.Sections {
+		for _, field := range section.Fields {
+			if field.Name == "volume_state" {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected volume_state field in admin config form")
+	}
+	defaultVal, ok := descriptor.AdminConfigForm.DefaultValues["volume_state"]
+	if !ok {
+		t.Fatalf("expected volume_state default value")
+	}
+	if defaultVal.GetStringValue() != "ALL" {
+		t.Fatalf("expected volume_state default 'ALL', got %q", defaultVal.GetStringValue())
+	}
+}
+
 func workerConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
 	if form == nil {
 		return false
