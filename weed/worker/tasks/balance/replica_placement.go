@@ -28,10 +28,18 @@ func IsGoodMove(rp *super_block.ReplicaPlacement, existingReplicas []types.Repli
 
 	// Build the replica set after the move: remove source, add target
 	afterMove := make([]types.ReplicaLocation, 0, len(existingReplicas))
+	sourceFound := false
 	for _, r := range existingReplicas {
-		if r.NodeID != sourceNodeID {
+		if r.NodeID == sourceNodeID {
+			sourceFound = true
+		} else {
 			afterMove = append(afterMove, r)
 		}
+	}
+	if !sourceFound {
+		// Source not in replica list — cluster state may be inconsistent.
+		// Treat as unsafe to avoid incorrect placement decisions.
+		return false
 	}
 
 	return satisfyReplicaPlacement(rp, afterMove, target)
