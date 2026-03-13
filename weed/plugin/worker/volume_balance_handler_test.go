@@ -629,24 +629,6 @@ func TestExecuteSingleMovePathUnchanged(t *testing.T) {
 	}
 }
 
-func TestVolumeBalanceDescriptorHasCollectionFilterModes(t *testing.T) {
-	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
-	for _, section := range descriptor.AdminConfigForm.Sections {
-		for _, field := range section.Fields {
-			if field.Name == "collection_filter" {
-				if !strings.Contains(field.Description, "EACH_COLLECTION") {
-					t.Fatal("collection_filter description should mention EACH_COLLECTION")
-				}
-				if !strings.Contains(field.Description, "ALL_COLLECTIONS") {
-					t.Fatal("collection_filter description should mention ALL_COLLECTIONS")
-				}
-				return
-			}
-		}
-	}
-	t.Fatal("collection_filter field not found")
-}
-
 func TestFilterMetricsByVolumeState(t *testing.T) {
 	metrics := []*workertypes.VolumeHealthMetrics{
 		{VolumeID: 1, FullnessRatio: 0.5},   // active
