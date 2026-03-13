@@ -83,10 +83,9 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		startTime := time.Now()
 		objectLoc := MapFullPathToRemoteStorageLocation(mountDir, remoteLoc, p)
 
-		// No overall timeout: individual SDK operations (S3, GCS, Azure) have
-		// their own per-request timeouts and retry policies. A blanket timeout
-		// here would cut off large directory listings mid-operation.
-		persistCtx := context.WithValue(context.Background(), lazyListContextKey{}, true)
+		// Decouple from the caller's cancellation/deadline while preserving
+		// trace/span values for distributed tracing.
+		persistCtx := context.WithValue(context.WithoutCancel(ctx), lazyListContextKey{}, true)
 		persistCtx = context.WithValue(persistCtx, lazyFetchContextKey{}, true)
 
 		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
