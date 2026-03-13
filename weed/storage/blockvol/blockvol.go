@@ -791,6 +791,69 @@ func (v *BlockVol) Status() BlockVolumeStatus {
 }
 
 
+// WALStatus is a point-in-time snapshot of WAL pressure and admission metrics.
+type WALStatus struct {
+	UsedFraction        float64 // current WAL usage 0.0–1.0
+	PressureState       string  // "normal", "soft", "hard"
+	SoftWatermark       float64 // configured soft threshold
+	HardWatermark       float64 // configured hard threshold
+	SoftAdmitTotal      uint64  // soft watermark throttle events
+	HardAdmitTotal      uint64  // hard watermark block events
+	TimeoutTotal        uint64  // ErrWALFull timeouts
+	AdmitWaitTotalSec   float64 // cumulative wait time in Acquire (seconds)
+	SoftPressureWaitSec float64 // cumulative writer wait in soft zone (seconds)
+	HardPressureWaitSec float64 // cumulative writer wait in hard zone (seconds)
+}
+
+// WALStatus returns a point-in-time snapshot of WAL pressure state and admission metrics.
+func (v *BlockVol) WALStatus() WALStatus {
+	ws := WALStatus{
+		UsedFraction:  v.WALUsedFraction(),
+		PressureState: "normal",
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+	}
+	if v.walAdmission != nil {
+		ws.PressureState = v.walAdmission.PressureState()
+		ws.SoftWatermark = v.walAdmission.SoftMark()
+		ws.HardWatermark = v.walAdmission.HardMark()
+		ws.SoftPressureWaitSec = float64(v.walAdmission.SoftPressureWaitNs()) / 1e9
+		ws.HardPressureWaitSec = float64(v.walAdmission.HardPressureWaitNs()) / 1e9
+	}
+	if v.Metrics != nil {
+		ws.SoftAdmitTotal = v.Metrics.WALAdmitSoftTotal.Load()
+		ws.HardAdmitTotal = v.Metrics.WALAdmitHardTotal.Load()
+		ws.TimeoutTotal = v.Metrics.WALAdmitTimeoutTotal.Load()
+		_, sumNs := v.Metrics.WALAdmitWaitSnapshot()
+		ws.AdmitWaitTotalSec = float64(sumNs) / 1e9
+	}
+	return ws
+}
+
+// WALPressureState returns the current WAL pressure state ("normal", "soft", "hard").
+func (v *BlockVol) WALPressureState() string {
+	if v.walAdmission == nil {
+		return "normal"
+	}
+	return v.walAdmission.PressureState()
+}
+
+// WALSoftPressureWaitNs returns cumulative nanoseconds writers spent waiting in the soft zone.
+func (v *BlockVol) WALSoftPressureWaitNs() int64 {
+	if v.walAdmission == nil {
+		return 0
+	}
+	return v.walAdmission.SoftPressureWaitNs()
+}
+
+// WALHardPressureWaitNs returns cumulative nanoseconds writers spent waiting in the hard zone.
+func (v *BlockVol) WALHardPressureWaitNs() int64 {
+	if v.walAdmission == nil {
+		return 0
+	}
+	return v.walAdmission.HardPressureWaitNs()
+}
+
 // CheckpointLSN returns the last LSN flushed to the extent region.
 func (v *BlockVol) CheckpointLSN() uint64 {
 	if v.flusher != nil {

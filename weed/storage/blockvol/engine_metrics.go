@@ -40,6 +40,10 @@ type EngineMetrics struct {
 	// Durability (CP8-3-1)
 	DurabilityBarrierFailedTotal atomic.Uint64 // sync_all barrier failures
 	DurabilityQuorumLostTotal    atomic.Uint64 // sync_quorum quorum lost
+
+	// WAL Admission Histogram Observer (CP11A-3)
+	// Set by Prometheus layer to feed histogram buckets; nil = no-op.
+	WALAdmitWaitObserver func(float64)
 }
 
 // NewEngineMetrics creates an EngineMetrics instance.
@@ -84,6 +88,9 @@ func (m *EngineMetrics) RecordWALBarrier(dur time.Duration, failed bool) {
 func (m *EngineMetrics) RecordWALAdmit(waitDur time.Duration, soft, hard, timedOut bool) {
 	m.WALAdmitTotal.Add(1)
 	m.walAdmitWaitNs.record(waitDur.Nanoseconds())
+	if m.WALAdmitWaitObserver != nil {
+		m.WALAdmitWaitObserver(waitDur.Seconds())
+	}
 	if soft {
 		m.WALAdmitSoftTotal.Add(1)
 	}

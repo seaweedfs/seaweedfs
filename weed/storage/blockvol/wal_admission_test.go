@@ -531,3 +531,150 @@ func TestWALAdmission_Metrics_ClosedDuringHard(t *testing.T) {
 		t.Errorf("WALAdmitHardTotal = %d, want 1", m.WALAdmitHardTotal.Load())
 	}
 }
+
+// --- CP11A-3: PressureState + Pressure Wait Tracking + Observer Tests ---
+
+func TestWALAdmission_PressureState_Normal(t *testing.T) {
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.3 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	if s := a.PressureState(); s != "normal" {
+		t.Fatalf("PressureState() = %q, want normal", s)
+	}
+}
+
+func TestWALAdmission_PressureState_Soft(t *testing.T) {
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.8 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	if s := a.PressureState(); s != "soft" {
+		t.Fatalf("PressureState() = %q, want soft", s)
+	}
+}
+
+func TestWALAdmission_PressureState_Hard(t *testing.T) {
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.95 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	if s := a.PressureState(); s != "hard" {
+		t.Fatalf("PressureState() = %q, want hard", s)
+	}
+}
+
+func TestWALAdmission_SoftPressureWaitTracking(t *testing.T) {
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.8 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	// Use real sleep for a tiny amount so softPressureWaitNs > 0.
+	a.sleepFn = func(d time.Duration) { time.Sleep(1 * time.Millisecond) }
+
+	if err := a.Acquire(1 * time.Second); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	ns := a.SoftPressureWaitNs()
+	if ns <= 0 {
+		t.Fatalf("SoftPressureWaitNs() = %d, want > 0", ns)
+	}
+	if a.HardPressureWaitNs() != 0 {
+		t.Fatalf("HardPressureWaitNs() = %d, want 0", a.HardPressureWaitNs())
+	}
+}
+
+func TestWALAdmission_HardPressureWaitTracking(t *testing.T) {
+	var pressure atomic.Int64
+	pressure.Store(95)
+	var sleepCount atomic.Int64
+
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return float64(pressure.Load()) / 100.0 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	a.sleepFn = func(d time.Duration) {
+		time.Sleep(1 * time.Millisecond)
+		if sleepCount.Add(1) >= 3 {
+			pressure.Store(50)
+		}
+	}
+
+	if err := a.Acquire(1 * time.Second); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	ns := a.HardPressureWaitNs()
+	if ns <= 0 {
+		t.Fatalf("HardPressureWaitNs() = %d, want > 0", ns)
+	}
+}
+
+func TestWALAdmission_Metrics_WaitObserverCalled(t *testing.T) {
+	m := NewEngineMetrics()
+	var observed float64
+	m.WALAdmitWaitObserver = func(s float64) { observed = s }
+
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.7,
+		HardWatermark: 0.9,
+		WALUsedFn:     func() float64 { return 0.0 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+		Metrics:       m,
+	})
+
+	if err := a.Acquire(100 * time.Millisecond); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	a.Release()
+
+	if observed < 0 {
+		t.Fatalf("WALAdmitWaitObserver called with negative: %f", observed)
+	}
+	// Observer should have been called exactly once.
+	if m.WALAdmitTotal.Load() != 1 {
+		t.Fatalf("WALAdmitTotal = %d, want 1", m.WALAdmitTotal.Load())
+	}
+}
+
+func TestWALAdmission_ThresholdAccessors(t *testing.T) {
+	a := NewWALAdmission(WALAdmissionConfig{
+		MaxConcurrent: 16,
+		SoftWatermark: 0.65,
+		HardWatermark: 0.85,
+		WALUsedFn:     func() float64 { return 0.0 },
+		NotifyFn:      func() {},
+		ClosedFn:      func() bool { return false },
+	})
+	if a.SoftMark() != 0.65 {
+		t.Fatalf("SoftMark() = %f, want 0.65", a.SoftMark())
+	}
+	if a.HardMark() != 0.85 {
+		t.Fatalf("HardMark() = %f, want 0.85", a.HardMark())
+	}
+}

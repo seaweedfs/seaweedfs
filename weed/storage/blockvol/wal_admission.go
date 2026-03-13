@@ -1,6 +1,7 @@
 package blockvol
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,10 @@ type WALAdmission struct {
 	sleepFn func(time.Duration)
 
 	metrics *EngineMetrics // optional; if nil, no metrics recorded
+
+	// Pressure wait tracking (CP11A-3): cumulative ns writers spent waiting.
+	softPressureWaitNs atomic.Int64
+	hardPressureWaitNs atomic.Int64
 }
 
 // WALAdmissionConfig holds parameters for WALAdmission construction.
@@ -57,6 +62,31 @@ func NewWALAdmission(cfg WALAdmissionConfig) *WALAdmission {
 	}
 }
 
+// PressureState returns the current WAL pressure state:
+// "hard" if usage >= hard watermark, "soft" if >= soft watermark, "normal" otherwise.
+func (a *WALAdmission) PressureState() string {
+	used := a.walUsed()
+	if used >= a.hardMark {
+		return "hard"
+	}
+	if used >= a.softMark {
+		return "soft"
+	}
+	return "normal"
+}
+
+// SoftPressureWaitNs returns cumulative nanoseconds writers spent waiting in the soft pressure zone.
+func (a *WALAdmission) SoftPressureWaitNs() int64 { return a.softPressureWaitNs.Load() }
+
+// HardPressureWaitNs returns cumulative nanoseconds writers spent waiting in the hard pressure zone.
+func (a *WALAdmission) HardPressureWaitNs() int64 { return a.hardPressureWaitNs.Load() }
+
+// SoftMark returns the configured soft watermark threshold.
+func (a *WALAdmission) SoftMark() float64 { return a.softMark }
+
+// HardMark returns the configured hard watermark threshold.
+func (a *WALAdmission) HardMark() float64 { return a.hardMark }
+
 // Acquire blocks until a write slot is available or the deadline expires.
 // The timeout covers both the watermark wait and semaphore acquisition.
 // Returns ErrWALFull on timeout, ErrVolumeClosed if the volume closes.
@@ -73,20 +103,24 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 	if pressure >= a.hardMark {
 		hitHard = true
 		a.notifyFn()
+		hardStart := time.Now()
 		for a.walUsed() >= a.hardMark {
 			if a.closedFn() {
+				a.hardPressureWaitNs.Add(time.Since(hardStart).Nanoseconds())
 				a.recordAdmit(start, hitSoft, hitHard, false)
 				return ErrVolumeClosed
 			}
 			a.notifyFn()
 			select {
 			case <-deadline.C:
+				a.hardPressureWaitNs.Add(time.Since(hardStart).Nanoseconds())
 				a.recordAdmit(start, hitSoft, hitHard, true)
 				return ErrWALFull
 			default:
 			}
 			a.sleepFn(2 * time.Millisecond)
 		}
+		a.hardPressureWaitNs.Add(time.Since(hardStart).Nanoseconds())
 		// Pressure dropped — fall through to semaphore acquisition.
 	} else if pressure >= a.softMark {
 		// Soft watermark: small delay to desynchronize herd.
@@ -99,7 +133,9 @@ func (a *WALAdmission) Acquire(timeout time.Duration) error {
 		// Scale: softMark→0ms, hardMark→5ms.
 		delay := time.Duration(scale * 5 * float64(time.Millisecond))
 		if delay > 0 {
+			softStart := time.Now()
 			a.sleepFn(delay)
+			a.softPressureWaitNs.Add(time.Since(softStart).Nanoseconds())
 		}
 	}
 

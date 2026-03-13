@@ -160,6 +160,34 @@ func newMetricsAdapter(inner iscsi.BlockDevice, vol *blockvol.BlockVol, reg prom
 		Name: "wal_admit_wait_seconds_total", Help: "Total time spent waiting in WAL admission (seconds)",
 	}, func() float64 { _, s := em.WALAdmitWaitSnapshot(); return float64(s) / 1e9 }))
 
+	// WAL Admission Histogram (CP11A-3)
+	walAdmitWaitHist := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name:    "wal_admit_wait_seconds",
+		Help:    "Distribution of WAL admission wait times in seconds",
+		Buckets: []float64{0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0},
+	})
+	reg.MustRegister(walAdmitWaitHist)
+	em.WALAdmitWaitObserver = walAdmitWaitHist.Observe
+
+	// WAL Pressure State gauge (CP11A-3): 0=normal, 1=soft, 2=hard
+	reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_pressure_state", Help: "WAL pressure state (0=normal, 1=soft, 2=hard)",
+	}, gs.walPressureState))
+
+	// WAL Pressure Wait counters (CP11A-3)
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_soft_pressure_wait_seconds_total",
+		Help: "Cumulative time writers spent waiting in the soft pressure zone (not wall-clock zone occupancy)",
+	}, gs.walSoftPressureWaitSeconds))
+	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "seaweedfs", Subsystem: "blockvol",
+		Name: "wal_hard_pressure_wait_seconds_total",
+		Help: "Cumulative time writers spent waiting in the hard pressure zone (not wall-clock zone occupancy)",
+	}, gs.walHardPressureWaitSeconds))
+
 	// Scrub
 	reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Namespace: "seaweedfs", Subsystem: "blockvol",
@@ -264,4 +292,23 @@ func (gs *gaugeSource) snapshotCount() float64 {
 
 func (gs *gaugeSource) checkpointLSN() float64 {
 	return float64(gs.vol.CheckpointLSN())
+}
+
+func (gs *gaugeSource) walPressureState() float64 {
+	switch gs.vol.WALPressureState() {
+	case "soft":
+		return 1
+	case "hard":
+		return 2
+	default:
+		return 0
+	}
+}
+
+func (gs *gaugeSource) walSoftPressureWaitSeconds() float64 {
+	return float64(gs.vol.WALSoftPressureWaitNs()) / 1e9
+}
+
+func (gs *gaugeSource) walHardPressureWaitSeconds() float64 {
+	return float64(gs.vol.WALHardPressureWaitNs()) / 1e9
 }

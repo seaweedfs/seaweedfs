@@ -65,14 +65,21 @@ type resizeRequest struct {
 
 // statusResponse is the JSON body for GET /status.
 type statusResponse struct {
-	Path          string `json:"path"`
-	Epoch         uint64 `json:"epoch"`
-	Role          string `json:"role"`
-	WALHeadLSN    uint64 `json:"wal_head_lsn"`
-	CheckpointLSN uint64 `json:"checkpoint_lsn"`
-	HasLease      bool   `json:"has_lease"`
-	Healthy       bool   `json:"healthy"`
-	VolumeSize    uint64 `json:"volume_size"`
+	Path              string  `json:"path"`
+	Epoch             uint64  `json:"epoch"`
+	Role              string  `json:"role"`
+	WALHeadLSN        uint64  `json:"wal_head_lsn"`
+	CheckpointLSN     uint64  `json:"checkpoint_lsn"`
+	HasLease          bool    `json:"has_lease"`
+	Healthy           bool    `json:"healthy"`
+	VolumeSize        uint64  `json:"volume_size"`
+	WALUsedFraction   float64 `json:"wal_used_fraction"`
+	WALPressureState  string  `json:"wal_pressure_state"`
+	WALSoftWatermark  float64 `json:"wal_soft_watermark"`
+	WALHardWatermark  float64 `json:"wal_hard_watermark"`
+	WALAdmitSoftTotal uint64  `json:"wal_admit_soft_total"`
+	WALAdmitHardTotal uint64  `json:"wal_admit_hard_total"`
+	WALTimeoutTotal   uint64  `json:"wal_admit_timeout_total"`
 }
 
 const maxValidRole = uint32(blockvol.RoleDraining)
@@ -149,14 +156,22 @@ func (a *adminServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	st := a.vol.Status()
 	info := a.vol.Info()
+	ws := a.vol.WALStatus()
 	resp := statusResponse{
-		Epoch:         st.Epoch,
-		Role:          st.Role.String(),
-		WALHeadLSN:    st.WALHeadLSN,
-		CheckpointLSN: st.CheckpointLSN,
-		HasLease:      st.HasLease,
-		Healthy:       info.Healthy,
-		VolumeSize:    info.VolumeSize,
+		Epoch:             st.Epoch,
+		Role:              st.Role.String(),
+		WALHeadLSN:        st.WALHeadLSN,
+		CheckpointLSN:     st.CheckpointLSN,
+		HasLease:          st.HasLease,
+		Healthy:           info.Healthy,
+		VolumeSize:        info.VolumeSize,
+		WALUsedFraction:   ws.UsedFraction,
+		WALPressureState:  ws.PressureState,
+		WALSoftWatermark:  ws.SoftWatermark,
+		WALHardWatermark:  ws.HardWatermark,
+		WALAdmitSoftTotal: ws.SoftAdmitTotal,
+		WALAdmitHardTotal: ws.HardAdmitTotal,
+		WALTimeoutTotal:   ws.TimeoutTotal,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
