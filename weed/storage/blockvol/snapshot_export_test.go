@@ -333,6 +333,130 @@ func TestImportSnapshot_ChecksumMismatch(t *testing.T) {
 	}
 }
 
+func TestImportSnapshot_DoubleImportReject(t *testing.T) {
+	// BUG-CP11A4-2: After import, nextLSN stays at 1 because import bypasses WAL.
+	// A second import without AllowOverwrite must still be rejected via FlagImported.
+	srcVol := createExportTestVol(t, 64*1024)
+	pattern := make([]byte, 4096)
+	pattern[0] = 0xAA
+	if err := srcVol.WriteLBA(0, pattern); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	var buf bytes.Buffer
+	manifest, err := srcVol.ExportSnapshot(context.Background(), &buf, ExportOptions{})
+	if err != nil {
+		t.Fatalf("ExportSnapshot: %v", err)
+	}
+	exportedData := buf.Bytes()
+
+	dstVol := createExportTestVol(t, 64*1024)
+	// First import succeeds.
+	err = dstVol.ImportSnapshot(context.Background(), manifest, bytes.NewReader(exportedData), ImportOptions{})
+	if err != nil {
+		t.Fatalf("first ImportSnapshot: %v", err)
+	}
+
+	// Second import without AllowOverwrite must fail.
+	err = dstVol.ImportSnapshot(context.Background(), manifest, bytes.NewReader(exportedData), ImportOptions{})
+	if err == nil {
+		t.Fatal("expected non-empty error on double import")
+	}
+
+	// Second import with AllowOverwrite must succeed.
+	err = dstVol.ImportSnapshot(context.Background(), manifest, bytes.NewReader(exportedData), ImportOptions{AllowOverwrite: true})
+	if err != nil {
+		t.Fatalf("AllowOverwrite import: %v", err)
+	}
+}
+
+func TestExportSnapshot_ClosedVolume(t *testing.T) {
+	// BUG-CP11A4-1: ExportSnapshot/ImportSnapshot must reject closed volumes via beginOp().
+	vol := createExportTestVol(t, 64*1024)
+	vol.Close()
+
+	var buf bytes.Buffer
+	_, err := vol.ExportSnapshot(context.Background(), &buf, ExportOptions{})
+	if err != ErrVolumeClosed {
+		t.Fatalf("ExportSnapshot on closed vol: got %v, want ErrVolumeClosed", err)
+	}
+}
+
+func TestImportSnapshot_ClosedVolume(t *testing.T) {
+	// BUG-CP11A4-1: ImportSnapshot must reject closed volumes.
+	srcVol := createExportTestVol(t, 64*1024)
+	var buf bytes.Buffer
+	manifest, err := srcVol.ExportSnapshot(context.Background(), &buf, ExportOptions{})
+	if err != nil {
+		t.Fatalf("ExportSnapshot: %v", err)
+	}
+
+	dstVol := createExportTestVol(t, 64*1024)
+	dstVol.Close()
+
+	err = dstVol.ImportSnapshot(context.Background(), manifest, &buf, ImportOptions{})
+	if err != ErrVolumeClosed {
+		t.Fatalf("ImportSnapshot on closed vol: got %v, want ErrVolumeClosed", err)
+	}
+}
+
+func TestImportSnapshot_ActiveSnapshotsReject(t *testing.T) {
+	// BUG-CP11A4-1: Import with active snapshots would corrupt non-CoW'd snapshot reads.
+	srcVol := createExportTestVol(t, 64*1024)
+	if err := srcVol.WriteLBA(0, make([]byte, 4096)); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	var buf bytes.Buffer
+	manifest, err := srcVol.ExportSnapshot(context.Background(), &buf, ExportOptions{})
+	if err != nil {
+		t.Fatalf("ExportSnapshot: %v", err)
+	}
+
+	// Target with an active snapshot.
+	dstVol := createExportTestVol(t, 64*1024)
+	if err := dstVol.CreateSnapshot(1); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	err = dstVol.ImportSnapshot(context.Background(), manifest, &buf, ImportOptions{AllowOverwrite: true})
+	if err == nil {
+		t.Fatal("expected ErrImportActiveSnapshots")
+	}
+	if err != ErrImportActiveSnapshots {
+		t.Fatalf("got %v, want ErrImportActiveSnapshots", err)
+	}
+
+	// After deleting the snapshot, import should succeed.
+	if err := dstVol.DeleteSnapshot(1); err != nil {
+		t.Fatalf("DeleteSnapshot: %v", err)
+	}
+	err = dstVol.ImportSnapshot(context.Background(), manifest, bytes.NewReader(buf.Bytes()), ImportOptions{AllowOverwrite: true})
+	if err != nil {
+		t.Fatalf("ImportSnapshot after snapshot delete: %v", err)
+	}
+}
+
+func TestExportSnapshot_UniqueTempSnapIDs(t *testing.T) {
+	// BUG-CP11A4-3: Each auto-export must use a unique temp snapshot ID.
+	vol := createExportTestVol(t, 64*1024)
+
+	var buf1, buf2 bytes.Buffer
+	_, err := vol.ExportSnapshot(context.Background(), &buf1, ExportOptions{})
+	if err != nil {
+		t.Fatalf("first export: %v", err)
+	}
+	_, err = vol.ExportSnapshot(context.Background(), &buf2, ExportOptions{})
+	if err != nil {
+		t.Fatalf("second export: %v", err)
+	}
+
+	// Both exports should succeed without snapshot ID collision.
+	if buf1.Len() != buf2.Len() {
+		t.Errorf("export sizes differ: %d vs %d", buf1.Len(), buf2.Len())
+	}
+}
+
 // createExportTestVol creates a temporary BlockVol with a specified size for export tests.
 func createExportTestVol(t *testing.T, volumeSize uint64) *BlockVol {
 	t.Helper()

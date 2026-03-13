@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,8 +18,15 @@ const (
 	ArtifactLayoutSingleFile = "single-file"
 	ExportToolVersion        = "sw-block-cp11a4"
 	exportChunkBlocks        = 256 // read 256 blocks per chunk (1MB at 4KB block size)
-	exportTempSnapID         = uint32(0xFFFFFFFE)
+	exportTempSnapBase       = uint32(0xFFFF0000) // base for temp snapshot IDs
 )
+
+// exportTempSnapSeq generates unique temp snapshot IDs per export to avoid collisions.
+var exportTempSnapSeq atomic.Uint32
+
+// FlagImported is set in Superblock.Flags after a successful import.
+// Used to detect non-empty volumes even when nextLSN == 1 (import bypasses WAL).
+const FlagImported uint16 = 1 << 0
 
 // SnapshotArtifactManifest describes a snapshot export artifact.
 type SnapshotArtifactManifest struct {
@@ -46,6 +54,7 @@ var (
 	ErrImportBlockSizeMismatch    = errors.New("blockvol: target block size does not match manifest")
 	ErrImportTargetNotEmpty       = errors.New("blockvol: target volume is not empty (use AllowOverwrite)")
 	ErrImportDataShort            = errors.New("blockvol: import data shorter than manifest declares")
+	ErrImportActiveSnapshots      = errors.New("blockvol: cannot import with active snapshots (extent would be overwritten)")
 )
 
 // MarshalManifest encodes a manifest as indented JSON.
@@ -102,6 +111,11 @@ type ExportOptions struct {
 // If opts.SnapshotID is > 0, the existing snapshot is used (not deleted).
 // The full logical volume image is streamed to w with SHA-256 computed inline.
 func (v *BlockVol) ExportSnapshot(ctx context.Context, w io.Writer, opts ExportOptions) (*SnapshotArtifactManifest, error) {
+	if err := v.beginOp(); err != nil {
+		return nil, err
+	}
+	defer v.endOp()
+
 	if v.Profile() != ProfileSingle {
 		return nil, ErrUnsupportedProfileExport
 	}
@@ -111,7 +125,9 @@ func (v *BlockVol) ExportSnapshot(ctx context.Context, w io.Writer, opts ExportO
 	deleteSnap := false
 
 	if snapID == 0 {
-		snapID = exportTempSnapID
+		// Generate unique temp snapshot ID to avoid collisions with concurrent exports
+		// and user-created snapshots.
+		snapID = exportTempSnapBase + exportTempSnapSeq.Add(1)
 		if err := v.CreateSnapshot(snapID); err != nil {
 			return nil, fmt.Errorf("blockvol: export create temp snapshot: %w", err)
 		}
@@ -190,7 +206,21 @@ type ImportOptions struct {
 // The volume must match the manifest's size and block size.
 // Data is read from r and written directly to the extent region, bypassing the WAL.
 // SHA-256 is verified against the manifest after the full read.
+//
+// IMPORTANT: Import is a destructive, non-atomic operation. If the import fails
+// mid-stream (reader error, context cancellation), the extent region will contain
+// a mix of old and new data. The volume remains operational but its data is
+// inconsistent. On failure, the volume should be discarded or re-imported with
+// AllowOverwrite. A future enhancement may add pre-import snapshot for rollback.
+//
+// Active snapshots are rejected because import overwrites the extent region that
+// non-CoW'd snapshot blocks read from, which would silently corrupt snapshot reads.
 func (v *BlockVol) ImportSnapshot(ctx context.Context, manifest *SnapshotArtifactManifest, r io.Reader, opts ImportOptions) error {
+	if err := v.beginOp(); err != nil {
+		return err
+	}
+	defer v.endOp()
+
 	if err := ValidateManifest(manifest); err != nil {
 		return err
 	}
@@ -203,8 +233,19 @@ func (v *BlockVol) ImportSnapshot(ctx context.Context, manifest *SnapshotArtifac
 		return fmt.Errorf("%w: target=%d manifest=%d", ErrImportBlockSizeMismatch, info.BlockSize, manifest.SourceBlockSize)
 	}
 
-	// Empty check: nextLSN > 1 means the volume has been written to.
-	if !opts.AllowOverwrite && v.nextLSN.Load() > 1 {
+	// Reject import if active snapshots exist. Import overwrites the extent
+	// region directly; non-CoW'd snapshot blocks read from extent and would
+	// return import data instead of snapshot-time data (BUG-CP11A4-1).
+	v.snapMu.RLock()
+	snapCount := len(v.snapshots)
+	v.snapMu.RUnlock()
+	if snapCount > 0 {
+		return ErrImportActiveSnapshots
+	}
+
+	// Empty check: nextLSN > 1 means WAL writes occurred; FlagImported means a
+	// previous import wrote directly to extent (bypassing WAL, so nextLSN stays 1).
+	if !opts.AllowOverwrite && (v.nextLSN.Load() > 1 || v.super.Flags&FlagImported != 0) {
 		return ErrImportTargetNotEmpty
 	}
 
@@ -273,6 +314,7 @@ func (v *BlockVol) ImportSnapshot(ctx context.Context, manifest *SnapshotArtifac
 	v.wal.Reset()
 	v.super.WALHead = 0
 	v.super.WALTail = 0
+	v.super.Flags |= FlagImported
 	if err := v.persistSuperblock(); err != nil {
 		return fmt.Errorf("blockvol: import persist superblock: %w", err)
 	}

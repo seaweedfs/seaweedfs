@@ -65,6 +65,8 @@ func newS3Session(endpoint, accessKey, secretKey, region string) (*session.Sessi
 	}
 	if accessKey != "" && secretKey != "" {
 		cfg.Credentials = credentials.NewStaticCredentials(accessKey, secretKey, "")
+	} else {
+		cfg.Credentials = credentials.AnonymousCredentials
 	}
 	return session.NewSession(cfg)
 }
@@ -217,7 +219,9 @@ func (a *adminServer) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer dataResp.Body.Close()
 
-	// Import.
+	// Import. WARNING: import is destructive and non-atomic. If it fails mid-stream
+	// (network error, context cancellation), the volume has mixed old+new data and
+	// should be discarded or re-imported with allow_overwrite=true.
 	err = a.vol.ImportSnapshot(r.Context(), manifest, dataResp.Body, blockvol.ImportOptions{
 		AllowOverwrite: req.AllowOverwrite,
 	})
