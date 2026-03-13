@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -87,8 +88,17 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
 			for _, dc := range topologyInfo.DataCenterInfos {
+				if balanceConfig.DataCenterFilter != "" && dc.Id != balanceConfig.DataCenterFilter {
+					continue
+				}
 				for _, rack := range dc.RackInfos {
+					if balanceConfig.RackFilter != "" && !containsInCSV(balanceConfig.RackFilter, rack.Id) {
+						continue
+					}
 					for _, node := range rack.DataNodeInfos {
+						if balanceConfig.NodeFilter != "" && !containsInCSV(balanceConfig.NodeFilter, node.Id) {
+							continue
+						}
 						for diskTypeName, diskInfo := range node.DiskInfos {
 							if diskTypeName == diskType {
 								serverVolumeCounts[node.Id] = 0
@@ -586,4 +596,14 @@ func calculateBalanceScore(disk *topology.DiskInfo, sourceRack, sourceDC string,
 	}
 
 	return score
+}
+
+// containsInCSV checks if value is present in a comma-separated string.
+func containsInCSV(csv, value string) bool {
+	for _, item := range strings.Split(csv, ",") {
+		if strings.TrimSpace(item) == value {
+			return true
+		}
+	}
+	return false
 }

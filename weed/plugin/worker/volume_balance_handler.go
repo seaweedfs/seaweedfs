@@ -90,11 +90,44 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
+						{
+							Name:        "data_center_filter",
+							Label:       "Data Center Filter",
+							Description: "Only balance volumes in this data center. Leave empty for all data centers.",
+							Placeholder: "all data centers",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "rack_filter",
+							Label:       "Rack Filter",
+							Description: "Only balance volumes on these racks (comma-separated). Leave empty for all racks.",
+							Placeholder: "all racks",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "node_filter",
+							Label:       "Node Filter",
+							Description: "Only balance volumes on these nodes (comma-separated server IDs). Leave empty for all nodes.",
+							Placeholder: "all nodes",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"collection_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"data_center_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"rack_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"node_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
@@ -265,6 +298,18 @@ func (h *VolumeBalanceHandler) Detect(
 	if err != nil {
 		return err
 	}
+
+	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+
+	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
+		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
+	}
+
+	workerConfig.TaskConfig.DataCenterFilter = dataCenterFilter
+	workerConfig.TaskConfig.RackFilter = rackFilter
+	workerConfig.TaskConfig.NodeFilter = nodeFilter
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
 	maxResults := int(request.MaxResults)
@@ -979,6 +1024,42 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		MaxConcurrentMoves: maxConcurrentMoves,
 		BatchSize:          batchSize,
 	}
+}
+
+func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilter, rackFilter, nodeFilter string) []*workertypes.VolumeHealthMetrics {
+	var rackSet, nodeSet map[string]bool
+	if rackFilter != "" {
+		rackSet = parseCSVSet(rackFilter)
+	}
+	if nodeFilter != "" {
+		nodeSet = parseCSVSet(nodeFilter)
+	}
+
+	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
+	for _, m := range metrics {
+		if dcFilter != "" && m.DataCenter != dcFilter {
+			continue
+		}
+		if rackSet != nil && !rackSet[m.Rack] {
+			continue
+		}
+		if nodeSet != nil && !nodeSet[m.Server] {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
+}
+
+func parseCSVSet(csv string) map[string]bool {
+	set := make(map[string]bool)
+	for _, item := range strings.Split(csv, ",") {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			set[trimmed] = true
+		}
+	}
+	return set
 }
 
 func buildVolumeBalanceProposal(

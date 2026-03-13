@@ -629,6 +629,68 @@ func TestExecuteSingleMovePathUnchanged(t *testing.T) {
 	}
 }
 
+func TestVolumeBalanceDescriptorHasLocationFilters(t *testing.T) {
+	descriptor := NewVolumeBalanceHandler(nil).Descriptor()
+	for _, name := range []string{"data_center_filter", "rack_filter", "node_filter"} {
+		if !adminConfigFormHasField(descriptor.AdminConfigForm, name) {
+			t.Fatalf("expected %s in admin config form", name)
+		}
+	}
+}
+
+func adminConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
+	if form == nil {
+		return false
+	}
+	for _, section := range form.Sections {
+		for _, field := range section.Fields {
+			if field != nil && field.Name == fieldName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestFilterMetricsByLocation(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{VolumeID: 1, Server: "node-a", DataCenter: "dc1", Rack: "rack1"},
+		{VolumeID: 2, Server: "node-b", DataCenter: "dc1", Rack: "rack2"},
+		{VolumeID: 3, Server: "node-c", DataCenter: "dc2", Rack: "rack1"},
+		{VolumeID: 4, Server: "node-d", DataCenter: "dc2", Rack: "rack3"},
+	}
+
+	// Filter by DC
+	filtered := filterMetricsByLocation(metrics, "dc1", "", "")
+	if len(filtered) != 2 {
+		t.Fatalf("DC filter: expected 2, got %d", len(filtered))
+	}
+
+	// Filter by rack
+	filtered = filterMetricsByLocation(metrics, "", "rack1,rack2", "")
+	if len(filtered) != 3 {
+		t.Fatalf("rack filter: expected 3, got %d", len(filtered))
+	}
+
+	// Filter by node
+	filtered = filterMetricsByLocation(metrics, "", "", "node-a,node-c")
+	if len(filtered) != 2 {
+		t.Fatalf("node filter: expected 2, got %d", len(filtered))
+	}
+
+	// Combined DC + rack
+	filtered = filterMetricsByLocation(metrics, "dc2", "rack3", "")
+	if len(filtered) != 1 {
+		t.Fatalf("DC+rack filter: expected 1, got %d", len(filtered))
+	}
+
+	// Empty filters pass all
+	filtered = filterMetricsByLocation(metrics, "", "", "")
+	if len(filtered) != 4 {
+		t.Fatalf("no filter: expected 4, got %d", len(filtered))
+	}
+}
+
 func workerConfigFormHasField(form *plugin_pb.ConfigForm, fieldName string) bool {
 	if form == nil {
 		return false
