@@ -91,6 +91,18 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
 						{
+							Name:        "volume_state",
+							Label:       "Volume State Filter",
+							Description: "Filter volumes by state: ALL (default), ACTIVE (writable volumes below size limit), or FULL (read-only volumes above size limit).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
+							Options: []*plugin_pb.ConfigOption{
+								{Value: "ALL", Label: "All Volumes"},
+								{Value: "ACTIVE", Label: "Active (writable)"},
+								{Value: "FULL", Label: "Full (read-only)"},
+							},
+						},
+						{
 							Name:        "data_center_filter",
 							Label:       "Data Center Filter",
 							Description: "Only balance volumes in this data center. Leave empty for all data centers.",
@@ -120,6 +132,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"collection_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"volume_state": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "ALL"},
 				},
 				"data_center_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
@@ -298,6 +313,9 @@ func (h *VolumeBalanceHandler) Detect(
 	if err != nil {
 		return err
 	}
+
+	volumeState := strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", "ALL")))
+	metrics = filterMetricsByVolumeState(metrics, volumeState)
 
 	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
 	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
@@ -587,6 +605,39 @@ func emitVolumeBalanceDetectionDecisionTrace(
 	}
 
 	return nil
+}
+
+// filterMetricsByVolumeState filters volume metrics by state.
+// "ACTIVE" keeps volumes with FullnessRatio < 1.01 (writable, below size limit).
+// "FULL" keeps volumes with FullnessRatio >= 1.01 (read-only, above size limit).
+// "ALL" or any other value returns all metrics unfiltered.
+func filterMetricsByVolumeState(metrics []*workertypes.VolumeHealthMetrics, volumeState string) []*workertypes.VolumeHealthMetrics {
+	const fullnessThreshold = 1.01
+
+	var predicate func(m *workertypes.VolumeHealthMetrics) bool
+	switch volumeState {
+	case "ACTIVE":
+		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
+			return m.FullnessRatio < fullnessThreshold
+		}
+	case "FULL":
+		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
+			return m.FullnessRatio >= fullnessThreshold
+		}
+	default:
+		return metrics
+	}
+
+	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
+	for _, m := range metrics {
+		if m == nil {
+			continue
+		}
+		if predicate(m) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
 }
 
 func countBalanceDiskTypes(metrics []*workertypes.VolumeHealthMetrics) int {
