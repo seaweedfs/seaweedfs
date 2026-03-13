@@ -261,12 +261,15 @@ func (h *VolumeBalanceHandler) Detect(
 		masters = append(masters, request.ClusterContext.MasterGrpcAddresses...)
 	}
 
-	metrics, activeTopology, err := h.collectVolumeMetrics(ctx, masters, collectionFilter)
+	metrics, activeTopology, replicaMap, err := h.collectVolumeMetrics(ctx, masters, collectionFilter)
 	if err != nil {
 		return err
 	}
 
-	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
+	clusterInfo := &workertypes.ClusterInfo{
+		ActiveTopology:   activeTopology,
+		VolumeReplicaMap: replicaMap,
+	}
 	maxResults := int(request.MaxResults)
 	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
 	if err != nil {
@@ -926,10 +929,8 @@ func (h *VolumeBalanceHandler) collectVolumeMetrics(
 	ctx context.Context,
 	masterAddresses []string,
 	collectionFilter string,
-) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	// Reuse the same master topology fetch/build flow used by the vacuum handler.
-	helper := &VacuumHandler{grpcDialOption: h.grpcDialOption}
-	return helper.collectVolumeMetrics(ctx, masterAddresses, collectionFilter)
+) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, map[uint32][]workertypes.ReplicaLocation, error) {
+	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
 }
 
 func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volumeBalanceWorkerConfig {

@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -350,6 +351,39 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 		if err != nil {
 			glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)
 			return nil, ""
+		}
+	}
+
+	// Validate move against replica placement policy
+	if selectedVolume.ExpectedReplicas > 0 && clusterInfo.VolumeReplicaMap != nil {
+		rpBytes, rpErr := super_block.NewReplicaPlacementFromByte(byte(selectedVolume.ExpectedReplicas))
+		if rpErr == nil && rpBytes.HasReplication() {
+			replicas := clusterInfo.VolumeReplicaMap[selectedVolume.VolumeID]
+			target := types.ReplicaLocation{
+				DataCenter: destinationPlan.TargetDC,
+				Rack:       destinationPlan.TargetRack,
+				NodeID:     destinationPlan.TargetNode,
+			}
+			if !IsGoodMove(rpBytes, replicas, selectedVolume.Server, target) {
+				glog.V(1).Infof("BALANCE [%s]: Destination %s violates replica placement for volume %d (rp=%03d), falling back",
+					diskType, destinationPlan.TargetNode, selectedVolume.VolumeID, selectedVolume.ExpectedReplicas)
+				// Fall back to score-based planning
+				destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
+				if err != nil {
+					return nil, ""
+				}
+				// Validate fallback too
+				target = types.ReplicaLocation{
+					DataCenter: destinationPlan.TargetDC,
+					Rack:       destinationPlan.TargetRack,
+					NodeID:     destinationPlan.TargetNode,
+				}
+				if !IsGoodMove(rpBytes, replicas, selectedVolume.Server, target) {
+					glog.V(1).Infof("BALANCE [%s]: Fallback destination %s also violates replica placement for volume %d",
+						diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
+					return nil, ""
+				}
+			}
 		}
 	}
 

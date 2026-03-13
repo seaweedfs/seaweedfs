@@ -505,7 +505,8 @@ func (h *VacuumHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	return metrics, activeTopology, err
 }
 
 func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Config {
