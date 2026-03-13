@@ -226,6 +226,7 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, fileID string, offset,
 
 	var data []byte
 
+	var n int
 	if useTempFile && tempFilePath != "" {
 		// Zero-copy path: read from temp file (page cache)
 		glog.V(4).Infof("🔥 Using zero-copy temp file: %s", tempFilePath)
@@ -237,7 +238,7 @@ func (c *RDMAMountClient) ReadNeedle(ctx context.Context, fileID string, offset,
 		}
 		buffer := make([]byte, bufferSize)
 
-		n, err := c.readFromTempFile(tempFilePath, buffer)
+		n, err = c.readFromTempFile(tempFilePath, buffer)
 		if err != nil {
 			glog.V(2).Infof("Zero-copy failed, falling back to HTTP body: %v", err)
 			// Fall back to reading HTTP body
