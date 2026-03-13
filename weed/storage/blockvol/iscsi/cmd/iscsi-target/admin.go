@@ -111,6 +111,10 @@ func (a *adminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.handleResize(w, r)
 	case "/metrics":
 		a.handleMetrics(w, r)
+	case "/export":
+		a.handleExport(w, r)
+	case "/import":
+		a.handleImport(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -352,6 +356,8 @@ func startAdminServer(addr string, srv *adminServer) (net.Listener, error) {
 	mux.Handle("/snapshot", srv)
 	mux.Handle("/resize", srv)
 	mux.Handle("/metrics", srv)
+	mux.Handle("/export", srv)
+	mux.Handle("/import", srv)
 	// pprof handlers registered on DefaultServeMux by net/http/pprof import.
 	mux.Handle("/debug/pprof/", http.DefaultServeMux)
 	go func() {
