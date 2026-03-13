@@ -298,6 +298,9 @@ func (h *VolumeBalanceHandler) Detect(
 		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
 		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {
+			if m == nil {
+				continue
+			}
 			metricsByCollection[m.Collection] = append(metricsByCollection[m.Collection], m)
 		}
 		collections := make([]string, 0, len(metricsByCollection))
