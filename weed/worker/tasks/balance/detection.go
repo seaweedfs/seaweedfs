@@ -356,32 +356,43 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 
 	// Validate move against replica placement policy
 	if selectedVolume.ExpectedReplicas > 0 && clusterInfo.VolumeReplicaMap != nil {
-		rpBytes, rpErr := super_block.NewReplicaPlacementFromByte(byte(selectedVolume.ExpectedReplicas))
-		if rpErr == nil && rpBytes.HasReplication() {
-			replicas := clusterInfo.VolumeReplicaMap[selectedVolume.VolumeID]
-			target := types.ReplicaLocation{
-				DataCenter: destinationPlan.TargetDC,
-				Rack:       destinationPlan.TargetRack,
-				NodeID:     destinationPlan.TargetNode,
-			}
-			if !IsGoodMove(rpBytes, replicas, selectedVolume.Server, target) {
-				glog.V(1).Infof("BALANCE [%s]: Destination %s violates replica placement for volume %d (rp=%03d), falling back",
-					diskType, destinationPlan.TargetNode, selectedVolume.VolumeID, selectedVolume.ExpectedReplicas)
-				// Fall back to score-based planning
-				destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
-				if err != nil {
-					return nil, ""
-				}
-				// Validate fallback too
-				target = types.ReplicaLocation{
-					DataCenter: destinationPlan.TargetDC,
-					Rack:       destinationPlan.TargetRack,
-					NodeID:     destinationPlan.TargetNode,
-				}
-				if !IsGoodMove(rpBytes, replicas, selectedVolume.Server, target) {
-					glog.V(1).Infof("BALANCE [%s]: Fallback destination %s also violates replica placement for volume %d",
-						diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
-					return nil, ""
+		if selectedVolume.ExpectedReplicas < 0 || selectedVolume.ExpectedReplicas > 255 {
+			glog.V(1).Infof("BALANCE [%s]: Invalid ExpectedReplicas %d for volume %d, skipping placement validation",
+				diskType, selectedVolume.ExpectedReplicas, selectedVolume.VolumeID)
+		} else {
+			rpBytes, rpErr := super_block.NewReplicaPlacementFromByte(byte(selectedVolume.ExpectedReplicas))
+			if rpErr == nil && rpBytes.HasReplication() {
+				replicas := clusterInfo.VolumeReplicaMap[selectedVolume.VolumeID]
+				if len(replicas) == 0 {
+					glog.V(1).Infof("BALANCE [%s]: No replica locations found for volume %d, skipping placement validation",
+						diskType, selectedVolume.VolumeID)
+				} else {
+					validateMove := func(plan *topology.DestinationPlan) bool {
+						if plan == nil {
+							return false
+						}
+						target := types.ReplicaLocation{
+							DataCenter: plan.TargetDC,
+							Rack:       plan.TargetRack,
+							NodeID:     plan.TargetNode,
+						}
+						return IsGoodMove(rpBytes, replicas, selectedVolume.Server, target)
+					}
+
+					if !validateMove(destinationPlan) {
+						glog.V(1).Infof("BALANCE [%s]: Destination %s violates replica placement for volume %d (rp=%03d), falling back",
+							diskType, destinationPlan.TargetNode, selectedVolume.VolumeID, selectedVolume.ExpectedReplicas)
+						// Fall back to score-based planning
+						destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
+						if err != nil {
+							return nil, ""
+						}
+						if !validateMove(destinationPlan) {
+							glog.V(1).Infof("BALANCE [%s]: Fallback destination %s also violates replica placement for volume %d",
+								diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
+							return nil, ""
+						}
+					}
 				}
 			}
 		}
