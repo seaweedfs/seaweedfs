@@ -2,6 +2,7 @@ package pluginworker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -38,6 +39,11 @@ func collectVolumeMetricsFromMasters(
 
 		metrics, activeTopology, buildErr := buildVolumeMetrics(response, collectionFilter)
 		if buildErr != nil {
+			// Configuration errors (e.g. invalid regex) will fail on every master,
+			// so return immediately instead of masking them with retries.
+			if isConfigError(buildErr) {
+				return nil, nil, buildErr
+			}
 			glog.Warningf("Plugin worker failed to build metrics from master %s: %v", masterAddress, buildErr)
 			continue
 		}
@@ -99,7 +105,7 @@ func buildVolumeMetrics(
 		var err error
 		collectionRegex, err = regexp.Compile(trimmedFilter)
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)
+			return nil, nil, &configError{err: fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)}
 		}
 	}
 
@@ -155,6 +161,19 @@ func buildVolumeMetrics(
 	}
 
 	return metrics, activeTopology, nil
+}
+
+// configError wraps configuration errors that should not be retried across masters.
+type configError struct {
+	err error
+}
+
+func (e *configError) Error() string { return e.err.Error() }
+func (e *configError) Unwrap() error { return e.err }
+
+func isConfigError(err error) bool {
+	var ce *configError
+	return errors.As(err, &ce)
 }
 
 func masterAddressCandidates(address string) []string {

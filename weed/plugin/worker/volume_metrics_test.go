@@ -103,4 +103,7 @@ func TestBuildVolumeMetricsInvalidRegex(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid regex")
 	}
+	if !isConfigError(err) {
+		t.Fatalf("expected config error for invalid regex, got: %v", err)
+	}
 }
