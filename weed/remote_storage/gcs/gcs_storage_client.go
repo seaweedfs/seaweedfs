@@ -149,7 +149,7 @@ func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remot
 			if iterErr == iterator.Done {
 				return nil
 			}
-			return iterErr
+			return fmt.Errorf("list directory %s%s: %w", loc.Bucket, loc.Path, iterErr)
 		}
 
 		if objectAttr.Prefix != "" {
