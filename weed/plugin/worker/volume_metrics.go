@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"regexp"
+
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 )
@@ -93,7 +94,16 @@ func buildVolumeMetrics(
 		return nil, nil, err
 	}
 
-	patterns := wildcard.CompileWildcardMatchers(collectionFilter)
+	var collectionRegex *regexp.Regexp
+	trimmedFilter := strings.TrimSpace(collectionFilter)
+	if trimmedFilter != "" && trimmedFilter != "ALL_COLLECTIONS" && trimmedFilter != "EACH_COLLECTION" {
+		var err error
+		collectionRegex, err = regexp.Compile(trimmedFilter)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)
+		}
+	}
+
 	volumeSizeLimitBytes := uint64(response.VolumeSizeLimitMb) * 1024 * 1024
 	now := time.Now()
 	metrics := make([]*workertypes.VolumeHealthMetrics, 0, 256)
@@ -103,7 +113,7 @@ func buildVolumeMetrics(
 			for _, node := range rack.DataNodeInfos {
 				for diskType, diskInfo := range node.DiskInfos {
 					for _, volume := range diskInfo.VolumeInfos {
-						if !wildcard.MatchesAnyWildcard(patterns, volume.Collection) {
+						if collectionRegex != nil && !collectionRegex.MatchString(volume.Collection) {
 							continue
 						}
 

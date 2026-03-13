@@ -85,8 +85,8 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only detect balance opportunities in this collection when set.",
-							Placeholder: "all collections",
+							Description: "Filter collections for balance detection. Use ALL_COLLECTIONS (default) to treat all volumes as one pool, EACH_COLLECTION to run detection separately per collection, or a regex pattern to match specific collections.",
+							Placeholder: "ALL_COLLECTIONS",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -268,9 +268,51 @@ func (h *VolumeBalanceHandler) Detect(
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
 	maxResults := int(request.MaxResults)
-	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
-	if err != nil {
-		return err
+
+	var results []*workertypes.TaskDetectionResult
+	var hasMore bool
+
+	if collectionFilter == "EACH_COLLECTION" {
+		// Extract distinct collection names
+		collectionSet := make(map[string]struct{})
+		for _, m := range metrics {
+			collectionSet[m.Collection] = struct{}{}
+		}
+		collections := make([]string, 0, len(collectionSet))
+		for c := range collectionSet {
+			collections = append(collections, c)
+		}
+		sort.Strings(collections)
+
+		budget := maxResults
+		for _, collection := range collections {
+			if budget <= 0 {
+				hasMore = true
+				break
+			}
+			// Filter metrics to only this collection's volumes
+			collectionMetrics := make([]*workertypes.VolumeHealthMetrics, 0)
+			for _, m := range metrics {
+				if m.Collection == collection {
+					collectionMetrics = append(collectionMetrics, m)
+				}
+			}
+			perResults, perHasMore, perErr := balancetask.Detection(collectionMetrics, clusterInfo, workerConfig.TaskConfig, budget)
+			if perErr != nil {
+				return perErr
+			}
+			results = append(results, perResults...)
+			budget -= len(perResults)
+			if perHasMore {
+				hasMore = true
+			}
+		}
+	} else {
+		var err error
+		results, hasMore, err = balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+		if err != nil {
+			return err
+		}
 	}
 
 	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
