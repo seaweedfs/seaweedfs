@@ -302,7 +302,7 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 		// and the destination selection stay in sync. Without this, the topology's
 		// LoadCount-based scoring can diverge from the adjustment-based effective
 		// counts, causing moves to pile onto one server or oscillate (A→B, B→A).
-		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer)
+		task, destServerID := createBalanceTask(diskType, selectedVolume, clusterInfo, minServer, serverVolumeCounts)
 		if task == nil {
 			glog.V(1).Infof("BALANCE [%s]: Cannot plan task for volume %d on server %s, trying next volume", diskType, selectedVolume.VolumeID, maxServer)
 			continue
@@ -334,7 +334,10 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 // targetServer is the server ID chosen by the detection loop's greedy algorithm.
 // Returns (nil, "") if destination planning fails.
 // On success, returns the task result and the canonical destination server ID.
-func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, targetServer string) (*types.TaskDetectionResult, string) {
+// allowedServers is the set of servers that passed DC/rack/node filtering in
+// the detection loop. When non-empty, the fallback destination planner is
+// checked against this set so that filter scope cannot leak.
+func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetrics, clusterInfo *types.ClusterInfo, targetServer string, allowedServers map[string]int) (*types.TaskDetectionResult, string) {
 	taskID := fmt.Sprintf("balance_vol_%d_%d", selectedVolume.VolumeID, time.Now().UnixNano())
 
 	task := &types.TaskDetectionResult{
@@ -366,6 +369,18 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 		destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
 		if err != nil {
 			glog.Warningf("Failed to plan balance destination for volume %d: %v", selectedVolume.VolumeID, err)
+			return nil, ""
+		}
+	}
+
+	// Verify the destination is within the filtered scope. When DC/rack/node
+	// filters are active, allowedServers contains only the servers that passed
+	// filtering. The fallback planner queries the full topology, so this check
+	// prevents out-of-scope targets from leaking through.
+	if len(allowedServers) > 0 {
+		if _, ok := allowedServers[destinationPlan.TargetNode]; !ok {
+			glog.V(1).Infof("BALANCE [%s]: Planned destination %s for volume %d is outside filtered scope, skipping",
+				diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
 			return nil, ""
 		}
 	}

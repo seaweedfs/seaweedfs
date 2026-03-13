@@ -105,7 +105,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "data_center_filter",
 							Label:       "Data Center Filter",
-							Description: "Only balance volumes in this data center. Leave empty for all data centers.",
+							Description: "Only balance volumes in a single data center. Leave empty for all data centers.",
 							Placeholder: "all data centers",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
