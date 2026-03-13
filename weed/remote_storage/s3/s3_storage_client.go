@@ -100,12 +100,19 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 				key := *content.Key
 				key = "/" + key
 				dir, name := util.FullPath(key).DirAndName()
-				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
-					RemoteMtime: (*content.LastModified).Unix(),
-					RemoteSize:  *content.Size,
-					RemoteETag:  *content.ETag,
+				remoteEntry := &filer_pb.RemoteEntry{
 					StorageName: s.conf.Name,
-				}); err != nil {
+				}
+				if content.LastModified != nil {
+					remoteEntry.RemoteMtime = content.LastModified.Unix()
+				}
+				if content.Size != nil {
+					remoteEntry.RemoteSize = *content.Size
+				}
+				if content.ETag != nil {
+					remoteEntry.RemoteETag = *content.ETag
+				}
+				if err := visitFn(dir, name, false, remoteEntry); err != nil {
 					localErr = err
 					return false
 				}
@@ -155,12 +162,19 @@ func (s *s3RemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_p
 				continue // skip directory markers
 			}
 			dir, name := util.FullPath(key).DirAndName()
-			if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
-				RemoteMtime: (*content.LastModified).Unix(),
-				RemoteSize:  *content.Size,
-				RemoteETag:  *content.ETag,
+			remoteEntry := &filer_pb.RemoteEntry{
 				StorageName: s.conf.Name,
-			}); err != nil {
+			}
+			if content.LastModified != nil {
+				remoteEntry.RemoteMtime = content.LastModified.Unix()
+			}
+			if content.Size != nil {
+				remoteEntry.RemoteSize = *content.Size
+			}
+			if content.ETag != nil {
+				remoteEntry.RemoteETag = *content.ETag
+			}
+			if err := visitFn(dir, name, false, remoteEntry); err != nil {
 				localErr = err
 				return false
 			}
