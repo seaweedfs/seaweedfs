@@ -61,8 +61,9 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 	}
 	cacheTTL := time.Duration(remoteLoc.ListingCacheTtlSeconds) * time.Second
 
-	// Check staleness: read the directory entry's extended attributes
-	dirEntry, _ := f.FindEntry(ctx, p)
+	// Check staleness: read the directory entry's extended attributes.
+	// Use Store.FindEntry directly — we only need the local xattr, not lazy-fetch.
+	dirEntry, _ := f.Store.FindEntry(ctx, p)
 	if dirEntry != nil {
 		if syncedAtStr, ok := dirEntry.Extended[xattrRemoteListingSyncedAt]; ok {
 			if syncedAt, err := strconv.ParseInt(string(syncedAtStr), 10, 64); err == nil {
@@ -91,7 +92,7 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 		listErr := client.ListDirectory(persistCtx, objectLoc, func(dir string, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
 			childPath := p.Child(name)
 
-			existingEntry, _ := f.FindEntry(persistCtx, childPath)
+			existingEntry, _ := f.Store.FindEntry(persistCtx, childPath)
 
 			// Skip entries that exist locally without a RemoteEntry (local-only uploads)
 			if existingEntry != nil && existingEntry.Remote == nil {
@@ -137,6 +138,8 @@ func (f *Filer) maybeLazyListFromRemote(ctx context.Context, p util.FullPath) {
 							Mtime:  mtime,
 							Crtime: mtime,
 							Mode:   0644,
+							Uid:    OS_UID,
+							Gid:    OS_GID,
 						},
 						Remote: remoteEntry,
 					}
@@ -177,13 +180,20 @@ func (f *Filer) updateDirectoryListingSyncedAt(ctx context.Context, p util.FullP
 				Gid:    OS_GID,
 			},
 		}
+		if dirEntry.Extended == nil {
+			dirEntry.Extended = make(map[string][]byte)
+		}
+		dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", syncTime.Unix()))
+		if saveErr := f.CreateEntry(ctx, dirEntry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+			glog.Warningf("maybeLazyListFromRemote: create dir synced_at for %s: %v", p, saveErr)
+		}
+		return
 	}
 	if dirEntry.Extended == nil {
 		dirEntry.Extended = make(map[string][]byte)
 	}
 	dirEntry.Extended[xattrRemoteListingSyncedAt] = []byte(fmt.Sprintf("%d", syncTime.Unix()))
-
-	if saveErr := f.CreateEntry(ctx, dirEntry, false, false, nil, true, f.MaxFilenameLength); saveErr != nil {
+	if saveErr := f.Store.UpdateEntry(ctx, dirEntry); saveErr != nil {
 		glog.Warningf("maybeLazyListFromRemote: update synced_at for %s: %v", p, saveErr)
 	}
 }
