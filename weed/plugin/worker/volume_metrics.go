@@ -3,11 +3,10 @@ package pluginworker
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
-
-	"regexp"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"

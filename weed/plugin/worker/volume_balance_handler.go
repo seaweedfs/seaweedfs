@@ -273,13 +273,13 @@ func (h *VolumeBalanceHandler) Detect(
 	var hasMore bool
 
 	if collectionFilter == "EACH_COLLECTION" {
-		// Extract distinct collection names
-		collectionSet := make(map[string]struct{})
+		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
+		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {
-			collectionSet[m.Collection] = struct{}{}
+			metricsByCollection[m.Collection] = append(metricsByCollection[m.Collection], m)
 		}
-		collections := make([]string, 0, len(collectionSet))
-		for c := range collectionSet {
+		collections := make([]string, 0, len(metricsByCollection))
+		for c := range metricsByCollection {
 			collections = append(collections, c)
 		}
 		sort.Strings(collections)
@@ -290,14 +290,7 @@ func (h *VolumeBalanceHandler) Detect(
 				hasMore = true
 				break
 			}
-			// Filter metrics to only this collection's volumes
-			collectionMetrics := make([]*workertypes.VolumeHealthMetrics, 0)
-			for _, m := range metrics {
-				if m.Collection == collection {
-					collectionMetrics = append(collectionMetrics, m)
-				}
-			}
-			perResults, perHasMore, perErr := balancetask.Detection(collectionMetrics, clusterInfo, workerConfig.TaskConfig, budget)
+			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, budget)
 			if perErr != nil {
 				return perErr
 			}
