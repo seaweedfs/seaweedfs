@@ -48,6 +48,8 @@ func (c *commandRemoteMount) Help() string {
 	remote.mount -dir=/xxx -remote=cloud1/bucket -metadataStrategy=lazy
 	# mount and pull one directory in the bucket
 	remote.mount -dir=/xxx -remote=cloud1/bucket/dir1
+	# mount with on-demand directory listing cached for 5 minutes
+	remote.mount -dir=/xxx -remote=cloud1/bucket -listingCacheTTL=300
 
 	# after mount, start a separate process to write updates to remote storage
 	weed filer.remote.sync -filer=<filerHost>:<filerPort> -dir=/xxx
@@ -67,6 +69,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	nonEmpty := remoteMountCommand.Bool("nonempty", false, "allows the mounting over a non-empty directory")
 	metadataStrategy := remoteMountCommand.String("metadataStrategy", string(MetadataCacheEager), "lazy: skip upfront metadata pull; eager: full metadata pull (default)")
 	remote := remoteMountCommand.String("remote", "", "a directory in remote storage, ex. <storageName>/<bucket>/path/to/dir")
+	listingCacheTTL := remoteMountCommand.Int("listingCacheTTL", 0, "seconds to cache remote directory listings (0 = disabled)")
 
 	if err = remoteMountCommand.Parse(args); err != nil {
 		return nil
@@ -87,6 +90,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	if err != nil {
 		return err
 	}
+	remoteStorageLocation.ListingCacheTtlSeconds = int32(*listingCacheTTL)
 
 	strategy := MetadataCacheStrategy(strings.ToLower(*metadataStrategy))
 	if strategy != MetadataCacheLazy && strategy != MetadataCacheEager {

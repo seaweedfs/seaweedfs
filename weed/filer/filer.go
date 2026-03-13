@@ -56,6 +56,7 @@ type Filer struct {
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
 	lazyFetchGroup      singleflight.Group
+	lazyListGroup       singleflight.Group
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
@@ -389,6 +390,8 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
+	f.maybeLazyListFromRemote(ctx, p)
+
 	// Collect expired entries during iteration to avoid deadlock with DB connection pool
 	var expiredEntries []*Entry
 	var s3ExpiredEntries []*Entry
