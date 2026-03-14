@@ -283,14 +283,16 @@ func (ms *MasterServer) tryCreateOneReplica(ctx context.Context, req *master_pb.
 		entry.RebuildListenAddr = primaryResult.RebuildListenAddr
 		// CP8-2: populate Replicas[].
 		entry.Replicas = append(entry.Replicas, ReplicaInfo{
-			Server:    replicaServerStr,
-			Path:      replicaResult.Path,
-			ISCSIAddr: replicaResult.ISCSIAddr,
-			IQN:       replicaResult.IQN,
-			NvmeAddr:  replicaResult.NvmeAddr,
-			NQN:       replicaResult.NQN,
-			DataAddr:  replicaResult.ReplicaDataAddr,
-			CtrlAddr:  replicaResult.ReplicaCtrlAddr,
+			Server:        replicaServerStr,
+			Path:          replicaResult.Path,
+			ISCSIAddr:     replicaResult.ISCSIAddr,
+			IQN:           replicaResult.IQN,
+			NvmeAddr:      replicaResult.NvmeAddr,
+			NQN:           replicaResult.NQN,
+			DataAddr:      replicaResult.ReplicaDataAddr,
+			CtrlAddr:      replicaResult.ReplicaCtrlAddr,
+			Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+			LastHeartbeat: time.Now(),
 		})
 		return replicaServerStr
 	}
@@ -408,6 +410,11 @@ func (ms *MasterServer) ExpandBlockVolume(ctx context.Context, req *master_pb.Ex
 			ms.blockRegistry.ReleaseExpandInflight(req.Name)
 		}
 	}()
+
+	// Test-only hook: inject failover between lock acquisition and re-read.
+	if ms.expandPreReadHook != nil {
+		ms.expandPreReadHook()
+	}
 
 	// B-09: Re-read entry after acquiring expand lock. Between the initial
 	// Lookup and AcquireExpandInflight, failover may have changed VolumeServer

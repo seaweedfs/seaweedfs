@@ -1,0 +1,190 @@
+name: cp11b3-manual-promote
+timeout: 10m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9435"
+
+# Tests: T5 (manual promote API), T6 (preflight), structured rejection
+# Flow: Create RF=2 → write → preflight check → kill primary → manual promote → verify data
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # Phase 1: Clean slate
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3m-master /tmp/sw-b3m-vs1 /tmp/sw-b3m-vs2"
+        root: "true"
+
+  # Phase 2: Start cluster
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: target_node
+        cmd: "mkdir -p /tmp/sw-b3m-master /tmp/sw-b3m-vs1/blocks /tmp/sw-b3m-vs2/blocks"
+      - action: start_weed_master
+        node: target_node
+        port: "9435"
+        dir: "/tmp/sw-b3m-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: target_node
+        master_url: "http://localhost:9435"
+        timeout: 30s
+      - action: start_weed_volume
+        node: target_node
+        port: "18192"
+        master: "localhost:9435"
+        dir: "/tmp/sw-b3m-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3m-vs1/blocks -block.listen=:3279 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: target_node
+        port: "18193"
+        master: "localhost:9435"
+        dir: "/tmp/sw-b3m-vs2"
+        extra_args: "-block.dir=/tmp/sw-b3m-vs2/blocks -block.listen=:3280 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+
+  # Phase 3: Create RF=2 volume, write data
+  - name: create_and_write
+    actions:
+      - action: create_block_volume
+        name: "promote-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      # Wait for replica to confirm role via heartbeat.
+      - action: sleep
+        duration: 10s
+      - action: lookup_block_volume
+        name: "promote-test"
+        save_as: initial
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ initial_iscsi_host }}"
+        port: "{{ initial_iscsi_port }}"
+        iqn: "{{ initial_iqn }}"
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        seek: "3"
+        save_as: md5_3M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        skip: "3"
+        save_as: verify_3M
+      - action: assert_equal
+        actual: "{{ verify_3M }}"
+        expected: "{{ md5_3M }}"
+
+  # Phase 4: Kill primary VS, then promote via API
+  - name: kill_and_promote
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      # Crash-kill VS1 with SIGKILL to simulate a real crash.
+      - action: exec
+        node: target_node
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+      # Wait for master to detect the disconnection.
+      - action: sleep
+        duration: 15s
+      # Manual promote via the API.
+      - action: block_promote
+        name: "promote-test"
+        reason: "T7 integration test: manual failover"
+        save_as: promote_result
+      - action: print
+        msg: "promoted to {{ promote_result_server }} epoch={{ promote_result_epoch }}"
+
+  # Phase 5: Verify promoted state
+  - name: verify_promoted
+    actions:
+      - action: lookup_block_volume
+        name: "promote-test"
+        save_as: after
+      # New primary should be different from old.
+      - action: assert_block_field
+        name: "promote-test"
+        field: "epoch"
+        expected: "2"
+      - action: block_status
+        save_as: stats
+      - action: print
+        msg: "promotions_total={{ stats_promotions_total }}"
+
+  # Phase 6: Reconnect iSCSI to new primary, verify data
+  - name: verify_data
+    actions:
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ after_iscsi_host }}"
+        port: "{{ after_iscsi_port }}"
+        iqn: "{{ after_iqn }}"
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "2"
+        skip: "3"
+        save_as: post_promote_md5
+      - action: assert_equal
+        actual: "{{ post_promote_md5 }}"
+        expected: "{{ md5_3M }}"
+
+  # Cleanup (always runs)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: delete_block_volume
+        name: "promote-test"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3m-master /tmp/sw-b3m-vs1 /tmp/sw-b3m-vs2"
+        root: "true"
+        ignore_error: true

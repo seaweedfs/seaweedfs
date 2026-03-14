@@ -26,6 +26,10 @@ func RegisterDevOpsActions(r *tr.Registry) {
 	r.RegisterFunc("delete_block_volume", tr.TierDevOps, deleteBlockVolume)
 	r.RegisterFunc("wait_block_servers", tr.TierDevOps, waitBlockServers)
 	r.RegisterFunc("cluster_status", tr.TierDevOps, clusterStatus)
+	r.RegisterFunc("wait_block_primary", tr.TierDevOps, waitBlockPrimary)
+	r.RegisterFunc("assert_block_field", tr.TierDevOps, assertBlockField)
+	r.RegisterFunc("block_status", tr.TierDevOps, blockStatus)
+	r.RegisterFunc("block_promote", tr.TierDevOps, blockPromote)
 }
 
 // setISCSIVars sets the save_as_iscsi_host/port/addr/iqn vars from a VolumeInfo.
@@ -432,6 +436,222 @@ func waitBlockServers(ctx context.Context, actx *tr.ActionContext, act tr.Action
 			}
 		}
 	}
+}
+
+// waitBlockPrimary polls lookup until the volume's primary server matches (or differs from) expected.
+// Params: name, expected (server addr to wait for) OR not (server addr to wait to change from), timeout (default 60s).
+// Sets save_as vars from the final lookup.
+func waitBlockPrimary(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("wait_block_primary: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		return nil, fmt.Errorf("wait_block_primary: name param required")
+	}
+	expected := act.Params["expected"]
+	notServer := act.Params["not"]
+	if expected == "" && notServer == "" {
+		return nil, fmt.Errorf("wait_block_primary: expected or not param required")
+	}
+
+	timeout := 60 * time.Second
+	if t, ok := act.Params["timeout"]; ok {
+		if d, err := parseDuration(t); err == nil {
+			timeout = d
+		}
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	pollCount := 0
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			return nil, fmt.Errorf("wait_block_primary: timeout after %s waiting for primary change on %s", timeout, name)
+		case <-ticker.C:
+			pollCount++
+			info, err := client.LookupVolume(timeoutCtx, name)
+			if err != nil {
+				if pollCount <= 3 {
+					actx.Log("  poll %d: lookup error: %v", pollCount, err)
+				}
+				continue
+			}
+			if pollCount <= 3 || pollCount%10 == 0 {
+				actx.Log("  poll %d: %s primary=%s role=%s", pollCount, name, info.VolumeServer, info.Role)
+			}
+
+			match := false
+			if expected != "" && info.VolumeServer == expected {
+				match = true
+			}
+			if notServer != "" && info.VolumeServer != notServer && info.VolumeServer != "" {
+				match = true
+			}
+			if match {
+				actx.Log("  primary for %s is now %s (epoch=%d)", name, info.VolumeServer, info.Epoch)
+				if act.SaveAs != "" {
+					setISCSIVars(actx, act.SaveAs, info)
+					actx.Vars[act.SaveAs+"_server"] = info.VolumeServer
+					actx.Vars[act.SaveAs+"_epoch"] = strconv.FormatUint(info.Epoch, 10)
+					actx.Vars[act.SaveAs+"_role"] = info.Role
+				}
+				return map[string]string{"value": info.VolumeServer}, nil
+			}
+		}
+	}
+}
+
+// assertBlockField looks up a block volume and asserts a specific field matches the expected value.
+// Params: name, field (one of: volume_server, role, status, epoch, size_bytes, replica_server,
+//   replica_factor, health_score, replica_degraded, durability_mode, iscsi_addr, iqn), expected.
+func assertBlockField(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("assert_block_field: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		return nil, fmt.Errorf("assert_block_field: name param required")
+	}
+	field := act.Params["field"]
+	if field == "" {
+		return nil, fmt.Errorf("assert_block_field: field param required")
+	}
+	expected := act.Params["expected"]
+	if expected == "" {
+		return nil, fmt.Errorf("assert_block_field: expected param required")
+	}
+
+	info, err := client.LookupVolume(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("assert_block_field: lookup %s: %w", name, err)
+	}
+
+	actual, err := extractVolumeField(info, field)
+	if err != nil {
+		return nil, fmt.Errorf("assert_block_field: %w", err)
+	}
+
+	if actual != expected {
+		return nil, fmt.Errorf("assert_block_field: %s.%s = %q, expected %q", name, field, actual, expected)
+	}
+	actx.Log("  assert %s.%s == %q OK", name, field, expected)
+	return map[string]string{"value": actual}, nil
+}
+
+// extractVolumeField extracts a named field from VolumeInfo as a string.
+func extractVolumeField(info *blockapi.VolumeInfo, field string) (string, error) {
+	switch field {
+	case "volume_server":
+		return info.VolumeServer, nil
+	case "role":
+		return info.Role, nil
+	case "status":
+		return info.Status, nil
+	case "epoch":
+		return strconv.FormatUint(info.Epoch, 10), nil
+	case "size_bytes":
+		return strconv.FormatUint(info.SizeBytes, 10), nil
+	case "replica_server":
+		return info.ReplicaServer, nil
+	case "replica_factor":
+		return strconv.Itoa(info.ReplicaFactor), nil
+	case "health_score":
+		return fmt.Sprintf("%.2f", info.HealthScore), nil
+	case "replica_degraded":
+		return strconv.FormatBool(info.ReplicaDegraded), nil
+	case "durability_mode":
+		return info.DurabilityMode, nil
+	case "iscsi_addr":
+		return info.ISCSIAddr, nil
+	case "iqn":
+		return info.IQN, nil
+	case "name":
+		return info.Name, nil
+	case "replica_iscsi_addr":
+		return info.ReplicaISCSIAddr, nil
+	case "replica_iqn":
+		return info.ReplicaIQN, nil
+	case "replica_data_addr":
+		return info.ReplicaDataAddr, nil
+	case "replica_ctrl_addr":
+		return info.ReplicaCtrlAddr, nil
+	default:
+		return "", fmt.Errorf("unknown field %q", field)
+	}
+}
+
+// blockStatus fetches block registry status metrics from master.
+// Sets save_as_promotions_total, save_as_failovers_total, etc.
+func blockStatus(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("block_status: %w", err)
+	}
+
+	status, err := client.BlockStatus(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("block_status: %w", err)
+	}
+
+	actx.Log("  block status: volumes=%d servers=%d promotions=%d failovers=%d rebuilds=%d",
+		status.VolumeCount, status.ServerCount, status.PromotionsTotal, status.FailoversTotal, status.RebuildsTotal)
+
+	if act.SaveAs != "" {
+		actx.Vars[act.SaveAs+"_volume_count"] = strconv.Itoa(status.VolumeCount)
+		actx.Vars[act.SaveAs+"_server_count"] = strconv.Itoa(status.ServerCount)
+		actx.Vars[act.SaveAs+"_promotions_total"] = strconv.FormatInt(status.PromotionsTotal, 10)
+		actx.Vars[act.SaveAs+"_failovers_total"] = strconv.FormatInt(status.FailoversTotal, 10)
+		actx.Vars[act.SaveAs+"_rebuilds_total"] = strconv.FormatInt(status.RebuildsTotal, 10)
+		actx.Vars[act.SaveAs+"_queue_depth"] = strconv.Itoa(status.AssignmentQueueDepth)
+	}
+
+	jsonBytes, _ := json.Marshal(status)
+	return map[string]string{"value": string(jsonBytes)}, nil
+}
+
+// blockPromote triggers a manual promotion for a block volume.
+// Params: name, target_server (optional, empty=auto), force (optional bool), reason (optional).
+func blockPromote(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("block_promote: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		return nil, fmt.Errorf("block_promote: name param required")
+	}
+
+	force := false
+	if f := act.Params["force"]; f == "true" || f == "1" {
+		force = true
+	}
+
+	resp, err := client.PromoteVolume(ctx, name, blockapi.PromoteVolumeRequest{
+		TargetServer: act.Params["target_server"],
+		Force:        force,
+		Reason:       act.Params["reason"],
+	})
+	if err != nil {
+		return nil, fmt.Errorf("block_promote: %w", err)
+	}
+
+	actx.Log("  promoted %s -> primary=%s epoch=%d", name, resp.NewPrimary, resp.Epoch)
+	if act.SaveAs != "" {
+		actx.Vars[act.SaveAs+"_server"] = resp.NewPrimary
+		actx.Vars[act.SaveAs+"_epoch"] = strconv.FormatUint(resp.Epoch, 10)
+	}
+	return map[string]string{"value": resp.NewPrimary}, nil
 }
 
 // clusterStatus fetches the full cluster status JSON.

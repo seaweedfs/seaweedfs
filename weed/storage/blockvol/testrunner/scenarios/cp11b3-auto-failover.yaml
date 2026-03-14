@@ -1,0 +1,246 @@
+name: cp11b3-auto-failover
+timeout: 10m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9434"
+
+# Tests: T1 (candidate evaluation), T2 (orphan re-evaluation), T6 (preflight/status)
+# Flow: Create RF=2 → write data → kill primary → master auto-promotes → verify data + metrics
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # Phase 1: Clean slate
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3-master /tmp/sw-b3-vs1 /tmp/sw-b3-vs2"
+        root: "true"
+
+  # Phase 2: Start cluster
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: target_node
+        cmd: "mkdir -p /tmp/sw-b3-master /tmp/sw-b3-vs1/blocks /tmp/sw-b3-vs2/blocks"
+      - action: start_weed_master
+        node: target_node
+        port: "9434"
+        dir: "/tmp/sw-b3-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: target_node
+        master_url: "http://localhost:9434"
+        timeout: 30s
+      - action: start_weed_volume
+        node: target_node
+        port: "18190"
+        master: "localhost:9434"
+        dir: "/tmp/sw-b3-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3-vs1/blocks -block.listen=:3277 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: target_node
+        port: "18191"
+        master: "localhost:9434"
+        dir: "/tmp/sw-b3-vs2"
+        extra_args: "-block.dir=/tmp/sw-b3-vs2/blocks -block.listen=:3278 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+
+  # Phase 3: Create RF=2 volume, record initial state
+  - name: create_volume
+    actions:
+      - action: create_block_volume
+        name: "failover-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      # Wait for replica to confirm role via heartbeat.
+      # Without this, PromoteBestReplica rejects replica as "no_heartbeat".
+      - action: sleep
+        duration: 10s
+      - action: lookup_block_volume
+        name: "failover-test"
+        save_as: initial
+      - action: print
+        msg: "initial primary={{ initial_iscsi_host }}:{{ initial_iscsi_port }} capacity={{ initial_capacity }}"
+      # Record the initial primary server for later comparison.
+      - action: assert_block_field
+        name: "failover-test"
+        field: "replica_factor"
+        expected: "2"
+      - action: assert_block_field
+        name: "failover-test"
+        field: "epoch"
+        expected: "1"
+      # Capture initial block status metrics.
+      - action: block_status
+        save_as: pre_stats
+
+  # Phase 4: Write data via iSCSI
+  - name: write_data
+    actions:
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ initial_iscsi_host }}"
+        port: "{{ initial_iscsi_port }}"
+        iqn: "{{ initial_iqn }}"
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        seek: "5"
+        save_as: md5_5M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        skip: "5"
+        save_as: verify_5M
+      - action: assert_equal
+        actual: "{{ verify_5M }}"
+        expected: "{{ md5_5M }}"
+
+  # Phase 5: Kill primary VS, wait for master auto-failover
+  - name: failover
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: lookup_block_volume
+        name: "failover-test"
+        save_as: pre_kill
+      - action: print
+        msg: "killing primary VS (server={{ pre_kill_iscsi_host }}:{{ pre_kill_iscsi_port }})"
+      # Crash-kill VS1 with SIGKILL (not SIGTERM) to simulate a real crash.
+      # SIGTERM triggers graceful shutdown which deregisters volumes from
+      # the master registry — preventing the failover path we want to test.
+      - action: exec
+        node: target_node
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+      # Wait for master to detect VS1 disconnection and promote.
+      # Lease TTL is 30s; if never granted (zero), promotion is immediate.
+      # Allow extra time for heartbeat confirmation + deferred timer.
+      - action: sleep
+        duration: 35s
+      - action: wait_block_primary
+        name: "failover-test"
+        not: "192.168.1.184:18190"
+        timeout: 60s
+        save_as: promoted
+
+  # Phase 6: Verify failover state
+  - name: verify_failover
+    actions:
+      - action: print
+        msg: "new primary={{ promoted_server }} epoch={{ promoted_epoch }}"
+      # Epoch must have incremented (real promotion, not just heartbeat update).
+      - action: assert_block_field
+        name: "failover-test"
+        field: "epoch"
+        expected: "2"
+      - action: block_status
+        save_as: post_stats
+      # Verify promotion counter incremented.
+      - action: assert_greater
+        actual: "{{ post_stats_promotions_total }}"
+        expected: "{{ pre_stats_promotions_total }}"
+
+  # Phase 7: Reconnect iSCSI to new primary, verify data
+  - name: verify_data
+    actions:
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ promoted_iscsi_host }}"
+        port: "{{ promoted_iscsi_port }}"
+        iqn: "{{ promoted_iqn }}"
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "5"
+        save_as: post_failover_md5
+      - action: assert_equal
+        actual: "{{ post_failover_md5 }}"
+        expected: "{{ md5_5M }}"
+
+  # Phase 8: Restart killed VS, verify rebuild queued
+  - name: restart_verify
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: start_weed_volume
+        node: target_node
+        port: "18190"
+        master: "localhost:9434"
+        dir: "/tmp/sw-b3-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3-vs1/blocks -block.listen=:3277 -ip=192.168.1.184"
+        save_as: vs1_pid2
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+      - action: sleep
+        duration: 5s
+      # After restart, the old primary should be queued for rebuild.
+      - action: block_status
+        save_as: final_stats
+      - action: assert_greater
+        actual: "{{ final_stats_rebuilds_total }}"
+        expected: "{{ post_stats_rebuilds_total }}"
+
+  # Cleanup (always runs)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: delete_block_volume
+        name: "failover-test"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid2 }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3-master /tmp/sw-b3-vs1 /tmp/sw-b3-vs2"
+        root: "true"
+        ignore_error: true

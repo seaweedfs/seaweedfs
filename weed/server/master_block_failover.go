@@ -57,7 +57,19 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 				delay := leaseExpiry.Sub(now)
 				glog.V(0).Infof("failover: %q lease expires in %v, deferring promotion", entry.Name, delay)
 				volumeName := entry.Name
+				capturedEpoch := entry.Epoch // T3: capture epoch for stale-timer validation
 				timer := time.AfterFunc(delay, func() {
+					// T3: Re-validate before acting — prevent stale timer on recreated/changed volume.
+					current, ok := ms.blockRegistry.Lookup(volumeName)
+					if !ok {
+						glog.V(0).Infof("failover: deferred promotion for %q skipped (volume deleted)", volumeName)
+						return
+					}
+					if current.Epoch != capturedEpoch {
+						glog.V(0).Infof("failover: deferred promotion for %q skipped (epoch changed %d -> %d)",
+							volumeName, capturedEpoch, current.Epoch)
+						return
+					}
 					ms.promoteReplica(volumeName)
 				})
 				ms.blockFailover.mu.Lock()
@@ -116,8 +128,15 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		return
 	}
 
+	ms.finalizePromotion(volumeName, oldPrimary, oldPath, newEpoch)
+}
+
+// finalizePromotion performs post-registry promotion steps:
+// enqueue assignment for new primary, record pending rebuild for old primary, bump metrics.
+// Called by both promoteReplica (auto) and blockVolumePromoteHandler (manual).
+func (ms *MasterServer) finalizePromotion(volumeName, oldPrimary, oldPath string, newEpoch uint64) {
 	// Re-read entry after promotion.
-	entry, ok = ms.blockRegistry.Lookup(volumeName)
+	entry, ok := ms.blockRegistry.Lookup(volumeName)
 	if !ok {
 		return
 	}
@@ -198,10 +217,14 @@ func (ms *MasterServer) cancelDeferredTimers(server string) {
 
 // recoverBlockVolumes is called when a previously dead VS reconnects.
 // It cancels any deferred promotion timers (R2-F2), drains pending rebuilds,
-// and enqueues rebuild assignments.
+// enqueues rebuild assignments, and checks for orphaned primaries (T2/B-06).
 func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 	// R2-F2: Cancel deferred promotion timers for this server to prevent split-brain.
 	ms.cancelDeferredTimers(reconnectedServer)
+
+	// T2 (B-06): Check for orphaned primaries — volumes where the reconnecting
+	// server is a replica but the primary is dead/disconnected.
+	ms.reevaluateOrphanedPrimaries(reconnectedServer)
 
 	rebuilds := ms.drainPendingRebuilds(reconnectedServer)
 	if len(rebuilds) == 0 {
@@ -221,16 +244,74 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 			Path:   rb.OldPath,
 		})
 
+		// T4: Warn if RebuildListenAddr is empty (new primary hasn't heartbeated yet).
+		rebuildAddr := entry.RebuildListenAddr
+		if rebuildAddr == "" {
+			glog.Warningf("rebuild: %q RebuildListenAddr is empty (new primary %s may not have heartbeated yet), "+
+				"queuing rebuild anyway — VS should retry on empty addr", rb.VolumeName, entry.VolumeServer)
+		}
+
 		// Enqueue rebuild assignment for the reconnected server.
 		ms.blockAssignmentQueue.Enqueue(reconnectedServer, blockvol.BlockVolumeAssignment{
 			Path:        rb.OldPath,
 			Epoch:       entry.Epoch,
 			Role:        blockvol.RoleToWire(blockvol.RoleRebuilding),
-			RebuildAddr: entry.RebuildListenAddr,
+			RebuildAddr: rebuildAddr,
 		})
 
 		ms.blockRegistry.RebuildsTotal.Add(1)
 		glog.V(0).Infof("rebuild: enqueued rebuild for %q on %s (epoch=%d, rebuildAddr=%s)",
-			rb.VolumeName, reconnectedServer, entry.Epoch, entry.RebuildListenAddr)
+			rb.VolumeName, reconnectedServer, entry.Epoch, rebuildAddr)
+	}
+}
+
+// reevaluateOrphanedPrimaries checks if the given server is a replica for any
+// volumes whose primary is dead (not block-capable). If so, promotes the best
+// available replica — but only after the old primary's lease has expired, to
+// maintain the same split-brain protection as failoverBlockVolumes().
+// This fixes B-06 (orphaned primary after replica re-register)
+// and partially B-08 (fast reconnect skips failover window).
+func (ms *MasterServer) reevaluateOrphanedPrimaries(server string) {
+	if ms.blockRegistry == nil {
+		return
+	}
+	orphaned := ms.blockRegistry.VolumesWithDeadPrimary(server)
+	now := time.Now()
+	for _, volumeName := range orphaned {
+		entry, ok := ms.blockRegistry.Lookup(volumeName)
+		if !ok {
+			continue
+		}
+
+		// Respect lease expiry — same gate as failoverBlockVolumes().
+		leaseExpiry := entry.LastLeaseGrant.Add(entry.LeaseTTL)
+		if now.Before(leaseExpiry) {
+			delay := leaseExpiry.Sub(now)
+			glog.V(0).Infof("failover: orphaned primary for %q (replica %s alive, primary dead) "+
+				"but lease expires in %v, deferring promotion", volumeName, server, delay)
+			capturedEpoch := entry.Epoch
+			deadPrimary := entry.VolumeServer
+			timer := time.AfterFunc(delay, func() {
+				current, ok := ms.blockRegistry.Lookup(volumeName)
+				if !ok {
+					return
+				}
+				if current.Epoch != capturedEpoch {
+					glog.V(0).Infof("failover: deferred orphan promotion for %q skipped (epoch changed %d -> %d)",
+						volumeName, capturedEpoch, current.Epoch)
+					return
+				}
+				ms.promoteReplica(volumeName)
+			})
+			ms.blockFailover.mu.Lock()
+			ms.blockFailover.deferredTimers[deadPrimary] = append(
+				ms.blockFailover.deferredTimers[deadPrimary], timer)
+			ms.blockFailover.mu.Unlock()
+			continue
+		}
+
+		glog.V(0).Infof("failover: orphaned primary detected for %q (replica %s alive, primary dead, lease expired), promoting",
+			volumeName, server)
+		ms.promoteReplica(volumeName)
 	}
 }

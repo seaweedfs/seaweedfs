@@ -842,44 +842,91 @@ func (r *BlockVolumeRegistry) PromotionLSNTolerance() uint64 {
 	return r.promotionLSNTolerance
 }
 
-// PromoteBestReplica promotes the best eligible replica to primary.
-// Eligibility: heartbeat fresh (within 2×LeaseTTL), WALHeadLSN within tolerance of primary,
-// and role must be RoleReplica (not RoleRebuilding).
-// The promoted replica is removed from Replicas[]. Other replicas stay.
-// Old primary is NOT added to Replicas (needs rebuild).
-// Returns the new epoch.
-func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	entry, ok := r.volumes[name]
-	if !ok {
-		return 0, fmt.Errorf("block volume %q not found", name)
+// PromotionRejection records why a specific replica was rejected for promotion.
+type PromotionRejection struct {
+	Server string
+	Reason string // "stale_heartbeat", "wal_lag", "wrong_role", "server_dead"
+}
+
+// PromotionPreflightResult is the reusable result of a promotion evaluation.
+// Used by auto-promotion, manual promote API, preflight status, and logging.
+type PromotionPreflightResult struct {
+	VolumeName   string
+	Promotable   bool               // true if a candidate was found
+	Candidate    *ReplicaInfo       // best candidate (nil if !Promotable)
+	CandidateIdx int                // index in Replicas[] (-1 if !Promotable)
+	Rejections   []PromotionRejection // why each non-candidate was rejected
+	Reason       string             // human-readable summary when !Promotable
+}
+
+// evaluatePromotionLocked evaluates promotion candidates for a volume.
+// Caller must hold r.mu (read or write). Returns a preflight result without
+// mutating the registry. The four gates:
+//   1. Heartbeat freshness (within 2×LeaseTTL)
+//   2. WAL LSN recency (within promotionLSNTolerance of primary)
+//   3. Role must be RoleReplica (not RoleRebuilding)
+//   4. Server must be in blockServers (alive) — fixes B-12
+func (r *BlockVolumeRegistry) evaluatePromotionLocked(entry *BlockVolumeEntry) PromotionPreflightResult {
+	result := PromotionPreflightResult{
+		VolumeName:   entry.Name,
+		CandidateIdx: -1,
 	}
 	if len(entry.Replicas) == 0 {
-		return 0, fmt.Errorf("block volume %q has no replicas", name)
+		result.Reason = "no replicas"
+		return result
 	}
 
-	// Filter eligible replicas.
 	now := time.Now()
 	freshnessCutoff := 2 * entry.LeaseTTL
 	if freshnessCutoff == 0 {
-		freshnessCutoff = 60 * time.Second // default if LeaseTTL not set
+		freshnessCutoff = 60 * time.Second
 	}
 	primaryLSN := entry.WALHeadLSN
 
 	bestIdx := -1
 	for i := range entry.Replicas {
 		ri := &entry.Replicas[i]
-		// Gate 1: heartbeat freshness.
-		if !ri.LastHeartbeat.IsZero() && now.Sub(ri.LastHeartbeat) > freshnessCutoff {
+
+		// Gate 1: heartbeat freshness. Zero means never heartbeated — unsafe
+		// to promote because the registry has no proof the replica is alive,
+		// caught up, or fully initialized.
+		if ri.LastHeartbeat.IsZero() {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "no_heartbeat",
+			})
+			continue
+		}
+		if now.Sub(ri.LastHeartbeat) > freshnessCutoff {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "stale_heartbeat",
+			})
 			continue
 		}
 		// Gate 2: WAL LSN recency (skip if primary LSN is 0 — no data yet, all eligible).
 		if primaryLSN > 0 && ri.WALHeadLSN+r.promotionLSNTolerance < primaryLSN {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "wal_lag",
+			})
 			continue
 		}
-		// Gate 3: role must be RoleReplica (not rebuilding/stale).
-		if ri.Role != 0 && blockvol.RoleFromWire(ri.Role) != blockvol.RoleReplica {
+		// Gate 3: role must be exactly RoleReplica. Zero/unset role means
+		// the replica was created but never confirmed its role via heartbeat.
+		if blockvol.RoleFromWire(ri.Role) != blockvol.RoleReplica {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "wrong_role",
+			})
+			continue
+		}
+		// Gate 4: server must be alive (in blockServers set) — B-12 fix.
+		if !r.blockServers[ri.Server] {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "server_dead",
+			})
 			continue
 		}
 		// Eligible — pick best by health score, tie-break by WALHeadLSN.
@@ -894,11 +941,39 @@ func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
 	}
 
 	if bestIdx == -1 {
-		return 0, fmt.Errorf("block volume %q: no eligible replicas for promotion", name)
+		result.Reason = "no eligible replicas"
+		if len(result.Rejections) > 0 {
+			result.Reason += ": " + result.Rejections[0].Reason
+			if len(result.Rejections) > 1 {
+				result.Reason += fmt.Sprintf(" (+%d more)", len(result.Rejections)-1)
+			}
+		}
+		return result
 	}
 
-	promoted := entry.Replicas[bestIdx]
+	result.Promotable = true
+	ri := entry.Replicas[bestIdx]
+	result.Candidate = &ri
+	result.CandidateIdx = bestIdx
+	return result
+}
 
+// EvaluatePromotion returns a read-only preflight result for the named volume
+// without mutating the registry. Safe for status/logging/manual promote preview.
+func (r *BlockVolumeRegistry) EvaluatePromotion(name string) (PromotionPreflightResult, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return PromotionPreflightResult{VolumeName: name, Reason: "volume not found"}, fmt.Errorf("block volume %q not found", name)
+	}
+	return r.evaluatePromotionLocked(entry), nil
+}
+
+// applyPromotionLocked applies the promotion of a replica at candidateIdx to primary.
+// Caller must hold r.mu (write lock). The promoted replica is removed from Replicas[].
+// Old primary is NOT added to Replicas (needs rebuild). Returns the new epoch.
+func (r *BlockVolumeRegistry) applyPromotionLocked(entry *BlockVolumeEntry, name string, candidate ReplicaInfo, candidateIdx int) uint64 {
 	// Remove old primary from byServer index.
 	r.removeFromServer(entry.VolumeServer, name)
 
@@ -906,18 +981,21 @@ func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
 	newEpoch := entry.Epoch + 1
 
 	// Promote replica to primary.
-	entry.VolumeServer = promoted.Server
-	entry.Path = promoted.Path
-	entry.IQN = promoted.IQN
-	entry.ISCSIAddr = promoted.ISCSIAddr
-	entry.NvmeAddr = promoted.NvmeAddr
-	entry.NQN = promoted.NQN
+	entry.VolumeServer = candidate.Server
+	entry.Path = candidate.Path
+	entry.IQN = candidate.IQN
+	entry.ISCSIAddr = candidate.ISCSIAddr
+	entry.NvmeAddr = candidate.NvmeAddr
+	entry.NQN = candidate.NQN
 	entry.Epoch = newEpoch
 	entry.Role = blockvol.RoleToWire(blockvol.RolePrimary)
 	entry.LastLeaseGrant = time.Now()
 
+	// Clear stale rebuild/publication metadata from old primary (B-11 partial fix).
+	entry.RebuildListenAddr = ""
+
 	// Remove promoted from Replicas. Others stay.
-	entry.Replicas = append(entry.Replicas[:bestIdx], entry.Replicas[bestIdx+1:]...)
+	entry.Replicas = append(entry.Replicas[:candidateIdx], entry.Replicas[candidateIdx+1:]...)
 
 	// Sync deprecated scalar fields.
 	if len(entry.Replicas) > 0 {
@@ -940,7 +1018,210 @@ func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
 	// Update byServer index: new primary server now hosts this volume.
 	r.addToServer(entry.VolumeServer, name)
 
+	return newEpoch
+}
+
+// PromoteBestReplica promotes the best eligible replica to primary.
+// Eligibility: heartbeat fresh (within 2×LeaseTTL), WALHeadLSN within tolerance of primary,
+// role must be RoleReplica (not RoleRebuilding), and server must be alive (B-12 fix).
+// The promoted replica is removed from Replicas[]. Other replicas stay.
+// Old primary is NOT added to Replicas (needs rebuild).
+// Returns the new epoch and the preflight result.
+func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return 0, fmt.Errorf("block volume %q not found", name)
+	}
+
+	pf := r.evaluatePromotionLocked(entry)
+	if !pf.Promotable {
+		return 0, fmt.Errorf("block volume %q: %s", name, pf.Reason)
+	}
+
+	promoted := *pf.Candidate
+	bestIdx := pf.CandidateIdx
+
+	newEpoch := r.applyPromotionLocked(entry, name, promoted, bestIdx)
 	return newEpoch, nil
+}
+
+// evaluateManualPromotionLocked evaluates promotion candidates for a manual promote request.
+// Caller must hold r.mu (read or write).
+//
+// Differences from evaluatePromotionLocked:
+//   - Primary-alive gate: if !force and current primary is alive, reject with "primary_alive".
+//   - Target filtering: if targetServer != "", only evaluate that specific replica.
+//     Returns Reason="target_not_found" if that server is not a replica.
+//   - Force flag: bypasses soft gates (primary_alive, stale_heartbeat, wal_lag)
+//     but keeps hard gates (no_heartbeat with zero time, wrong_role, server_dead).
+//
+// Gate table:
+//
+//	Gate             | Normal | Force
+//	primary_alive    | Reject | Skip
+//	no_heartbeat(0)  | Reject | Reject
+//	stale_heartbeat  | Reject | Skip
+//	wal_lag          | Reject | Skip
+//	wrong_role       | Reject | Reject
+//	server_dead      | Reject | Reject
+func (r *BlockVolumeRegistry) evaluateManualPromotionLocked(entry *BlockVolumeEntry, targetServer string, force bool) PromotionPreflightResult {
+	result := PromotionPreflightResult{
+		VolumeName:   entry.Name,
+		CandidateIdx: -1,
+	}
+
+	// Primary-alive gate (soft — skipped when force=true).
+	if !force && r.blockServers[entry.VolumeServer] {
+		result.Reason = "primary_alive"
+		return result
+	}
+
+	if len(entry.Replicas) == 0 {
+		result.Reason = "no replicas"
+		return result
+	}
+
+	// Target filtering: if a specific server is requested, find its index first.
+	// Return early if not found.
+	if targetServer != "" {
+		found := false
+		for i := range entry.Replicas {
+			if entry.Replicas[i].Server == targetServer {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result.Reason = "target_not_found"
+			return result
+		}
+	}
+
+	now := time.Now()
+	freshnessCutoff := 2 * entry.LeaseTTL
+	if freshnessCutoff == 0 {
+		freshnessCutoff = 60 * time.Second
+	}
+	primaryLSN := entry.WALHeadLSN
+
+	bestIdx := -1
+	for i := range entry.Replicas {
+		ri := &entry.Replicas[i]
+
+		// If targeting a specific server, skip all others.
+		if targetServer != "" && ri.Server != targetServer {
+			continue
+		}
+
+		// Hard gate: no heartbeat (zero time) — unsafe regardless of force.
+		if ri.LastHeartbeat.IsZero() {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "no_heartbeat",
+			})
+			continue
+		}
+
+		// Soft gate: stale heartbeat — skipped when force=true.
+		if !force && now.Sub(ri.LastHeartbeat) > freshnessCutoff {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "stale_heartbeat",
+			})
+			continue
+		}
+
+		// Soft gate: WAL lag — skipped when force=true.
+		if !force && primaryLSN > 0 && ri.WALHeadLSN+r.promotionLSNTolerance < primaryLSN {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "wal_lag",
+			})
+			continue
+		}
+
+		// Hard gate: role must be exactly RoleReplica.
+		if blockvol.RoleFromWire(ri.Role) != blockvol.RoleReplica {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "wrong_role",
+			})
+			continue
+		}
+
+		// Hard gate: server must be alive (in blockServers set).
+		if !r.blockServers[ri.Server] {
+			result.Rejections = append(result.Rejections, PromotionRejection{
+				Server: ri.Server,
+				Reason: "server_dead",
+			})
+			continue
+		}
+
+		// Eligible — pick best by health score, tie-break by WALHeadLSN.
+		if bestIdx == -1 {
+			bestIdx = i
+		} else if ri.HealthScore > entry.Replicas[bestIdx].HealthScore {
+			bestIdx = i
+		} else if ri.HealthScore == entry.Replicas[bestIdx].HealthScore &&
+			ri.WALHeadLSN > entry.Replicas[bestIdx].WALHeadLSN {
+			bestIdx = i
+		}
+	}
+
+	if bestIdx == -1 {
+		result.Reason = "no eligible replicas"
+		if len(result.Rejections) > 0 {
+			result.Reason += ": " + result.Rejections[0].Reason
+			if len(result.Rejections) > 1 {
+				result.Reason += fmt.Sprintf(" (+%d more)", len(result.Rejections)-1)
+			}
+		}
+		return result
+	}
+
+	result.Promotable = true
+	ri := entry.Replicas[bestIdx]
+	result.Candidate = &ri
+	result.CandidateIdx = bestIdx
+	return result
+}
+
+// ManualPromote promotes a specific replica (or the best eligible replica) to primary.
+// Unlike PromoteBestReplica, it accepts operator overrides:
+//   - targetServer: if non-empty, only that replica is considered.
+//   - force: bypasses soft gates (primary_alive, stale_heartbeat, wal_lag).
+//
+// Returns (newEpoch, oldPrimary, oldPath, preflightResult, nil) on success.
+// oldPrimary and oldPath are captured under the lock to avoid TOCTOU with
+// concurrent auto-failover (BUG-T5-2 fix).
+// Returns (0, "", "", preflightResult, err) on rejection or lookup failure.
+func (r *BlockVolumeRegistry) ManualPromote(name, targetServer string, force bool) (uint64, string, string, PromotionPreflightResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, ok := r.volumes[name]
+	if !ok {
+		return 0, "", "", PromotionPreflightResult{VolumeName: name, Reason: "volume not found"},
+			fmt.Errorf("block volume %q not found", name)
+	}
+
+	// Capture old primary info under lock (BUG-T5-2 fix).
+	oldPrimary := entry.VolumeServer
+	oldPath := entry.Path
+
+	pf := r.evaluateManualPromotionLocked(entry, targetServer, force)
+	if !pf.Promotable {
+		return 0, "", "", pf, fmt.Errorf("block volume %q: %s", name, pf.Reason)
+	}
+
+	promoted := *pf.Candidate
+	candidateIdx := pf.CandidateIdx
+
+	newEpoch := r.applyPromotionLocked(entry, name, promoted, candidateIdx)
+	return newEpoch, oldPrimary, oldPath, pf, nil
 }
 
 // MarkBlockCapable records that the given server supports block volumes.
@@ -1043,6 +1324,41 @@ func (r *BlockVolumeRegistry) ServerSummaries() []BlockServerSummary {
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Address < summaries[j].Address })
 	return summaries
+}
+
+// IsBlockCapable returns true if the given server is in the block-capable set (alive).
+func (r *BlockVolumeRegistry) IsBlockCapable(server string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.blockServers[server]
+}
+
+// VolumesWithDeadPrimary returns names of volumes where the given server is a replica
+// and the current primary is NOT in the block-capable set (dead/disconnected).
+// Used by T2 (B-06) to detect orphaned primaries that need re-promotion.
+func (r *BlockVolumeRegistry) VolumesWithDeadPrimary(replicaServer string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names, ok := r.byServer[replicaServer]
+	if !ok {
+		return nil
+	}
+	var orphaned []string
+	for name := range names {
+		entry := r.volumes[name]
+		if entry == nil {
+			continue
+		}
+		// Only consider volumes where this server is a replica (not the primary).
+		if entry.VolumeServer == replicaServer {
+			continue
+		}
+		// Check if the primary server is dead.
+		if !r.blockServers[entry.VolumeServer] {
+			orphaned = append(orphaned, name)
+		}
+	}
+	return orphaned
 }
 
 // BlockCapableServers returns the list of servers known to support block volumes.

@@ -478,6 +478,107 @@ func (h *HATarget) Resize(ctx context.Context, newSizeBytes uint64) error {
 	return nil
 }
 
+// ExportSnapshotS3 sends POST /export with S3 credentials.
+// Returns the manifest key and data SHA-256 on success.
+func (h *HATarget) ExportSnapshotS3(ctx context.Context, opts ExportS3Opts) (*ExportS3Result, error) {
+	reqBody := map[string]interface{}{
+		"bucket":      opts.Bucket,
+		"key_prefix":  opts.KeyPrefix,
+		"s3_endpoint": opts.S3Endpoint,
+		"s3_region":   opts.S3Region,
+	}
+	if opts.S3AccessKey != "" {
+		reqBody["s3_access_key"] = opts.S3AccessKey
+		reqBody["s3_secret_key"] = opts.S3SecretKey
+	}
+	if opts.SnapshotID > 0 {
+		reqBody["snapshot_id"] = opts.SnapshotID
+	}
+
+	code, body, err := h.curlPost(ctx, "/export", reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("export snapshot s3: %w", err)
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("export snapshot s3 failed (HTTP %d): %s", code, body)
+	}
+
+	var resp ExportS3Result
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("decode export response: %w", err)
+	}
+	return &resp, nil
+}
+
+// ImportSnapshotS3 sends POST /import with S3 credentials and manifest key.
+func (h *HATarget) ImportSnapshotS3(ctx context.Context, opts ImportS3Opts) (*ImportS3Result, error) {
+	reqBody := map[string]interface{}{
+		"bucket":       opts.Bucket,
+		"manifest_key": opts.ManifestKey,
+		"s3_endpoint":  opts.S3Endpoint,
+		"s3_region":    opts.S3Region,
+	}
+	if opts.S3AccessKey != "" {
+		reqBody["s3_access_key"] = opts.S3AccessKey
+		reqBody["s3_secret_key"] = opts.S3SecretKey
+	}
+	if opts.AllowOverwrite {
+		reqBody["allow_overwrite"] = true
+	}
+
+	code, body, err := h.curlPost(ctx, "/import", reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("import snapshot s3: %w", err)
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("import snapshot s3 failed (HTTP %d): %s", code, body)
+	}
+
+	var resp ImportS3Result
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("decode import response: %w", err)
+	}
+	return &resp, nil
+}
+
+// ExportS3Opts configures a snapshot export to S3.
+type ExportS3Opts struct {
+	Bucket      string
+	KeyPrefix   string
+	S3Endpoint  string
+	S3AccessKey string
+	S3SecretKey string
+	S3Region    string
+	SnapshotID  uint32
+}
+
+// ExportS3Result is the response from POST /export.
+type ExportS3Result struct {
+	OK          bool   `json:"ok"`
+	ManifestKey string `json:"manifest_key"`
+	DataKey     string `json:"data_key"`
+	SizeBytes   uint64 `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
+}
+
+// ImportS3Opts configures a snapshot import from S3.
+type ImportS3Opts struct {
+	Bucket         string
+	ManifestKey    string
+	S3Endpoint     string
+	S3AccessKey    string
+	S3SecretKey    string
+	S3Region       string
+	AllowOverwrite bool
+}
+
+// ImportS3Result is the response from POST /import.
+type ImportS3Result struct {
+	OK        bool   `json:"ok"`
+	SizeBytes uint64 `json:"size_bytes"`
+	SHA256    string `json:"sha256"`
+}
+
 // WaitForRole polls GET /status until the target reports the expected role.
 func (h *HATarget) WaitForRole(ctx context.Context, expectedRole string) error {
 	for {

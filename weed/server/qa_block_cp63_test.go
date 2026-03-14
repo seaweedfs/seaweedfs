@@ -40,6 +40,11 @@ func testMSForQA(t *testing.T) *MasterServer {
 // registerQAVolume creates a volume entry with optional replica, configurable lease state.
 func registerQAVolume(t *testing.T, ms *MasterServer, name, primary, replica string, epoch uint64, leaseTTL time.Duration, leaseExpired bool) {
 	t.Helper()
+	// Mark servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable(primary)
+	if replica != "" {
+		ms.blockRegistry.MarkBlockCapable(replica)
+	}
 	entry := &BlockVolumeEntry{
 		Name:         name,
 		VolumeServer: primary,
@@ -65,11 +70,13 @@ func registerQAVolume(t *testing.T, ms *MasterServer, name, primary, replica str
 		// CP8-2: also populate Replicas[].
 		entry.Replicas = []ReplicaInfo{
 			{
-				Server:      replica,
-				Path:        fmt.Sprintf("/data/%s.blk", name),
-				IQN:         fmt.Sprintf("iqn.2024.test:%s-r", name),
-				ISCSIAddr:   replica + ":3260",
-				HealthScore: 1.0,
+				Server:        replica,
+				Path:          fmt.Sprintf("/data/%s.blk", name),
+				IQN:           fmt.Sprintf("iqn.2024.test:%s-r", name),
+				ISCSIAddr:     replica + ":3260",
+				HealthScore:   1.0,
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+				LastHeartbeat: time.Now(),
 			},
 		}
 	}
@@ -398,7 +405,15 @@ func TestQA_Failover_PromoteIdempotent_NoReplicaAfterFirstSwap(t *testing.T) {
 	// Reconnect vs1 first so it becomes a replica.
 	ms.recoverBlockVolumes("vs1")
 
+	// Simulate rebuild completion: mark vs1 as a healthy replica.
 	e, _ := ms.blockRegistry.Lookup("vol1")
+	for i := range e.Replicas {
+		if e.Replicas[i].Server == "vs1" {
+			e.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+			e.Replicas[i].LastHeartbeat = time.Now()
+			e.Replicas[i].HealthScore = 1.0
+		}
+	}
 	e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expire the new lease
 	ms.failoverBlockVolumes("vs2")
 

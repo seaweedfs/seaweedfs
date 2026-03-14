@@ -278,6 +278,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// on subsequent heartbeats), never both in the same message.
 		if len(heartbeat.BlockVolumeInfos) > 0 || heartbeat.HasNoBlockVolumes {
 			ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos)
+			// T2 (B-06): After updating registry from heartbeat, check if this server
+			// is a replica for any volume whose primary is dead. If so, promote.
+			ms.reevaluateOrphanedPrimaries(dn.Url())
 		} else if len(heartbeat.NewBlockVolumes) > 0 || len(heartbeat.DeletedBlockVolumes) > 0 {
 			ms.blockRegistry.UpdateDeltaHeartbeat(dn.Url(), heartbeat.NewBlockVolumes, heartbeat.DeletedBlockVolumes)
 		}

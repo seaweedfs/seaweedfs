@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -538,6 +539,8 @@ func TestRegistry_RemoveReplica(t *testing.T) {
 
 func TestRegistry_PromoteBestReplica_PicksHighest(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("s2")
+	r.MarkBlockCapable("s3")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "s1",
@@ -545,8 +548,8 @@ func TestRegistry_PromoteBestReplica_PicksHighest(t *testing.T) {
 		Epoch:        5,
 		Role:         1,
 		Replicas: []ReplicaInfo{
-			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.8, WALHeadLSN: 100},
-			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.95, WALHeadLSN: 90},
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.8, WALHeadLSN: 100, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.95, WALHeadLSN: 90, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	})
 	// Add to byServer for s2 and s3.
@@ -592,14 +595,16 @@ func TestRegistry_PromoteBestReplica_NoReplica(t *testing.T) {
 
 func TestRegistry_PromoteBestReplica_TiebreakByLSN(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("s2")
+	r.MarkBlockCapable("s3")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "s1",
 		Path:         "/v1.blk",
 		Epoch:        3,
 		Replicas: []ReplicaInfo{
-			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.9, WALHeadLSN: 50},
-			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.9, WALHeadLSN: 100},
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 0.9, WALHeadLSN: 50, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.9, WALHeadLSN: 100, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	})
 	r.mu.Lock()
@@ -627,14 +632,16 @@ func TestRegistry_PromoteBestReplica_TiebreakByLSN(t *testing.T) {
 
 func TestRegistry_PromoteBestReplica_KeepsOthers(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("s2")
+	r.MarkBlockCapable("s3")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "s1",
 		Path:         "/v1.blk",
 		Epoch:        1,
 		Replicas: []ReplicaInfo{
-			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 1.0, WALHeadLSN: 100},
-			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.5, WALHeadLSN: 100},
+			{Server: "s2", Path: "/r1.blk", IQN: "iqn:r1", ISCSIAddr: "s2:3260", HealthScore: 1.0, WALHeadLSN: 100, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "s3", Path: "/r2.blk", IQN: "iqn:r2", ISCSIAddr: "s3:3260", HealthScore: 0.5, WALHeadLSN: 100, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	})
 	r.mu.Lock()
@@ -877,6 +884,7 @@ func TestRegistry_PromoteBestReplica_WALLagIneligible(t *testing.T) {
 				HealthScore:   1.0,
 				WALHeadLSN:    800, // lag=200, tolerance=100
 				LastHeartbeat: time.Now(),
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
 			},
 		},
 	})
@@ -918,6 +926,8 @@ func TestRegistry_PromoteBestReplica_RebuildingIneligible(t *testing.T) {
 // Fix #2: Among eligible replicas, best (health+LSN) wins.
 func TestRegistry_PromoteBestReplica_EligibilityFiltersCorrectly(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("stale")
+	r.MarkBlockCapable("good")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "primary",
@@ -939,6 +949,7 @@ func TestRegistry_PromoteBestReplica_EligibilityFiltersCorrectly(t *testing.T) {
 				HealthScore:   0.8,
 				WALHeadLSN:    95,
 				LastHeartbeat: time.Now(),
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
 			},
 		},
 	})
@@ -956,6 +967,7 @@ func TestRegistry_PromoteBestReplica_EligibilityFiltersCorrectly(t *testing.T) {
 // Configurable tolerance: widen tolerance to allow lagging replicas.
 func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("lagging")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "primary",
@@ -970,6 +982,7 @@ func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
 				HealthScore:   1.0,
 				WALHeadLSN:    800, // lag=200
 				LastHeartbeat: time.Now(),
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
 			},
 		},
 	})
@@ -989,6 +1002,236 @@ func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
 	e, _ := r.Lookup("vol1")
 	if e.VolumeServer != "lagging" {
 		t.Fatalf("expected 'lagging' promoted, got %q", e.VolumeServer)
+	}
+}
+
+// B-12: PromoteBestReplica rejects dead replica (server not in blockServers).
+func TestRegistry_PromoteBestReplica_DeadServerIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// Intentionally do NOT mark "dead-replica" as block-capable.
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "dead-replica",
+				Path:          "/data/vol1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				LastHeartbeat: time.Now(),
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: dead replica should be rejected")
+	}
+	if !strings.Contains(err.Error(), "server_dead") {
+		t.Fatalf("error should mention server_dead, got: %v", err)
+	}
+}
+
+// B-12: Dead replica rejected but alive replica promoted when both exist.
+func TestRegistry_PromoteBestReplica_DeadSkipped_AlivePromoted(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// Only mark s3 as alive.
+	r.MarkBlockCapable("s3")
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{Server: "s2-dead", Path: "/r1.blk", HealthScore: 1.0, WALHeadLSN: 100, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+			{Server: "s3", Path: "/r2.blk", HealthScore: 0.8, WALHeadLSN: 95, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	newEpoch, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	if newEpoch != 2 {
+		t.Fatalf("newEpoch: got %d, want 2", newEpoch)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "s3" {
+		t.Fatalf("expected alive s3 promoted, got %q", e.VolumeServer)
+	}
+}
+
+// EvaluatePromotion returns read-only preflight without mutating registry.
+func TestRegistry_EvaluatePromotion_Basic(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        5,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{Server: "replica1", Path: "/r1.blk", HealthScore: 0.9, WALHeadLSN: 100, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	pf, err := r.EvaluatePromotion("vol1")
+	if err != nil {
+		t.Fatalf("EvaluatePromotion: %v", err)
+	}
+	if !pf.Promotable {
+		t.Fatalf("expected promotable, got reason: %s", pf.Reason)
+	}
+	if pf.Candidate == nil || pf.Candidate.Server != "replica1" {
+		t.Fatalf("expected candidate replica1, got %+v", pf.Candidate)
+	}
+
+	// Registry must be unmutated.
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "primary" {
+		t.Fatal("EvaluatePromotion should not mutate the registry")
+	}
+	if e.Epoch != 5 {
+		t.Fatal("EvaluatePromotion should not bump epoch")
+	}
+}
+
+// EvaluatePromotion with all replicas rejected.
+func TestRegistry_EvaluatePromotion_AllRejected(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// No servers marked as block-capable.
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		Replicas: []ReplicaInfo{
+			{Server: "dead1", Path: "/r1.blk", HealthScore: 1.0, WALHeadLSN: 100, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+			{Server: "dead2", Path: "/r2.blk", HealthScore: 0.9, WALHeadLSN: 100, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	pf, err := r.EvaluatePromotion("vol1")
+	if err != nil {
+		t.Fatalf("EvaluatePromotion: %v", err)
+	}
+	if pf.Promotable {
+		t.Fatal("expected not promotable")
+	}
+	if len(pf.Rejections) != 2 {
+		t.Fatalf("expected 2 rejections, got %d", len(pf.Rejections))
+	}
+	for _, rej := range pf.Rejections {
+		if rej.Reason != "server_dead" {
+			t.Fatalf("expected server_dead rejection, got %q", rej.Reason)
+		}
+	}
+}
+
+// EvaluatePromotion for nonexistent volume.
+func TestRegistry_EvaluatePromotion_NotFound(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	_, err := r.EvaluatePromotion("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent volume")
+	}
+}
+
+// Replica created but never heartbeated is not promotable.
+func TestRegistry_PromoteBestReplica_NoHeartbeatIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:      "replica1",
+				Path:        "/r1.blk",
+				HealthScore: 1.0,
+				WALHeadLSN:  100,
+				Role:        blockvol.RoleToWire(blockvol.RoleReplica),
+				// LastHeartbeat: zero — never heartbeated
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: replica with no heartbeat should be rejected")
+	}
+	if !strings.Contains(err.Error(), "no_heartbeat") {
+		t.Fatalf("error should mention no_heartbeat, got: %v", err)
+	}
+}
+
+// Replica with unset (zero) role is not promotable.
+func TestRegistry_PromoteBestReplica_UnsetRoleIneligible(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		LeaseTTL:     30 * time.Second,
+		WALHeadLSN:   100,
+		Replicas: []ReplicaInfo{
+			{
+				Server:        "replica1",
+				Path:          "/r1.blk",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				LastHeartbeat: time.Now(),
+				// Role: 0 — unset/RoleNone
+			},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err == nil {
+		t.Fatal("expected error: replica with unset role should be rejected")
+	}
+	if !strings.Contains(err.Error(), "wrong_role") {
+		t.Fatalf("error should mention wrong_role, got: %v", err)
+	}
+}
+
+// PromoteBestReplica clears RebuildListenAddr on promotion (B-11 partial fix).
+func TestRegistry_PromoteBestReplica_ClearsRebuildAddr(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.Register(&BlockVolumeEntry{
+		Name:              "vol1",
+		VolumeServer:      "primary",
+		Path:              "/data/vol1.blk",
+		Epoch:             1,
+		RebuildListenAddr: "primary:15000",
+		Replicas: []ReplicaInfo{
+			{Server: "replica1", Path: "/r1.blk", HealthScore: 1.0, WALHeadLSN: 100, LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	_, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.RebuildListenAddr != "" {
+		t.Fatalf("RebuildListenAddr should be cleared after promotion, got %q", e.RebuildListenAddr)
 	}
 }
 
@@ -1108,5 +1351,269 @@ func TestRegistry_LeaseGrants_UnknownServer(t *testing.T) {
 	grants := r.LeaseGrants("unknown:18080", nil)
 	if grants != nil {
 		t.Fatalf("expected nil for unknown server, got %+v", grants)
+	}
+}
+
+// ============================================================
+// CP11B-3 T2: IsBlockCapable + VolumesWithDeadPrimary
+// ============================================================
+
+func TestRegistry_IsBlockCapable(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1:8080")
+
+	if !r.IsBlockCapable("vs1:8080") {
+		t.Fatal("vs1 should be block-capable")
+	}
+	if r.IsBlockCapable("vs2:8080") {
+		t.Fatal("vs2 should NOT be block-capable")
+	}
+
+	r.UnmarkBlockCapable("vs1:8080")
+	if r.IsBlockCapable("vs1:8080") {
+		t.Fatal("vs1 should no longer be block-capable after unmark")
+	}
+}
+
+func TestRegistry_VolumesWithDeadPrimary_Basic(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1")
+	r.MarkBlockCapable("vs2")
+
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive,
+		Replicas: []ReplicaInfo{{Server: "vs2", Path: "/data/vol1.blk"}},
+	})
+
+	// Both alive → no orphans.
+	orphaned := r.VolumesWithDeadPrimary("vs2")
+	if len(orphaned) != 0 {
+		t.Fatalf("expected 0 orphaned volumes, got %d", len(orphaned))
+	}
+
+	// Kill primary.
+	r.UnmarkBlockCapable("vs1")
+	orphaned = r.VolumesWithDeadPrimary("vs2")
+	if len(orphaned) != 1 || orphaned[0] != "vol1" {
+		t.Fatalf("expected [vol1], got %v", orphaned)
+	}
+}
+
+func TestRegistry_VolumesWithDeadPrimary_PrimaryServer_NotIncluded(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1")
+
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive,
+	})
+
+	// vs1 is the primary for vol1 — should NOT appear in orphaned list for vs1.
+	orphaned := r.VolumesWithDeadPrimary("vs1")
+	if len(orphaned) != 0 {
+		t.Fatalf("primary server should not appear in its own orphan list, got %v", orphaned)
+	}
+}
+
+// T6: EvaluatePromotion preflight includes primary liveness.
+func TestRegistry_EvaluatePromotion_PrimaryDead_StillShowsCandidate(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1")
+	r.MarkBlockCapable("vs2")
+
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{{
+			Server: "vs2", Path: "/data/vol1.blk", HealthScore: 1.0,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	})
+
+	// Kill primary but keep vs2 alive.
+	r.UnmarkBlockCapable("vs1")
+
+	pf, err := r.EvaluatePromotion("vol1")
+	if err != nil {
+		t.Fatalf("EvaluatePromotion: %v", err)
+	}
+	if !pf.Promotable {
+		t.Fatalf("should be promotable (vs2 alive), reason=%s", pf.Reason)
+	}
+	if pf.Candidate.Server != "vs2" {
+		t.Fatalf("candidate should be vs2, got %q", pf.Candidate.Server)
+	}
+}
+
+// ============================================================
+// CP11B-3 T5: ManualPromote Dev Tests
+// ============================================================
+
+// T5: ManualPromote with empty target → auto-picks best candidate.
+func TestRegistry_ManualPromote_AutoTarget(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("best")
+	r.MarkBlockCapable("worse")
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second, WALHeadLSN: 100,
+		Replicas: []ReplicaInfo{
+			{Server: "worse", Path: "/r1.blk", HealthScore: 0.5, WALHeadLSN: 100,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+			{Server: "best", Path: "/r2.blk", HealthScore: 1.0, WALHeadLSN: 100,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+	// Primary not block-capable → non-force should still pass (primary_alive gate won't trigger).
+
+	newEpoch, _, _, pf, err := r.ManualPromote("vol1", "", false)
+	if err != nil {
+		t.Fatalf("ManualPromote: %v", err)
+	}
+	if newEpoch != 2 {
+		t.Fatalf("epoch: got %d, want 2", newEpoch)
+	}
+	if !pf.Promotable {
+		t.Fatal("should be promotable")
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "best" {
+		t.Fatalf("expected 'best' promoted, got %q", e.VolumeServer)
+	}
+}
+
+// T5: ManualPromote targets a specific replica (not the best by health).
+func TestRegistry_ManualPromote_SpecificTarget(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("r1")
+	r.MarkBlockCapable("r2")
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{Server: "r1", Path: "/r1.blk", HealthScore: 1.0, WALHeadLSN: 100,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+			{Server: "r2", Path: "/r2.blk", HealthScore: 0.5, WALHeadLSN: 50,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	// Target r2 specifically (worse health).
+	newEpoch, _, _, _, err := r.ManualPromote("vol1", "r2", false)
+	if err != nil {
+		t.Fatalf("ManualPromote: %v", err)
+	}
+	if newEpoch != 2 {
+		t.Fatalf("epoch: got %d, want 2", newEpoch)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "r2" {
+		t.Fatalf("expected r2 promoted (specific target), got %q", e.VolumeServer)
+	}
+}
+
+// T5: ManualPromote with non-existent target → error.
+func TestRegistry_ManualPromote_TargetNotFound(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("r1")
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{Server: "r1", Path: "/r1.blk", HealthScore: 1.0,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	_, _, _, pf, err := r.ManualPromote("vol1", "nonexistent", false)
+	if err == nil {
+		t.Fatal("expected error for nonexistent target")
+	}
+	if pf.Reason != "target_not_found" {
+		t.Fatalf("expected target_not_found, got %q", pf.Reason)
+	}
+}
+
+// T5: ManualPromote non-force with alive primary → rejected.
+func TestRegistry_ManualPromote_PrimaryAlive_Rejected(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary")
+	r.MarkBlockCapable("r1")
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{Server: "r1", Path: "/r1.blk", HealthScore: 1.0,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	_, _, _, pf, err := r.ManualPromote("vol1", "", false)
+	if err == nil {
+		t.Fatal("expected rejection when primary alive and !force")
+	}
+	if pf.Reason != "primary_alive" {
+		t.Fatalf("expected primary_alive, got %q", pf.Reason)
+	}
+	// Verify no mutation.
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "primary" {
+		t.Fatalf("primary should not change, got %q", e.VolumeServer)
+	}
+}
+
+// T5: Force bypasses stale heartbeat and primary_alive gates.
+func TestRegistry_ManualPromote_Force_StaleHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary")
+	r.MarkBlockCapable("r1")
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{Server: "r1", Path: "/r1.blk", HealthScore: 1.0,
+				LastHeartbeat: time.Now().Add(-10 * time.Minute), // stale
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	// Non-force: would fail on primary_alive.
+	// Force: bypasses primary_alive AND stale_heartbeat.
+	newEpoch, _, _, _, err := r.ManualPromote("vol1", "", true)
+	if err != nil {
+		t.Fatalf("force ManualPromote should succeed: %v", err)
+	}
+	if newEpoch != 2 {
+		t.Fatalf("epoch: got %d, want 2", newEpoch)
+	}
+	e, _ := r.Lookup("vol1")
+	if e.VolumeServer != "r1" {
+		t.Fatalf("expected r1 promoted via force, got %q", e.VolumeServer)
+	}
+}
+
+// T5: Force does NOT bypass server_dead (hard gate).
+func TestRegistry_ManualPromote_Force_StillRejectsDeadServer(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// "dead" is NOT marked block-capable.
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "primary", Path: "/data/vol1.blk",
+		Epoch: 1, LeaseTTL: 30 * time.Second,
+		Replicas: []ReplicaInfo{
+			{Server: "dead", Path: "/r1.blk", HealthScore: 1.0,
+				LastHeartbeat: time.Now(), Role: blockvol.RoleToWire(blockvol.RoleReplica)},
+		},
+	})
+
+	_, _, _, pf, err := r.ManualPromote("vol1", "dead", true)
+	if err == nil {
+		t.Fatal("force should NOT bypass server_dead")
+	}
+	if len(pf.Rejections) == 0 || pf.Rejections[0].Reason != "server_dead" {
+		t.Fatalf("expected server_dead rejection, got %+v", pf.Rejections)
 	}
 }

@@ -645,13 +645,16 @@ func TestIntegration_DoubleFailover(t *testing.T) {
 	// Reconnect vs1 first so it becomes a replica (via recoverBlockVolumes).
 	ms.recoverBlockVolumes(vs1)
 
-	// Simulate heartbeat from vs1 that restores iSCSI addr and health score
-	// (in production this happens when the VS re-registers after reconnect).
+	// Simulate heartbeat from vs1 that restores iSCSI addr, health score,
+	// role, and heartbeat timestamp (in production this happens when the
+	// VS re-registers after reconnect and completes rebuild).
 	e1, _ = ms.blockRegistry.Lookup("pvc-double-1")
 	for i := range e1.Replicas {
 		if e1.Replicas[i].Server == vs1 {
 			e1.Replicas[i].ISCSIAddr = vs1 + ":3260"
 			e1.Replicas[i].HealthScore = 1.0
+			e1.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+			e1.Replicas[i].LastHeartbeat = time.Now()
 		}
 	}
 

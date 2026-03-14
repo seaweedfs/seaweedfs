@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // testMasterServer creates a minimal MasterServer with mock VS calls for testing.
@@ -1112,6 +1113,9 @@ func TestMaster_NoNvmeFieldsWhenDisabled(t *testing.T) {
 
 func TestMaster_PromotionCopiesNvmeFields(t *testing.T) {
 	ms := testMasterServer(t)
+	// Mark servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable("vs1:9333")
+	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
 	// Directly register an entry with primary + replica, both having NVMe fields.
 	ms.blockRegistry.Register(&BlockVolumeEntry{
@@ -1128,16 +1132,18 @@ func TestMaster_PromotionCopiesNvmeFields(t *testing.T) {
 		LeaseTTL:     30 * time.Second,
 		Replicas: []ReplicaInfo{
 			{
-				Server:      "vs2:9333",
-				Path:        "/data/ha-vol.blk",
-				IQN:         "iqn.2024.test:ha-vol-r",
-				ISCSIAddr:   "vs2:3260",
-				NvmeAddr:    "vs2:4420",
-				NQN:         "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2",
-				DataAddr:    "vs2:14260",
-				CtrlAddr:    "vs2:14261",
-				HealthScore: 0.95,
-				WALHeadLSN:  100,
+				Server:        "vs2:9333",
+				Path:          "/data/ha-vol.blk",
+				IQN:           "iqn.2024.test:ha-vol-r",
+				ISCSIAddr:     "vs2:3260",
+				NvmeAddr:      "vs2:4420",
+				NQN:           "nqn.2024-01.com.seaweedfs:vol.ha-vol.vs2",
+				DataAddr:      "vs2:14260",
+				CtrlAddr:      "vs2:14261",
+				HealthScore:   0.95,
+				WALHeadLSN:    100,
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+				LastHeartbeat: time.Now(),
 			},
 		},
 	})
@@ -1654,10 +1660,11 @@ func TestMaster_ExpandCoordinated_RestartRecovery(t *testing.T) {
 }
 
 func TestMaster_ExpandCoordinated_B09_ReReadsEntryAfterLock(t *testing.T) {
-	// B-09: If failover changes VolumeServer between initial Lookup and
-	// AcquireExpandInflight, the coordinator must use the fresh entry,
-	// not the stale one. Use RF=3 so promotion still leaves 1 replica
-	// and the coordinated path is taken.
+	// B-09: Exercises the actual race window — failover happens BETWEEN
+	// the initial Lookup (line 380) and the post-lock re-read (line 419).
+	// Uses expandPreReadHook to inject PromoteBestReplica at the exact
+	// interleaving point. RF=3 so promotion leaves 1 replica and the
+	// coordinated path is taken.
 	ms := testMasterServerWithExpandMocks(t)
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
@@ -1689,31 +1696,39 @@ func TestMaster_ExpandCoordinated_B09_ReReadsEntryAfterLock(t *testing.T) {
 		return 2 << 30, nil
 	}
 
-	// Simulate failover: promote best replica. With RF=3, one replica
-	// becomes primary and the other stays as replica → coordinated path.
-	ms.blockRegistry.PromoteBestReplica("b09-vol")
-
-	entry, _ = ms.blockRegistry.Lookup("b09-vol")
-	newPrimary := entry.VolumeServer
-	if newPrimary == originalPrimary {
-		t.Fatal("promotion didn't change primary")
-	}
-	if len(entry.Replicas) == 0 {
-		t.Fatal("expected at least 1 replica after RF=3 promotion")
+	// Hook fires AFTER AcquireExpandInflight but BEFORE the re-read Lookup.
+	// This is the exact race window: the initial Lookup already returned
+	// the old primary, but failover changes it before the re-read.
+	hookFired := false
+	ms.expandPreReadHook = func() {
+		hookFired = true
+		ms.blockRegistry.PromoteBestReplica("b09-vol")
 	}
 
-	// Expand should use the NEW primary (post-failover), not the old one.
+	// At this point, the initial Lookup inside ExpandBlockVolume will see
+	// originalPrimary. The hook then promotes, changing the primary.
+	// The re-read must pick up the new primary.
 	resp, err := ms.ExpandBlockVolume(context.Background(), &master_pb.ExpandBlockVolumeRequest{
 		Name: "b09-vol", NewSizeBytes: 2 << 30,
 	})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
+	if !hookFired {
+		t.Fatal("expandPreReadHook was not called — race window not exercised")
+	}
 	if resp.CapacityBytes != 2<<30 {
 		t.Fatalf("capacity: got %d", resp.CapacityBytes)
 	}
 
-	// First PREPARE should have gone to the new primary, not the old one.
+	// Verify: after the hook promoted, the re-read must have picked up
+	// the new primary. The first PREPARE should go to the new primary.
+	entry, _ = ms.blockRegistry.Lookup("b09-vol")
+	newPrimary := entry.VolumeServer
+	if newPrimary == originalPrimary {
+		t.Fatal("promotion didn't change primary")
+	}
+
 	if len(preparedServers) == 0 {
 		t.Fatal("no prepare calls recorded")
 	}
@@ -1721,7 +1736,7 @@ func TestMaster_ExpandCoordinated_B09_ReReadsEntryAfterLock(t *testing.T) {
 		t.Fatalf("PREPARE went to %q (stale), should go to %q (fresh primary)",
 			preparedServers[0], newPrimary)
 	}
-	// Verify old primary was NOT contacted.
+	// Verify old primary was NOT contacted at all.
 	for _, s := range preparedServers {
 		if s == originalPrimary {
 			t.Fatalf("PREPARE sent to old primary %q — stale entry used", originalPrimary)

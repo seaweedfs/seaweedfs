@@ -1,0 +1,214 @@
+name: cp11b3-fast-reconnect
+timeout: 10m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9436"
+
+# Tests: T3 (deferred timer safety), T2 (fast reconnect skips failover)
+# Flow: Create RF=2 → write → kill primary briefly → restart before lease expires
+#       → verify no promotion happened → verify data intact
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # Phase 1: Clean slate
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3r-master /tmp/sw-b3r-vs1 /tmp/sw-b3r-vs2"
+        root: "true"
+
+  # Phase 2: Start cluster
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: target_node
+        cmd: "mkdir -p /tmp/sw-b3r-master /tmp/sw-b3r-vs1/blocks /tmp/sw-b3r-vs2/blocks"
+      - action: start_weed_master
+        node: target_node
+        port: "9436"
+        dir: "/tmp/sw-b3r-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: target_node
+        master_url: "http://localhost:9436"
+        timeout: 30s
+      - action: start_weed_volume
+        node: target_node
+        port: "18194"
+        master: "localhost:9436"
+        dir: "/tmp/sw-b3r-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3r-vs1/blocks -block.listen=:3281 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: target_node
+        port: "18195"
+        master: "localhost:9436"
+        dir: "/tmp/sw-b3r-vs2"
+        extra_args: "-block.dir=/tmp/sw-b3r-vs2/blocks -block.listen=:3282 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+
+  # Phase 3: Create RF=2 volume, write data
+  - name: create_and_write
+    actions:
+      - action: create_block_volume
+        name: "reconnect-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      # Wait for replica to confirm role via heartbeat.
+      - action: sleep
+        duration: 10s
+      - action: lookup_block_volume
+        name: "reconnect-test"
+        save_as: initial
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ initial_iscsi_host }}"
+        port: "{{ initial_iscsi_port }}"
+        iqn: "{{ initial_iqn }}"
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        seek: "8"
+        save_as: md5_8M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        skip: "8"
+        save_as: verify_8M
+      - action: assert_equal
+        actual: "{{ verify_8M }}"
+        expected: "{{ md5_8M }}"
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      # Record initial epoch.
+      - action: assert_block_field
+        name: "reconnect-test"
+        field: "epoch"
+        expected: "1"
+      # Record pre-kill promotion counter.
+      - action: block_status
+        save_as: pre_stats
+
+  # Phase 4: Kill and quickly restart primary VS (before lease expires)
+  - name: fast_reconnect
+    actions:
+      # Crash-kill primary VS with SIGKILL.
+      - action: exec
+        node: target_node
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+      # Restart it quickly — within a few seconds, well before the
+      # default 30s lease TTL expires on the master.
+      - action: sleep
+        duration: 3s
+      - action: start_weed_volume
+        node: target_node
+        port: "18194"
+        master: "localhost:9436"
+        dir: "/tmp/sw-b3r-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3r-vs1/blocks -block.listen=:3281 -ip=192.168.1.184"
+        save_as: vs1_pid2
+      # Wait for VS to re-register with master.
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+      - action: sleep
+        duration: 5s
+
+  # Phase 5: Verify NO promotion happened
+  - name: verify_no_promotion
+    actions:
+      # Epoch should still be 1 (no promotion).
+      - action: assert_block_field
+        name: "reconnect-test"
+        field: "epoch"
+        expected: "1"
+      # Promotion counter should not have increased.
+      - action: block_status
+        save_as: post_stats
+      - action: assert_equal
+        actual: "{{ post_stats_promotions_total }}"
+        expected: "{{ pre_stats_promotions_total }}"
+      - action: print
+        msg: "fast reconnect: epoch unchanged, no promotion — deferred timer cancelled"
+
+  # Phase 6: Verify data still accessible on original primary
+  - name: verify_data
+    actions:
+      - action: lookup_block_volume
+        name: "reconnect-test"
+        save_as: after
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ after_iscsi_host }}"
+        port: "{{ after_iscsi_port }}"
+        iqn: "{{ after_iqn }}"
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "8"
+        save_as: post_reconnect_md5
+      - action: assert_equal
+        actual: "{{ post_reconnect_md5 }}"
+        expected: "{{ md5_8M }}"
+
+  # Cleanup (always runs)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: delete_block_volume
+        name: "reconnect-test"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid2 }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-b3r-master /tmp/sw-b3r-vs1 /tmp/sw-b3r-vs2"
+        root: "true"
+        ignore_error: true

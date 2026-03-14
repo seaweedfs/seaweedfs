@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/blockapi"
@@ -206,6 +207,99 @@ func (ms *MasterServer) blockStatusHandler(w http.ResponseWriter, r *http.Reques
 	writeJsonQuiet(w, r, http.StatusOK, status)
 }
 
+// blockVolumePreflightHandler handles GET /block/volume/{name}/preflight.
+// Returns a read-only promotion preflight evaluation for the named volume.
+func (ms *MasterServer) blockVolumePreflightHandler(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	if name == "" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("name is required"))
+		return
+	}
+
+	pf, err := ms.blockRegistry.EvaluatePromotion(name)
+	if err != nil {
+		writeJsonError(w, r, http.StatusNotFound, err)
+		return
+	}
+
+	resp := blockapi.PreflightResponse{
+		VolumeName: pf.VolumeName,
+		Promotable: pf.Promotable,
+		Reason:     pf.Reason,
+	}
+	if pf.Candidate != nil {
+		resp.CandidateServer = pf.Candidate.Server
+		resp.CandidateHealth = pf.Candidate.HealthScore
+		resp.CandidateWALLSN = pf.Candidate.WALHeadLSN
+	}
+	for _, rej := range pf.Rejections {
+		resp.Rejections = append(resp.Rejections, blockapi.PreflightRejection{
+			Server: rej.Server,
+			Reason: rej.Reason,
+		})
+	}
+	// Add primary liveness info.
+	entry, ok := ms.blockRegistry.Lookup(name)
+	if ok {
+		resp.PrimaryServer = entry.VolumeServer
+		resp.PrimaryAlive = ms.blockRegistry.IsBlockCapable(entry.VolumeServer)
+	}
+	writeJsonQuiet(w, r, http.StatusOK, resp)
+}
+
+// blockVolumePromoteHandler handles POST /block/volume/{name}/promote.
+// Triggers a manual promotion for the named block volume.
+func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	if name == "" {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("name is required"))
+		return
+	}
+
+	var req blockapi.PromoteVolumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
+		return
+	}
+
+	// ManualPromote captures oldPrimary/oldPath under lock to avoid TOCTOU (BUG-T5-2).
+	newEpoch, oldPrimary, oldPath, pf, err := ms.blockRegistry.ManualPromote(name, req.TargetServer, req.Force)
+	if err != nil {
+		// Distinguish not-found from rejection.
+		status := http.StatusConflict
+		if pf.Reason == "volume not found" {
+			status = http.StatusNotFound
+		}
+		// Build structured rejection response.
+		resp := blockapi.PromoteVolumeResponse{
+			Reason: pf.Reason,
+		}
+		for _, rej := range pf.Rejections {
+			resp.Rejections = append(resp.Rejections, blockapi.PreflightRejection{
+				Server: rej.Server,
+				Reason: rej.Reason,
+			})
+		}
+		glog.V(0).Infof("manual promote %q rejected: %s", name, pf.Reason)
+		writeJsonQuiet(w, r, status, resp)
+		return
+	}
+
+	// Post-promotion orchestration (same as auto path).
+	ms.finalizePromotion(name, oldPrimary, oldPath, newEpoch)
+
+	if req.Reason != "" {
+		glog.V(0).Infof("manual promote %q: reason=%q", name, req.Reason)
+	}
+
+	// Re-read to get the new primary server name.
+	entry, _ := ms.blockRegistry.Lookup(name)
+	writeJsonQuiet(w, r, http.StatusOK, blockapi.PromoteVolumeResponse{
+		NewPrimary: entry.VolumeServer,
+		Epoch:      newEpoch,
+	})
+}
+
 // entryToVolumeInfo converts a BlockVolumeEntry to a blockapi.VolumeInfo.
 func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 	status := "pending"
@@ -239,6 +333,8 @@ func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 		HealthScore:      e.HealthScore,
 		ReplicaDegraded:  e.ReplicaDegraded,
 		DurabilityMode:   durMode,
+		NvmeAddr:         e.NvmeAddr,
+		NQN:              e.NQN,
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

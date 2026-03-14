@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/infra"
 )
 
 // RegisterSnapshotActions registers snapshot and resize actions.
@@ -18,6 +19,8 @@ func RegisterSnapshotActions(r *tr.Registry) {
 	r.RegisterFunc("resize", tr.TierBlock, resizeAction)
 	r.RegisterFunc("iscsi_rescan", tr.TierBlock, iscsiRescan)
 	r.RegisterFunc("get_block_size", tr.TierBlock, getBlockSize)
+	r.RegisterFunc("snapshot_export_s3", tr.TierBlock, snapshotExportS3)
+	r.RegisterFunc("snapshot_import_s3", tr.TierBlock, snapshotImportS3)
 }
 
 func snapshotCreate(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
@@ -180,4 +183,90 @@ func parseHumanSize(s string) (uint64, error) {
 		return 0, err
 	}
 	return val * multiplier, nil
+}
+
+// snapshotExportS3 exports a snapshot from a target to an S3 bucket.
+// Params: bucket, key_prefix, s3_endpoint, s3_access_key, s3_secret_key, s3_region, snapshot_id (optional).
+// Returns: manifest_key, data_key, size_bytes, sha256.
+func snapshotExportS3(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	tgt, err := getHATarget(actx, act.Target)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := infra.ExportS3Opts{
+		Bucket:      act.Params["bucket"],
+		KeyPrefix:   act.Params["key_prefix"],
+		S3Endpoint:  act.Params["s3_endpoint"],
+		S3AccessKey: act.Params["s3_access_key"],
+		S3SecretKey: act.Params["s3_secret_key"],
+		S3Region:    act.Params["s3_region"],
+	}
+	if opts.Bucket == "" || opts.S3Endpoint == "" {
+		return nil, fmt.Errorf("snapshot_export_s3: bucket and s3_endpoint required")
+	}
+	if idStr := act.Params["snapshot_id"]; idStr != "" {
+		id, err := strconv.ParseUint(idStr, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot_export_s3: invalid snapshot_id %q: %w", idStr, err)
+		}
+		opts.SnapshotID = uint32(id)
+	}
+
+	result, err := tgt.ExportSnapshotS3(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot_export_s3: %w", err)
+	}
+
+	actx.Log("  exported to s3://%s/%s (%d bytes, sha256=%s)", opts.Bucket, result.DataKey, result.SizeBytes, result.SHA256)
+	out := map[string]string{
+		"value": result.SHA256,
+	}
+	if act.SaveAs != "" {
+		actx.Vars[act.SaveAs+"_manifest_key"] = result.ManifestKey
+		actx.Vars[act.SaveAs+"_data_key"] = result.DataKey
+		actx.Vars[act.SaveAs+"_size_bytes"] = strconv.FormatUint(result.SizeBytes, 10)
+		actx.Vars[act.SaveAs+"_sha256"] = result.SHA256
+	}
+	return out, nil
+}
+
+// snapshotImportS3 imports a snapshot from an S3 bucket into a target.
+// Params: bucket, manifest_key, s3_endpoint, s3_access_key, s3_secret_key, s3_region, allow_overwrite.
+// Returns: size_bytes, sha256.
+func snapshotImportS3(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	tgt, err := getHATarget(actx, act.Target)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := infra.ImportS3Opts{
+		Bucket:      act.Params["bucket"],
+		ManifestKey: act.Params["manifest_key"],
+		S3Endpoint:  act.Params["s3_endpoint"],
+		S3AccessKey: act.Params["s3_access_key"],
+		S3SecretKey: act.Params["s3_secret_key"],
+		S3Region:    act.Params["s3_region"],
+	}
+	if opts.Bucket == "" || opts.ManifestKey == "" || opts.S3Endpoint == "" {
+		return nil, fmt.Errorf("snapshot_import_s3: bucket, manifest_key, and s3_endpoint required")
+	}
+	if act.Params["allow_overwrite"] == "true" {
+		opts.AllowOverwrite = true
+	}
+
+	result, err := tgt.ImportSnapshotS3(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot_import_s3: %w", err)
+	}
+
+	actx.Log("  imported %d bytes (sha256=%s)", result.SizeBytes, result.SHA256)
+	out := map[string]string{
+		"value": result.SHA256,
+	}
+	if act.SaveAs != "" {
+		actx.Vars[act.SaveAs+"_size_bytes"] = strconv.FormatUint(result.SizeBytes, 10)
+		actx.Vars[act.SaveAs+"_sha256"] = result.SHA256
+	}
+	return out, nil
 }

@@ -38,6 +38,8 @@ type VolumeInfo struct {
 	HealthScore     float64         `json:"health_score"`
 	ReplicaDegraded bool            `json:"replica_degraded,omitempty"`
 	DurabilityMode  string          `json:"durability_mode"` // CP8-3-1
+	NvmeAddr        string          `json:"nvme_addr,omitempty"`
+	NQN             string          `json:"nqn,omitempty"`
 }
 
 // ReplicaDetail describes one replica in the API response.
@@ -72,6 +74,52 @@ type ExpandVolumeRequest struct {
 // ExpandVolumeResponse is the response for POST /block/volume/{name}/expand.
 type ExpandVolumeResponse struct {
 	CapacityBytes uint64 `json:"capacity_bytes"`
+}
+
+// PromoteVolumeRequest is the request body for POST /block/volume/{name}/promote.
+type PromoteVolumeRequest struct {
+	TargetServer string `json:"target_server,omitempty"` // specific replica, or empty for auto
+	Force        bool   `json:"force,omitempty"`         // bypass soft safety checks
+	Reason       string `json:"reason,omitempty"`        // audit note
+}
+
+// PromoteVolumeResponse is the response for POST /block/volume/{name}/promote.
+type PromoteVolumeResponse struct {
+	NewPrimary string               `json:"new_primary"`
+	Epoch      uint64               `json:"epoch"`
+	Reason     string               `json:"reason,omitempty"`      // rejection reason if failed
+	Rejections []PreflightRejection `json:"rejections,omitempty"`  // per-replica rejection details
+}
+
+// BlockStatusResponse is the response for GET /block/status.
+type BlockStatusResponse struct {
+	VolumeCount          int    `json:"volume_count"`
+	ServerCount          int    `json:"server_count"`
+	PromotionLSNTolerance uint64 `json:"promotion_lsn_tolerance"`
+	BarrierLagLSN        uint64 `json:"barrier_lag_lsn"`
+	PromotionsTotal      int64  `json:"promotions_total"`
+	FailoversTotal       int64  `json:"failovers_total"`
+	RebuildsTotal        int64  `json:"rebuilds_total"`
+	AssignmentQueueDepth int    `json:"assignment_queue_depth"`
+}
+
+// PreflightRejection describes why a specific replica was rejected for promotion.
+type PreflightRejection struct {
+	Server string `json:"server"`
+	Reason string `json:"reason"` // "stale_heartbeat", "wal_lag", "wrong_role", "server_dead", "no_heartbeat"
+}
+
+// PreflightResponse is the response for GET /block/volume/{name}/preflight.
+type PreflightResponse struct {
+	VolumeName      string                `json:"volume_name"`
+	Promotable      bool                  `json:"promotable"`
+	Reason          string                `json:"reason,omitempty"`
+	CandidateServer string                `json:"candidate_server,omitempty"`
+	CandidateHealth float64               `json:"candidate_health,omitempty"`
+	CandidateWALLSN uint64                `json:"candidate_wal_lsn,omitempty"`
+	Rejections      []PreflightRejection  `json:"rejections,omitempty"`
+	PrimaryServer   string                `json:"primary_server"`
+	PrimaryAlive    bool                  `json:"primary_alive"`
 }
 
 // RoleFromString converts a role string to its uint32 wire value.

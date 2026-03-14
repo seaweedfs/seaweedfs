@@ -136,6 +136,61 @@ func (c *Client) ExpandVolume(ctx context.Context, name string, newSizeBytes uin
 	return out.CapacityBytes, nil
 }
 
+// PromoteVolume triggers a manual promotion for a block volume.
+func (c *Client) PromoteVolume(ctx context.Context, name string, req PromoteVolumeRequest) (*PromoteVolumeResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := c.doRequest(ctx, http.MethodPost, "/block/volume/"+name+"/promote", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var out PromoteVolumeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
+// BlockStatus fetches the block registry status metrics.
+func (c *Client) BlockStatus(ctx context.Context) (*BlockStatusResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/block/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var out BlockStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
+// Preflight returns the promotion preflight evaluation for a block volume.
+func (c *Client) Preflight(ctx context.Context, name string) (*PreflightResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/block/volume/"+name+"/preflight", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var out PreflightResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
 // ListServers lists all block-capable volume servers.
 func (c *Client) ListServers(ctx context.Context) ([]ServerInfo, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/block/servers", nil)

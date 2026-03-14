@@ -34,6 +34,9 @@ func testMasterServerForFailover(t *testing.T) *MasterServer {
 // registerVolumeWithReplica creates a volume entry with primary + replica for tests.
 func registerVolumeWithReplica(t *testing.T, ms *MasterServer, name, primary, replica string, epoch uint64, leaseTTL time.Duration) {
 	t.Helper()
+	// Mark both servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable(primary)
+	ms.blockRegistry.MarkBlockCapable(replica)
 	entry := &BlockVolumeEntry{
 		Name:             name,
 		VolumeServer:     primary,
@@ -53,11 +56,13 @@ func registerVolumeWithReplica(t *testing.T, ms *MasterServer, name, primary, re
 		// CP8-2: also populate Replicas[] for PromoteBestReplica.
 		Replicas: []ReplicaInfo{
 			{
-				Server:      replica,
-				Path:        fmt.Sprintf("/data/%s.blk", name),
-				IQN:         fmt.Sprintf("iqn.2024.test:%s-replica", name),
-				ISCSIAddr:   replica + ":3260",
-				HealthScore: 1.0,
+				Server:        replica,
+				Path:          fmt.Sprintf("/data/%s.blk", name),
+				IQN:           fmt.Sprintf("iqn.2024.test:%s-replica", name),
+				ISCSIAddr:     replica + ":3260",
+				HealthScore:   1.0,
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+				LastHeartbeat: time.Now(),
 			},
 		},
 	}
@@ -194,6 +199,9 @@ func TestFailover_MultipleVolumes(t *testing.T) {
 
 func TestFailover_LeaseNotExpired_DeferredPromotion(t *testing.T) {
 	ms := testMasterServerForFailover(t)
+	// Mark servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
 	entry := &BlockVolumeEntry{
 		Name:             "vol1",
 		VolumeServer:     "vs1",
@@ -209,7 +217,7 @@ func TestFailover_LeaseNotExpired_DeferredPromotion(t *testing.T) {
 		LeaseTTL:         200 * time.Millisecond,
 		LastLeaseGrant:   time.Now(), // just granted, NOT expired yet
 		Replicas: []ReplicaInfo{
-			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0},
+			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	}
 	ms.blockRegistry.Register(entry)
@@ -397,6 +405,9 @@ func TestRebuild_RegistryUpdatedWithNewReplica(t *testing.T) {
 
 func TestRebuild_AssignmentContainsRebuildAddr(t *testing.T) {
 	ms := testMasterServerForFailover(t)
+	// Mark servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
 	entry := &BlockVolumeEntry{
 		Name:              "vol1",
 		VolumeServer:      "vs1",
@@ -413,7 +424,7 @@ func TestRebuild_AssignmentContainsRebuildAddr(t *testing.T) {
 		LeaseTTL:          5 * time.Second,
 		LastLeaseGrant:    time.Now().Add(-10 * time.Second),
 		Replicas: []ReplicaInfo{
-			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0},
+			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	}
 	ms.blockRegistry.Register(entry)
@@ -457,7 +468,7 @@ func TestFailover_TransientDisconnect_NoPromotion(t *testing.T) {
 		LeaseTTL:         30 * time.Second,
 		LastLeaseGrant:   time.Now(), // just granted
 		Replicas: []ReplicaInfo{
-			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0},
+			{Server: "vs2", Path: "/data/vol1.blk", IQN: "iqn:vol1-r", ISCSIAddr: "vs2:3260", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 	}
 	ms.blockRegistry.Register(entry)
@@ -556,6 +567,10 @@ func TestLifecycle_CreateFailoverRebuild(t *testing.T) {
 // registerVolumeRF3 creates a volume entry with primary + 2 replicas for RF=3 tests.
 func registerVolumeRF3(t *testing.T, ms *MasterServer, name, primary, replica1, replica2 string, epoch uint64, leaseTTL time.Duration) {
 	t.Helper()
+	// Mark all servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable(primary)
+	ms.blockRegistry.MarkBlockCapable(replica1)
+	ms.blockRegistry.MarkBlockCapable(replica2)
 	entry := &BlockVolumeEntry{
 		Name:          name,
 		VolumeServer:  primary,
@@ -576,20 +591,24 @@ func registerVolumeRF3(t *testing.T, ms *MasterServer, name, primary, replica1, 
 		ReplicaISCSIAddr: replica1 + ":3260",
 		Replicas: []ReplicaInfo{
 			{
-				Server:      replica1,
-				Path:        fmt.Sprintf("/data/%s.blk", name),
-				IQN:         fmt.Sprintf("iqn.2024.test:%s-r1", name),
-				ISCSIAddr:   replica1 + ":3260",
-				HealthScore: 1.0,
-				WALHeadLSN:  100,
+				Server:        replica1,
+				Path:          fmt.Sprintf("/data/%s.blk", name),
+				IQN:           fmt.Sprintf("iqn.2024.test:%s-r1", name),
+				ISCSIAddr:     replica1 + ":3260",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+				LastHeartbeat: time.Now(),
 			},
 			{
-				Server:      replica2,
-				Path:        fmt.Sprintf("/data/%s.blk", name),
-				IQN:         fmt.Sprintf("iqn.2024.test:%s-r2", name),
-				ISCSIAddr:   replica2 + ":3260",
-				HealthScore: 1.0,
-				WALHeadLSN:  100,
+				Server:        replica2,
+				Path:          fmt.Sprintf("/data/%s.blk", name),
+				IQN:           fmt.Sprintf("iqn.2024.test:%s-r2", name),
+				ISCSIAddr:     replica2 + ":3260",
+				HealthScore:   1.0,
+				WALHeadLSN:    100,
+				Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+				LastHeartbeat: time.Now(),
 			},
 		},
 	}
@@ -793,6 +812,10 @@ func TestRF3_AllReplicasDead_NoPromotion(t *testing.T) {
 // RF3: Lease deferred promotion with RF=3.
 func TestRF3_LeaseDeferred_Promotion(t *testing.T) {
 	ms := testMasterServerForFailover(t)
+	// Mark servers as block-capable so promotion Gate 4 (liveness) passes.
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	ms.blockRegistry.MarkBlockCapable("vs3")
 	entry := &BlockVolumeEntry{
 		Name:          "vol1",
 		VolumeServer:  "vs1",
@@ -807,8 +830,8 @@ func TestRF3_LeaseDeferred_Promotion(t *testing.T) {
 		LeaseTTL:      200 * time.Millisecond,
 		LastLeaseGrant: time.Now(), // just granted → NOT expired
 		Replicas: []ReplicaInfo{
-			{Server: "vs2", Path: "/data/vol1.blk", ISCSIAddr: "vs2:3260", HealthScore: 1.0, WALHeadLSN: 50},
-			{Server: "vs3", Path: "/data/vol1.blk", ISCSIAddr: "vs3:3260", HealthScore: 0.9, WALHeadLSN: 50},
+			{Server: "vs2", Path: "/data/vol1.blk", ISCSIAddr: "vs2:3260", HealthScore: 1.0, WALHeadLSN: 50, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "vs3", Path: "/data/vol1.blk", ISCSIAddr: "vs3:3260", HealthScore: 0.9, WALHeadLSN: 50, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 		// Deprecated scalar fields.
 		ReplicaServer: "vs2", ReplicaPath: "/data/vol1.blk", ReplicaISCSIAddr: "vs2:3260",
@@ -853,8 +876,8 @@ func TestRF3_CancelDeferredOnReconnect(t *testing.T) {
 		LeaseTTL:      5 * time.Second,
 		LastLeaseGrant: time.Now(), // just granted → long lease
 		Replicas: []ReplicaInfo{
-			{Server: "vs2", Path: "/data/vol1.blk", ISCSIAddr: "vs2:3260", HealthScore: 1.0},
-			{Server: "vs3", Path: "/data/vol1.blk", ISCSIAddr: "vs3:3260", HealthScore: 1.0},
+			{Server: "vs2", Path: "/data/vol1.blk", ISCSIAddr: "vs2:3260", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "vs3", Path: "/data/vol1.blk", ISCSIAddr: "vs3:3260", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
 		},
 		ReplicaServer: "vs2", ReplicaPath: "/data/vol1.blk", ReplicaISCSIAddr: "vs2:3260",
 	}
@@ -886,5 +909,269 @@ func TestRF3_CancelDeferredOnReconnect(t *testing.T) {
 	e, _ := ms.blockRegistry.Lookup("vol1")
 	if e.VolumeServer != "vs1" {
 		t.Fatalf("vs1 should remain primary (timer cancelled), got %q", e.VolumeServer)
+	}
+}
+
+// ============================================================
+// CP11B-3 T2: Re-evaluate on Replica Registration (B-06)
+// ============================================================
+
+// T2: Orphaned primary + replica reconnects → automatic promotion.
+func TestT2_OrphanedPrimary_ReplicaReconnect_Promotes(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	registerVolumeWithReplica(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second)
+
+	// Simulate vs1 dying without proper failover (e.g., promotion failed at the time).
+	// Mark vs1 as dead but DON'T call failoverBlockVolumes (simulates missed/failed failover).
+	ms.blockRegistry.UnmarkBlockCapable("vs1")
+
+	// vs2 reconnects (sends heartbeat). reevaluateOrphanedPrimaries should detect orphaned primary.
+	ms.recoverBlockVolumes("vs2")
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.VolumeServer != "vs2" {
+		t.Fatalf("expected promotion to vs2 (orphaned primary), got %q", entry.VolumeServer)
+	}
+	if entry.Epoch != 2 {
+		t.Fatalf("expected epoch 2 after promotion, got %d", entry.Epoch)
+	}
+}
+
+// T2: Replica reconnects but primary is alive → no unnecessary promotion.
+func TestT2_PrimaryAlive_NoPromotion(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	registerVolumeWithReplica(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second)
+
+	// Both servers alive. vs2 reconnects — no orphaned primary.
+	ms.recoverBlockVolumes("vs2")
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("primary should remain vs1 (alive), got %q", entry.VolumeServer)
+	}
+	if entry.Epoch != 1 {
+		t.Fatalf("epoch should remain 1, got %d", entry.Epoch)
+	}
+}
+
+// T2: Multiple orphaned volumes, all promoted on reconnect.
+func TestT2_MultipleOrphanedVolumes(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	// vol1: vs1=primary, vs2=replica
+	// vol2: vs3=primary, vs2=replica
+	registerVolumeWithReplica(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second)
+	ms.blockRegistry.MarkBlockCapable("vs3")
+	entry2 := &BlockVolumeEntry{
+		Name: "vol2", VolumeServer: "vs3", Path: "/data/vol2.blk",
+		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive, LeaseTTL: 5 * time.Second,
+		LastLeaseGrant: time.Now().Add(-10 * time.Second),
+		Replicas: []ReplicaInfo{{
+			Server: "vs2", Path: "/data/vol2.blk", HealthScore: 1.0,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	}
+	ms.blockRegistry.Register(entry2)
+
+	// Both primaries die.
+	ms.blockRegistry.UnmarkBlockCapable("vs1")
+	ms.blockRegistry.UnmarkBlockCapable("vs3")
+
+	// vs2 reconnects → both orphaned volumes should be promoted.
+	ms.recoverBlockVolumes("vs2")
+
+	e1, _ := ms.blockRegistry.Lookup("vol1")
+	e2, _ := ms.blockRegistry.Lookup("vol2")
+	if e1.VolumeServer != "vs2" {
+		t.Fatalf("vol1: expected promotion to vs2, got %q", e1.VolumeServer)
+	}
+	if e2.VolumeServer != "vs2" {
+		t.Fatalf("vol2: expected promotion to vs2, got %q", e2.VolumeServer)
+	}
+}
+
+// T2: Repeated heartbeats do NOT cause duplicate promotions.
+func TestT2_RepeatedHeartbeats_NoDuplicatePromotion(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	registerVolumeWithReplica(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second)
+
+	ms.blockRegistry.UnmarkBlockCapable("vs1")
+
+	// First reconnect promotes.
+	ms.reevaluateOrphanedPrimaries("vs2")
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.VolumeServer != "vs2" {
+		t.Fatalf("first call: expected promotion to vs2, got %q", entry.VolumeServer)
+	}
+	epochAfterFirst := entry.Epoch
+
+	// Second call: vs2 is now the primary AND block-capable. No orphan detected.
+	ms.reevaluateOrphanedPrimaries("vs2")
+	entry, _ = ms.blockRegistry.Lookup("vol1")
+	if entry.Epoch != epochAfterFirst {
+		t.Fatalf("second call should not bump epoch: got %d, want %d", entry.Epoch, epochAfterFirst)
+	}
+}
+
+// T2: Dead primary with active lease, replica reconnects → no immediate promotion.
+// Regression test for lease-bypass bug: reevaluateOrphanedPrimaries must respect
+// lease expiry, not promote immediately.
+func TestT2_OrphanedPrimary_LeaseNotExpired_DefersPromotion(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive, LeaseTTL: 300 * time.Millisecond,
+		LastLeaseGrant: time.Now(), // lease still active
+		Replicas: []ReplicaInfo{{
+			Server: "vs2", Path: "/data/vol1.blk", HealthScore: 1.0,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	})
+
+	// vs1 dies (unmark block-capable).
+	ms.blockRegistry.UnmarkBlockCapable("vs1")
+
+	// vs2 reconnects — orphan detected, but lease still active → should NOT promote immediately.
+	ms.reevaluateOrphanedPrimaries("vs2")
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("should NOT promote while lease active, got primary=%q", entry.VolumeServer)
+	}
+	if entry.Epoch != 1 {
+		t.Fatalf("epoch should remain 1, got %d", entry.Epoch)
+	}
+
+	// Verify a deferred timer was created for the dead primary.
+	ms.blockFailover.mu.Lock()
+	timerCount := len(ms.blockFailover.deferredTimers["vs1"])
+	ms.blockFailover.mu.Unlock()
+	if timerCount != 1 {
+		t.Fatalf("expected 1 deferred timer for vs1, got %d", timerCount)
+	}
+
+	// Wait for lease to expire + margin → timer fires, promotion happens.
+	time.Sleep(450 * time.Millisecond)
+
+	entry, _ = ms.blockRegistry.Lookup("vol1")
+	if entry.VolumeServer != "vs2" {
+		t.Fatalf("after lease expiry, expected promotion to vs2, got %q", entry.VolumeServer)
+	}
+	if entry.Epoch != 2 {
+		t.Fatalf("expected epoch 2, got %d", entry.Epoch)
+	}
+}
+
+// ============================================================
+// CP11B-3 T3: Deferred Timer Safety
+// ============================================================
+
+// T3: Delete/recreate volume before deferred timer fires → no wrong promotion.
+func TestT3_DeferredTimer_VolumeDeleted_NoPromotion(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	entry := &BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 5, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive, LeaseTTL: 200 * time.Millisecond,
+		LastLeaseGrant: time.Now(),
+		Replicas: []ReplicaInfo{{
+			Server: "vs2", Path: "/data/vol1.blk", HealthScore: 1.0,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	}
+	ms.blockRegistry.Register(entry)
+
+	// vs1 dies → deferred timer created (lease not expired, epoch=5).
+	ms.failoverBlockVolumes("vs1")
+
+	// Delete the volume before timer fires.
+	ms.blockRegistry.Unregister("vol1")
+
+	// Wait for timer to fire.
+	time.Sleep(350 * time.Millisecond)
+
+	// Volume should not exist (timer found it deleted, no-op).
+	_, ok := ms.blockRegistry.Lookup("vol1")
+	if ok {
+		t.Fatal("volume should have been deleted, timer should not recreate it")
+	}
+}
+
+// T3: Epoch changes before deferred timer fires → timer rejected.
+func TestT3_DeferredTimer_EpochChanged_NoPromotion(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	ms.blockRegistry.MarkBlockCapable("vs3")
+	entry := &BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
+		SizeBytes: 1 << 30, Epoch: 5, Role: blockvol.RoleToWire(blockvol.RolePrimary),
+		Status: StatusActive, LeaseTTL: 200 * time.Millisecond,
+		LastLeaseGrant: time.Now(),
+		Replicas: []ReplicaInfo{{
+			Server: "vs2", Path: "/data/vol1.blk", HealthScore: 1.0,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	}
+	ms.blockRegistry.Register(entry)
+
+	// vs1 dies → deferred timer created (captures epoch=5).
+	ms.failoverBlockVolumes("vs1")
+
+	// Before timer fires, manually bump the epoch (simulating another event).
+	e, _ := ms.blockRegistry.Lookup("vol1")
+	e.Epoch = 99
+
+	// Wait for timer to fire.
+	time.Sleep(350 * time.Millisecond)
+
+	// Timer should have been rejected (epoch mismatch). Epoch stays at 99.
+	e, _ = ms.blockRegistry.Lookup("vol1")
+	if e.Epoch != 99 {
+		t.Fatalf("epoch should remain 99 (timer rejected), got %d", e.Epoch)
+	}
+	// Primary should NOT have changed (deferred promotion was rejected).
+	if e.VolumeServer != "vs1" {
+		t.Fatalf("primary should remain vs1 (timer rejected), got %q", e.VolumeServer)
+	}
+}
+
+// ============================================================
+// CP11B-3 T4: Rebuild with empty RebuildListenAddr
+// ============================================================
+
+// T4: Rebuild queued with empty RebuildListenAddr after promotion.
+func TestT4_RebuildEmptyAddr_StillQueued(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	registerVolumeWithReplica(t, ms, "vol1", "vs1", "vs2", 1, 5*time.Second)
+
+	// Failover: vs1 dies, vs2 promoted. PromoteBestReplica clears RebuildListenAddr.
+	ms.failoverBlockVolumes("vs1")
+
+	entry, _ := ms.blockRegistry.Lookup("vol1")
+	if entry.RebuildListenAddr != "" {
+		t.Fatalf("RebuildListenAddr should be empty after promotion, got %q", entry.RebuildListenAddr)
+	}
+
+	// vs1 reconnects. Rebuild should still be queued (even with empty addr).
+	ms.recoverBlockVolumes("vs1")
+
+	assignments := ms.blockAssignmentQueue.Peek("vs1")
+	foundRebuild := false
+	for _, a := range assignments {
+		if blockvol.RoleFromWire(a.Role) == blockvol.RoleRebuilding {
+			foundRebuild = true
+			if a.RebuildAddr != "" {
+				t.Fatalf("RebuildAddr should be empty (new primary hasn't heartbeated), got %q", a.RebuildAddr)
+			}
+		}
+	}
+	if !foundRebuild {
+		t.Fatal("rebuild assignment should still be queued even with empty addr")
 	}
 }
