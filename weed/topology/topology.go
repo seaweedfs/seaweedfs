@@ -532,6 +532,7 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 func (t *Topology) DisableVacuum() {
 	glog.V(0).Infof("DisableVacuum")
 	t.isDisableVacuum.Store(true)
+	t.vacuumDisabledByPlugin.Store(false) // manual disable clears plugin ownership
 }
 
 func (t *Topology) EnableVacuum() {
