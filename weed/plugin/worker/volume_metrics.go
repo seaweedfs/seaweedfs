@@ -22,12 +22,12 @@ func collectVolumeMetricsFromMasters(
 	masterAddresses []string,
 	collectionFilter string,
 	grpcDialOption grpc.DialOption,
-) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
+) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, map[uint32][]workertypes.ReplicaLocation, error) {
 	if grpcDialOption == nil {
-		return nil, nil, fmt.Errorf("grpc dial option is not configured")
+		return nil, nil, nil, fmt.Errorf("grpc dial option is not configured")
 	}
 	if len(masterAddresses) == 0 {
-		return nil, nil, fmt.Errorf("no master addresses provided in cluster context")
+		return nil, nil, nil, fmt.Errorf("no master addresses provided in cluster context")
 	}
 
 	for _, masterAddress := range masterAddresses {
@@ -37,20 +37,20 @@ func collectVolumeMetricsFromMasters(
 			continue
 		}
 
-		metrics, activeTopology, buildErr := buildVolumeMetrics(response, collectionFilter)
+		metrics, activeTopology, replicaMap, buildErr := buildVolumeMetrics(response, collectionFilter)
 		if buildErr != nil {
 			// Configuration errors (e.g. invalid regex) will fail on every master,
 			// so return immediately instead of masking them with retries.
 			if isConfigError(buildErr) {
-				return nil, nil, buildErr
+				return nil, nil, nil, buildErr
 			}
 			glog.Warningf("Plugin worker failed to build metrics from master %s: %v", masterAddress, buildErr)
 			continue
 		}
-		return metrics, activeTopology, nil
+		return metrics, activeTopology, replicaMap, nil
 	}
 
-	return nil, nil, fmt.Errorf("failed to load topology from all provided masters")
+	return nil, nil, nil, fmt.Errorf("failed to load topology from all provided masters")
 }
 
 func fetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.DialOption) (*master_pb.VolumeListResponse, error) {
@@ -89,14 +89,14 @@ func fetchVolumeList(ctx context.Context, address string, grpcDialOption grpc.Di
 func buildVolumeMetrics(
 	response *master_pb.VolumeListResponse,
 	collectionFilter string,
-) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
+) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, map[uint32][]workertypes.ReplicaLocation, error) {
 	if response == nil || response.TopologyInfo == nil {
-		return nil, nil, fmt.Errorf("volume list response has no topology info")
+		return nil, nil, nil, fmt.Errorf("volume list response has no topology info")
 	}
 
 	activeTopology := topology.NewActiveTopology(10)
 	if err := activeTopology.UpdateTopology(response.TopologyInfo); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	var collectionRegex *regexp.Regexp
@@ -105,19 +105,28 @@ func buildVolumeMetrics(
 		var err error
 		collectionRegex, err = regexp.Compile(trimmedFilter)
 		if err != nil {
-			return nil, nil, &configError{err: fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)}
+			return nil, nil, nil, &configError{err: fmt.Errorf("invalid collection_filter regex %q: %w", trimmedFilter, err)}
 		}
 	}
 
 	volumeSizeLimitBytes := uint64(response.VolumeSizeLimitMb) * 1024 * 1024
 	now := time.Now()
 	metrics := make([]*workertypes.VolumeHealthMetrics, 0, 256)
+	replicaMap := make(map[uint32][]workertypes.ReplicaLocation)
 
 	for _, dc := range response.TopologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
 				for diskType, diskInfo := range node.DiskInfos {
 					for _, volume := range diskInfo.VolumeInfos {
+						// Build replica map from ALL volumes BEFORE collection filtering,
+						// since replicas may span filtered/unfiltered nodes.
+						replicaMap[volume.Id] = append(replicaMap[volume.Id], workertypes.ReplicaLocation{
+							DataCenter: dc.Id,
+							Rack:       rack.Id,
+							NodeID:     node.Id,
+						})
+
 						if collectionRegex != nil && !collectionRegex.MatchString(volume.Collection) {
 							continue
 						}
@@ -160,7 +169,7 @@ func buildVolumeMetrics(
 		metric.ReplicaCount = replicaCounts[metric.VolumeID]
 	}
 
-	return metrics, activeTopology, nil
+	return metrics, activeTopology, replicaMap, nil
 }
 
 // configError wraps configuration errors that should not be retried across masters.

@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -386,6 +387,46 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 			glog.V(1).Infof("BALANCE [%s]: Planned destination %s for volume %d is outside filtered scope, skipping",
 				diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
 			return nil, ""
+		}
+	}
+
+	// Validate move against replica placement policy
+	if selectedVolume.ExpectedReplicas > 0 && selectedVolume.ExpectedReplicas <= 255 && clusterInfo.VolumeReplicaMap != nil {
+		rpBytes, rpErr := super_block.NewReplicaPlacementFromByte(byte(selectedVolume.ExpectedReplicas))
+		if rpErr == nil && rpBytes.HasReplication() {
+			replicas := clusterInfo.VolumeReplicaMap[selectedVolume.VolumeID]
+			if len(replicas) == 0 {
+				glog.V(1).Infof("BALANCE [%s]: No replica locations found for volume %d, skipping placement validation",
+					diskType, selectedVolume.VolumeID)
+			} else {
+				validateMove := func(plan *topology.DestinationPlan) bool {
+					if plan == nil {
+						return false
+					}
+					target := types.ReplicaLocation{
+						DataCenter: plan.TargetDC,
+						Rack:       plan.TargetRack,
+						NodeID:     plan.TargetNode,
+					}
+					return IsGoodMove(rpBytes, replicas, selectedVolume.Server, target)
+				}
+
+				if !validateMove(destinationPlan) {
+					glog.V(1).Infof("BALANCE [%s]: Destination %s violates replica placement for volume %d (rp=%03d), falling back",
+						diskType, destinationPlan.TargetNode, selectedVolume.VolumeID, selectedVolume.ExpectedReplicas)
+					// Fall back to score-based planning
+					destinationPlan, err = planBalanceDestination(clusterInfo.ActiveTopology, selectedVolume)
+					if err != nil {
+						glog.Warningf("BALANCE [%s]: Failed to plan fallback destination for volume %d: %v", diskType, selectedVolume.VolumeID, err)
+						return nil, ""
+					}
+					if !validateMove(destinationPlan) {
+						glog.V(1).Infof("BALANCE [%s]: Fallback destination %s also violates replica placement for volume %d",
+							diskType, destinationPlan.TargetNode, selectedVolume.VolumeID)
+						return nil, ""
+					}
+				}
+			}
 		}
 	}
 
