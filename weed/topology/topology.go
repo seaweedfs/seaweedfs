@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -45,8 +46,8 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	isDisableVacuum        bool
-	vacuumDisabledByPlugin bool // true when disabled by the vacuum plugin monitor
+	isDisableVacuum        atomic.Bool
+	vacuumDisabledByPlugin atomic.Bool // true when disabled by the vacuum plugin monitor
 
 	Sequence sequence.Sequencer
 
@@ -529,23 +530,23 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 
 func (t *Topology) DisableVacuum() {
 	glog.V(0).Infof("DisableVacuum")
-	t.isDisableVacuum = true
+	t.isDisableVacuum.Store(true)
 }
 
 func (t *Topology) EnableVacuum() {
 	glog.V(0).Infof("EnableVacuum")
-	t.isDisableVacuum = false
-	t.vacuumDisabledByPlugin = false
+	t.isDisableVacuum.Store(false)
+	t.vacuumDisabledByPlugin.Store(false)
 }
 
 func (t *Topology) DisableVacuumByPlugin() {
 	glog.V(0).Infof("DisableVacuum (by plugin worker)")
-	t.isDisableVacuum = true
-	t.vacuumDisabledByPlugin = true
+	t.isDisableVacuum.Store(true)
+	t.vacuumDisabledByPlugin.Store(true)
 }
 
 func (t *Topology) IsVacuumDisabledByPlugin() bool {
-	return t.vacuumDisabledByPlugin
+	return t.vacuumDisabledByPlugin.Load()
 }
 
 func (t *Topology) GetTopologyId() string {

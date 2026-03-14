@@ -250,11 +250,11 @@ func (t *Topology) Vacuum(grpcDialOption grpc.DialOption, garbageThreshold float
 					t.vacuumOneVolumeLayout(grpcDialOption, volumeLayout, c, garbageThreshold, maxParallelVacuumPerServer, preallocate, automatic)
 				}
 			}
-			if automatic && t.isDisableVacuum {
+			if automatic && t.isDisableVacuum.Load() {
 				break
 			}
 		}
-		if automatic && t.isDisableVacuum {
+		if automatic && t.isDisableVacuum.Load() {
 			glog.V(0).Infof("Vacuum is disabled")
 			break
 		}
@@ -321,11 +321,11 @@ func (t *Topology) vacuumOneVolumeLayout(grpcDialOption grpc.DialOption, volumeL
 					limiterLock.Unlock()
 				}
 			})
-			if automatic && t.isDisableVacuum {
+			if automatic && t.isDisableVacuum.Load() {
 				break
 			}
 		}
-		if automatic && t.isDisableVacuum {
+		if automatic && t.isDisableVacuum.Load() {
 			break
 		}
 		if len(todoVolumeMap) == len(pendingVolumeMap) {
