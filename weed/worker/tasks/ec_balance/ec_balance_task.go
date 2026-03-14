@@ -22,7 +22,6 @@ type ECBalanceTask struct {
 	volumeID       uint32
 	collection     string
 	grpcDialOption grpc.DialOption
-	progress       float64
 }
 
 // NewECBalanceTask creates a new EC balance task instance
@@ -44,6 +43,9 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 
 	if len(params.Sources) == 0 || len(params.Targets) == 0 {
 		return fmt.Errorf("sources and targets are required for EC shard move")
+	}
+	if len(params.Sources) > 1 || len(params.Targets) > 1 {
+		return fmt.Errorf("batch EC shard moves not supported: got %d sources and %d targets, expected 1 each", len(params.Sources), len(params.Targets))
 	}
 
 	source := params.Sources[0]
@@ -189,9 +191,9 @@ func (t *ECBalanceTask) EstimateTime(params *worker_pb.TaskParams) time.Duration
 	return 30 * time.Second
 }
 
-// GetProgress returns current progress
+// GetProgress returns current progress from the BaseTask
 func (t *ECBalanceTask) GetProgress() float64 {
-	return t.progress
+	return t.BaseTask.GetProgress()
 }
 
 // isDedupPhase checks if this is a dedup-phase task (source and target are the same node)

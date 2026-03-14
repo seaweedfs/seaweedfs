@@ -224,6 +224,24 @@ func TestDecodeECBalanceTaskParamsFallback(t *testing.T) {
 	}
 }
 
+func TestDecodeECBalanceTaskParamsMissingShardID(t *testing.T) {
+	job := &plugin_pb.JobSpec{
+		JobId: "job-3",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"volume_id":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 300}},
+			"source_server": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "src:8080"}},
+			"target_server": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "dst:8080"}},
+			"collection":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "test-col"}},
+			// shard_id deliberately missing
+		},
+	}
+
+	_, err := decodeECBalanceTaskParams(job)
+	if err == nil {
+		t.Fatal("expected error for missing shard_id")
+	}
+}
+
 func TestECBalanceHandlerCapability(t *testing.T) {
 	handler := NewECBalanceHandler(nil)
 	cap := handler.Capability()

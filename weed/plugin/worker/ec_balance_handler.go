@@ -564,9 +564,13 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 		return nil, fmt.Errorf("missing target_server in job parameters")
 	}
 
-	shardID := readInt64Config(job.Parameters, "shard_id", 0)
+	shardIDVal, hasShardID := job.Parameters["shard_id"]
+	if !hasShardID || shardIDVal == nil {
+		return nil, fmt.Errorf("missing shard_id in job parameters")
+	}
+	shardID := readInt64Config(job.Parameters, "shard_id", -1)
 	if shardID < 0 || shardID > math.MaxUint32 {
-		shardID = 0
+		return nil, fmt.Errorf("invalid shard_id in job parameters: %d", shardID)
 	}
 
 	return &worker_pb.TaskParams{

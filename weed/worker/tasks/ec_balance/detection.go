@@ -20,7 +20,7 @@ type ecNodeInfo struct {
 	nodeID    string
 	address   string
 	dc        string
-	rack      string
+	rack      string // dc:rack composite key
 	freeSlots int
 	// volumeID -> shardBits (bitmask of shard IDs present on this node)
 	ecShards map[uint32]*ecVolumeInfo
@@ -92,8 +92,8 @@ func Detection(
 		return nil, false, nil
 	}
 
+	threshold := ecConfig.ImbalanceThreshold
 	var allMoves []*shardMove
-	now := time.Now()
 
 	for collection, volumeIDs := range collections {
 		if ctx != nil {
@@ -102,7 +102,7 @@ func Detection(
 			}
 		}
 
-		// Phase 1: Detect duplicate shards
+		// Phase 1: Detect duplicate shards (always run, duplicates are errors not imbalance)
 		for _, vid := range volumeIDs {
 			moves := detectDuplicateShards(vid, collection, nodes, ecConfig.DiskType)
 			allMoves = append(allMoves, moves...)
@@ -110,13 +110,13 @@ func Detection(
 
 		// Phase 2: Balance shards across racks
 		for _, vid := range volumeIDs {
-			moves := detectCrossRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType)
+			moves := detectCrossRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
 			allMoves = append(allMoves, moves...)
 		}
 
 		// Phase 3: Balance shards within racks
 		for _, vid := range volumeIDs {
-			moves := detectWithinRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType)
+			moves := detectWithinRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
 			allMoves = append(allMoves, moves...)
 		}
 	}
@@ -133,9 +133,14 @@ func Detection(
 	}
 
 	// Convert moves to TaskDetectionResults
+	now := time.Now()
 	results := make([]*types.TaskDetectionResult, 0, len(allMoves))
-	for _, move := range allMoves {
-		taskID := fmt.Sprintf("ec_balance_%d_%d_%d", move.volumeID, move.shardID, now.UnixNano())
+	for i, move := range allMoves {
+		// Include loop index and source/target in TaskID for uniqueness
+		taskID := fmt.Sprintf("ec_balance_%d_%d_%s_%s_%d_%d",
+			move.volumeID, move.shardID,
+			move.source.nodeID, move.target.nodeID,
+			now.UnixNano(), i)
 
 		result := &types.TaskDetectionResult{
 			TaskID:     taskID,
@@ -175,13 +180,15 @@ func Detection(
 		results = append(results, result)
 	}
 
-	glog.V(1).Infof("EC balance detection: %d moves proposed across %d collections (%d dedup, cross_rack, within_rack, global)",
-		len(results), len(collections), len(results))
+	glog.V(1).Infof("EC balance detection: %d moves proposed across %d collections",
+		len(results), len(collections))
 
 	return results, hasMore, nil
 }
 
-// buildECTopology constructs EC node and rack structures from topology info
+// buildECTopology constructs EC node and rack structures from topology info.
+// Rack keys are dc:rack composites to avoid cross-DC name collisions.
+// Only racks with eligible nodes (matching disk type, having EC shards or capacity) are included.
 func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[string]*ecNodeInfo, map[string]*ecRackInfo) {
 	nodes := make(map[string]*ecNodeInfo)
 	racks := make(map[string]*ecRackInfo)
@@ -195,24 +202,24 @@ func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[stri
 		}
 
 		for _, rack := range dc.RackInfos {
-			rackID := rack.Id
-			if _, ok := racks[rackID]; !ok {
-				racks[rackID] = &ecRackInfo{nodes: make(map[string]*ecNodeInfo)}
-			}
+			// Use dc:rack composite key to avoid cross-DC name collisions
+			rackKey := dc.Id + ":" + rack.Id
 
 			for _, dn := range rack.DataNodeInfos {
 				node := &ecNodeInfo{
 					nodeID:   dn.Id,
-					address:  dn.Id, // same as ID in topology
+					address:  dn.Id,
 					dc:       dc.Id,
-					rack:     rackID,
+					rack:     rackKey,
 					ecShards: make(map[uint32]*ecVolumeInfo),
 				}
 
+				hasMatchingDisk := false
 				for diskType, diskInfo := range dn.DiskInfos {
 					if config.DiskType != "" && diskType != config.DiskType {
 						continue
 					}
+					hasMatchingDisk = true
 
 					freeSlots := int(diskInfo.MaxVolumeCount-diskInfo.VolumeCount)*erasure_coding.DataShardsCount - countEcShards(diskInfo.EcShardInfos)
 					if freeSlots > 0 {
@@ -233,9 +240,18 @@ func buildECTopology(topoInfo *master_pb.TopologyInfo, config *Config) (map[stri
 					}
 				}
 
+				if !hasMatchingDisk {
+					continue
+				}
+
 				nodes[dn.Id] = node
-				racks[rackID].nodes[dn.Id] = node
-				racks[rackID].freeSlots += node.freeSlots
+
+				// Only create rack entry when we have an eligible node
+				if _, ok := racks[rackKey]; !ok {
+					racks[rackKey] = &ecRackInfo{nodes: make(map[string]*ecNodeInfo)}
+				}
+				racks[rackKey].nodes[dn.Id] = node
+				racks[rackKey].freeSlots += node.freeSlots
 			}
 		}
 	}
@@ -275,7 +291,8 @@ func collectECCollections(nodes map[string]*ecNodeInfo, config *Config) map[stri
 	return result
 }
 
-// detectDuplicateShards finds shards that exist on multiple nodes
+// detectDuplicateShards finds shards that exist on multiple nodes.
+// Duplicates are always returned regardless of threshold since they are data errors.
 func detectDuplicateShards(vid uint32, collection string, nodes map[string]*ecNodeInfo, diskType string) []*shardMove {
 	// Build shard -> list of nodes mapping
 	shardLocations := make(map[int][]*ecNodeInfo)
@@ -318,8 +335,9 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*ecNo
 	return moves
 }
 
-// detectCrossRackImbalance detects shards that should be moved across racks for even distribution
-func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string) []*shardMove {
+// detectCrossRackImbalance detects shards that should be moved across racks for even distribution.
+// Returns nil if imbalance is below the threshold.
+func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64) []*shardMove {
 	numRacks := len(racks)
 	if numRacks <= 1 {
 		return nil
@@ -344,6 +362,11 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 	}
 
 	if totalShards == 0 {
+		return nil
+	}
+
+	// Check if imbalance exceeds threshold
+	if !exceedsImbalanceThreshold(rackShardCount, totalShards, numRacks, threshold) {
 		return nil
 	}
 
@@ -390,6 +413,11 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 					phase:      "cross_rack",
 				})
 				movedFromRack++
+
+				// Reserve capacity on destination so it isn't picked again
+				rackShardCount[destNode.rack]++
+				rackShardCount[rackID]--
+				destNode.freeSlots--
 			}
 		}
 	}
@@ -397,11 +425,12 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 	return moves
 }
 
-// detectWithinRackImbalance detects shards that should be moved within racks for even node distribution
-func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string) []*shardMove {
+// detectWithinRackImbalance detects shards that should be moved within racks for even node distribution.
+// Returns nil if imbalance is below the threshold.
+func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, diskType string, threshold float64) []*shardMove {
 	var moves []*shardMove
 
-	for rackID, rack := range racks {
+	for _, rack := range racks {
 		if len(rack.nodes) <= 1 {
 			continue
 		}
@@ -420,6 +449,11 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 		}
 
 		if totalInRack == 0 {
+			continue
+		}
+
+		// Check if imbalance exceeds threshold
+		if !exceedsImbalanceThreshold(nodeShardCount, totalInRack, len(rack.nodes), threshold) {
 			continue
 		}
 
@@ -462,15 +496,16 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 				moved++
 				nodeShardCount[nodeID]--
 				nodeShardCount[destNode.nodeID]++
+				destNode.freeSlots--
 			}
 		}
-		_ = rackID
 	}
 
 	return moves
 }
 
-// detectGlobalImbalance detects total shard count imbalance across nodes in each rack
+// detectGlobalImbalance detects total shard count imbalance across nodes in each rack.
+// Respects ImbalanceThreshold from config.
 func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, config *Config) []*shardMove {
 	var moves []*shardMove
 
@@ -495,17 +530,23 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			continue
 		}
 
+		// Check if imbalance exceeds threshold
+		if !exceedsImbalanceThreshold(nodeShardCounts, totalShards, len(rack.nodes), config.ImbalanceThreshold) {
+			continue
+		}
+
 		avgShards := ceilDivide(totalShards, len(rack.nodes))
 
 		// Iteratively move shards from most-loaded to least-loaded
 		for i := 0; i < 10; i++ { // cap iterations to avoid infinite loops
-			// Find min and max nodes
+			// Find min and max nodes, skipping full nodes for min
 			var minNode, maxNode *ecNodeInfo
 			minCount, maxCount := totalShards+1, -1
 			for nodeID, count := range nodeShardCounts {
-				if count < minCount {
+				node := rack.nodes[nodeID]
+				if count < minCount && node.freeSlots > 0 {
 					minCount = count
-					minNode = rack.nodes[nodeID]
+					minNode = node
 				}
 				if count > maxCount {
 					maxCount = count
@@ -552,6 +593,7 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 					})
 					nodeShardCounts[maxNode.nodeID]--
 					nodeShardCounts[minNode.nodeID]++
+					minNode.freeSlots--
 					moved = true
 					break
 				}
@@ -617,6 +659,41 @@ func findLeastLoadedNodeInRack(vid uint32, rack *ecRackInfo, excludeNode string,
 	}
 
 	return bestNode
+}
+
+// exceedsImbalanceThreshold checks if the distribution of counts exceeds the threshold.
+// numGroups is the total number of groups (including those with 0 shards that aren't in the map).
+// imbalanceRatio = (maxCount - minCount) / avgCount
+func exceedsImbalanceThreshold(counts map[string]int, total int, numGroups int, threshold float64) bool {
+	if numGroups <= 1 || total == 0 {
+		return false
+	}
+
+	minCount := 0 // groups not in map have 0 shards
+	if len(counts) >= numGroups {
+		// All groups have entries; find actual min
+		minCount = total + 1
+		for _, count := range counts {
+			if count < minCount {
+				minCount = count
+			}
+		}
+	}
+
+	maxCount := -1
+	for _, count := range counts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	avg := float64(total) / float64(numGroups)
+	if avg == 0 {
+		return false
+	}
+
+	imbalanceRatio := float64(maxCount-minCount) / avg
+	return imbalanceRatio > threshold
 }
 
 // Helper functions
