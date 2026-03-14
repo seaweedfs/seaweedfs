@@ -13,7 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
-func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64, isAdminServerConnected func() bool) {
+func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, garbageThreshold float64, concurrentVacuumLimitPerVolumeServer int, growThreshold float64, preallocate int64) {
 	go func() {
 		for {
 			if t.IsLeader() {
@@ -30,7 +30,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 				// admin server is no longer connected, automatically re-enable.
 				// This handles the case where the admin server crashes without
 				// cleanup. Does NOT override an operator's intentional disable.
-				if t.IsVacuumDisabledByPlugin() && isAdminServerConnected != nil && !isAdminServerConnected() {
+				if t.IsVacuumDisabledByPlugin() && t.adminServerConnectedFunc != nil && !t.adminServerConnectedFunc() {
 					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, re-enabling vacuum")
 					t.EnableVacuum()
 				}

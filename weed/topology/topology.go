@@ -46,8 +46,9 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	isDisableVacuum        atomic.Bool
-	vacuumDisabledByPlugin atomic.Bool // true when disabled by the vacuum plugin monitor
+	isDisableVacuum          atomic.Bool
+	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
+	adminServerConnectedFunc func() bool // optional callback to check admin server presence
 
 	Sequence sequence.Sequencer
 
@@ -547,6 +548,12 @@ func (t *Topology) DisableVacuumByPlugin() {
 
 func (t *Topology) IsVacuumDisabledByPlugin() bool {
 	return t.vacuumDisabledByPlugin.Load()
+}
+
+// SetAdminServerConnectedFunc sets an optional callback used by the vacuum
+// safety net to detect when the admin server has disconnected.
+func (t *Topology) SetAdminServerConnectedFunc(f func() bool) {
+	t.adminServerConnectedFunc = f
 }
 
 func (t *Topology) GetTopologyId() string {

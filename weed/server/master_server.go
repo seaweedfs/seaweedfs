@@ -185,13 +185,13 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		r.HandleFunc("/{fileId}", requestIDMiddleware(ms.redirectHandler))
 	}
 
+	ms.Topo.SetAdminServerConnectedFunc(ms.isAdminServerConnectedFunc)
 	ms.Topo.StartRefreshWritableVolumes(
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
 		ms.option.MaxParallelVacuumPerServer,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
-		ms.isAdminServerConnectedFunc,
 	)
 
 	ms.ProcessGrowRequest()
