@@ -231,12 +231,7 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
 			continue
 		}
 		if shardCount < erasure_coding.DataShardsCount {
-			// Capture variables for closure
-			vid := vid
-			shardCount := shardCount
-			erb.ewg.Add(func() error {
-				return fmt.Errorf("ec volume %d is unrepairable with %d shards", vid, shardCount)
-			})
+			erb.write("%.2d: ec volume %d is unrepairable with %d shards (need %d), skipping\n", vid, vid, shardCount, erasure_coding.DataShardsCount)
 			continue
 		}
 
