@@ -34,7 +34,7 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, re-enabling vacuum")
 					t.EnableVacuum()
 				}
-				if !t.isDisableVacuum.Load() {
+				if !t.IsVacuumDisabled() {
 					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate, true)
 				}
 			} else {
