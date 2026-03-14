@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	taskutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -23,6 +24,10 @@ import (
 const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 	maxProposalStringLength      = 200
+
+	// Collection filter mode constants.
+	collectionFilterAll  = "ALL_COLLECTIONS"
+	collectionFilterEach = "EACH_COLLECTION"
 )
 
 func init() {
@@ -85,8 +90,8 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only detect balance opportunities in this collection when set.",
-							Placeholder: "all collections",
+							Description: "Filter collections for balance detection. Use ALL_COLLECTIONS (default) to treat all volumes as one pool, EACH_COLLECTION to run detection separately per collection, or a regex pattern to match specific collections.",
+							Placeholder: "ALL_COLLECTIONS",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -102,6 +107,30 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 								{Value: "FULL", Label: "Full (read-only)"},
 							},
 						},
+						{
+							Name:        "data_center_filter",
+							Label:       "Data Center Filter",
+							Description: "Only balance volumes in a single data center. Leave empty for all data centers.",
+							Placeholder: "all data centers",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "rack_filter",
+							Label:       "Rack Filter",
+							Description: "Only balance volumes on these racks (comma-separated). Leave empty for all racks.",
+							Placeholder: "all racks",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "node_filter",
+							Label:       "Node Filter",
+							Description: "Only balance volumes on these nodes (comma-separated server IDs). Leave empty for all nodes.",
+							Placeholder: "all nodes",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
 					},
 				},
 			},
@@ -111,6 +140,15 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"volume_state": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "ALL"},
+				},
+				"data_center_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"rack_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"node_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
 		},
@@ -284,14 +322,71 @@ func (h *VolumeBalanceHandler) Detect(
 	volumeState := strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", "ALL")))
 	metrics = filterMetricsByVolumeState(metrics, volumeState)
 
+	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+
+	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
+		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
+	}
+
+	workerConfig.TaskConfig.DataCenterFilter = dataCenterFilter
+	workerConfig.TaskConfig.RackFilter = rackFilter
+	workerConfig.TaskConfig.NodeFilter = nodeFilter
+
 	clusterInfo := &workertypes.ClusterInfo{
 		ActiveTopology:   activeTopology,
 		VolumeReplicaMap: replicaMap,
 	}
 	maxResults := int(request.MaxResults)
-	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
-	if err != nil {
-		return err
+
+	var results []*workertypes.TaskDetectionResult
+	var hasMore bool
+
+	if collectionFilter == collectionFilterEach {
+		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
+		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
+		for _, m := range metrics {
+			if m == nil {
+				continue
+			}
+			metricsByCollection[m.Collection] = append(metricsByCollection[m.Collection], m)
+		}
+		collections := make([]string, 0, len(metricsByCollection))
+		for c := range metricsByCollection {
+			collections = append(collections, c)
+		}
+		sort.Strings(collections)
+
+		budget := maxResults
+		unlimitedBudget := budget <= 0
+		for _, collection := range collections {
+			if !unlimitedBudget && budget <= 0 {
+				hasMore = true
+				break
+			}
+			perCollectionLimit := budget
+			if unlimitedBudget {
+				perCollectionLimit = 0 // Detection treats <= 0 as unbounded
+			}
+			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, perCollectionLimit)
+			if perErr != nil {
+				return perErr
+			}
+			results = append(results, perResults...)
+			if !unlimitedBudget {
+				budget -= len(perResults)
+			}
+			if perHasMore {
+				hasMore = true
+			}
+		}
+	} else {
+		var err error
+		results, hasMore, err = balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+		if err != nil {
+			return err
+		}
 	}
 
 	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
@@ -1031,6 +1126,31 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 		MaxConcurrentMoves: maxConcurrentMoves,
 		BatchSize:          batchSize,
 	}
+}
+
+func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilter, rackFilter, nodeFilter string) []*workertypes.VolumeHealthMetrics {
+	var rackSet, nodeSet map[string]bool
+	if rackFilter != "" {
+		rackSet = taskutil.ParseCSVSet(rackFilter)
+	}
+	if nodeFilter != "" {
+		nodeSet = taskutil.ParseCSVSet(nodeFilter)
+	}
+
+	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
+	for _, m := range metrics {
+		if dcFilter != "" && m.DataCenter != dcFilter {
+			continue
+		}
+		if rackSet != nil && !rackSet[m.Rack] {
+			continue
+		}
+		if nodeSet != nil && !nodeSet[m.Server] {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	return filtered
 }
 
 func buildVolumeBalanceProposal(
