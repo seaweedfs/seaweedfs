@@ -26,11 +26,12 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 	go func(garbageThreshold float64) {
 		for {
 			if t.IsLeader() {
-				// Safety net: if vacuum is disabled but admin server is no longer
-				// connected, automatically re-enable vacuum. This handles the case
-				// where the admin server crashes without cleanup.
-				if t.isDisableVacuum && isAdminServerConnected != nil && !isAdminServerConnected() {
-					glog.V(0).Infof("Admin server disconnected while vacuum was disabled, re-enabling vacuum")
+				// Safety net: if vacuum was disabled by the plugin monitor but the
+				// admin server is no longer connected, automatically re-enable.
+				// This handles the case where the admin server crashes without
+				// cleanup. Does NOT override an operator's intentional disable.
+				if t.IsVacuumDisabledByPlugin() && isAdminServerConnected != nil && !isAdminServerConnected() {
+					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, re-enabling vacuum")
 					t.EnableVacuum()
 				}
 				if !t.isDisableVacuum {

@@ -45,7 +45,8 @@ type Topology struct {
 
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	isDisableVacuum  bool
+	isDisableVacuum        bool
+	vacuumDisabledByPlugin bool // true when disabled by the vacuum plugin monitor
 
 	Sequence sequence.Sequencer
 
@@ -534,6 +535,17 @@ func (t *Topology) DisableVacuum() {
 func (t *Topology) EnableVacuum() {
 	glog.V(0).Infof("EnableVacuum")
 	t.isDisableVacuum = false
+	t.vacuumDisabledByPlugin = false
+}
+
+func (t *Topology) DisableVacuumByPlugin() {
+	glog.V(0).Infof("DisableVacuum (by plugin worker)")
+	t.isDisableVacuum = true
+	t.vacuumDisabledByPlugin = true
+}
+
+func (t *Topology) IsVacuumDisabledByPlugin() bool {
+	return t.vacuumDisabledByPlugin
 }
 
 func (t *Topology) GetTopologyId() string {
