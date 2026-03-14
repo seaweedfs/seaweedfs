@@ -7,11 +7,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
-const fullnessThreshold = 1.01
+const (
+	fullnessThreshold = 1.01
+	stateActive       = "ACTIVE"
+	stateFull         = "FULL"
+)
 
 // filterByState filters metrics by volume state for testing.
 func filterByState(metrics []*types.VolumeHealthMetrics, state string) []*types.VolumeHealthMetrics {
-	if state != "ACTIVE" && state != "FULL" {
+	if state != stateActive && state != stateFull {
 		return metrics
 	}
 	var out []*types.VolumeHealthMetrics
@@ -19,10 +23,10 @@ func filterByState(metrics []*types.VolumeHealthMetrics, state string) []*types.
 		if m == nil {
 			continue
 		}
-		if state == "ACTIVE" && m.FullnessRatio < fullnessThreshold {
+		if state == stateActive && m.FullnessRatio < fullnessThreshold {
 			out = append(out, m)
 		}
-		if state == "FULL" && m.FullnessRatio >= fullnessThreshold {
+		if state == stateFull && m.FullnessRatio >= fullnessThreshold {
 			out = append(out, m)
 		}
 	}
@@ -87,7 +91,7 @@ func TestIntegration_DCFilterWithVolumeState(t *testing.T) {
 	allMetrics = append(allMetrics, makeVolumesWith("node-c", "hdd", "dc2", "rack1", "c1", 300, 50, withFullness(0.5))...)
 
 	// Apply volume state filter (ACTIVE only) first
-	activeMetrics := filterByState(allMetrics, "ACTIVE")
+	activeMetrics := filterByState(allMetrics, stateActive)
 	// Then apply DC filter
 	dcMetrics := make([]*types.VolumeHealthMetrics, 0)
 	for _, m := range activeMetrics {
@@ -394,7 +398,7 @@ func TestIntegration_AllFactors(t *testing.T) {
 	}
 
 	// Apply all filters: ACTIVE state, dc1, rack1
-	filtered := filterByState(allMetrics, "ACTIVE")
+	filtered := filterByState(allMetrics, stateActive)
 	var finalMetrics []*types.VolumeHealthMetrics
 	for _, m := range filtered {
 		if m.DataCenter == "dc1" && m.Rack == "rack1" {
@@ -482,7 +486,7 @@ func TestIntegration_FullVolumesOnlyBalancing(t *testing.T) {
 	allMetrics = append(allMetrics, makeVolumesWith("node-b", "hdd", "dc1", "rack1", "c1", 300, 5, withFullness(1.5))...)
 
 	// Filter to FULL only
-	fullMetrics := filterByState(allMetrics, "FULL")
+	fullMetrics := filterByState(allMetrics, stateFull)
 
 	at := buildTopology(servers, allMetrics)
 	clusterInfo := &types.ClusterInfo{ActiveTopology: at}

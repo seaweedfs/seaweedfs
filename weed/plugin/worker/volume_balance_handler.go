@@ -24,10 +24,23 @@ import (
 const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 	maxProposalStringLength      = 200
+)
 
-	// Collection filter mode constants.
-	collectionFilterAll  = "ALL_COLLECTIONS"
-	collectionFilterEach = "EACH_COLLECTION"
+// collectionFilterMode controls how collections are handled during balance detection.
+type collectionFilterMode string
+
+const (
+	collectionFilterAll  collectionFilterMode = "ALL_COLLECTIONS"
+	collectionFilterEach collectionFilterMode = "EACH_COLLECTION"
+)
+
+// volumeState controls which volumes participate in balance detection.
+type volumeState string
+
+const (
+	volumeStateAll    volumeState = "ALL"
+	volumeStateActive volumeState = "ACTIVE"
+	volumeStateFull   volumeState = "FULL"
 )
 
 func init() {
@@ -102,9 +115,9 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
 							Options: []*plugin_pb.ConfigOption{
-								{Value: "ALL", Label: "All Volumes"},
-								{Value: "ACTIVE", Label: "Active (writable)"},
-								{Value: "FULL", Label: "Full (read-only)"},
+								{Value: string(volumeStateAll), Label: "All Volumes"},
+								{Value: string(volumeStateActive), Label: "Active (writable)"},
+								{Value: string(volumeStateFull), Label: "Full (read-only)"},
 							},
 						},
 						{
@@ -139,7 +152,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 				"volume_state": {
-					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "ALL"},
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(volumeStateAll)},
 				},
 				"data_center_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
@@ -319,8 +332,8 @@ func (h *VolumeBalanceHandler) Detect(
 		return err
 	}
 
-	volumeState := strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", "ALL")))
-	metrics = filterMetricsByVolumeState(metrics, volumeState)
+	volState := volumeState(strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", string(volumeStateAll)))))
+	metrics = filterMetricsByVolumeState(metrics, volState)
 
 	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
 	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
@@ -343,7 +356,7 @@ func (h *VolumeBalanceHandler) Detect(
 	var results []*workertypes.TaskDetectionResult
 	var hasMore bool
 
-	if collectionFilter == collectionFilterEach {
+	if collectionFilterMode(collectionFilter) == collectionFilterEach {
 		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
 		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
 		for _, m := range metrics {
@@ -664,16 +677,16 @@ func emitVolumeBalanceDetectionDecisionTrace(
 // "ACTIVE" keeps volumes with FullnessRatio < 1.01 (writable, below size limit).
 // "FULL" keeps volumes with FullnessRatio >= 1.01 (read-only, above size limit).
 // "ALL" or any other value returns all metrics unfiltered.
-func filterMetricsByVolumeState(metrics []*workertypes.VolumeHealthMetrics, volumeState string) []*workertypes.VolumeHealthMetrics {
+func filterMetricsByVolumeState(metrics []*workertypes.VolumeHealthMetrics, state volumeState) []*workertypes.VolumeHealthMetrics {
 	const fullnessThreshold = 1.01
 
 	var predicate func(m *workertypes.VolumeHealthMetrics) bool
-	switch volumeState {
-	case "ACTIVE":
+	switch state {
+	case volumeStateActive:
 		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
 			return m.FullnessRatio < fullnessThreshold
 		}
-	case "FULL":
+	case volumeStateFull:
 		predicate = func(m *workertypes.VolumeHealthMetrics) bool {
 			return m.FullnessRatio >= fullnessThreshold
 		}

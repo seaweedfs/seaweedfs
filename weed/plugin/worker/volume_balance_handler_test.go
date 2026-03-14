@@ -712,7 +712,7 @@ func TestFilterMetricsByVolumeState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := filterMetricsByVolumeState(metrics, tt.state)
+			result := filterMetricsByVolumeState(metrics, volumeState(tt.state))
 			if len(result) != len(tt.expectedIDs) {
 				t.Fatalf("expected %d metrics, got %d", len(tt.expectedIDs), len(result))
 			}
@@ -732,23 +732,23 @@ func TestFilterMetricsByVolumeState_NilElement(t *testing.T) {
 		nil,
 		{VolumeID: 2, FullnessRatio: 1.5},
 	}
-	result := filterMetricsByVolumeState(metrics, "ACTIVE")
+	result := filterMetricsByVolumeState(metrics, volumeStateActive)
 	if len(result) != 1 || result[0].VolumeID != 1 {
 		t.Fatalf("expected [vol 1] for ACTIVE with nil elements, got %d results", len(result))
 	}
-	result = filterMetricsByVolumeState(metrics, "FULL")
+	result = filterMetricsByVolumeState(metrics, volumeStateFull)
 	if len(result) != 1 || result[0].VolumeID != 2 {
 		t.Fatalf("expected [vol 2] for FULL with nil elements, got %d results", len(result))
 	}
 }
 
 func TestFilterMetricsByVolumeState_EmptyInput(t *testing.T) {
-	result := filterMetricsByVolumeState(nil, "ACTIVE")
+	result := filterMetricsByVolumeState(nil, volumeStateActive)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 metrics for nil input, got %d", len(result))
 	}
 
-	result = filterMetricsByVolumeState([]*workertypes.VolumeHealthMetrics{}, "FULL")
+	result = filterMetricsByVolumeState([]*workertypes.VolumeHealthMetrics{}, volumeStateFull)
 	if len(result) != 0 {
 		t.Fatalf("expected 0 metrics for empty input, got %d", len(result))
 	}

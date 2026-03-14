@@ -101,7 +101,8 @@ func buildVolumeMetrics(
 
 	var collectionRegex *regexp.Regexp
 	trimmedFilter := strings.TrimSpace(collectionFilter)
-	if trimmedFilter != "" && trimmedFilter != collectionFilterAll && trimmedFilter != collectionFilterEach && trimmedFilter != "*" {
+	filterMode := collectionFilterMode(trimmedFilter)
+	if trimmedFilter != "" && filterMode != collectionFilterAll && filterMode != collectionFilterEach && trimmedFilter != "*" {
 		var err error
 		collectionRegex, err = regexp.Compile(trimmedFilter)
 		if err != nil {
