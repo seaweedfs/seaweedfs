@@ -111,6 +111,9 @@ type AdminServer struct {
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
 
+	// Background goroutine lifecycle
+	bgCancel context.CancelFunc
+
 	// Collection statistics caching
 	collectionStatsCache          map[string]collectionStats
 	lastCollectionStatsUpdate     time.Time
@@ -137,8 +140,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	)
 
 	// Start master client connection process (like shell and filer do)
-	ctx := context.Background()
-	go masterClient.KeepConnectedToMaster(ctx)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go masterClient.KeepConnectedToMaster(bgCtx)
 
 	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
 	presenceLock := newAdminPresenceLock(masterClient)
@@ -159,6 +162,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		icebergPort:                   icebergPort,
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
+		bgCancel:                      bgCancel,
 	}
 
 	// Initialize topic retention purger
@@ -256,7 +260,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
-		go server.monitorVacuumWorker(ctx)
+		go server.monitorVacuumWorker(bgCtx)
 	}
 
 	return server
@@ -1581,6 +1585,11 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 // Shutdown gracefully shuts down the admin server
 func (s *AdminServer) Shutdown() {
 	glog.V(1).Infof("Shutting down admin server...")
+
+	// Cancel background goroutines (vacuum monitor, etc.)
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
