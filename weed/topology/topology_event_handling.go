@@ -31,8 +31,8 @@ func (t *Topology) StartRefreshWritableVolumes(grpcDialOption grpc.DialOption, g
 				// This handles the case where the admin server crashes without
 				// cleanup. Does NOT override an operator's intentional disable.
 				if t.IsVacuumDisabledByPlugin() && t.adminServerConnectedFunc != nil && !t.adminServerConnectedFunc() {
-					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, re-enabling vacuum")
-					t.EnableVacuum()
+					glog.V(0).Infof("Admin server disconnected while vacuum was disabled by plugin, clearing plugin disable")
+					t.EnableVacuumByPlugin()
 				}
 				if !t.IsVacuumDisabled() {
 					t.Vacuum(grpcDialOption, garbageThreshold, concurrentVacuumLimitPerVolumeServer, 0, "", preallocate, true)
