@@ -10,7 +10,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types/base"
 	"google.golang.org/grpc"
@@ -201,13 +200,4 @@ func isDedupPhase(params *worker_pb.TaskParams) bool {
 		return params.Sources[0].Node == params.Targets[0].Node
 	}
 	return false
-}
-
-// ShardIdsToUint32 is a helper to convert ShardId slice to uint32 slice
-func ShardIdsToUint32(ids []erasure_coding.ShardId) []uint32 {
-	result := make([]uint32, len(ids))
-	for i, id := range ids {
-		result[i] = uint32(id)
-	}
-	return result
 }

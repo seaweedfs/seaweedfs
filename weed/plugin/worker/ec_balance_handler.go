@@ -3,6 +3,7 @@ package pluginworker
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -15,6 +16,12 @@ import (
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	ecBalanceMinImbalanceThreshold = 0.05
+	ecBalanceMaxImbalanceThreshold = 0.5
+	ecBalanceMinServerCount        = 2
 )
 
 func init() {
@@ -122,8 +129,8 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_DOUBLE,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.05}},
-							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.5}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: ecBalanceMinImbalanceThreshold}},
+							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: ecBalanceMaxImbalanceThreshold}},
 						},
 						{
 							Name:        "min_server_count",
@@ -132,7 +139,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMinServerCount}},
 						},
 						{
 							Name:        "min_interval_seconds",
@@ -414,21 +421,29 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	taskConfig := ecbalancetask.NewDefaultConfig()
 
 	imbalanceThreshold := readDoubleConfig(values, "imbalance_threshold", taskConfig.ImbalanceThreshold)
-	if imbalanceThreshold < 0.05 {
-		imbalanceThreshold = 0.05
+	if imbalanceThreshold < ecBalanceMinImbalanceThreshold {
+		imbalanceThreshold = ecBalanceMinImbalanceThreshold
 	}
-	if imbalanceThreshold > 0.5 {
-		imbalanceThreshold = 0.5
+	if imbalanceThreshold > ecBalanceMaxImbalanceThreshold {
+		imbalanceThreshold = ecBalanceMaxImbalanceThreshold
 	}
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
-	minServerCount := int(readInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount)))
-	if minServerCount < 2 {
-		minServerCount = 2
+	minServerCountRaw := readInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount))
+	if minServerCountRaw > math.MaxInt32 {
+		minServerCountRaw = math.MaxInt32
+	}
+	minServerCount := int(minServerCountRaw)
+	if minServerCount < ecBalanceMinServerCount {
+		minServerCount = ecBalanceMinServerCount
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	minIntervalSeconds := int(readInt64Config(values, "min_interval_seconds", 60*60))
+	minIntervalRaw := readInt64Config(values, "min_interval_seconds", 60*60)
+	if minIntervalRaw > math.MaxInt32 {
+		minIntervalRaw = math.MaxInt32
+	}
+	minIntervalSeconds := int(minIntervalRaw)
 	if minIntervalSeconds < 0 {
 		minIntervalSeconds = 0
 	}
@@ -539,8 +554,8 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 	targetNode := strings.TrimSpace(readStringConfig(job.Parameters, "target_server", ""))
 	collection := readStringConfig(job.Parameters, "collection", "")
 
-	if volumeID <= 0 {
-		return nil, fmt.Errorf("missing volume_id in job parameters")
+	if volumeID <= 0 || volumeID > math.MaxUint32 {
+		return nil, fmt.Errorf("invalid volume_id in job parameters: %d", volumeID)
 	}
 	if sourceNode == "" {
 		return nil, fmt.Errorf("missing source_server in job parameters")
@@ -550,6 +565,9 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 	}
 
 	shardID := readInt64Config(job.Parameters, "shard_id", 0)
+	if shardID < 0 || shardID > math.MaxUint32 {
+		shardID = 0
+	}
 
 	return &worker_pb.TaskParams{
 		TaskId:     job.JobId,
