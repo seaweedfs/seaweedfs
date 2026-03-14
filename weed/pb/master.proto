@@ -350,11 +350,13 @@ message VacuumVolumeResponse {
 }
 
 message DisableVacuumRequest {
+    bool by_plugin = 1;
 }
 message DisableVacuumResponse {
 }
 
 message EnableVacuumRequest {
+    bool by_plugin = 1;
 }
 message EnableVacuumResponse {
 }
