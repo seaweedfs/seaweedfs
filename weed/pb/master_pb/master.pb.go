@@ -2650,6 +2650,7 @@ func (*VacuumVolumeResponse) Descriptor() ([]byte, []int) {
 
 type DisableVacuumRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ByPlugin      bool                   `protobuf:"varint,1,opt,name=by_plugin,json=byPlugin,proto3" json:"by_plugin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2682,6 +2683,13 @@ func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DisableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*DisableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *DisableVacuumRequest) GetByPlugin() bool {
+	if x != nil {
+		return x.ByPlugin
+	}
+	return false
 }
 
 type DisableVacuumResponse struct {
@@ -2973,16 +2981,17 @@ func (*GetMasterConfigurationRequest) Descriptor() ([]byte, []int) {
 }
 
 type GetMasterConfigurationResponse struct {
-	state                   protoimpl.MessageState `protogen:"open.v1"`
-	MetricsAddress          string                 `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress,proto3" json:"metrics_address,omitempty"`
-	MetricsIntervalSeconds  uint32                 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds,proto3" json:"metrics_interval_seconds,omitempty"`
-	StorageBackends         []*StorageBackend      `protobuf:"bytes,3,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
-	DefaultReplication      string                 `protobuf:"bytes,4,opt,name=default_replication,json=defaultReplication,proto3" json:"default_replication,omitempty"`
-	Leader                  string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`
-	VolumeSizeLimitMB       uint32                 `protobuf:"varint,6,opt,name=volume_size_limit_m_b,json=volumeSizeLimitMB,proto3" json:"volume_size_limit_m_b,omitempty"`
-	VolumePreallocate       bool                   `protobuf:"varint,7,opt,name=volume_preallocate,json=volumePreallocate,proto3" json:"volume_preallocate,omitempty"`
-	MaintenanceScripts      string                 `protobuf:"bytes,8,opt,name=maintenance_scripts,json=maintenanceScripts,proto3" json:"maintenance_scripts,omitempty"`
-	MaintenanceSleepMinutes uint32                 `protobuf:"varint,9,opt,name=maintenance_sleep_minutes,json=maintenanceSleepMinutes,proto3" json:"maintenance_sleep_minutes,omitempty"`
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	MetricsAddress         string                 `protobuf:"bytes,1,opt,name=metrics_address,json=metricsAddress,proto3" json:"metrics_address,omitempty"`
+	MetricsIntervalSeconds uint32                 `protobuf:"varint,2,opt,name=metrics_interval_seconds,json=metricsIntervalSeconds,proto3" json:"metrics_interval_seconds,omitempty"`
+	StorageBackends        []*StorageBackend      `protobuf:"bytes,3,rep,name=storage_backends,json=storageBackends,proto3" json:"storage_backends,omitempty"`
+	DefaultReplication     string                 `protobuf:"bytes,4,opt,name=default_replication,json=defaultReplication,proto3" json:"default_replication,omitempty"`
+	Leader                 string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`
+	VolumeSizeLimitMB      uint32                 `protobuf:"varint,6,opt,name=volume_size_limit_m_b,json=volumeSizeLimitMB,proto3" json:"volume_size_limit_m_b,omitempty"`
+	VolumePreallocate      bool                   `protobuf:"varint,7,opt,name=volume_preallocate,json=volumePreallocate,proto3" json:"volume_preallocate,omitempty"`
+	// MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
+	MaintenanceScripts      string `protobuf:"bytes,8,opt,name=maintenance_scripts,json=maintenanceScripts,proto3" json:"maintenance_scripts,omitempty"`
+	MaintenanceSleepMinutes uint32 `protobuf:"varint,9,opt,name=maintenance_sleep_minutes,json=maintenanceSleepMinutes,proto3" json:"maintenance_sleep_minutes,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -4525,8 +4534,9 @@ const file_master_proto_rawDesc = "" +
 	"\n" +
 	"collection\x18\x03 \x01(\tR\n" +
 	"collection\"\x16\n" +
-	"\x14VacuumVolumeResponse\"\x16\n" +
-	"\x14DisableVacuumRequest\"\x17\n" +
+	"\x14VacuumVolumeResponse\"3\n" +
+	"\x14DisableVacuumRequest\x12\x1b\n" +
+	"\tby_plugin\x18\x01 \x01(\bR\bbyPlugin\"\x17\n" +
 	"\x15DisableVacuumResponse\"\x15\n" +
 	"\x13EnableVacuumRequest\"\x16\n" +
 	"\x14EnableVacuumResponse\"\x93\x02\n" +

@@ -299,10 +299,10 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 }
 
 func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
-	// If the admin server is connected, this was likely called by the
-	// vacuum plugin monitor. Track ownership so the safety net in the
-	// vacuum loop won't override an operator's intentional disable.
-	if ms.isAdminServerConnectedFunc() {
+	// The caller explicitly indicates whether this disable request comes
+	// from the vacuum plugin monitor. Track ownership so the safety net
+	// in the vacuum loop won't override an operator's intentional disable.
+	if req.GetByPlugin() {
 		ms.Topo.DisableVacuumByPlugin()
 	} else {
 		ms.Topo.DisableVacuum()

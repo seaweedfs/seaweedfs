@@ -277,7 +277,7 @@ func (m *masterVacuumToggler) disableVacuum() error {
 	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{})
+		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{ByPlugin: true})
 		return err
 	})
 }
