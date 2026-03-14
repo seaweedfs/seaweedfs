@@ -1148,6 +1148,9 @@ func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilte
 
 	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
 	for _, m := range metrics {
+		if m == nil {
+			continue
+		}
 		if !wildcard.MatchesAnyWildcard(dcMatchers, m.DataCenter) {
 			continue
 		}
