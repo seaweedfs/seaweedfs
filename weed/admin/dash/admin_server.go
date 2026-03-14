@@ -287,7 +287,9 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 			if hasWorker {
 				glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
 				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-					_, err := client.DisableVacuum(context.Background(), &master_pb.DisableVacuumRequest{})
+					rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, err := client.DisableVacuum(rpcCtx, &master_pb.DisableVacuumRequest{})
 					return err
 				}); err != nil {
 					glog.Warningf("Failed to disable vacuum on master: %v", err)
@@ -296,7 +298,9 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 			} else {
 				glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
 				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-					_, err := client.EnableVacuum(context.Background(), &master_pb.EnableVacuumRequest{})
+					rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					_, err := client.EnableVacuum(rpcCtx, &master_pb.EnableVacuumRequest{})
 					return err
 				}); err != nil {
 					glog.Warningf("Failed to enable vacuum on master: %v", err)
