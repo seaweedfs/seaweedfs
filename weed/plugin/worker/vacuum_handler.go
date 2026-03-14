@@ -87,8 +87,44 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only scan this collection when set.",
-							Placeholder: "all collections",
+							Description: "Filter collections for vacuum detection. Use ALL_COLLECTIONS (default) to treat all volumes as one pool, EACH_COLLECTION to run detection separately per collection, or a regex pattern to match specific collections.",
+							Placeholder: "ALL_COLLECTIONS",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "volume_state",
+							Label:       "Volume State Filter",
+							Description: "Filter volumes by state: ALL (default), ACTIVE (writable volumes below size limit), or FULL (read-only volumes above size limit).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
+							Options: []*plugin_pb.ConfigOption{
+								{Value: string(volumeStateAll), Label: "All Volumes"},
+								{Value: string(volumeStateActive), Label: "Active (writable)"},
+								{Value: string(volumeStateFull), Label: "Full (read-only)"},
+							},
+						},
+						{
+							Name:        "data_center_filter",
+							Label:       "Data Center Filter",
+							Description: "Only vacuum volumes in matching data centers (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all data centers",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "rack_filter",
+							Label:       "Rack Filter",
+							Description: "Only vacuum volumes on matching racks (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all racks",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "node_filter",
+							Label:       "Node Filter",
+							Description: "Only vacuum volumes on matching nodes (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all nodes",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -97,6 +133,18 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"collection_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"volume_state": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(volumeStateAll)},
+				},
+				"data_center_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"rack_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"node_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
@@ -224,6 +272,17 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	metrics, activeTopology, err := h.collectVolumeMetrics(ctx, masters, collectionFilter)
 	if err != nil {
 		return err
+	}
+
+	volState := volumeState(strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", string(volumeStateAll)))))
+	metrics = filterMetricsByVolumeState(metrics, volState)
+
+	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+
+	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
+		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}

@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/base"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -88,19 +88,19 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 	if clusterInfo.ActiveTopology != nil {
 		topologyInfo := clusterInfo.ActiveTopology.GetTopologyInfo()
 		if topologyInfo != nil {
-			rackFilterSet := util.ParseCSVSet(balanceConfig.RackFilter)
-			nodeFilterSet := util.ParseCSVSet(balanceConfig.NodeFilter)
-			dcFilter := strings.TrimSpace(balanceConfig.DataCenterFilter)
+			dcMatchers := wildcard.CompileWildcardMatchers(balanceConfig.DataCenterFilter)
+			rackMatchers := wildcard.CompileWildcardMatchers(balanceConfig.RackFilter)
+			nodeMatchers := wildcard.CompileWildcardMatchers(balanceConfig.NodeFilter)
 			for _, dc := range topologyInfo.DataCenterInfos {
-				if dcFilter != "" && dc.Id != dcFilter {
+				if !wildcard.MatchesAnyWildcard(dcMatchers, dc.Id) {
 					continue
 				}
 				for _, rack := range dc.RackInfos {
-					if rackFilterSet != nil && !rackFilterSet[rack.Id] {
+					if !wildcard.MatchesAnyWildcard(rackMatchers, rack.Id) {
 						continue
 					}
 					for _, node := range rack.DataNodeInfos {
-						if nodeFilterSet != nil && !nodeFilterSet[node.Id] {
+						if !wildcard.MatchesAnyWildcard(nodeMatchers, node.Id) {
 							continue
 						}
 						for diskTypeName, diskInfo := range node.DiskInfos {
