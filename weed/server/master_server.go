@@ -191,7 +191,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.option.MaxParallelVacuumPerServer,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
-		ms.isAdminServerConnected,
+		ms.isAdminServerConnectedFunc,
 	)
 
 	ms.ProcessGrowRequest()
@@ -337,7 +337,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (ms *MasterServer) isAdminServerConnected() bool {
+func (ms *MasterServer) isAdminServerConnectedFunc() bool {
 	if ms == nil || ms.adminLocks == nil {
 		return false
 	}
@@ -384,7 +384,7 @@ func (ms *MasterServer) startAdminScripts() {
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster(context.Background()) != "" {
-				if ms.isAdminServerConnected() {
+				if ms.isAdminServerConnectedFunc() {
 					glog.V(1).Infof("Skipping master maintenance scripts because admin server is connected")
 					continue
 				}
