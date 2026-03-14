@@ -346,6 +346,8 @@ func (h *ECBalanceHandler) Execute(
 				BuildExecutorActivity(stage, message),
 			},
 		}); err != nil {
+			glog.Warningf("EC balance job %s (%s): failed to send progress (%.0f%%, stage=%q): %v, cancelling execution",
+				request.Job.JobId, request.Job.JobType, progress, stage, err)
 			execCancel()
 		}
 	})
