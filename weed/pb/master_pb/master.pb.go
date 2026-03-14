@@ -2730,6 +2730,7 @@ func (*DisableVacuumResponse) Descriptor() ([]byte, []int) {
 
 type EnableVacuumRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ByPlugin      bool                   `protobuf:"varint,1,opt,name=by_plugin,json=byPlugin,proto3" json:"by_plugin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2762,6 +2763,13 @@ func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EnableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*EnableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *EnableVacuumRequest) GetByPlugin() bool {
+	if x != nil {
+		return x.ByPlugin
+	}
+	return false
 }
 
 type EnableVacuumResponse struct {
@@ -4537,8 +4545,9 @@ const file_master_proto_rawDesc = "" +
 	"\x14VacuumVolumeResponse\"3\n" +
 	"\x14DisableVacuumRequest\x12\x1b\n" +
 	"\tby_plugin\x18\x01 \x01(\bR\bbyPlugin\"\x17\n" +
-	"\x15DisableVacuumResponse\"\x15\n" +
-	"\x13EnableVacuumRequest\"\x16\n" +
+	"\x15DisableVacuumResponse\"2\n" +
+	"\x13EnableVacuumRequest\x12\x1b\n" +
+	"\tby_plugin\x18\x01 \x01(\bR\bbyPlugin\"\x16\n" +
 	"\x14EnableVacuumResponse\"\x93\x02\n" +
 	"\x19VolumeMarkReadonlyRequest\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +

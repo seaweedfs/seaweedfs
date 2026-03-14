@@ -541,6 +541,19 @@ func (t *Topology) EnableVacuum() {
 	t.vacuumDisabledByPlugin.Store(false)
 }
 
+// EnableVacuumByPlugin only re-enables vacuum if it was disabled by the
+// plugin. If an operator manually disabled vacuum after the plugin did,
+// this is a no-op to avoid overriding operator intent.
+func (t *Topology) EnableVacuumByPlugin() {
+	if !t.vacuumDisabledByPlugin.Load() {
+		glog.V(0).Infof("EnableVacuum (by plugin): skipped, vacuum was not disabled by plugin")
+		return
+	}
+	glog.V(0).Infof("EnableVacuum (by plugin)")
+	t.isDisableVacuum.Store(false)
+	t.vacuumDisabledByPlugin.Store(false)
+}
+
 func (t *Topology) DisableVacuumByPlugin() {
 	glog.V(0).Infof("DisableVacuum (by plugin worker)")
 	t.isDisableVacuum.Store(true)

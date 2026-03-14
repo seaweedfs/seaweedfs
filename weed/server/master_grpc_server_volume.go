@@ -312,8 +312,11 @@ func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.Disabl
 }
 
 func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
-
-	ms.Topo.EnableVacuum()
+	if req.GetByPlugin() {
+		ms.Topo.EnableVacuumByPlugin()
+	} else {
+		ms.Topo.EnableVacuum()
+	}
 	resp := &master_pb.EnableVacuumResponse{}
 	return resp, nil
 }
