@@ -200,11 +200,13 @@ func TestDecodeECBalanceTaskParamsFallback(t *testing.T) {
 	job := &plugin_pb.JobSpec{
 		JobId: "job-2",
 		Parameters: map[string]*plugin_pb.ConfigValue{
-			"volume_id":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 200}},
-			"source_server": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "src:8080"}},
-			"target_server": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "dst:8080"}},
-			"collection":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "fallback-col"}},
-			"shard_id":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7}},
+			"volume_id":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 200}},
+			"source_server":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "src:8080"}},
+			"target_server":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "dst:8080"}},
+			"collection":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "fallback-col"}},
+			"shard_id":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7}},
+			"source_disk_id": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+			"target_disk_id": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 		},
 	}
 
@@ -221,6 +223,33 @@ func TestDecodeECBalanceTaskParamsFallback(t *testing.T) {
 	}
 	if decoded.Sources[0].ShardIds[0] != 7 {
 		t.Errorf("expected shard_id 7, got %d", decoded.Sources[0].ShardIds[0])
+	}
+	if decoded.Sources[0].DiskId != 1 {
+		t.Errorf("expected source disk_id 1, got %d", decoded.Sources[0].DiskId)
+	}
+	if decoded.Targets[0].DiskId != 2 {
+		t.Errorf("expected target disk_id 2, got %d", decoded.Targets[0].DiskId)
+	}
+}
+
+func TestDecodeECBalanceTaskParamsProtobufValidation(t *testing.T) {
+	// Protobuf payload with missing ShardIds should fail validation
+	badParams := &worker_pb.TaskParams{
+		TaskId:   "test-id",
+		VolumeId: 100,
+		Sources:  []*worker_pb.TaskSource{{Node: "source:8080"}}, // no ShardIds
+		Targets:  []*worker_pb.TaskTarget{{Node: "target:8080", ShardIds: []uint32{3}}},
+	}
+	payload, _ := proto.Marshal(badParams)
+	job := &plugin_pb.JobSpec{
+		JobId: "job-validate",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"task_params_pb": {Kind: &plugin_pb.ConfigValue_BytesValue{BytesValue: payload}},
+		},
+	}
+	_, err := decodeECBalanceTaskParams(job)
+	if err == nil {
+		t.Fatal("expected error for missing Sources[0].ShardIds in protobuf")
 	}
 }
 

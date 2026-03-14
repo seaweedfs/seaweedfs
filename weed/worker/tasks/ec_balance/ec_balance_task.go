@@ -22,6 +22,7 @@ type ECBalanceTask struct {
 	volumeID       uint32
 	collection     string
 	grpcDialOption grpc.DialOption
+	progress       float64
 }
 
 // NewECBalanceTask creates a new EC balance task instance
@@ -70,24 +71,24 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 	}
 
 	// Step 1: Copy shard to destination and mount
-	t.ReportProgressWithStage(10.0, "Copying EC shard to destination")
+	t.reportProgress(10.0, "Copying EC shard to destination")
 	if err := t.copyAndMountShard(ctx, params.VolumeId, sourceAddr, targetAddr, source.ShardIds, target.DiskId); err != nil {
 		return fmt.Errorf("copy and mount shard: %v", err)
 	}
 
 	// Step 2: Unmount shard on source
-	t.ReportProgressWithStage(50.0, "Unmounting EC shard from source")
+	t.reportProgress(50.0, "Unmounting EC shard from source")
 	if err := t.unmountShard(ctx, params.VolumeId, sourceAddr, source.ShardIds); err != nil {
 		return fmt.Errorf("unmount shard on source: %v", err)
 	}
 
 	// Step 3: Delete shard from source
-	t.ReportProgressWithStage(75.0, "Deleting EC shard from source")
+	t.reportProgress(75.0, "Deleting EC shard from source")
 	if err := t.deleteShard(ctx, params.VolumeId, params.Collection, sourceAddr, source.ShardIds); err != nil {
 		return fmt.Errorf("delete shard on source: %v", err)
 	}
 
-	t.ReportProgressWithStage(100.0, "EC shard move complete")
+	t.reportProgress(100.0, "EC shard move complete")
 	glog.Infof("EC balance: successfully moved shard(s) %v of volume %d from %s to %s",
 		source.ShardIds, params.VolumeId, source.Node, target.Node)
 	return nil
@@ -95,17 +96,17 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 
 // executeDedupDelete removes a duplicate shard without copying
 func (t *ECBalanceTask) executeDedupDelete(ctx context.Context, volumeID uint32, sourceAddr pb.ServerAddress, shardIDs []uint32) error {
-	t.ReportProgressWithStage(25.0, "Unmounting duplicate EC shard")
+	t.reportProgress(25.0, "Unmounting duplicate EC shard")
 	if err := t.unmountShard(ctx, volumeID, sourceAddr, shardIDs); err != nil {
 		return fmt.Errorf("unmount duplicate shard: %v", err)
 	}
 
-	t.ReportProgressWithStage(75.0, "Deleting duplicate EC shard")
+	t.reportProgress(75.0, "Deleting duplicate EC shard")
 	if err := t.deleteShard(ctx, volumeID, t.collection, sourceAddr, shardIDs); err != nil {
 		return fmt.Errorf("delete duplicate shard: %v", err)
 	}
 
-	t.ReportProgressWithStage(100.0, "Duplicate shard removed")
+	t.reportProgress(100.0, "Duplicate shard removed")
 	return nil
 }
 
@@ -169,19 +170,23 @@ func (t *ECBalanceTask) deleteShard(ctx context.Context, volumeID uint32, collec
 		})
 }
 
-// Validate validates the task parameters
+// Validate validates the task parameters.
+// ECBalanceTask handles exactly one source→target shard move per execution.
 func (t *ECBalanceTask) Validate(params *worker_pb.TaskParams) error {
 	if params == nil {
-		return fmt.Errorf("task parameters are required")
+		return fmt.Errorf("ECBalanceTask.Validate: TaskParams are required")
 	}
-	if len(params.Sources) == 0 {
-		return fmt.Errorf("at least one source is required")
+	if len(params.Sources) != 1 {
+		return fmt.Errorf("ECBalanceTask.Validate: expected exactly 1 source, got %d", len(params.Sources))
 	}
-	if len(params.Targets) == 0 {
-		return fmt.Errorf("at least one target is required")
+	if len(params.Targets) != 1 {
+		return fmt.Errorf("ECBalanceTask.Validate: expected exactly 1 target, got %d", len(params.Targets))
 	}
 	if len(params.Sources[0].ShardIds) == 0 {
-		return fmt.Errorf("source shard IDs are required")
+		return fmt.Errorf("ECBalanceTask.Validate: Sources[0].ShardIds is empty")
+	}
+	if len(params.Targets[0].ShardIds) == 0 {
+		return fmt.Errorf("ECBalanceTask.Validate: Targets[0].ShardIds is empty")
 	}
 	return nil
 }
@@ -191,9 +196,15 @@ func (t *ECBalanceTask) EstimateTime(params *worker_pb.TaskParams) time.Duration
 	return 30 * time.Second
 }
 
-// GetProgress returns current progress from the BaseTask
+// GetProgress returns current progress
 func (t *ECBalanceTask) GetProgress() float64 {
-	return t.BaseTask.GetProgress()
+	return t.progress
+}
+
+// reportProgress updates the stored progress and reports it via the callback
+func (t *ECBalanceTask) reportProgress(progress float64, stage string) {
+	t.progress = progress
+	t.reportProgress(progress, stage)
 }
 
 // isDedupPhase checks if this is a dedup-phase task (source and target are the same node)

@@ -536,41 +536,64 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 		return nil, fmt.Errorf("job spec is nil")
 	}
 
-	// Try protobuf-encoded params first
+	// Try protobuf-encoded params first (preferred path)
 	if payload := readBytesConfig(job.Parameters, "task_params_pb"); len(payload) > 0 {
 		params := &worker_pb.TaskParams{}
 		if err := proto.Unmarshal(payload, params); err != nil {
-			return nil, fmt.Errorf("unmarshal task_params_pb: %w", err)
+			return nil, fmt.Errorf("decodeECBalanceTaskParams: unmarshal task_params_pb: %w", err)
 		}
 		if params.TaskId == "" {
 			params.TaskId = job.JobId
 		}
+		// Validate execution-critical fields in the deserialized TaskParams
+		if len(params.Sources) == 0 || strings.TrimSpace(params.Sources[0].Node) == "" {
+			return nil, fmt.Errorf("decodeECBalanceTaskParams: TaskParams missing Sources[0].Node")
+		}
+		if len(params.Sources[0].ShardIds) == 0 {
+			return nil, fmt.Errorf("decodeECBalanceTaskParams: TaskParams missing Sources[0].ShardIds")
+		}
+		if len(params.Targets) == 0 || strings.TrimSpace(params.Targets[0].Node) == "" {
+			return nil, fmt.Errorf("decodeECBalanceTaskParams: TaskParams missing Targets[0].Node")
+		}
+		if len(params.Targets[0].ShardIds) == 0 {
+			return nil, fmt.Errorf("decodeECBalanceTaskParams: TaskParams missing Targets[0].ShardIds")
+		}
 		return params, nil
 	}
 
-	// Fallback: construct from individual parameters
+	// Legacy fallback: construct TaskParams from individual scalar parameters.
+	// All execution-critical fields are required.
 	volumeID := readInt64Config(job.Parameters, "volume_id", 0)
 	sourceNode := strings.TrimSpace(readStringConfig(job.Parameters, "source_server", ""))
 	targetNode := strings.TrimSpace(readStringConfig(job.Parameters, "target_server", ""))
 	collection := readStringConfig(job.Parameters, "collection", "")
 
 	if volumeID <= 0 || volumeID > math.MaxUint32 {
-		return nil, fmt.Errorf("invalid volume_id in job parameters: %d", volumeID)
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid or missing volume_id: %d", volumeID)
 	}
 	if sourceNode == "" {
-		return nil, fmt.Errorf("missing source_server in job parameters")
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: missing source_server")
 	}
 	if targetNode == "" {
-		return nil, fmt.Errorf("missing target_server in job parameters")
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: missing target_server")
 	}
 
 	shardIDVal, hasShardID := job.Parameters["shard_id"]
 	if !hasShardID || shardIDVal == nil {
-		return nil, fmt.Errorf("missing shard_id in job parameters")
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: missing shard_id (required for EcBalanceTaskParams)")
 	}
 	shardID := readInt64Config(job.Parameters, "shard_id", -1)
 	if shardID < 0 || shardID > math.MaxUint32 {
-		return nil, fmt.Errorf("invalid shard_id in job parameters: %d", shardID)
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid shard_id: %d", shardID)
+	}
+
+	sourceDiskID := readInt64Config(job.Parameters, "source_disk_id", 0)
+	if sourceDiskID < 0 || sourceDiskID > math.MaxUint32 {
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid source_disk_id: %d", sourceDiskID)
+	}
+	targetDiskID := readInt64Config(job.Parameters, "target_disk_id", 0)
+	if targetDiskID < 0 || targetDiskID > math.MaxUint32 {
+		return nil, fmt.Errorf("decodeECBalanceTaskParams: invalid target_disk_id: %d", targetDiskID)
 	}
 
 	return &worker_pb.TaskParams{
@@ -579,10 +602,12 @@ func decodeECBalanceTaskParams(job *plugin_pb.JobSpec) (*worker_pb.TaskParams, e
 		Collection: collection,
 		Sources: []*worker_pb.TaskSource{{
 			Node:     sourceNode,
+			DiskId:   uint32(sourceDiskID),
 			ShardIds: []uint32{uint32(shardID)},
 		}},
 		Targets: []*worker_pb.TaskTarget{{
 			Node:     targetNode,
+			DiskId:   uint32(targetDiskID),
 			ShardIds: []uint32{uint32(shardID)},
 		}},
 		TaskParams: &worker_pb.TaskParams_EcBalanceParams{
