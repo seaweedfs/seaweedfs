@@ -1,13 +1,13 @@
 package app
 
-templ Plugin(page string) {
+templ Plugin(page string, initialJob string) {
     {{
         currentPage := page
         if currentPage == "" {
             currentPage = "overview"
         }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -589,6 +589,7 @@ templ Plugin(page string) {
                 jobTypes: [],
                 lastDetectionByJobType: {},
                 initialPage: String(page.getAttribute('data-plugin-page') || 'overview').trim().toLowerCase(),
+                initialJob: String(page.getAttribute('data-plugin-job') || '').trim(),
                 activeTopTab: 'overview',
                 activeSubTab: 'configuration',
                 initialNavigationApplied: false,
@@ -717,6 +718,28 @@ templ Plugin(page string) {
                 return 'configuration';
             }
 
+            function buildPluginURL(topTab, subTab, jobType) {
+                if (topTab === 'overview') {
+                    return '/plugin';
+                }
+                var effectiveSubTab = normalizeSubTab(subTab);
+                var path = '/plugin/' + encodeURIComponent(effectiveSubTab);
+                var jt = String(jobType || '').trim();
+                if (jt) {
+                    path += '?job=' + encodeURIComponent(jt);
+                }
+                return path;
+            }
+
+            function updateURL(replace) {
+                var url = buildPluginURL(state.activeTopTab, state.activeSubTab, state.selectedJobType);
+                if (replace) {
+                    history.replaceState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                } else {
+                    history.pushState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                }
+            }
+
             // Parse a job type item (string or object) into a safe object shape
             function parseJobTypeItem(item) {
                 var jobType = '';
@@ -782,8 +805,13 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                var firstItem = parseJobTypeItem(state.jobTypes[0]);
-                state.selectedJobType = firstItem.jobType;
+                // If a specific job type was provided in the URL, use it
+                if (state.initialJob && hasJobType(state.initialJob)) {
+                    state.selectedJobType = state.initialJob;
+                } else {
+                    var firstItem = parseJobTypeItem(state.jobTypes[0]);
+                    state.selectedJobType = firstItem.jobType;
+                }
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -3015,6 +3043,7 @@ templ Plugin(page string) {
                         if (topTabKey === 'overview') {
                             state.activeTopTab = 'overview';
                             renderNavigationState();
+                            updateURL(false);
                             return;
                         }
 
@@ -3026,6 +3055,7 @@ templ Plugin(page string) {
                         state.selectedJobType = jobType;
                         ensureActiveNavigation();
                         renderNavigationState();
+                        updateURL(false);
                         if (state.loadedJobType !== jobType) {
                             try {
                                 await loadDescriptorAndConfig(jobType, false);
@@ -3053,6 +3083,7 @@ templ Plugin(page string) {
                         var subTabKey = normalizeSubTab(subTab.getAttribute('data-plugin-subtab'));
                         state.activeSubTab = subTabKey;
                         renderNavigationState();
+                        updateURL(false);
                         return;
                     }
 
@@ -3076,10 +3107,39 @@ templ Plugin(page string) {
                 renderNavigationState();
                 await refreshAll();
 
+                // Set the initial browser history state to match the current view
+                updateURL(true);
+
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
                 }, 3000);
             }
+
+            window.addEventListener('popstate', function(event) {
+                var s = event.state;
+                if (!s || !s.pluginTopTab) {
+                    // No plugin state — treat as overview
+                    state.activeTopTab = 'overview';
+                    renderNavigationState();
+                    return;
+                }
+                state.activeTopTab = String(s.pluginTopTab || 'overview');
+                state.activeSubTab = normalizeSubTab(s.pluginSubTab);
+                var jobType = String(s.pluginJob || '').trim();
+                if (jobType) {
+                    state.selectedJobType = jobType;
+                }
+                ensureActiveNavigation();
+                renderNavigationState();
+                // If a job type is selected and not loaded yet, load it
+                if (state.selectedJobType && state.loadedJobType !== state.selectedJobType) {
+                    loadDescriptorAndConfig(state.selectedJobType, false).catch(function() {});
+                }
+                renderQueueJobs();
+                renderDetectionJobs();
+                renderExecutionJobs();
+                renderExecutionActivities();
+            });
 
             window.addEventListener('beforeunload', function() {
                 if (state.refreshTimer) {
