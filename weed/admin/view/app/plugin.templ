@@ -3115,7 +3115,7 @@ templ Plugin(page string, initialJob string) {
                 }, 3000);
             }
 
-            window.addEventListener('popstate', function(event) {
+            window.addEventListener('popstate', async function(event) {
                 var s = event.state;
                 if (!s || !s.pluginTopTab) {
                     // No plugin state — treat as overview
@@ -3133,7 +3133,11 @@ templ Plugin(page string, initialJob string) {
                 renderNavigationState();
                 // If a job type is selected and not loaded yet, load it
                 if (state.selectedJobType && state.loadedJobType !== state.selectedJobType) {
-                    loadDescriptorAndConfig(state.selectedJobType, false).catch(function() {});
+                    try {
+                        await loadDescriptorAndConfig(state.selectedJobType, false);
+                    } catch (e) {
+                        console.error('Failed to load data on popstate navigation:', e);
+                    }
                 }
                 renderQueueJobs();
                 renderDetectionJobs();
