@@ -107,7 +107,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "data_center_filter",
 							Label:       "Data Center Filter",
-							Description: "Only vacuum volumes in a single data center. Leave empty for all data centers.",
+							Description: "Only vacuum volumes in matching data centers (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all data centers",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -115,7 +115,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "rack_filter",
 							Label:       "Rack Filter",
-							Description: "Only vacuum volumes on these racks (comma-separated). Leave empty for all racks.",
+							Description: "Only vacuum volumes on matching racks (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all racks",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -123,7 +123,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "node_filter",
 							Label:       "Node Filter",
-							Description: "Only vacuum volumes on these nodes (comma-separated server IDs). Leave empty for all nodes.",
+							Description: "Only vacuum volumes on matching nodes (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all nodes",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,

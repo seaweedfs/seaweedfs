@@ -15,7 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
-	taskutil "github.com/seaweedfs/seaweedfs/weed/worker/tasks/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -123,7 +123,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "data_center_filter",
 							Label:       "Data Center Filter",
-							Description: "Only balance volumes in a single data center. Leave empty for all data centers.",
+							Description: "Only balance volumes in matching data centers (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all data centers",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -131,7 +131,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "rack_filter",
 							Label:       "Rack Filter",
-							Description: "Only balance volumes on these racks (comma-separated). Leave empty for all racks.",
+							Description: "Only balance volumes on matching racks (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all racks",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -139,7 +139,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "node_filter",
 							Label:       "Node Filter",
-							Description: "Only balance volumes on these nodes (comma-separated server IDs). Leave empty for all nodes.",
+							Description: "Only balance volumes on matching nodes (comma-separated, wildcards supported). Leave empty for all.",
 							Placeholder: "all nodes",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
@@ -1142,23 +1142,19 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 }
 
 func filterMetricsByLocation(metrics []*workertypes.VolumeHealthMetrics, dcFilter, rackFilter, nodeFilter string) []*workertypes.VolumeHealthMetrics {
-	var rackSet, nodeSet map[string]bool
-	if rackFilter != "" {
-		rackSet = taskutil.ParseCSVSet(rackFilter)
-	}
-	if nodeFilter != "" {
-		nodeSet = taskutil.ParseCSVSet(nodeFilter)
-	}
+	dcMatchers := wildcard.CompileWildcardMatchers(dcFilter)
+	rackMatchers := wildcard.CompileWildcardMatchers(rackFilter)
+	nodeMatchers := wildcard.CompileWildcardMatchers(nodeFilter)
 
 	filtered := make([]*workertypes.VolumeHealthMetrics, 0, len(metrics))
 	for _, m := range metrics {
-		if dcFilter != "" && m.DataCenter != dcFilter {
+		if !wildcard.MatchesAnyWildcard(dcMatchers, m.DataCenter) {
 			continue
 		}
-		if rackSet != nil && !rackSet[m.Rack] {
+		if !wildcard.MatchesAnyWildcard(rackMatchers, m.Rack) {
 			continue
 		}
-		if nodeSet != nil && !nodeSet[m.Server] {
+		if !wildcard.MatchesAnyWildcard(nodeMatchers, m.Server) {
 			continue
 		}
 		filtered = append(filtered, m)
