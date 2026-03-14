@@ -688,6 +688,11 @@ func (r *Plugin) executeJobWithExecutor(
 	}
 }
 
+// HasCapableWorker checks if any non-stale worker has a capability for the given job type.
+func (r *Plugin) HasCapableWorker(jobType string) bool {
+	return r.registry.HasCapableWorker(jobType)
+}
+
 func (r *Plugin) ListWorkers() []*WorkerSession {
 	return r.registry.List()
 }
@@ -1413,4 +1418,14 @@ func (s *streamSession) close() {
 	s.closeOnce.Do(func() {
 		close(s.outgoing)
 	})
+}
+
+// WorkerConnectForTest simulates a worker connecting (test helper).
+func (r *Plugin) WorkerConnectForTest(hello *plugin_pb.WorkerHello) {
+	r.registry.UpsertFromHello(hello)
+}
+
+// WorkerDisconnectForTest simulates a worker disconnecting (test helper).
+func (r *Plugin) WorkerDisconnectForTest(workerID string) {
+	r.registry.Remove(workerID)
 }

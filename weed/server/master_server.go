@@ -191,6 +191,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.option.MaxParallelVacuumPerServer,
 		topology.VolumeGrowStrategy.Threshold,
 		ms.preallocateSize,
+		ms.isAdminServerConnected,
 	)
 
 	ms.ProcessGrowRequest()

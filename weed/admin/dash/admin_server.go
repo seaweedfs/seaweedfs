@@ -256,9 +256,55 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
+		go server.monitorVacuumWorker(ctx)
 	}
 
 	return server
+}
+
+// monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
+// disables/enables the master's automatic scheduled vacuum accordingly.
+func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
+	const pollInterval = 30 * time.Second
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	vacuumWorkerActive := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.plugin == nil {
+				continue
+			}
+			hasWorker := s.plugin.HasCapableWorker("vacuum")
+			if hasWorker == vacuumWorkerActive {
+				continue
+			}
+			vacuumWorkerActive = hasWorker
+			if hasWorker {
+				glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+					_, err := client.DisableVacuum(context.Background(), &master_pb.DisableVacuumRequest{})
+					return err
+				}); err != nil {
+					glog.Warningf("Failed to disable vacuum on master: %v", err)
+					vacuumWorkerActive = false // retry next tick
+				}
+			} else {
+				glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+					_, err := client.EnableVacuum(context.Background(), &master_pb.EnableVacuumRequest{})
+					return err
+				}); err != nil {
+					glog.Warningf("Failed to enable vacuum on master: %v", err)
+					vacuumWorkerActive = true // retry next tick
+				}
+			}
+		}
+	}
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files
