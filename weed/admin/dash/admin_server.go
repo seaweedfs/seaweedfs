@@ -262,6 +262,57 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	return server
 }
 
+// vacuumToggler abstracts the master's vacuum enable/disable for testing.
+type vacuumToggler interface {
+	disableVacuum() error
+	enableVacuum() error
+}
+
+// masterVacuumToggler implements vacuumToggler via gRPC calls to the master.
+type masterVacuumToggler struct {
+	server *AdminServer
+}
+
+func (m *masterVacuumToggler) disableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{})
+		return err
+	})
+}
+
+func (m *masterVacuumToggler) enableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.EnableVacuum(ctx, &master_pb.EnableVacuumRequest{})
+		return err
+	})
+}
+
+// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
+// is present and calls disable/enable accordingly. Returns the updated state.
+func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler) bool {
+	if hasWorker == previouslyActive {
+		return previouslyActive
+	}
+	if hasWorker {
+		glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		if err := toggler.disableVacuum(); err != nil {
+			glog.Warningf("Failed to disable vacuum on master: %v", err)
+			return false // retry next tick
+		}
+		return true
+	}
+	glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	if err := toggler.enableVacuum(); err != nil {
+		glog.Warningf("Failed to enable vacuum on master: %v", err)
+		return true // retry next tick
+	}
+	return false
+}
+
 // monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
 // disables/enables the master's automatic scheduled vacuum accordingly.
 func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
@@ -269,6 +320,7 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	toggler := &masterVacuumToggler{server: s}
 	vacuumWorkerActive := false
 
 	for {
@@ -280,33 +332,7 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 				continue
 			}
 			hasWorker := s.plugin.HasCapableWorker("vacuum")
-			if hasWorker == vacuumWorkerActive {
-				continue
-			}
-			vacuumWorkerActive = hasWorker
-			if hasWorker {
-				glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
-				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-					rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					_, err := client.DisableVacuum(rpcCtx, &master_pb.DisableVacuumRequest{})
-					return err
-				}); err != nil {
-					glog.Warningf("Failed to disable vacuum on master: %v", err)
-					vacuumWorkerActive = false // retry next tick
-				}
-			} else {
-				glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
-				if err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-					rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-					defer cancel()
-					_, err := client.EnableVacuum(rpcCtx, &master_pb.EnableVacuumRequest{})
-					return err
-				}); err != nil {
-					glog.Warningf("Failed to enable vacuum on master: %v", err)
-					vacuumWorkerActive = true // retry next tick
-				}
-			}
+			vacuumWorkerActive = syncVacuumState(hasWorker, vacuumWorkerActive, toggler)
 		}
 	}
 }

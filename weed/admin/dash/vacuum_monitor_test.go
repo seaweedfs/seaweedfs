@@ -51,3 +51,68 @@ func TestVacuumMonitorStateTransitions(t *testing.T) {
 		t.Fatalf("expected no capable worker after disconnect")
 	}
 }
+
+// fakeToggler records disable/enable calls for testing.
+type fakeToggler struct {
+	disableCalls int
+	enableCalls  int
+}
+
+func (f *fakeToggler) disableVacuum() error {
+	f.disableCalls++
+	return nil
+}
+
+func (f *fakeToggler) enableVacuum() error {
+	f.enableCalls++
+	return nil
+}
+
+func TestSyncVacuumState(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no change when state matches", func(t *testing.T) {
+		tog := &fakeToggler{}
+		// both false
+		result := syncVacuumState(false, false, tog)
+		if result != false {
+			t.Error("expected false")
+		}
+		// both true
+		result = syncVacuumState(true, true, tog)
+		if result != true {
+			t.Error("expected true")
+		}
+		if tog.disableCalls != 0 || tog.enableCalls != 0 {
+			t.Errorf("expected no calls, got disable=%d enable=%d", tog.disableCalls, tog.enableCalls)
+		}
+	})
+
+	t.Run("worker connects triggers disable", func(t *testing.T) {
+		tog := &fakeToggler{}
+		result := syncVacuumState(true, false, tog)
+		if result != true {
+			t.Error("expected true after disable")
+		}
+		if tog.disableCalls != 1 {
+			t.Errorf("expected 1 disable call, got %d", tog.disableCalls)
+		}
+		if tog.enableCalls != 0 {
+			t.Errorf("expected 0 enable calls, got %d", tog.enableCalls)
+		}
+	})
+
+	t.Run("worker disconnects triggers enable", func(t *testing.T) {
+		tog := &fakeToggler{}
+		result := syncVacuumState(false, true, tog)
+		if result != false {
+			t.Error("expected false after enable")
+		}
+		if tog.enableCalls != 1 {
+			t.Errorf("expected 1 enable call, got %d", tog.enableCalls)
+		}
+		if tog.disableCalls != 0 {
+			t.Errorf("expected 0 disable calls, got %d", tog.disableCalls)
+		}
+	})
+}
