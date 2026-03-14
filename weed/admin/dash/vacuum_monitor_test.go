@@ -73,15 +73,13 @@ func TestSyncVacuumState(t *testing.T) {
 
 	t.Run("no change when state matches", func(t *testing.T) {
 		tog := &fakeToggler{}
-		// both false
-		result := syncVacuumState(false, false, tog)
-		if result != false {
-			t.Error("expected false")
+		result, failed := syncVacuumState(false, false, tog, false)
+		if result != false || failed {
+			t.Error("expected false, no failure")
 		}
-		// both true
-		result = syncVacuumState(true, true, tog)
-		if result != true {
-			t.Error("expected true")
+		result, failed = syncVacuumState(true, true, tog, false)
+		if result != true || failed {
+			t.Error("expected true, no failure")
 		}
 		if tog.disableCalls != 0 || tog.enableCalls != 0 {
 			t.Errorf("expected no calls, got disable=%d enable=%d", tog.disableCalls, tog.enableCalls)
@@ -90,9 +88,9 @@ func TestSyncVacuumState(t *testing.T) {
 
 	t.Run("worker connects triggers disable", func(t *testing.T) {
 		tog := &fakeToggler{}
-		result := syncVacuumState(true, false, tog)
-		if result != true {
-			t.Error("expected true after disable")
+		result, failed := syncVacuumState(true, false, tog, false)
+		if result != true || failed {
+			t.Error("expected true after disable, no failure")
 		}
 		if tog.disableCalls != 1 {
 			t.Errorf("expected 1 disable call, got %d", tog.disableCalls)
@@ -104,9 +102,9 @@ func TestSyncVacuumState(t *testing.T) {
 
 	t.Run("worker disconnects triggers enable", func(t *testing.T) {
 		tog := &fakeToggler{}
-		result := syncVacuumState(false, true, tog)
-		if result != false {
-			t.Error("expected false after enable")
+		result, failed := syncVacuumState(false, true, tog, false)
+		if result != false || failed {
+			t.Error("expected false after enable, no failure")
 		}
 		if tog.enableCalls != 1 {
 			t.Errorf("expected 1 enable call, got %d", tog.enableCalls)

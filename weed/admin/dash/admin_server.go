@@ -292,25 +292,30 @@ func (m *masterVacuumToggler) enableVacuum() error {
 }
 
 // syncVacuumState performs a single sync step: checks if a vacuum-capable worker
-// is present and calls disable/enable accordingly. Returns the updated state.
-func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler) bool {
+// is present and calls disable/enable accordingly. Returns the updated state
+// and whether the call failed (for log dedup on retries).
+func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
 	if hasWorker == previouslyActive {
-		return previouslyActive
+		return previouslyActive, false
 	}
 	if hasWorker {
-		glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		if !retrying {
+			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		}
 		if err := toggler.disableVacuum(); err != nil {
 			glog.Warningf("Failed to disable vacuum on master: %v", err)
-			return false // retry next tick
+			return false, true // retry next tick
 		}
-		return true
+		return true, false
 	}
-	glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	if !retrying {
+		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	}
 	if err := toggler.enableVacuum(); err != nil {
 		glog.Warningf("Failed to enable vacuum on master: %v", err)
-		return true // retry next tick
+		return true, true // retry next tick
 	}
-	return false
+	return false, false
 }
 
 // monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
@@ -322,6 +327,7 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 
 	toggler := &masterVacuumToggler{server: s}
 	vacuumWorkerActive := false
+	retrying := false
 
 	for {
 		select {
@@ -332,7 +338,7 @@ func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
 				continue
 			}
 			hasWorker := s.plugin.HasCapableWorker("vacuum")
-			vacuumWorkerActive = syncVacuumState(hasWorker, vacuumWorkerActive, toggler)
+			vacuumWorkerActive, retrying = syncVacuumState(hasWorker, vacuumWorkerActive, toggler, retrying)
 		}
 	}
 }
