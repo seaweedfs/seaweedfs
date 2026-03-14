@@ -80,8 +80,9 @@ func TestDetectDuplicateShards(t *testing.T) {
 	if move.source.nodeID != "node1" {
 		t.Errorf("expected source node1 (fewer free slots), got %s", move.source.nodeID)
 	}
-	if move.target.nodeID != "node2" {
-		t.Errorf("expected target node2 (more free slots), got %s", move.target.nodeID)
+	// Dedup moves set target=source so isDedupPhase recognizes unmount+delete only
+	if move.target.nodeID != "node1" {
+		t.Errorf("expected target node1 (same as source for dedup), got %s", move.target.nodeID)
 	}
 }
 
@@ -232,7 +233,7 @@ func TestDetectGlobalImbalance(t *testing.T) {
 
 	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.01 // low threshold to ensure moves happen
-	moves := detectGlobalImbalance(nodes, racks, config)
+	moves := detectGlobalImbalance(nodes, racks, config, nil)
 
 	// Total = 22 shards, avg = 11. node1 has 20, node2 has 2.
 	// Should move shards until balanced (max 10 iterations)
@@ -277,7 +278,7 @@ func TestDetectGlobalImbalanceSkipsFullNodes(t *testing.T) {
 
 	config := NewDefaultConfig()
 	config.ImbalanceThreshold = 0.01
-	moves := detectGlobalImbalance(nodes, racks, config)
+	moves := detectGlobalImbalance(nodes, racks, config, nil)
 
 	// node2 has no free slots so no moves should be proposed
 	if len(moves) != 0 {

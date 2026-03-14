@@ -60,6 +60,14 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 	targetAddr := pb.ServerAddress(target.Node)
 
 	ecParams := params.GetEcBalanceParams()
+
+	// Apply configured timeout to the context for all RPC operations
+	if ecParams != nil && ecParams.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(ecParams.TimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+
 	isDedupDelete := ecParams != nil && isDedupPhase(params)
 
 	glog.Infof("EC balance: moving shard(s) %v of volume %d from %s to %s",

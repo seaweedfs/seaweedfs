@@ -430,23 +430,22 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	taskConfig.ImbalanceThreshold = imbalanceThreshold
 
 	minServerCountRaw := readInt64Config(values, "min_server_count", int64(taskConfig.MinServerCount))
+	if minServerCountRaw < int64(ecBalanceMinServerCount) {
+		minServerCountRaw = int64(ecBalanceMinServerCount)
+	}
 	if minServerCountRaw > math.MaxInt32 {
 		minServerCountRaw = math.MaxInt32
 	}
-	minServerCount := int(minServerCountRaw)
-	if minServerCount < ecBalanceMinServerCount {
-		minServerCount = ecBalanceMinServerCount
-	}
-	taskConfig.MinServerCount = minServerCount
+	taskConfig.MinServerCount = int(minServerCountRaw)
 
 	minIntervalRaw := readInt64Config(values, "min_interval_seconds", 60*60)
+	if minIntervalRaw < 0 {
+		minIntervalRaw = 0
+	}
 	if minIntervalRaw > math.MaxInt32 {
 		minIntervalRaw = math.MaxInt32
 	}
 	minIntervalSeconds := int(minIntervalRaw)
-	if minIntervalSeconds < 0 {
-		minIntervalSeconds = 0
-	}
 
 	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
@@ -474,10 +473,14 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 		proposalID = fmt.Sprintf("ec-balance-%d-%d", result.VolumeID, time.Now().UnixNano())
 	}
 
-	// Dedupe key includes volume ID and shard ID(s)
+	// Dedupe key includes volume ID, shard ID, source node, and collection
+	// to distinguish moves of the same shard from different source nodes (e.g. dedup)
 	dedupeKey := fmt.Sprintf("ec_balance:%d", result.VolumeID)
-	if len(result.TypedParams.Sources) > 0 && len(result.TypedParams.Sources[0].ShardIds) > 0 {
-		dedupeKey = fmt.Sprintf("ec_balance:%d:%d", result.VolumeID, result.TypedParams.Sources[0].ShardIds[0])
+	if len(result.TypedParams.Sources) > 0 {
+		src := result.TypedParams.Sources[0]
+		if len(src.ShardIds) > 0 {
+			dedupeKey = fmt.Sprintf("ec_balance:%d:%d:%s", result.VolumeID, src.ShardIds[0], src.Node)
+		}
 	}
 	if result.Collection != "" {
 		dedupeKey += ":" + result.Collection

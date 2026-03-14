@@ -119,8 +119,8 @@ func TestBuildECBalanceProposal(t *testing.T) {
 	if proposal.ProposalId != "test-task-123" {
 		t.Errorf("expected proposal ID test-task-123, got %s", proposal.ProposalId)
 	}
-	if proposal.DedupeKey != "ec_balance:42:5:test-col" {
-		t.Errorf("expected dedupe key ec_balance:42:5:test-col, got %s", proposal.DedupeKey)
+	if proposal.DedupeKey != "ec_balance:42:5:source:8080:test-col" {
+		t.Errorf("expected dedupe key ec_balance:42:5:source:8080:test-col, got %s", proposal.DedupeKey)
 	}
 	if proposal.Labels["source_node"] != "source:8080" {
 		t.Errorf("expected source_node label source:8080, got %s", proposal.Labels["source_node"])

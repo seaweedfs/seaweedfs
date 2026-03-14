@@ -95,6 +95,14 @@ func Detection(
 	threshold := ecConfig.ImbalanceThreshold
 	var allMoves []*shardMove
 
+	// Build set of allowed collections for global phase filtering
+	allowedVids := make(map[uint32]bool)
+	for _, volumeIDs := range collections {
+		for _, vid := range volumeIDs {
+			allowedVids[vid] = true
+		}
+	}
+
 	for collection, volumeIDs := range collections {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
@@ -105,24 +113,27 @@ func Detection(
 		// Phase 1: Detect duplicate shards (always run, duplicates are errors not imbalance)
 		for _, vid := range volumeIDs {
 			moves := detectDuplicateShards(vid, collection, nodes, ecConfig.DiskType)
+			applyMovesToTopology(moves)
 			allMoves = append(allMoves, moves...)
 		}
 
-		// Phase 2: Balance shards across racks
+		// Phase 2: Balance shards across racks (operates on updated topology from phase 1)
 		for _, vid := range volumeIDs {
 			moves := detectCrossRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
+			applyMovesToTopology(moves)
 			allMoves = append(allMoves, moves...)
 		}
 
-		// Phase 3: Balance shards within racks
+		// Phase 3: Balance shards within racks (operates on updated topology from phases 1-2)
 		for _, vid := range volumeIDs {
 			moves := detectWithinRackImbalance(vid, collection, nodes, racks, ecConfig.DiskType, threshold)
+			applyMovesToTopology(moves)
 			allMoves = append(allMoves, moves...)
 		}
 	}
 
-	// Phase 4: Global node balance across racks
-	globalMoves := detectGlobalImbalance(nodes, racks, ecConfig)
+	// Phase 4: Global node balance across racks (only for volumes in allowed collections)
+	globalMoves := detectGlobalImbalance(nodes, racks, ecConfig, allowedVids)
 	allMoves = append(allMoves, globalMoves...)
 
 	// Cap results
@@ -315,9 +326,9 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*ecNo
 		}
 		// Keep the copy on the node with most free slots (ascending sort, keep last)
 		sort.Slice(locs, func(i, j int) bool { return locs[i].freeSlots < locs[j].freeSlots })
-		keeper := locs[len(locs)-1]
 
-		// Propose deletion of all other copies
+		// Propose deletion of all other copies (skip the keeper at the end).
+		// Set target=source so isDedupPhase() recognizes this as unmount+delete only.
 		for _, node := range locs[:len(locs)-1] {
 			moves = append(moves, &shardMove{
 				volumeID:   vid,
@@ -325,8 +336,8 @@ func detectDuplicateShards(vid uint32, collection string, nodes map[string]*ecNo
 				collection: collection,
 				source:     node,
 				sourceDisk: ecShardDiskID(node, vid),
-				target:     keeper, // target is the keeper for dedup (we delete from source)
-				targetDisk: ecShardDiskID(keeper, vid),
+				target:     node,
+				targetDisk: ecShardDiskID(node, vid),
 				phase:      "dedup",
 			})
 		}
@@ -505,8 +516,8 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 }
 
 // detectGlobalImbalance detects total shard count imbalance across nodes in each rack.
-// Respects ImbalanceThreshold from config.
-func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, config *Config) []*shardMove {
+// Respects ImbalanceThreshold from config. Only considers volumes in allowedVids.
+func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRackInfo, config *Config, allowedVids map[uint32]bool) []*shardMove {
 	var moves []*shardMove
 
 	for _, rack := range racks {
@@ -514,12 +525,15 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			continue
 		}
 
-		// Count total EC shards per node (across all volumes)
+		// Count total EC shards per node (only for allowed volumes)
 		nodeShardCounts := make(map[string]int)
 		totalShards := 0
 		for nodeID, node := range rack.nodes {
 			count := 0
-			for _, info := range node.ecShards {
+			for vid, info := range node.ecShards {
+				if len(allowedVids) > 0 && !allowedVids[vid] {
+					continue
+				}
 				count += shardBitCount(info.shardBits)
 			}
 			nodeShardCounts[nodeID] = count
@@ -569,6 +583,9 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			for vid, info := range maxNode.ecShards {
 				if moved {
 					break
+				}
+				if len(allowedVids) > 0 && !allowedVids[vid] {
+					continue
 				}
 				// Check minNode doesn't have this volume's shards already (avoid same-volume overlap)
 				minInfo := minNode.ecShards[vid]
@@ -694,6 +711,32 @@ func exceedsImbalanceThreshold(counts map[string]int, total int, numGroups int, 
 
 	imbalanceRatio := float64(maxCount-minCount) / avg
 	return imbalanceRatio > threshold
+}
+
+// applyMovesToTopology simulates planned moves on the in-memory topology
+// so subsequent detection phases see updated shard placement.
+func applyMovesToTopology(moves []*shardMove) {
+	for _, move := range moves {
+		shardBit := uint32(1 << uint(move.shardID))
+
+		// Remove shard from source
+		if srcInfo, ok := move.source.ecShards[move.volumeID]; ok {
+			srcInfo.shardBits &^= shardBit
+		}
+
+		// For non-dedup moves, add shard to target
+		if move.source.nodeID != move.target.nodeID {
+			dstInfo, ok := move.target.ecShards[move.volumeID]
+			if !ok {
+				dstInfo = &ecVolumeInfo{
+					collection: move.collection,
+					diskID:     move.targetDisk,
+				}
+				move.target.ecShards[move.volumeID] = dstInfo
+			}
+			dstInfo.shardBits |= shardBit
+		}
+	}
 }
 
 // Helper functions
