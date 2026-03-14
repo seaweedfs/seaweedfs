@@ -23,6 +23,10 @@ import (
 const (
 	defaultBalanceTimeoutSeconds = int32(10 * 60)
 	maxProposalStringLength      = 200
+
+	// Collection filter mode constants.
+	collectionFilterAll  = "ALL_COLLECTIONS"
+	collectionFilterEach = "EACH_COLLECTION"
 )
 
 func init() {
@@ -85,8 +89,8 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only detect balance opportunities in this collection when set.",
-							Placeholder: "all collections",
+							Description: "Filter collections for balance detection. Use ALL_COLLECTIONS (default) to treat all volumes as one pool, EACH_COLLECTION to run detection separately per collection, or a regex pattern to match specific collections.",
+							Placeholder: "ALL_COLLECTIONS",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -286,9 +290,54 @@ func (h *VolumeBalanceHandler) Detect(
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
 	maxResults := int(request.MaxResults)
-	results, hasMore, err := balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
-	if err != nil {
-		return err
+
+	var results []*workertypes.TaskDetectionResult
+	var hasMore bool
+
+	if collectionFilter == collectionFilterEach {
+		// Group metrics by collection in a single pass (O(N) instead of O(C*N))
+		metricsByCollection := make(map[string][]*workertypes.VolumeHealthMetrics)
+		for _, m := range metrics {
+			if m == nil {
+				continue
+			}
+			metricsByCollection[m.Collection] = append(metricsByCollection[m.Collection], m)
+		}
+		collections := make([]string, 0, len(metricsByCollection))
+		for c := range metricsByCollection {
+			collections = append(collections, c)
+		}
+		sort.Strings(collections)
+
+		budget := maxResults
+		unlimitedBudget := budget <= 0
+		for _, collection := range collections {
+			if !unlimitedBudget && budget <= 0 {
+				hasMore = true
+				break
+			}
+			perCollectionLimit := budget
+			if unlimitedBudget {
+				perCollectionLimit = 0 // Detection treats <= 0 as unbounded
+			}
+			perResults, perHasMore, perErr := balancetask.Detection(metricsByCollection[collection], clusterInfo, workerConfig.TaskConfig, perCollectionLimit)
+			if perErr != nil {
+				return perErr
+			}
+			results = append(results, perResults...)
+			if !unlimitedBudget {
+				budget -= len(perResults)
+			}
+			if perHasMore {
+				hasMore = true
+			}
+		}
+	} else {
+		var err error
+		results, hasMore, err = balancetask.Detection(metrics, clusterInfo, workerConfig.TaskConfig, maxResults)
+		if err != nil {
+			return err
+		}
 	}
 
 	if traceErr := emitVolumeBalanceDetectionDecisionTrace(sender, metrics, activeTopology, workerConfig.TaskConfig, results); traceErr != nil {
