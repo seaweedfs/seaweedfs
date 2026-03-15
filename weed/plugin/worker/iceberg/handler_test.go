@@ -580,6 +580,9 @@ type testEntrySpec struct {
 	specID    int32 // partition spec ID; 0 uses UnpartitionedSpec
 }
 
+// makeTestEntries creates manifest entries using UnpartitionedSpec (spec ID 0).
+// The specID field in testEntrySpec is ignored here; for multi-spec testing,
+// use makeTestEntriesWithSpec instead.
 func makeTestEntries(t *testing.T, specs []testEntrySpec) []iceberg.ManifestEntry {
 	t.Helper()
 	entries := make([]iceberg.ManifestEntry, 0, len(specs))

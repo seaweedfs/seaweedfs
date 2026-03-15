@@ -1024,6 +1024,11 @@ func TestMetadataVersionCAS(t *testing.T) {
 
 // patchManifestContentToDeletes performs a binary patch on an Avro manifest
 // file to change the "content" metadata value from "data" to "deletes".
+// This workaround is needed because iceberg-go's WriteManifest API always
+// sets content="data" and provides no way to create delete manifests.
+// The function validates the pattern was found (bytes.Equal check) and fails
+// fast if not, so breakage from encoding changes is caught immediately.
+//
 // In Avro OCF encoding, strings are stored as zigzag-encoded length + bytes.
 // "content" (7 chars) = \x0e + "content", "data" (4 chars) = \x08 + "data",
 // "deletes" (7 chars) = \x0e + "deletes".
