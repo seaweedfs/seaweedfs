@@ -19,6 +19,7 @@ const (
 	defaultTargetFileSizeMB       = 256
 	defaultMinInputFiles          = 5
 	defaultMinManifestsToRewrite  = 5
+	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
 
 	// Metric keys returned by maintenance operations.
@@ -80,8 +81,8 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	if cfg.MinInputFiles < 2 {
 		cfg.MinInputFiles = defaultMinInputFiles
 	}
-	if cfg.MinManifestsToRewrite < 2 {
-		cfg.MinManifestsToRewrite = 2
+	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
+		cfg.MinManifestsToRewrite = minManifestsToRewrite
 	}
 
 	return cfg

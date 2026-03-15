@@ -20,11 +20,12 @@ import (
 
 // tableInfo captures metadata about a table for detection/execution.
 type tableInfo struct {
-	BucketName string
-	Namespace  string
-	TableName  string
-	TablePath  string // namespace/tableName
-	Metadata   table.Metadata
+	BucketName       string
+	Namespace        string
+	TableName        string
+	TablePath        string // namespace/tableName
+	MetadataFileName string
+	Metadata         table.Metadata
 }
 
 // scanTablesForMaintenance enumerates table buckets and their tables,
@@ -122,7 +123,8 @@ func (h *Handler) scanTablesForMaintenance(
 
 				// Parse the internal metadata to get FullMetadata
 				var internalMeta struct {
-					Metadata *struct {
+					MetadataLocation string `json:"metadataLocation,omitempty"`
+					Metadata         *struct {
 						FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
 					} `json:"metadata,omitempty"`
 				}
@@ -141,18 +143,20 @@ func (h *Handler) scanTablesForMaintenance(
 				}
 
 				tablePath := path.Join(nsName, tblName)
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, config, ops)
+				metadataFileName := metadataFileNameFromLocation(internalMeta.MetadataLocation, bucketName, tablePath)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, config, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
 				}
 				if needsWork {
 					tables = append(tables, tableInfo{
-						BucketName: bucketName,
-						Namespace:  nsName,
-						TableName:  tblName,
-						TablePath:  tablePath,
-						Metadata:   icebergMeta,
+						BucketName:       bucketName,
+						Namespace:        nsName,
+						TableName:        tblName,
+						TablePath:        tablePath,
+						MetadataFileName: metadataFileName,
+						Metadata:         icebergMeta,
 					})
 					if limit > 0 && len(tables) > limit {
 						return tables, nil
@@ -173,8 +177,8 @@ func normalizeDetectionConfig(config Config) Config {
 	if normalized.MinInputFiles < 2 {
 		normalized.MinInputFiles = defaultMinInputFiles
 	}
-	if normalized.MinManifestsToRewrite < 2 {
-		normalized.MinManifestsToRewrite = 2
+	if normalized.MinManifestsToRewrite < minManifestsToRewrite {
+		normalized.MinManifestsToRewrite = minManifestsToRewrite
 	}
 	if normalized.OrphanOlderThanHours <= 0 {
 		normalized.OrphanOlderThanHours = defaultOrphanOlderThanHours
@@ -187,6 +191,7 @@ func (h *Handler) tableNeedsMaintenance(
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	meta table.Metadata,
+	metadataFileName string,
 	config Config,
 	ops []string,
 ) (bool, error) {
@@ -238,9 +243,12 @@ func (h *Handler) tableNeedsMaintenance(
 				return true, nil
 			}
 		case "remove_orphans":
-			_, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
-			if err != nil {
-				return false, err
+			if metadataFileName == "" {
+				_, currentMetadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+				if err != nil {
+					return false, err
+				}
+				metadataFileName = currentMetadataFileName
 			}
 			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
 			if err != nil {
@@ -253,6 +261,13 @@ func (h *Handler) tableNeedsMaintenance(
 	}
 
 	return false, nil
+}
+
+func metadataFileNameFromLocation(location, bucketName, tablePath string) string {
+	if location == "" {
+		return ""
+	}
+	return path.Base(normalizeIcebergPath(location, bucketName, tablePath))
 }
 
 func loadCurrentManifests(

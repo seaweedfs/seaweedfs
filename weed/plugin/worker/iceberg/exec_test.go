@@ -244,7 +244,8 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 
 	// Build internal metadata xattr
 	internalMeta := map[string]interface{}{
-		"metadataVersion": 1,
+		"metadataVersion":  1,
+		"metadataLocation": path.Join("metadata", fmt.Sprintf("v%d.metadata.json", meta.Version())),
 		"metadata": map[string]interface{}{
 			"fullMetadata": json.RawMessage(fullMetadataJSON),
 		},
@@ -430,8 +431,14 @@ func makeManifestEntries(t *testing.T, specs []testEntrySpec, snapshotID int64) 
 
 	entries := make([]iceberg.ManifestEntry, 0, len(specs))
 	for _, spec := range specs {
+		partitionSpec := iceberg.UnpartitionedSpec
+		if spec.partitionSpec != nil {
+			partitionSpec = spec.partitionSpec
+		} else if len(spec.partition) > 0 {
+			t.Fatalf("partition spec is required for partitioned test entry %s", spec.path)
+		}
 		dfBuilder, err := iceberg.NewDataFileBuilder(
-			*iceberg.UnpartitionedSpec,
+			*partitionSpec,
 			iceberg.EntryContentData,
 			spec.path,
 			iceberg.ParquetFile,
