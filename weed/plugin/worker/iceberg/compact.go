@@ -458,6 +458,11 @@ func mergeParquetFiles(
 	drainReader := func(reader *parquet.Reader) error {
 		defer reader.Close()
 		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 			n, readErr := reader.ReadRows(rows)
 			if n > 0 {
 				if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
