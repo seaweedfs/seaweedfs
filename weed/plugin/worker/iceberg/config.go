@@ -68,7 +68,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		cfg.MinInputFiles = defaultMinInputFiles
 	}
 	if cfg.MinManifestsToRewrite < 2 {
-		cfg.MinManifestsToRewrite = defaultMinManifestsToRewrite
+		cfg.MinManifestsToRewrite = 2
 	}
 
 	return cfg
